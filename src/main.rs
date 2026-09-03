@@ -1,5 +1,6 @@
 mod app;
 mod panel;
+mod theme;
 mod ui;
 
 use std::io::{self, Stdout};
@@ -14,6 +15,7 @@ use crossterm::{
 use ratatui::{prelude::CrosstermBackend, Terminal};
 
 use app::App;
+use theme::Theme;
 
 
 fn main() -> Result<()> {
@@ -22,7 +24,8 @@ fn main() -> Result<()> {
 
     let mut terminal = setup_terminal()?;
     let mut app = App::new(start_dir)?;
-    let result = run(&mut terminal, &mut app);
+    let theme = Theme::dark();
+    let result = run(&mut terminal, &mut app, &theme);
     restore_terminal(&mut terminal)?;
     result
 }
@@ -43,9 +46,13 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
 }
 
 
-fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
+fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App, theme: &Theme) -> Result<()> {
     while !app.should_quit {
-        terminal.draw(|frame| ui::draw(frame, app))?;
+        let mut columns = [1usize; 2];
+        terminal.draw(|frame| columns = ui::draw(frame, app, theme))?;
+        for (panel, cols) in app.panels.iter_mut().zip(columns) {
+            panel.set_columns(cols);
+        }
         handle_event(terminal, app)?;
     }
     Ok(())
@@ -63,6 +70,8 @@ fn handle_event(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
     match key.code {
         KeyCode::Up => app.active_panel().move_up(),
         KeyCode::Down => app.active_panel().move_down(),
+        KeyCode::Left => app.active_panel().move_left(),
+        KeyCode::Right => app.active_panel().move_right(),
         KeyCode::Enter => app.active_panel().enter_selected()?,
         KeyCode::Tab => app.toggle_active(),
         KeyCode::F(4) => open_editor_for_selection(terminal, app)?,
