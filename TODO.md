@@ -14,9 +14,8 @@ Near-term, actionable items. Full staged plan:
 
 ## Built-in editor (F4, `editor.rs`, `tui-textarea`) — MVP landed, gaps left
 
-- [ ] Confirm-before-discard prompt when closing (`Esc`) with unsaved
-      changes — currently discards silently, no modal system exists yet
-      to ask
+- [x] Confirm-before-discard prompt when closing (`Esc`) with unsaved
+      changes — `Mode::ConfirmDiscard`, `editor_keymap::resolve_confirm_discard`
 - [ ] Handle non-UTF-8 / binary files without just silently doing
       nothing on F4 — at least a status-bar message once one exists
 - [ ] Syntax highlighting (`syntect`) — deferred, not started

@@ -5,12 +5,18 @@ use crate::editor::Editor;
 use crate::panel::Panel;
 
 
-/// What the app is currently showing: the dual-pane browser, or a file
-/// open for editing (F4). Only one at a time — there's no split-screen
-/// browse-while-editing yet.
+/// What the app is currently showing. Only one at a time — there's no
+/// split-screen browse-while-editing yet.
 pub enum Mode {
+    /// The dual-pane browser.
     Browsing,
+    /// A file open for editing (F4).
     Editing(Editor),
+    /// Editing was interrupted by `Esc` with unsaved changes: the
+    /// editor is shown behind a "discard changes?" prompt rather than
+    /// silently closing. Holds the editor so `Editor` moves straight
+    /// back into `Editing` on cancel, with no data loss either way.
+    ConfirmDiscard(Editor),
 }
 
 

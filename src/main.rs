@@ -76,6 +76,7 @@ fn handle_event(app: &mut App, theme: &Theme) -> Result<()> {
 
     match &app.mode {
         Mode::Editing(_) => handle_editor_key(app, key),
+        Mode::ConfirmDiscard(_) => handle_confirm_discard_key(app, key),
         Mode::Browsing => {
             debug!(?key, "browsing key");
             if let Some(cmd) = keymap::resolve(key.code) {
@@ -98,9 +99,7 @@ fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
     debug!(?key, ?command, "editor key");
 
     if command == EditorCommand::Close {
-        app.mode = Mode::Browsing;
-        app.active_panel().reload()?;
-        return Ok(());
+        return close_editor_or_confirm(app);
     }
 
     let Mode::Editing(active_editor) = &mut app.mode else {
@@ -114,6 +113,56 @@ fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         EditorCommand::Cut => active_editor.cut(),
         EditorCommand::Paste => active_editor.paste(),
         EditorCommand::Input => active_editor.input(key),
+    }
+
+    Ok(())
+}
+
+
+/// `Esc` in the editor: closes straight back to browsing if the buffer
+/// has no unsaved changes, otherwise moves to `Mode::ConfirmDiscard`
+/// instead of discarding them silently.
+fn close_editor_or_confirm(app: &mut App) -> Result<()> {
+    let Mode::Editing(editor) = &app.mode else {
+        return Ok(());
+    };
+
+    if !editor.is_dirty() {
+        app.mode = Mode::Browsing;
+        app.active_panel().reload()?;
+        return Ok(());
+    }
+
+    debug!("editor close: unsaved changes, asking to confirm discard");
+    let Mode::Editing(editor) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+        unreachable!("just matched Mode::Editing above");
+    };
+    app.mode = Mode::ConfirmDiscard(editor);
+    Ok(())
+}
+
+
+/// Key handling on the "discard unsaved changes?" prompt: `Y` discards
+/// and returns to browsing, `N`/`Esc` cancels back into the editor with
+/// nothing lost, anything else is ignored.
+fn handle_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    use editor_keymap::ConfirmDiscardCommand;
+
+    let command = editor_keymap::resolve_confirm_discard(key);
+    debug!(?key, ?command, "confirm-discard key");
+
+    match command {
+        ConfirmDiscardCommand::Discard => {
+            app.mode = Mode::Browsing;
+            app.active_panel().reload()?;
+        }
+        ConfirmDiscardCommand::Cancel => {
+            let Mode::ConfirmDiscard(editor) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+                unreachable!("only called while in Mode::ConfirmDiscard");
+            };
+            app.mode = Mode::Editing(editor);
+        }
+        ConfirmDiscardCommand::Ignore => {}
     }
 
     Ok(())

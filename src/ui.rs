@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
     Frame,
 };
 
@@ -24,9 +24,17 @@ const MIN_COLUMN_WIDTH: u16 = 24;
 /// which only `ui::draw` computes, but `Panel` (not `ui`) owns the
 /// cursor state that navigation needs it for.
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) -> [usize; 2] {
-    if let Mode::Editing(editor) = &app.mode {
-        draw_editor(frame, frame.area(), editor, theme);
-        return [1, 1];
+    match &app.mode {
+        Mode::Editing(editor) => {
+            draw_editor(frame, frame.area(), editor, theme);
+            return [1, 1];
+        }
+        Mode::ConfirmDiscard(editor) => {
+            draw_editor(frame, frame.area(), editor, theme);
+            draw_confirm_discard_popup(frame, frame.area(), theme);
+            return [1, 1];
+        }
+        Mode::Browsing => {}
     }
 
     let root = Layout::default()
@@ -165,6 +173,46 @@ fn draw_editor(frame: &mut Frame, area: Rect, editor: &Editor, theme: &Theme) {
         Span::styled(dirty_marker, Style::default().fg(theme.danger)),
     ]);
     frame.render_widget(hint, rows[1]);
+}
+
+
+/// Renders the "discard unsaved changes?" prompt centered over
+/// whatever's already drawn (the editor, still visible underneath).
+fn draw_confirm_discard_popup(frame: &mut Frame, area: Rect, theme: &Theme) {
+    let popup = centered_rect(44, 4, area);
+
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.danger))
+        .title(" Unsaved changes ");
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let lines = vec![
+        Line::from(Span::styled("Discard unsaved changes?", Style::default().fg(theme.text))),
+        Line::from(vec![
+            Span::styled("Y", Style::default().fg(theme.danger).add_modifier(Modifier::BOLD)),
+            Span::styled(" discard    ", Style::default().fg(theme.text_dim)),
+            Span::styled("N", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(" / Esc cancel", Style::default().fg(theme.text_dim)),
+        ]),
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+
+/// A `width`x`height` rectangle centered within `area`, clamped to fit.
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
 }
 
 

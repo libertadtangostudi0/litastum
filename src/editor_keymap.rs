@@ -41,6 +41,28 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
 }
 
 
+/// The choice on the "discard unsaved changes?" prompt (`Mode::ConfirmDiscard`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmDiscardCommand {
+    Discard,
+    Cancel,
+    /// Anything else — the prompt only understands these two answers,
+    /// so unrecognized keys are ignored rather than forwarded anywhere
+    /// (there's no text area to forward them to while it's showing).
+    Ignore,
+}
+
+
+/// Resolves a raw key press on the discard-confirmation prompt.
+pub fn resolve_confirm_discard(key: KeyEvent) -> ConfirmDiscardCommand {
+    match key.code {
+        KeyCode::Char('y' | 'Y') => ConfirmDiscardCommand::Discard,
+        KeyCode::Char('n' | 'N') | KeyCode::Esc => ConfirmDiscardCommand::Cancel,
+        _ => ConfirmDiscardCommand::Ignore,
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +112,27 @@ mod tests {
     fn unmodified_letter_is_input() {
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
         assert_eq!(resolve(key), EditorCommand::Input);
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn y_or_uppercase_y_confirms_discard() {
+        assert_eq!(resolve_confirm_discard(key(KeyCode::Char('y'))), ConfirmDiscardCommand::Discard);
+        assert_eq!(resolve_confirm_discard(key(KeyCode::Char('Y'))), ConfirmDiscardCommand::Discard);
+    }
+
+    #[test]
+    fn n_or_esc_cancels_discard() {
+        assert_eq!(resolve_confirm_discard(key(KeyCode::Char('n'))), ConfirmDiscardCommand::Cancel);
+        assert_eq!(resolve_confirm_discard(key(KeyCode::Esc)), ConfirmDiscardCommand::Cancel);
+    }
+
+    #[test]
+    fn other_keys_are_ignored_on_the_discard_prompt() {
+        assert_eq!(resolve_confirm_discard(key(KeyCode::Char('x'))), ConfirmDiscardCommand::Ignore);
+        assert_eq!(resolve_confirm_discard(key(KeyCode::Enter)), ConfirmDiscardCommand::Ignore);
     }
 }
