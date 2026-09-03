@@ -10,12 +10,13 @@ Build in this order; each stage is independently usable.
 2. **F4 editor, minimal version** — done: shell out to `$EDITOR` (or
    `notepad`/`nano` fallback), suspending/restoring the TUI around the
    external process.
-3. **Built-in editor** — replace the shell-out with `ratatui-textarea`
-   (undo/redo, search, selection, line numbers) or `edtui` for a
-   vim-like mode; add `syntect` for syntax highlighting. See
-   [[litastum-ui-theme]] for the multi-column panel layout this stage
-   should also land (design target, not yet implemented) — tracked in
-   detail in `ARCHITECTURE.md`.
+3. **Built-in editor** — multi-column panel layout done (see
+   [[litastum-ui-theme]], tracked in `ARCHITECTURE.md`). Editor itself:
+   F4 now opens `editor.rs` (backed by `tui-textarea` — see
+   [[litastum-stack]] for why, and for the `ratatui`/`crossterm` version
+   pin this required) instead of shelling out. Still missing: syntax
+   highlighting (`syntect`), a confirm-before-discard prompt on `Esc`
+   with unsaved changes, and handling for files that aren't valid UTF-8.
 4. **Scripting / user menu / macros** — see [[litastum-stack]] for the
    `rhai` vs `mlua` decision. Scripts should emit typed
    `Message`/`Command` values that the core executes — no direct

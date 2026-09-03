@@ -10,13 +10,13 @@ where the mockup needs behavior the scaffold doesn't have yet.
 ## Module map
 
 ```
-main.rs      — terminal setup/teardown, event loop, top-level key dispatch
+main.rs      — terminal setup/teardown, event loop, wires keymap -> command
 app.rs       — App: owns panels, active index, mode, should_quit
 panel.rs     — Panel: cwd, entries, cursor, column-aware navigation
 ui.rs        — pure rendering: App -> ratatui widgets (no state mutation)
-theme.rs     — NEW: color/style constants, one place matching the mockup's CSS
-keymap.rs    — NEW: KeyCode -> Command mapping, replaces the match in main.rs
-command.rs   — NEW: Command enum + execution (moves editor-shellout etc. out of main.rs)
+theme.rs     — color/style constants, one place matching the mockup's CSS
+keymap.rs    — KeyCode -> Command mapping
+command.rs   — Command enum + execution (owns the F4 editor-shellout etc.)
 config.rs    — LATER (stage 5): on-disk config via `directories`, live reload via `notify`
 editor.rs    — LATER (stage 3): built-in editor widget (ratatui-textarea/edtui)
 vfs.rs       — LATER (stage 6): trait over {std::fs, zip/tar, sftp} so Panel doesn't care
@@ -49,9 +49,13 @@ so rendering never needs `Result` plumbing.
 ## Panel: column-major layout (the mockup's core UI change)
 
 The mockup's grid (`grid-auto-flow:column`) fills column 1 top-to-bottom
-before column 2, and arrow keys move **within a column on Up/Down,
-across columns on Left/Right** — this is different from the scaffold's
-current flat `List` + linear `move_up`/`move_down`.
+before column 2. Up/Down flow through the whole grid in that same
+column-major order — reaching the bottom of a column continues into the
+top of the next one, rather than stopping there — and Left/Right jump
+directly across columns, same row. (An earlier version of this doc had
+Up/Down clamp at each column's edge, matching the mockup's own arrow-key
+JS; that felt wrong once actually used in a terminal and was corrected
+after implementation.)
 
 `Panel` needs:
 
@@ -71,9 +75,12 @@ trick the mockup's JS uses via `data-row`/`data-col`):
 impl Panel {
     fn rows(&self) -> usize { self.entries.len().div_ceil(self.columns) }
 
-    pub fn move_up(&mut self)    { if self.selected % self.rows() > 0 { self.selected -= 1 } }
-    pub fn move_down(&mut self)  { if self.selected % self.rows() + 1 < self.rows()
-                                       && self.selected + 1 < self.entries.len() { self.selected += 1 } }
+    // entries is already stored in column-major order, so a plain linear
+    // step already flows correctly from one column into the next.
+    pub fn move_up(&mut self)    { self.selected = self.selected.saturating_sub(1) }
+    pub fn move_down(&mut self)  { if self.selected + 1 < self.entries.len() { self.selected += 1 } }
+
+    // Left/Right jump a whole column (same row), independent of Up/Down.
     pub fn move_left(&mut self)  { self.selected = self.selected.saturating_sub(self.rows()) }
     pub fn move_right(&mut self) { let n = self.selected + self.rows();
                                        if n < self.entries.len() { self.selected = n } }

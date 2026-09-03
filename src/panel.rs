@@ -122,22 +122,20 @@ impl Panel {
     }
 
 
-    /// Moves the cursor up within its column, clamped at the column's
-    /// top row.
+    /// Moves the cursor up one row. At the top of a column this flows
+    /// into the bottom of the previous column — `entries` is already
+    /// stored in column-major order, so a plain linear step does this
+    /// correctly on its own. Clamped at the very first entry.
     pub fn move_up(&mut self) {
-        let rows = self.rows();
-        if rows > 0 && self.selected % rows > 0 {
-            self.selected -= 1;
-        }
+        self.selected = self.selected.saturating_sub(1);
     }
 
 
-    /// Moves the cursor down within its column, clamped at the
-    /// column's bottom row (the last column may be shorter than
-    /// `rows()` when the entry count doesn't divide evenly).
+    /// Moves the cursor down one row. At the bottom of a column this
+    /// flows into the top of the next column, for the same reason as
+    /// `move_up`. Clamped at the very last entry.
     pub fn move_down(&mut self) {
-        let rows = self.rows();
-        if rows > 0 && self.selected % rows + 1 < rows && self.selected + 1 < self.entries.len() {
+        if self.selected + 1 < self.entries.len() {
             self.selected += 1;
         }
     }
@@ -226,21 +224,36 @@ mod tests {
     // (col1's row 2 doesn't exist — 5 doesn't divide evenly by 2).
 
     #[test]
-    fn move_down_stops_at_column_bottom() {
+    fn move_down_flows_into_next_column_at_column_bottom() {
         let mut panel = panel_with(5, 2);
         panel.move_down();
         panel.move_down();
-        assert_eq!(panel.selected, 2);
+        assert_eq!(panel.selected, 2, "still col0, its last row");
         panel.move_down();
-        assert_eq!(panel.selected, 2, "col0 has no 4th row");
+        assert_eq!(panel.selected, 3, "flowed into col1, row0");
     }
 
     #[test]
-    fn move_up_clamped_at_column_top() {
+    fn move_down_clamped_at_last_entry() {
+        let mut panel = panel_with(5, 2);
+        panel.selected = 4;
+        panel.move_down();
+        assert_eq!(panel.selected, 4);
+    }
+
+    #[test]
+    fn move_up_flows_into_previous_column_at_column_top() {
         let mut panel = panel_with(5, 2);
         panel.selected = 3; // col1, row0
         panel.move_up();
-        assert_eq!(panel.selected, 3);
+        assert_eq!(panel.selected, 2, "flowed into col0, its last row");
+    }
+
+    #[test]
+    fn move_up_clamped_at_first_entry() {
+        let mut panel = panel_with(5, 2);
+        panel.move_up();
+        assert_eq!(panel.selected, 0);
     }
 
     #[test]

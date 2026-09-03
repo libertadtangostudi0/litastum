@@ -26,6 +26,45 @@ highlighting, so it wouldn't save meaningful work over building the TUI
 directly, and a windowed app loses the "runs inside any terminal / over
 SSH" property that matters here.
 
+## Built-in editor: `tui-textarea`, and why it pins our `ratatui`/`crossterm` versions
+
+Chose `tui-textarea` (the crate `ratatui-textarea` is usually referred to
+by) over `edtui` for the F4 built-in editor: standard (non-modal)
+keybindings by default, which is what this project's own workflow
+expects, while `edtui`'s vim-modal editing is a real feature some future
+users will want but isn't the default we need today. Not a permanent
+decision — revisit if vim-mode demand shows up.
+
+**Version constraint this created**: `tui-textarea` 0.7.0 (latest at
+integration time) requires `ratatui ^0.29.0` and `crossterm ^0.28`
+exactly — not just "close enough". `edtui` 0.11.x, by contrast, already
+tracks `ratatui ^0.30`. Picking `tui-textarea` meant downgrading the
+whole project from `ratatui 0.30`/`crossterm 0.29` to `0.29`/`0.28` to
+keep a single copy of each in the dependency graph (two semver-different
+copies can't share `Frame`/`KeyEvent` types, so this isn't optional).
+Revisit this pin when `tui-textarea` publishes a `ratatui 0.30`-
+compatible release.
+
+**Hard-won lesson: its default keymap is Emacs-style, not OS-standard.**
+`Ctrl+C`/`Ctrl+X` happen to line up with copy/cut, but `Ctrl+V` is bound
+to "scroll down a page" (Emacs `C-v`) — paste is `Ctrl+Y` in its default
+map. Found by hand-testing after the initial integration (paste
+silently did nothing useful). Fixed by intercepting `Ctrl+V` in
+`main.rs::handle_editor_key` before it reaches `TextArea::input`, and
+routing it to `Editor::paste` instead — see `editor.rs`. **Any other
+binding we add or rely on needs checking against `tui-textarea`'s actual
+default map (`tui_textarea::textarea::TextArea::input`'s match arms),
+not assumed from OS/VSCode convention.**
+
+**OS clipboard integration**: `tui-textarea`'s copy/cut/paste only
+reach its own internal, in-app-only yank buffer — nothing bridges to
+the real OS clipboard on its own, so copying in the editor couldn't be
+pasted into another app (or vice versa). Added `arboard` with
+`default-features = false` (its default pulls in `image`/`image-data`
+for bitmap clipboard support, which we don't need — text only) to
+bridge `Editor::copy`/`cut`/`paste` to the OS clipboard, falling back
+to the internal buffer when the OS clipboard is unavailable or empty.
+
 ## Later-stage crate choices (rationale locked in now, not yet added)
 
 - Scripting: prefer `rhai` (pure Rust, trivially cross-compiles,

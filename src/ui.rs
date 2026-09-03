@@ -6,7 +6,8 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::App;
+use crate::app::{App, Mode};
+use crate::editor::Editor;
 use crate::panel::{Entry, Panel};
 use crate::theme::Theme;
 
@@ -23,6 +24,11 @@ const MIN_COLUMN_WIDTH: u16 = 24;
 /// which only `ui::draw` computes, but `Panel` (not `ui`) owns the
 /// cursor state that navigation needs it for.
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) -> [usize; 2] {
+    if let Mode::Editing(editor) = &app.mode {
+        draw_editor(frame, frame.area(), editor, theme);
+        return [1, 1];
+    }
+
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -137,6 +143,28 @@ fn build_list_item(entry: &Entry, is_selected: bool, panel_active: bool, theme: 
     }
 
     ListItem::new(Line::from(Span::styled(label, style)))
+}
+
+
+/// Renders the built-in editor full-screen, with a one-line hint bar
+/// for its two special bindings (everything else goes to the text area).
+fn draw_editor(frame: &mut Frame, area: Rect, editor: &Editor, theme: &Theme) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(1)])
+        .split(area);
+
+    frame.render_widget(editor.widget(), rows[0]);
+
+    let dirty_marker = if editor.is_dirty() { " [modified]" } else { "" };
+    let hint = Line::from(vec![
+        Span::styled("Ctrl+S ", Style::default().fg(theme.accent)),
+        Span::styled("Save   ", Style::default().fg(theme.text_dim)),
+        Span::styled("Esc ", Style::default().fg(theme.accent)),
+        Span::styled("Close", Style::default().fg(theme.text_dim)),
+        Span::styled(dirty_marker, Style::default().fg(theme.danger)),
+    ]);
+    frame.render_widget(hint, rows[1]);
 }
 
 

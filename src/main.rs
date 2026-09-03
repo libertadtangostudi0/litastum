@@ -1,25 +1,32 @@
 mod app;
+mod command;
+mod editor;
+mod editor_keymap;
+mod keymap;
+mod logging;
 mod panel;
 mod theme;
 mod ui;
 
 use std::io::{self, Stdout};
-use std::process::Command;
 
 use color_eyre::eyre::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyEvent, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{prelude::CrosstermBackend, Terminal};
+use tracing::debug;
 
-use app::App;
+use app::{App, Mode};
+use editor_keymap::EditorCommand;
 use theme::Theme;
 
 
 fn main() -> Result<()> {
     color_eyre::install()?;
+    logging::init()?;
     let start_dir = std::env::current_dir()?;
 
     let mut terminal = setup_terminal()?;
@@ -53,13 +60,13 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App, theme: 
         for (panel, cols) in app.panels.iter_mut().zip(columns) {
             panel.set_columns(cols);
         }
-        handle_event(terminal, app)?;
+        handle_event(app, theme)?;
     }
     Ok(())
 }
 
 
-fn handle_event(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
+fn handle_event(app: &mut App, theme: &Theme) -> Result<()> {
     let Event::Key(key) = event::read()? else {
         return Ok(());
     };
@@ -67,67 +74,47 @@ fn handle_event(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
         return Ok(());
     }
 
-    match key.code {
-        KeyCode::Up => app.active_panel().move_up(),
-        KeyCode::Down => app.active_panel().move_down(),
-        KeyCode::Left => app.active_panel().move_left(),
-        KeyCode::Right => app.active_panel().move_right(),
-        KeyCode::Enter => app.active_panel().enter_selected()?,
-        KeyCode::Tab => app.toggle_active(),
-        KeyCode::F(4) => open_editor_for_selection(terminal, app)?,
-        KeyCode::F(10) => app.should_quit = true,
-        KeyCode::Char('q') => app.should_quit = true,
-        _ => {}
+    match &app.mode {
+        Mode::Editing(_) => handle_editor_key(app, key),
+        Mode::Browsing => {
+            debug!(?key, "browsing key");
+            if let Some(cmd) = keymap::resolve(key.code) {
+                debug!(?cmd, "browsing command");
+                command::execute(cmd, app, theme)?;
+            }
+            Ok(())
+        }
     }
-
-    Ok(())
 }
 
 
-/// Suspends the TUI, opens the file under the cursor in an external
-/// editor, then restores the TUI and reloads the panel's contents.
-///
-/// This is the deliberately minimal "shell-out" F4 from stage 2 of the
-/// roadmap; a built-in editor widget (ratatui-textarea / edtui) replaces
-/// this in a later stage.
-fn open_editor_for_selection(
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
-    app: &mut App,
-) -> Result<()> {
-    let Some(path) = app.active_panel().selected_path() else {
+/// Key handling while a file is open in the built-in editor. Resolution
+/// (`editor_keymap::resolve`) and execution are split the same way as
+/// the browsing-mode `keymap`/`command` pair, for the same reason: the
+/// key table only grows from here, and resolution alone is unit
+/// testable without touching `Editor`/the OS clipboard.
+fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    let command = editor_keymap::resolve(key);
+    debug!(?key, ?command, "editor key");
+
+    if command == EditorCommand::Close {
+        app.mode = Mode::Browsing;
+        app.active_panel().reload()?;
+        return Ok(());
+    }
+
+    let Mode::Editing(active_editor) = &mut app.mode else {
         return Ok(());
     };
-    if path.is_dir() {
-        return Ok(());
+
+    match command {
+        EditorCommand::Close => unreachable!("handled above"),
+        EditorCommand::Save => active_editor.save()?,
+        EditorCommand::Copy => active_editor.copy(),
+        EditorCommand::Cut => active_editor.cut(),
+        EditorCommand::Paste => active_editor.paste(),
+        EditorCommand::Input => active_editor.input(key),
     }
 
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| default_editor());
-
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
-    let status = Command::new(&editor).arg(&path).status();
-
-    enable_raw_mode()?;
-    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-    terminal.clear()?;
-
-    if let Err(err) = status {
-        eprintln!("Failed to launch editor '{editor}': {err}");
-    }
-
-    app.active_panel().reload()?;
     Ok(())
-}
-
-
-#[cfg(windows)]
-fn default_editor() -> String {
-    "notepad".to_string()
-}
-
-
-#[cfg(not(windows))]
-fn default_editor() -> String {
-    "nano".to_string()
 }
