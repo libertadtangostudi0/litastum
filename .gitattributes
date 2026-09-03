@@ -1,0 +1,32 @@
+# Auto-detect text files and normalize line endings on checkin;
+# everything not matched below falls back to this.
+* text=auto eol=lf
+
+# Rust source and manifests: always LF, regardless of the checking-out
+# OS. This project targets Windows *and* Unix terminals equally, so
+# contributors on either platform should produce identical diffs.
+*.rs text eol=lf
+Cargo.toml text eol=lf
+Cargo.lock text eol=lf linguist-generated
+
+# Docs / config
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+
+# Windows-only scripts keep CRLF (native `notepad`/PowerShell behavior
+# expects it); POSIX shell scripts keep LF.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+
+# Never let git touch line endings in binaries.
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdb binary
+*.woff binary
+*.woff2 binary

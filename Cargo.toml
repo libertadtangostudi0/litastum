@@ -1,0 +1,13 @@
+[package]
+name = "litastum"
+version = "0.1.0"
+edition = "2021"
+description = "A cross-platform, keyboard-driven dual-pane file manager (Far Manager-inspired), written in Rust"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/YOUR_USERNAME/litastum"
+
+[dependencies]
+crossterm = "0.29"
+ratatui = "0.30"
+directories = "6.0"
+color-eyre = "0.6"
