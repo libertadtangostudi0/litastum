@@ -12,14 +12,20 @@ runs it (or does the usual `EnterSelected` if the line is empty).
 type into the command line, a lone `q` has to be the start of a typed
 command, not a shortcut. Only `F10` quits now, matching real Far.
 
-Dispatch order in `main.rs::handle_browsing_key` (this exact order
-matters — each step only runs if the previous one didn't already
-handle the key):
+Dispatch order in `command_line.rs::handle_browsing_key` (moved here
+from `main.rs` when every mode's handling got split out of it — this
+exact order matters, each step only runs if the previous one didn't
+already handle the key):
 1. `Ctrl+P` → open the shell picker (below).
-2. `Enter` with a non-empty command line → run it.
-3. `keymap::resolve` — the fixed table (arrows, Tab, F4/F9/F10, and
-   `Enter` on an *empty* line).
-4. Anything left over (a plain character, `Backspace`, `Esc`) edits the
+2. `Shift+F6` → rename prompt (needs the raw modifier, same reason as
+   Tab below — `keymap::resolve`'s table only keys off `KeyCode`).
+3. `Enter` with a non-empty command line → run it.
+4. `Tab` with a non-empty command line → complete it (below) instead
+   of falling through to `keymap::resolve`'s Tab-as-`ToggleActive`
+   binding.
+5. `keymap::resolve` — the fixed table (arrows, Tab *on an empty
+   line*, F4/F9/F10, and `Enter` on an *empty* line).
+6. Anything left over (a plain character, `Backspace`, `Esc`) edits the
    command line (`command_line.rs`).
 
 ## Scope cuts (deliberate, not oversights)
@@ -43,12 +49,50 @@ handle the key):
   `\\?\` extended-length prefix, neither of which is wanted just to
   clean up `..`.
 - **A command actually runs by suspending the TUI and inheriting
-  stdio** (`main.rs::run_command_line`) — not a captured/parsed output
-  pane. This is deliberate: it's what makes interactive things
+  stdio** (`command_line.rs::run_command_line`) — not a captured/parsed
+  output pane. This is deliberate: it's what makes interactive things
   (`python`, `git commit` invoking an editor, ...) work at all, and
   gives real colors/prompts, matching Far Manager's own behavior. A
   `Press any key to continue...` pause follows so fast-scrolling output
   isn't gone the instant the panels redraw over it.
+
+## Tab completion (`command_line::complete`)
+
+Reported as a bug, not requested as a feature: `Tab` used to hit
+`keymap::resolve`'s Tab-as-`ToggleActive` binding unconditionally, even
+with text typed and mid-command — backwards from every shell's own
+convention for the key. Fixed by special-casing `Tab` ahead of that
+table (same pattern as `Ctrl+P`/`Shift+F6` above) whenever
+`app.command_line` isn't empty; an empty line still falls through to
+the panel-switch binding, so Tab's original behavior survives outside
+the command line.
+
+Completes the *last whitespace-separated word* in the typed line as a
+filesystem path relative to the active panel's directory (an
+already-absolute word completes from its own root instead —
+`Path::join`'s own behavior). One matching entry completes it fully,
+with a trailing separator for a directory (so the next `Tab` continues
+completing *inside* it) or a trailing space for a file (ready for the
+next argument) — matching a normal shell's completion habit. No
+matches leaves the line untouched, no bell or error shown. Matching is
+case-insensitive.
+
+**Several matches enter a `Tab`-cycling session**
+(`App::command_line_completion: Option<command_line::CompletionCycle>`)
+— the first `Tab` shows the first match (alphabetically), each further
+`Tab` press steps to the next one, wrapping back to the first after the
+last. This is `cmd.exe`'s own convention for the key, chosen explicitly
+over completing to the matches' shared prefix and stopping there (an
+earlier version of this did exactly that — replaced after being asked
+for cycling specifically). Ending the session is `handle_browsing_key`'s
+job, not `complete`'s: *any* other edit to the command line
+(`insert_char`/`backspace`/`Esc`/running it/a bound command like a
+panel move) sets `command_line_completion` back to `None`, so a stale
+cycle never survives past the keystroke that should have ended it.
+
+**Paths only, not command names** — no `PATH` scanning to complete
+`car<Tab>` into `cargo`, same scope boundary as the existing `cd`
+handling (which also only ever touches paths, not commands).
 
 ## Shell profile picker (`Ctrl+P`)
 

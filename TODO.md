@@ -219,6 +219,24 @@ in more detail.
 - [ ] No command history (no up-arrow recall) — same reason, arrows
       are taken
 - [ ] Bare `cd` (no argument) is a no-op, not "go to home directory"
+- [x] `Tab` completes the last typed word as a filesystem path
+      (`command_line::complete`) instead of always switching panels —
+      reported as a bug: `Tab` used to hit `keymap::resolve`'s
+      Tab-as-`ToggleActive` binding unconditionally, even mid-command,
+      which is backwards from every shell's own convention for the key.
+      Now special-cased ahead of that table (same pattern as `Ctrl+P`)
+      whenever the command line has something typed; falls through to
+      the usual panel-switch once it's empty. One match completes fully
+      (trailing separator for a directory, trailing space for a file);
+      several matches enter a `Tab`-cycling session
+      (`App::command_line_completion`, a `command_line::CompletionCycle`)
+      — each further `Tab` steps to the next match, wrapping back to
+      the first after the last, `cmd.exe`'s own convention (explicitly
+      requested over completing to the matches' shared prefix and
+      stopping there); any other edit to the line ends the session.
+      None leaves the line untouched. No completion for command *names*
+      themselves (`PATH` scanning), only paths — same scope as the
+      existing `cd` handling
 - [ ] Shell profile picker has no Git Bash/WSL/pwsh/Azure Cloud Shell
       entries (unlike the Windows Terminal dropdown that prompted this
       feature) — only `cmd`/`powershell` (Windows) or `$SHELL`/`sh`

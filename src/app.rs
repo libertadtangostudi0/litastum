@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use edtui::syntect::highlighting::Theme as SynTheme;
 
+use crate::command_line;
 use crate::editor::Editor;
 use crate::menu::MainMenu;
 use crate::panel::Panel;
@@ -120,6 +121,10 @@ pub struct App {
     /// Manager-style) — see `command_line.rs` for the editing logic
     /// and `.claude/rules/litastum-stack.md` for the design.
     pub command_line: String,
+    /// A live `Tab`-cycling session over `command_line`'s current word,
+    /// if one's in progress — `None` whenever nothing's being cycled.
+    /// See `command_line::CompletionCycle`.
+    pub command_line_completion: Option<command_line::CompletionCycle>,
     /// Shells the command line can run typed input through — see
     /// `shell.rs`. Never empty; `active_shell` indexes into it.
     pub shell_profiles: Vec<ShellProfile>,
@@ -140,6 +145,7 @@ impl App {
             theme,
             syntax_theme,
             command_line: String::new(),
+            command_line_completion: None,
             shell_profiles: shell::builtin_profiles(),
             active_shell: 0,
         })
