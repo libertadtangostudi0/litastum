@@ -52,7 +52,7 @@ fn open_editor(app: &mut App) {
 /// F8: opens the "delete this?" prompt (`Mode::ConfirmDelete`) for the
 /// entry under the cursor. Does nothing for `..` (there's nothing
 /// sensible to delete) or an empty panel — never deletes directly, see
-/// `main.rs::handle_confirm_delete_key` for the actual filesystem call.
+/// `confirm::handle_confirm_delete_key` for the actual filesystem call.
 fn request_delete(app: &mut App) {
     let panel = app.active_panel();
     let Some(entry) = panel.current() else {
@@ -133,4 +133,157 @@ fn request_rename(app: &mut App) {
         selection_anchor: None,
     };
     app.mode = Mode::ConfirmTransfer(pending);
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::theme::Theme;
+
+    /// A fresh scratch directory under the OS temp dir, unique per test
+    /// (same pattern as `fs_ops.rs`/`panel.rs`'s own scratch helpers).
+    fn scratch_dir() -> std::path::PathBuf {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("litastum-command-test-{}-{n}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    /// Both panels rooted at a real scratch directory containing one
+    /// real file `name`, with the active panel's cursor already on it
+    /// (never on the synthetic `..` entry).
+    fn app_with_selected_file(name: &str) -> App {
+        let dir = scratch_dir();
+        fs::write(dir.join(name), b"data").expect("write scratch file");
+        let mut app = App::new(dir, Theme::dark(), None).expect("build app");
+        let idx = app.panels[0].entries.iter().position(|e| e.name == name).expect("entry listed");
+        app.panels[0].selected = idx;
+        app
+    }
+
+    #[test]
+    fn request_delete_targets_the_selected_entry() {
+        let mut app = app_with_selected_file("victim.txt");
+        let expected_path = app.panels[0].path.join("victim.txt");
+
+        request_delete(&mut app);
+
+        let Mode::ConfirmDelete(pending) = &app.mode else {
+            panic!("expected Mode::ConfirmDelete");
+        };
+        assert_eq!(pending.path, expected_path);
+        assert_eq!(pending.name, "victim.txt");
+        assert!(!pending.is_dir);
+    }
+
+    #[test]
+    fn request_delete_on_dotdot_does_nothing() {
+        let mut app = app_with_selected_file("victim.txt");
+        app.panels[0].selected = 0; // ".." is always entry 0 when a parent exists
+
+        request_delete(&mut app);
+
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn request_delete_on_an_empty_panel_does_nothing() {
+        let mut app = App::new(scratch_dir(), Theme::dark(), None).expect("build app");
+
+        request_delete(&mut app);
+
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn request_transfer_defaults_the_destination_to_the_other_panel() {
+        let mut app = app_with_selected_file("source.txt");
+        let other_dir = app.panels[1].path.clone();
+
+        request_transfer(&mut app, TransferOp::Copy);
+
+        let Mode::ConfirmTransfer(pending) = &app.mode else {
+            panic!("expected Mode::ConfirmTransfer");
+        };
+        assert_eq!(pending.operation, TransferOp::Copy);
+        assert_eq!(pending.destination, other_dir.join("source.txt").to_string_lossy());
+        assert_eq!(pending.cursor, pending.destination.chars().count(), "cursor starts at the end");
+        assert_eq!(pending.selection_anchor, None);
+    }
+
+    #[test]
+    fn request_transfer_move_sets_the_move_operation() {
+        let mut app = app_with_selected_file("source.txt");
+
+        request_transfer(&mut app, TransferOp::Move);
+
+        let Mode::ConfirmTransfer(pending) = &app.mode else {
+            panic!("expected Mode::ConfirmTransfer");
+        };
+        assert_eq!(pending.operation, TransferOp::Move);
+    }
+
+    #[test]
+    fn request_transfer_on_dotdot_does_nothing() {
+        let mut app = app_with_selected_file("source.txt");
+        app.panels[0].selected = 0;
+
+        request_transfer(&mut app, TransferOp::Copy);
+
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn request_rename_defaults_the_destination_to_the_same_directory() {
+        let mut app = app_with_selected_file("source.txt");
+        let same_dir = app.panels[0].path.clone();
+
+        request_rename(&mut app);
+
+        let Mode::ConfirmTransfer(pending) = &app.mode else {
+            panic!("expected Mode::ConfirmTransfer");
+        };
+        assert_eq!(pending.operation, TransferOp::Move);
+        assert_eq!(pending.destination, same_dir.join("source.txt").to_string_lossy());
+    }
+
+    #[test]
+    fn request_rename_places_the_cursor_right_before_the_filename() {
+        let mut app = app_with_selected_file("source.txt");
+
+        request_rename(&mut app);
+
+        let Mode::ConfirmTransfer(pending) = &app.mode else {
+            panic!("expected Mode::ConfirmTransfer");
+        };
+        let expected = pending.destination.chars().count() - "source.txt".chars().count();
+        assert_eq!(pending.cursor, expected);
+        assert_eq!(&pending.destination[pending.destination.char_indices().nth(pending.cursor).unwrap().0..], "source.txt");
+    }
+
+    /// Regression guard for the cursor-position arithmetic in
+    /// `request_rename` (`destination.chars().count() -
+    /// entry.name.chars().count()`), which relies on `to_string_lossy()`
+    /// leaving the trailing filename's char count untouched. A
+    /// multi-byte-but-still-valid-UTF-8 name (unlike the parent
+    /// directory, which on a real OS could contain non-UTF-8 bytes that
+    /// `to_string_lossy()` would replace and shrink/grow) is the case
+    /// this could break under if that assumption were ever wrong.
+    #[test]
+    fn request_rename_handles_a_multibyte_filename_without_underflow() {
+        let mut app = app_with_selected_file("café_résumé.txt");
+
+        request_rename(&mut app);
+
+        let Mode::ConfirmTransfer(pending) = &app.mode else {
+            panic!("expected Mode::ConfirmTransfer");
+        };
+        let expected = pending.destination.chars().count() - "café_résumé.txt".chars().count();
+        assert_eq!(pending.cursor, expected);
+    }
 }

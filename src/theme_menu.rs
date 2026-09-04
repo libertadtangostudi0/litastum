@@ -252,4 +252,76 @@ mod tests {
     fn unbound_key_is_ignored() {
         assert_eq!(resolve(key(KeyCode::Char('z'))), ThemeMenuCommand::Ignore);
     }
+
+    /// A real `App` (no terminal needed) in `Mode::ThemeMenu`, for
+    /// exercising `handle_theme_menu_key` end to end.
+    ///
+    /// Deliberately does *not* cover the `Enter`/`I`/`E` apply branches
+    /// with a non-empty theme list: `config::set_interface_theme`/
+    /// `set_editor_theme` write to the *real* OS config directory
+    /// (`config_dir()`, not an injectable path like `try_persist`'s own
+    /// tests use) — calling them here would mutate the actual user's
+    /// `config.json` as a side effect of running the test suite, which
+    /// is worse than not testing that path at all. `config.rs`'s own
+    /// tests have the same limitation, for the same reason.
+    fn app_in_theme_menu(themes: Vec<&str>) -> App {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("litastum-theme-menu-test-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        let mut app = App::new(dir, Theme::dark(), None).expect("build app");
+        app.mode = Mode::ThemeMenu(menu_with(themes));
+        app
+    }
+
+    #[test]
+    fn handle_theme_menu_key_up_and_down_move_the_cursor() {
+        let mut app = app_in_theme_menu(vec!["a", "b", "c"]);
+
+        handle_theme_menu_key(&mut app, key(KeyCode::Down)).unwrap();
+
+        let Mode::ThemeMenu(menu) = &app.mode else { panic!("expected Mode::ThemeMenu") };
+        assert_eq!(menu.selected, 1);
+    }
+
+    #[test]
+    fn handle_theme_menu_key_esc_closes_to_browsing() {
+        let mut app = app_in_theme_menu(vec!["a"]);
+
+        handle_theme_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn handle_theme_menu_key_ignores_unrelated_keys_and_stays_open() {
+        let mut app = app_in_theme_menu(vec!["a"]);
+
+        handle_theme_menu_key(&mut app, key(KeyCode::Char('z'))).unwrap();
+
+        assert!(matches!(app.mode, Mode::ThemeMenu(_)));
+    }
+
+    #[test]
+    fn handle_theme_menu_key_enter_with_no_themes_is_a_noop() {
+        let mut app = app_in_theme_menu(vec![]);
+
+        handle_theme_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        // Guarded by ThemeMenu::selected_theme() returning None before
+        // config::set_interface_theme is ever reached -- safe to test
+        // without touching the real config dir.
+        assert!(matches!(app.mode, Mode::ThemeMenu(_)), "nothing to apply, should stay open");
+    }
+
+    #[test]
+    fn handle_theme_menu_key_is_a_noop_outside_theme_menu_mode() {
+        let mut app = app_in_theme_menu(vec!["a"]);
+        app.mode = Mode::Browsing;
+
+        handle_theme_menu_key(&mut app, key(KeyCode::Down)).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
 }

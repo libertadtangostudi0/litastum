@@ -218,4 +218,127 @@ mod tests {
         assert_eq!(resolve_confirm_discard(key(KeyCode::Char('x'))), ConfirmDiscardCommand::Ignore);
         assert_eq!(resolve_confirm_discard(key(KeyCode::Enter)), ConfirmDiscardCommand::Ignore);
     }
+
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::editor::Editor;
+    use crate::theme::Theme;
+
+    /// A real `App` (no terminal needed) in `Mode::Editing`, with the
+    /// panel rooted in the same scratch directory as the opened file so
+    /// `close_editor_or_confirm`'s `app.active_panel().reload()` has
+    /// somewhere real to reload.
+    fn open_editor_app(contents: &str) -> (App, PathBuf) {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("litastum-editor-keymap-test-{}-{n}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create scratch dir");
+        let file_path = dir.join("file.txt");
+        fs::write(&file_path, contents).expect("write test fixture file");
+
+        let editor = Editor::open(file_path.clone(), None).expect("open test fixture file");
+        let mut app = App::new(dir, Theme::dark(), None).expect("build app");
+        app.mode = Mode::Editing(editor);
+        (app, file_path)
+    }
+
+    #[test]
+    fn handle_editor_key_ctrl_s_saves_and_clears_dirty() {
+        let (mut app, path) = open_editor_app("hi\n");
+        handle_editor_key(&mut app, ctrl_key('c')).ok(); // no-op sanity: forwarded, doesn't save
+        handle_editor_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+
+        handle_editor_key(&mut app, ctrl_key('s')).unwrap();
+
+        let Mode::Editing(editor) = &app.mode else { panic!("expected Mode::Editing") };
+        assert!(!editor.is_dirty());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "!hi\n");
+    }
+
+    #[test]
+    fn handle_editor_key_plain_char_is_forwarded_and_marks_dirty() {
+        let (mut app, _path) = open_editor_app("hi\n");
+
+        handle_editor_key(&mut app, key(KeyCode::Char('x'))).unwrap();
+
+        let Mode::Editing(editor) = &app.mode else { panic!("expected Mode::Editing") };
+        assert!(editor.is_dirty());
+    }
+
+    #[test]
+    fn handle_editor_key_esc_with_no_changes_closes_straight_to_browsing() {
+        let (mut app, _path) = open_editor_app("hi\n");
+
+        handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn handle_editor_key_esc_with_unsaved_changes_asks_to_confirm_discard() {
+        let (mut app, _path) = open_editor_app("hi\n");
+        handle_editor_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+
+        handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert!(matches!(app.mode, Mode::ConfirmDiscard(_)));
+    }
+
+    #[test]
+    fn handle_editor_key_esc_with_an_active_selection_cancels_the_selection_instead_of_closing() {
+        let (mut app, _path) = open_editor_app("hello\n");
+        handle_editor_key(&mut app, shift_key(KeyCode::Right)).unwrap();
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert!(editor.has_selection(), "precondition: a selection should be active");
+
+        handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        let Mode::Editing(editor) = &app.mode else {
+            panic!("Esc should cancel the selection, not close the editor");
+        };
+        assert!(!editor.has_selection());
+    }
+
+    fn shift_key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
+    #[test]
+    fn handle_confirm_discard_key_y_discards_and_returns_to_browsing() {
+        let (mut app, _path) = open_editor_app("hi\n");
+        handle_editor_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+        handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+        assert!(matches!(app.mode, Mode::ConfirmDiscard(_)));
+
+        handle_confirm_discard_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn handle_confirm_discard_key_n_cancels_back_into_the_editor_with_changes_intact() {
+        let (mut app, _path) = open_editor_app("hi\n");
+        handle_editor_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+        handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        handle_confirm_discard_key(&mut app, key(KeyCode::Char('n'))).unwrap();
+
+        let Mode::Editing(editor) = &app.mode else {
+            panic!("Cancel should return to Mode::Editing, not discard");
+        };
+        assert!(editor.is_dirty(), "the unsaved change should still be there");
+    }
+
+    #[test]
+    fn handle_confirm_discard_key_ignores_unrelated_keys_and_stays_open() {
+        let (mut app, _path) = open_editor_app("hi\n");
+        handle_editor_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+        handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        handle_confirm_discard_key(&mut app, key(KeyCode::Char('x'))).unwrap();
+
+        assert!(matches!(app.mode, Mode::ConfirmDiscard(_)));
+    }
 }

@@ -302,3 +302,170 @@ fn destination_line(pending: &PendingTransfer, theme: &Theme) -> Line<'static> {
         Span::styled(after, Style::default().fg(theme.text)),
     ])
 }
+
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crossterm::event::KeyModifiers;
+
+    use super::*;
+    use crate::app::App;
+    use crate::theme::Theme;
+
+    /// A fresh scratch directory under the OS temp dir, unique per test
+    /// (same pattern as `fs_ops.rs`/`panel.rs`/`command.rs`'s own
+    /// scratch helpers).
+    fn scratch_dir() -> PathBuf {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("litastum-confirm-test-{}-{n}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    fn scratch_app() -> App {
+        App::new(scratch_dir(), Theme::dark(), None).expect("build app")
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn confirm_delete_removes_a_file_and_returns_to_browsing() {
+        let mut app = scratch_app();
+        let file = app.panels[0].path.join("victim.txt");
+        fs::write(&file, b"bye").unwrap();
+        app.mode = Mode::ConfirmDelete(PendingDelete { path: file.clone(), name: "victim.txt".into(), is_dir: false });
+
+        handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+
+        assert!(!file.exists());
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn confirm_delete_removes_a_directory_recursively() {
+        let mut app = scratch_app();
+        let dir = app.panels[0].path.join("victim_dir");
+        fs::create_dir_all(dir.join("nested")).unwrap();
+        fs::write(dir.join("nested").join("f.txt"), b"x").unwrap();
+        app.mode = Mode::ConfirmDelete(PendingDelete { path: dir.clone(), name: "victim_dir".into(), is_dir: true });
+
+        handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn confirm_delete_cancel_leaves_the_file_untouched() {
+        let mut app = scratch_app();
+        let file = app.panels[0].path.join("keep.txt");
+        fs::write(&file, b"stay").unwrap();
+        app.mode = Mode::ConfirmDelete(PendingDelete { path: file.clone(), name: "keep.txt".into(), is_dir: false });
+
+        handle_confirm_delete_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert!(file.exists());
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn confirm_delete_ignores_unrelated_keys_and_stays_open() {
+        let mut app = scratch_app();
+        let file = app.panels[0].path.join("keep2.txt");
+        fs::write(&file, b"stay").unwrap();
+        app.mode = Mode::ConfirmDelete(PendingDelete { path: file.clone(), name: "keep2.txt".into(), is_dir: false });
+
+        handle_confirm_delete_key(&mut app, key(KeyCode::Char('x'))).unwrap();
+
+        assert!(file.exists());
+        assert!(matches!(app.mode, Mode::ConfirmDelete(_)));
+    }
+
+    fn pending_transfer(operation: TransferOp, source: PathBuf, destination: String) -> PendingTransfer {
+        let cursor = destination.chars().count();
+        PendingTransfer {
+            operation,
+            source,
+            name: "irrelevant".into(),
+            is_dir: false,
+            destination,
+            cursor,
+            selection_anchor: None,
+        }
+    }
+
+    #[test]
+    fn confirm_transfer_enter_copies_and_keeps_the_source() {
+        let mut app = scratch_app();
+        let src = app.panels[0].path.join("source.txt");
+        fs::write(&src, b"hello").unwrap();
+        let dst = app.panels[0].path.join("dest.txt");
+        app.mode = Mode::ConfirmTransfer(pending_transfer(TransferOp::Copy, src.clone(), dst.to_string_lossy().into_owned()));
+
+        handle_confirm_transfer_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert!(src.exists(), "copy should leave the source alone");
+        assert_eq!(fs::read(&dst).unwrap(), b"hello");
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn confirm_transfer_enter_moves_and_removes_the_source() {
+        let mut app = scratch_app();
+        let src = app.panels[0].path.join("source.txt");
+        fs::write(&src, b"hello").unwrap();
+        let dst = app.panels[0].path.join("dest.txt");
+        app.mode = Mode::ConfirmTransfer(pending_transfer(TransferOp::Move, src.clone(), dst.to_string_lossy().into_owned()));
+
+        handle_confirm_transfer_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert!(!src.exists(), "move should remove the source");
+        assert_eq!(fs::read(&dst).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn confirm_transfer_esc_cancels_without_touching_the_filesystem() {
+        let mut app = scratch_app();
+        let src = app.panels[0].path.join("source.txt");
+        fs::write(&src, b"hello").unwrap();
+        let dst = app.panels[0].path.join("dest.txt");
+        app.mode = Mode::ConfirmTransfer(pending_transfer(TransferOp::Copy, src.clone(), dst.to_string_lossy().into_owned()));
+
+        handle_confirm_transfer_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert!(src.exists());
+        assert!(!dst.exists());
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn confirm_transfer_typing_edits_the_destination_in_place() {
+        let mut app = scratch_app();
+        app.mode = Mode::ConfirmTransfer(pending_transfer(TransferOp::Copy, PathBuf::from("src"), "dest".to_string()));
+
+        handle_confirm_transfer_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+
+        let Mode::ConfirmTransfer(pending) = &app.mode else {
+            panic!("should stay in ConfirmTransfer");
+        };
+        assert_eq!(pending.destination, "dest!");
+        assert_eq!(pending.cursor, 5);
+    }
+
+    #[test]
+    fn confirm_transfer_a_failed_move_still_returns_to_browsing_without_panicking() {
+        let mut app = scratch_app();
+        let missing_src = app.panels[0].path.join("does-not-exist.txt");
+        let dst = app.panels[0].path.join("dest.txt");
+        app.mode = Mode::ConfirmTransfer(pending_transfer(TransferOp::Move, missing_src, dst.to_string_lossy().into_owned()));
+
+        handle_confirm_transfer_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(!dst.exists());
+    }
+}

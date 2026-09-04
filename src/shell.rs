@@ -144,10 +144,91 @@ pub fn draw_shell_menu(frame: &mut Frame, area: Rect, menu: &ShellMenu, profiles
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crossterm::event::KeyModifiers;
+
     use super::*;
+    use crate::theme::Theme;
 
     #[test]
     fn builtin_profiles_is_never_empty() {
         assert!(!builtin_profiles().is_empty());
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// A real `App` (no terminal needed) in `Mode::ShellMenu`, cursor on
+    /// row 0 — `App::new` always seeds at least one built-in profile, so
+    /// there's always something to navigate.
+    fn app_in_shell_menu() -> App {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("litastum-shell-menu-test-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        let mut app = App::new(dir, Theme::dark(), None).expect("build app");
+        app.mode = Mode::ShellMenu(ShellMenu { selected: 0 });
+        app
+    }
+
+    #[test]
+    fn handle_shell_menu_key_down_is_clamped_at_the_last_profile() {
+        let mut app = app_in_shell_menu();
+        let profile_count = app.shell_profiles.len();
+
+        for _ in 0..profile_count + 2 {
+            handle_shell_menu_key(&mut app, key(KeyCode::Down)).unwrap();
+        }
+
+        let Mode::ShellMenu(menu) = &app.mode else { panic!("expected Mode::ShellMenu") };
+        assert_eq!(menu.selected, profile_count - 1);
+    }
+
+    #[test]
+    fn handle_shell_menu_key_up_is_clamped_at_zero() {
+        let mut app = app_in_shell_menu();
+
+        handle_shell_menu_key(&mut app, key(KeyCode::Up)).unwrap();
+
+        let Mode::ShellMenu(menu) = &app.mode else { panic!("expected Mode::ShellMenu") };
+        assert_eq!(menu.selected, 0);
+    }
+
+    #[test]
+    fn handle_shell_menu_key_enter_applies_the_selection_and_closes() {
+        let mut app = app_in_shell_menu();
+        if app.shell_profiles.len() > 1 {
+            handle_shell_menu_key(&mut app, key(KeyCode::Down)).unwrap();
+        }
+        let Mode::ShellMenu(menu) = &app.mode else { unreachable!() };
+        let expected = menu.selected;
+
+        handle_shell_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert_eq!(app.active_shell, expected);
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn handle_shell_menu_key_esc_cancels_without_changing_active_shell() {
+        let mut app = app_in_shell_menu();
+        let original_shell = app.active_shell;
+
+        handle_shell_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert_eq!(app.active_shell, original_shell);
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn handle_shell_menu_key_is_a_noop_outside_shell_menu_mode() {
+        let mut app = app_in_shell_menu();
+        app.mode = Mode::Browsing;
+
+        handle_shell_menu_key(&mut app, key(KeyCode::Down)).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing));
     }
 }

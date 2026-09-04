@@ -253,4 +253,71 @@ mod tests {
         assert_eq!(resolve(key(KeyCode::Esc)), MenuCommand::Back);
         assert_eq!(resolve(key(KeyCode::Char('z'))), MenuCommand::Ignore);
     }
+
+    /// A real `App` (no terminal needed — `App::new` just wants a
+    /// directory) in `Mode::MainMenu`, for exercising
+    /// `handle_main_menu_key` end to end rather than just `MainMenu`'s
+    /// own methods.
+    fn app_in_main_menu() -> App {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("litastum-menu-test-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        let mut app = App::new(dir, Theme::dark(), None).expect("build app");
+        app.mode = Mode::MainMenu(MainMenu::open());
+        app
+    }
+
+    #[test]
+    fn handle_main_menu_key_select_at_main_level_enters_settings() {
+        let mut app = app_in_main_menu();
+
+        handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        let Mode::MainMenu(menu) = &app.mode else { panic!("expected Mode::MainMenu") };
+        assert_eq!(menu.level, MenuLevel::Settings);
+    }
+
+    #[test]
+    fn handle_main_menu_key_select_at_settings_level_opens_theme_menu() {
+        let mut app = app_in_main_menu();
+        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
+        menu.enter_settings();
+
+        handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert!(matches!(app.mode, Mode::ThemeMenu(_)));
+    }
+
+    #[test]
+    fn handle_main_menu_key_back_at_settings_level_returns_to_main() {
+        let mut app = app_in_main_menu();
+        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
+        menu.enter_settings();
+
+        handle_main_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        let Mode::MainMenu(menu) = &app.mode else { panic!("expected Mode::MainMenu") };
+        assert_eq!(menu.level, MenuLevel::Main, "should back up a level, not close");
+    }
+
+    #[test]
+    fn handle_main_menu_key_back_at_main_level_closes_the_menu() {
+        let mut app = app_in_main_menu();
+
+        handle_main_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn handle_main_menu_key_is_a_noop_outside_main_menu_mode() {
+        let mut app = app_in_main_menu();
+        app.mode = Mode::Browsing;
+
+        handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
 }
