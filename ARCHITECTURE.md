@@ -42,9 +42,13 @@ crossterm::event::read()
    ui.rs: draw(&App)  -- theme.rs supplies styles, pure read of App state
 ```
 
-`ui.rs` stays a pure function of `&App` (no `io::Result`, no mutation) —
-that's already true today and should be preserved as modules are added,
-so rendering never needs `Result` plumbing.
+`ui.rs` stays a pure function of `&App` for the browsing panels (no
+`io::Result`, no mutation). **Exception**: `draw` takes `app: &mut App`
+overall, because the built-in editor's `edtui::EditorView` tracks scroll
+position as part of rendering and needs `&mut EditorState` even just to
+draw — not a design choice on our side, `edtui`'s own render step
+mutates view state. Everything outside the `Mode::Editing`/
+`Mode::ConfirmDiscard` branches still only reads `app`.
 
 ## Panel: column-major layout (the mockup's core UI change)
 

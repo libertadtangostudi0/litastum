@@ -1,42 +1,39 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 
-/// A user-triggered action while a file is open in the built-in editor.
-/// Kept separate from the browsing-mode `keymap::Command` because the
-/// editor's default action is "forward everything to the text widget"
-/// rather than "look up a binding or do nothing" — see `Input` below.
+/// A user-triggered action while a file is open in the built-in editor,
+/// at the level `main.rs` needs to care about. Everything else —
+/// typing, movement, selection, copy/cut/paste — is `edtui`'s own
+/// concern once a key reaches `Editor::input`; only `Save` (a concept
+/// `edtui` has no notion of) and `Close` (which `main.rs` must decide
+/// whether to honor immediately or forward, depending on whether a
+/// selection is active — see `Editor::has_selection`) need resolving
+/// before that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorCommand {
     Close,
     Save,
-    Copy,
-    Cut,
-    Paste,
     /// Not one of the bindings above — forward the raw key event to
-    /// the text area as ordinary typing/movement.
-    Input,
+    /// `Editor::input`.
+    Forward,
 }
 
 
-/// Resolves a raw key press to an `EditorCommand`. Unlike
-/// `keymap::resolve`, this never returns `None` — an unrecognized key
-/// still needs to reach the text area.
+/// Resolves a raw key press to an `EditorCommand`.
 ///
-/// Matches both the lowercase and uppercase letter for each `Ctrl`
-/// binding: some terminal/backend combinations report the
-/// Caps-Lock-affected case even while `Ctrl` is held, so `Ctrl+S` can
-/// arrive as `Char('S')` rather than `Char('s')` — this was found by
-/// hand while debugging save/paste appearing to silently do nothing.
+/// Matches both the lowercase and uppercase letter for `Ctrl+S`: some
+/// terminal/backend combinations report the Caps-Lock-affected case
+/// even while `Ctrl` is held, so it can arrive as `Char('S')` rather
+/// than `Char('s')` — this was found by hand while debugging save
+/// appearing to silently do nothing (back when this also handled
+/// copy/paste directly, before the `edtui` switch).
 pub fn resolve(key: KeyEvent) -> EditorCommand {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
     match key.code {
         KeyCode::Esc => EditorCommand::Close,
         KeyCode::Char('s' | 'S') if ctrl => EditorCommand::Save,
-        KeyCode::Char('c' | 'C') if ctrl => EditorCommand::Copy,
-        KeyCode::Char('x' | 'X') if ctrl => EditorCommand::Cut,
-        KeyCode::Char('v' | 'V') if ctrl => EditorCommand::Paste,
-        _ => EditorCommand::Input,
+        _ => EditorCommand::Forward,
     }
 }
 
@@ -82,36 +79,28 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_resolves_to_copy() {
-        assert_eq!(resolve(ctrl_key('c')), EditorCommand::Copy);
-    }
-
-    #[test]
-    fn ctrl_x_resolves_to_cut() {
-        assert_eq!(resolve(ctrl_key('x')), EditorCommand::Cut);
-    }
-
-    #[test]
-    fn ctrl_v_resolves_to_paste() {
-        assert_eq!(resolve(ctrl_key('v')), EditorCommand::Paste);
-    }
-
-    #[test]
     fn esc_resolves_to_close_even_without_ctrl() {
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
         assert_eq!(resolve(key), EditorCommand::Close);
     }
 
     #[test]
-    fn plain_s_without_ctrl_is_ordinary_input_not_save() {
+    fn plain_s_without_ctrl_is_forwarded_not_save() {
         let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
-        assert_eq!(resolve(key), EditorCommand::Input);
+        assert_eq!(resolve(key), EditorCommand::Forward);
     }
 
     #[test]
-    fn unmodified_letter_is_input() {
+    fn unmodified_letter_is_forwarded() {
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
-        assert_eq!(resolve(key), EditorCommand::Input);
+        assert_eq!(resolve(key), EditorCommand::Forward);
+    }
+
+    #[test]
+    fn ctrl_c_is_forwarded_to_edtui_not_handled_here() {
+        // Copy/cut/paste are edtui's own concern now (see its custom
+        // keymap in editor.rs) -- this module no longer special-cases them.
+        assert_eq!(resolve(ctrl_key('c')), EditorCommand::Forward);
     }
 
     fn key(code: KeyCode) -> KeyEvent {

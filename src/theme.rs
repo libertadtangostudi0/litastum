@@ -4,6 +4,12 @@ use ratatui::style::Color;
 /// Color palette for the whole UI. Values are lifted from the "color 2"
 /// GitHub Dark mockup agreed while planning — see
 /// `.claude/rules/litastum-ui-theme.md` for the source hex values.
+///
+/// `Copy` (all fields are `Color`, itself `Copy`): `App` owns the live
+/// theme so the F9 menu can swap it at runtime, and rendering copies it
+/// out once per frame rather than juggling a borrow of `App` alongside
+/// `&mut app.mode` for the whole draw call.
+#[derive(Clone, Copy)]
 pub struct Theme {
     pub bg: Color,
     pub border: Color,
@@ -11,6 +17,17 @@ pub struct Theme {
     pub text_dim: Color,
     pub accent: Color,
     pub danger: Color,
+    /// Archives, and anything else worth flagging without it being an
+    /// error — added alongside `HighlightRole::Archive` file coloring
+    /// (`panel.rs`). Part of the original "color 2" plan
+    /// (`.claude/rules/litastum-ui-theme.md`'s success/danger/warning
+    /// triad) that only `danger` actually made it into this struct
+    /// initially.
+    pub warning: Color,
+    /// Executables/scripts (`HighlightRole::Executable`) and anything
+    /// else worth marking as a positive/active state. Same
+    /// success/danger/warning triad as `warning`, above.
+    pub success: Color,
     /// Background for the cursor row in the panel that has keyboard
     /// focus — `accent` blended over `bg` at ~15% alpha (ratatui has no
     /// real alpha blending, so this is precomputed).
@@ -28,6 +45,8 @@ impl Theme {
             text_dim: Color::Rgb(0x8b, 0x94, 0x9e),
             accent: Color::Rgb(0x58, 0xa6, 0xff),
             danger: Color::Rgb(0xf8, 0x51, 0x49),
+            warning: Color::Rgb(0xd2, 0x99, 0x22),
+            success: Color::Rgb(0x3f, 0xb9, 0x50),
             current_row_bg: Color::Rgb(0x18, 0x27, 0x3a),
         }
     }

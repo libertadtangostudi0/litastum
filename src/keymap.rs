@@ -14,6 +14,9 @@ pub enum Command {
     EnterSelected,
     ToggleActive,
     EditSelected,
+    /// F9 — opens the color-scheme picker (`theme_menu.rs`); a minimal
+    /// analog of Far Manager's F9 menu, scoped to just themes for now.
+    OpenThemeMenu,
     Quit,
 }
 
@@ -28,6 +31,7 @@ pub fn resolve(key: KeyCode) -> Option<Command> {
         KeyCode::Enter => Some(Command::EnterSelected),
         KeyCode::Tab => Some(Command::ToggleActive),
         KeyCode::F(4) => Some(Command::EditSelected),
+        KeyCode::F(9) => Some(Command::OpenThemeMenu),
         KeyCode::F(10) | KeyCode::Char('q') => Some(Command::Quit),
         _ => None,
     }
@@ -41,6 +45,11 @@ mod tests {
     #[test]
     fn unbound_key_resolves_to_none() {
         assert_eq!(resolve(KeyCode::Char('z')), None);
+    }
+
+    #[test]
+    fn f9_opens_the_theme_menu() {
+        assert_eq!(resolve(KeyCode::F(9)), Some(Command::OpenThemeMenu));
     }
 
     #[test]

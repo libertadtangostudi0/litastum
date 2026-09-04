@@ -8,8 +8,9 @@ use ratatui::{
 
 use crate::app::{App, Mode};
 use crate::editor::Editor;
-use crate::panel::{Entry, Panel};
+use crate::panel::{Entry, HighlightRole, Panel};
 use crate::theme::Theme;
+use crate::theme_menu::ThemeMenu;
 
 /// Panels narrower than this (per column) fall back to a single column.
 const MIN_COLUMN_WIDTH: u16 = 24;
@@ -23,18 +24,20 @@ const MIN_COLUMN_WIDTH: u16 = 24;
 /// keyboard event is handled — column count depends on terminal size,
 /// which only `ui::draw` computes, but `Panel` (not `ui`) owns the
 /// cursor state that navigation needs it for.
-pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) -> [usize; 2] {
-    match &app.mode {
+pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
+    let theme = app.theme; // Theme is Copy -- see theme.rs for why
+    let area = frame.area();
+    match &mut app.mode {
         Mode::Editing(editor) => {
-            draw_editor(frame, frame.area(), editor, theme);
+            draw_editor(frame, area, editor, &theme);
             return [1, 1];
         }
         Mode::ConfirmDiscard(editor) => {
-            draw_editor(frame, frame.area(), editor, theme);
-            draw_confirm_discard_popup(frame, frame.area(), theme);
+            draw_editor(frame, area, editor, &theme);
+            draw_confirm_discard_popup(frame, area, &theme);
             return [1, 1];
         }
-        Mode::Browsing => {}
+        Mode::Browsing | Mode::ThemeMenu(_) => {}
     }
 
     let root = Layout::default()
@@ -51,10 +54,17 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) -> [usize; 2] {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(root[0]);
 
-    let left_columns = draw_panel(frame, panels[0], &app.panels[0], app.active == 0, theme);
-    let right_columns = draw_panel(frame, panels[1], &app.panels[1], app.active == 1, theme);
-    draw_command_line(frame, root[1], theme);
-    draw_function_keys(frame, root[2], theme);
+    let left_columns = draw_panel(frame, panels[0], &app.panels[0], app.active == 0, &theme);
+    let right_columns = draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme);
+    draw_command_line(frame, root[1], &theme);
+    draw_function_keys(frame, root[2], &theme);
+
+    // The F9 popup shows over the browser, like a Far Manager menu, not
+    // in place of it -- unlike Editing/ConfirmDiscard above, which
+    // replace the whole screen.
+    if let Mode::ThemeMenu(menu) = &app.mode {
+        draw_theme_menu(frame, area, menu, &theme);
+    }
 
     [left_columns, right_columns]
 }
@@ -140,7 +150,13 @@ fn build_list_item(entry: &Entry, is_selected: bool, panel_active: bool, theme: 
         entry.name.clone()
     };
 
-    let base_color = if entry.name == ".." { theme.text_dim } else { theme.text };
+    let base_color = match entry.highlight_role() {
+        HighlightRole::Parent => theme.text_dim,
+        HighlightRole::Directory | HighlightRole::Other => theme.text,
+        HighlightRole::VcsDirectory => theme.accent,
+        HighlightRole::Archive => theme.warning,
+        HighlightRole::Executable => theme.success,
+    };
     let mut style = Style::default().fg(base_color);
     if is_selected {
         style = if panel_active {
@@ -154,20 +170,27 @@ fn build_list_item(entry: &Entry, is_selected: bool, panel_active: bool, theme: 
 }
 
 
-/// Renders the built-in editor full-screen, with a one-line hint bar
-/// for its two special bindings (everything else goes to the text area).
-fn draw_editor(frame: &mut Frame, area: Rect, editor: &Editor, theme: &Theme) {
+/// Renders the built-in editor full-screen (border/title drawn by
+/// `Editor::view` itself), with a one-line hint bar below for its
+/// special bindings (everything else goes straight to `edtui`).
+fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(1)])
         .split(area);
 
-    frame.render_widget(editor.widget(), rows[0]);
-
     let dirty_marker = if editor.is_dirty() { " [modified]" } else { "" };
+
+    frame.render_widget(editor.view(theme), rows[0]);
+    if let Some(pos) = editor.cursor_screen_position() {
+        frame.set_cursor_position(pos);
+    }
+
     let hint = Line::from(vec![
         Span::styled("Ctrl+S ", Style::default().fg(theme.accent)),
         Span::styled("Save   ", Style::default().fg(theme.text_dim)),
+        Span::styled("Ctrl+C/X/V ", Style::default().fg(theme.accent)),
+        Span::styled("Copy/Cut/Paste   ", Style::default().fg(theme.text_dim)),
         Span::styled("Esc ", Style::default().fg(theme.accent)),
         Span::styled("Close", Style::default().fg(theme.text_dim)),
         Span::styled(dirty_marker, Style::default().fg(theme.danger)),
@@ -203,6 +226,63 @@ fn draw_confirm_discard_popup(frame: &mut Frame, area: Rect, theme: &Theme) {
 }
 
 
+/// Renders the F9 color-scheme picker popup: a list of theme names
+/// found in the config dir, or a hint that none were found.
+fn draw_theme_menu(frame: &mut Frame, area: Rect, menu: &ThemeMenu, theme: &Theme) {
+    let height = (menu.themes.len().max(1) as u16 + 4).clamp(6, area.height);
+    let popup = centered_rect(46, height, area);
+
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent))
+        .title(" Color scheme ");
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    if menu.themes.is_empty() {
+        let empty = Paragraph::new(Line::from(Span::styled(
+            "No themes found — drop a Windows Terminal scheme .json",
+            Style::default().fg(theme.text_dim),
+        )));
+        frame.render_widget(empty, rows[0]);
+    } else {
+        let items: Vec<ListItem> = menu
+            .themes
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                let style = if index == menu.selected {
+                    Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.text)
+                };
+                ListItem::new(Line::from(Span::styled(name.clone(), style)))
+            })
+            .collect();
+        frame.render_widget(List::new(items), rows[0]);
+    }
+
+    let hint = Line::from(vec![
+        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" apply both  ", Style::default().fg(theme.text_dim)),
+        Span::styled("I", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("nterface  ", Style::default().fg(theme.text_dim)),
+        Span::styled("E", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("ditor  ", Style::default().fg(theme.text_dim)),
+        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" cancel", Style::default().fg(theme.text_dim)),
+    ]);
+    frame.render_widget(hint, rows[1]);
+}
+
+
 /// A `width`x`height` rectangle centered within `area`, clamped to fit.
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let width = width.min(area.width);
@@ -232,9 +312,8 @@ fn draw_function_keys(frame: &mut Frame, area: Rect, theme: &Theme) {
     let spans: Vec<Span> = LABELS
         .iter()
         .flat_map(|(key, label)| {
-            let key_color = if *key == "F8" { theme.danger } else { theme.accent };
             [
-                Span::styled(format!("{key} "), Style::default().fg(key_color)),
+                Span::styled(format!("{key} "), Style::default().fg(theme.accent)),
                 Span::styled(format!("{label}  "), Style::default().fg(theme.text_dim)),
             ]
         })

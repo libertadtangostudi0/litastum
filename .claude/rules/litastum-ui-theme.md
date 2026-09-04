@@ -1,8 +1,9 @@
 # litastum: UI reference (design target for stage 3+)
 
-Not yet implemented in code as of this writing — see `ARCHITECTURE.md`
-for the module-level plan (`theme.rs`, column-major `Panel` layout) that
-implements what's described here.
+Written before implementation; `theme.rs` (color values below),
+`panel.rs` (column-major layout, file-type coloring), and `ui.rs`
+(rendering) now implement most of this — see `ARCHITECTURE.md` for the
+module-level plan.
 
 ## Color theme ("color 2", GitHub Dark inspired)
 
@@ -25,9 +26,13 @@ multi-column view, specifically so arrow keys can navigate efficiently
 through long listings (Up/Down within a column, Left/Right across
 columns).
 
-No folder icons, no file-type color dots — directories are distinguished
-only by a trailing `/`. This is a deliberate minimalism choice, not an
-oversight.
+No folder icons — directories are still distinguished only by a
+trailing `/`, not a glyph. File-type **coloring**, though, reverses an
+earlier "deliberately no color dots" decision: entries are now colored
+by a coarse category (`panel.rs::HighlightRole` — directory/archive/
+executable/other), Far Manager-style, per explicit later request. See
+[[litastum-theming]] for the category list and which `Theme` color each
+maps to.
 
 ## Reference mockup
 

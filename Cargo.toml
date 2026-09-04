@@ -7,11 +7,13 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/YOUR_USERNAME/litastum"
 
 [dependencies]
-crossterm = "0.28"
-ratatui = "0.29"
+crossterm = "0.29"
+ratatui = "0.30"
 directories = "6.0"
 color-eyre = "0.6"
-tui-textarea = "0.7"
+edtui = { version = "0.11", default-features = false, features = ["mouse-support", "syntax-highlighting"] }
 arboard = { version = "3.6", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
