@@ -4,12 +4,14 @@ mod command_line;
 mod config;
 mod editor;
 mod editor_keymap;
+mod fs_ops;
 mod keymap;
 mod logging;
 mod menu;
 mod panel;
 mod scheme;
 mod shell;
+mod text_field;
 mod theme;
 mod theme_menu;
 mod ui;
@@ -27,7 +29,7 @@ use crossterm::{
 use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::debug;
 
-use app::{App, Mode, ShellMenu};
+use app::{App, Mode, ShellMenu, TransferOp};
 use editor_keymap::EditorCommand;
 use theme_menu::ThemeMenu;
 
@@ -93,6 +95,7 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
         Mode::Editing(_) => handle_editor_key(app, key),
         Mode::ConfirmDiscard(_) => handle_confirm_discard_key(app, key),
         Mode::ConfirmDelete(_) => handle_confirm_delete_key(app, key),
+        Mode::ConfirmTransfer(_) => handle_confirm_transfer_key(app, key),
         Mode::MainMenu(_) => handle_main_menu_key(app, key),
         Mode::ThemeMenu(_) => handle_theme_menu_key(app, key),
         Mode::ShellMenu(_) => handle_shell_menu_key(app, key),
@@ -117,6 +120,13 @@ fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal<Cro
     if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
         app.mode = Mode::ShellMenu(ShellMenu { selected: app.active_shell });
         return Ok(());
+    }
+
+    // Shift+F6 (rename) vs plain F6 (move) only differ by modifier --
+    // keymap::resolve's table keys off KeyCode alone, so this one has
+    // to be special-cased ahead of it, same as Ctrl+P above.
+    if key.code == KeyCode::F(6) && key.modifiers.contains(KeyModifiers::SHIFT) {
+        return command::execute(keymap::Command::RenameSelected, app);
     }
 
     if key.code == KeyCode::Enter && !app.command_line.is_empty() {
@@ -325,6 +335,135 @@ fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
         }
         ConfirmDeleteCommand::Cancel => app.mode = Mode::Browsing,
         ConfirmDeleteCommand::Ignore => {}
+    }
+
+    Ok(())
+}
+
+
+/// Key handling on the F5/F6 "copy/move to?" prompt: the destination
+/// line gets a real cursor (`text_field.rs`, not the command line's
+/// own append/backspace-only editing — see that module's doc for why
+/// this popup gets one and the always-live command line doesn't) —
+/// `Left`/`Right` move a character, `Ctrl+Left`/`Ctrl+Right` a word,
+/// `Home`/`End` to the edges, `Backspace`/`Delete` remove around the
+/// cursor. `Enter` performs the transfer (`fs_ops::copy_entry`/
+/// `move_entry`) and reloads *both* panels (the destination side
+/// always needs it, and a move also changes the source side); `Esc`
+/// cancels with nothing touched. A failed transfer is only logged, same
+/// as `handle_confirm_delete_key` — no status-bar surface exists yet.
+fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+    match key.code {
+        KeyCode::Enter => {
+            let Mode::ConfirmTransfer(pending) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+                return Ok(());
+            };
+            let destination = std::path::PathBuf::from(pending.destination.trim());
+            debug!(
+                source = %pending.source.display(),
+                destination = %destination.display(),
+                op = ?pending.operation,
+                "confirm-transfer: running"
+            );
+            let result = match pending.operation {
+                TransferOp::Copy => fs_ops::copy_entry(&pending.source, &destination, pending.is_dir),
+                TransferOp::Move => fs_ops::move_entry(&pending.source, &destination, pending.is_dir),
+            };
+            if let Err(err) = result {
+                debug!(source = %pending.source.display(), destination = %destination.display(), %err, "transfer failed");
+            }
+            for panel in &mut app.panels {
+                panel.reload()?;
+            }
+        }
+        KeyCode::Esc => app.mode = Mode::Browsing,
+        // Backspace/Delete remove the active selection instead of one
+        // character, if there is one -- text_field::delete_selection
+        // reports whether it did anything, so the single-character path
+        // only runs when there wasn't a selection to consume instead.
+        KeyCode::Backspace => {
+            if let Mode::ConfirmTransfer(pending) = &mut app.mode {
+                let removed_selection =
+                    text_field::delete_selection(&mut pending.destination, &mut pending.cursor, &mut pending.selection_anchor);
+                if !removed_selection {
+                    text_field::backspace(&mut pending.destination, &mut pending.cursor);
+                }
+            }
+        }
+        KeyCode::Delete => {
+            if let Mode::ConfirmTransfer(pending) = &mut app.mode {
+                let removed_selection =
+                    text_field::delete_selection(&mut pending.destination, &mut pending.cursor, &mut pending.selection_anchor);
+                if !removed_selection {
+                    text_field::delete_forward(&mut pending.destination, &mut pending.cursor);
+                }
+            }
+        }
+        // Shift+Left/Right (selection) is checked ahead of Ctrl+Left/
+        // Right and plain Left/Right below, same reason Ctrl+P is
+        // checked ahead of the browsing keymap table -- KeyCode::Left
+        // alone can't distinguish "extend selection" from "move" or
+        // "jump a word".
+        KeyCode::Left if shift => {
+            if let Mode::ConfirmTransfer(pending) = &mut app.mode {
+                text_field::extend_selection_left(&mut pending.cursor, &mut pending.selection_anchor);
+            }
+        }
+        KeyCode::Right if shift => {
+            if let Mode::ConfirmTransfer(pending) = &mut app.mode {
+                text_field::extend_selection_right(&pending.destination, &mut pending.cursor, &mut pending.selection_anchor);
+            }
+        }
+        KeyCode::Left if ctrl => {
+            if let Mode::ConfirmTransfer(pending) = &mut app.mode {
+                pending.selection_anchor = None;
+                text_field::move_word_left(&pending.destination, &mut pending.cursor);
+            }
+        }
+        KeyCode::Right if ctrl => {
+            if let Mode::ConfirmTransfer(pending) = &mut app.mode {
+                pending.selection_anchor = None;
+                text_field::move_word_right(&pending.destination, &mut pending.cursor);
+            }
+        }
+        // Plain Left/Right with a selection active collapses to that
+        // selection's near edge (standard editor behavior) rather than
+        // moving one further character past it.
+        KeyCode::Left => {
+            if let Mode::ConfirmTransfer(pending) = &mut app.mode {
+                text_field::collapse_selection_left(&mut pending.cursor, &mut pending.selection_anchor);
+            }
+        }
+        KeyCode::Right => {
+            if let Mode::ConfirmTransfer(pending) = &mut app.mode {
+                text_field::collapse_selection_right(&pending.destination, &mut pending.cursor, &mut pending.selection_anchor);
+            }
+        }
+        KeyCode::Home => {
+            if let Mode::ConfirmTransfer(pending) = &mut app.mode {
+                pending.selection_anchor = None;
+                text_field::move_home(&mut pending.cursor);
+            }
+        }
+        KeyCode::End => {
+            if let Mode::ConfirmTransfer(pending) = &mut app.mode {
+                pending.selection_anchor = None;
+                text_field::move_end(&pending.destination, &mut pending.cursor);
+            }
+        }
+        // Typing over an active selection replaces it, like any normal
+        // text field -- delete it first, then insert at the (now
+        // collapsed) cursor.
+        KeyCode::Char(c) if !ctrl => {
+            if let Mode::ConfirmTransfer(pending) = &mut app.mode {
+                text_field::delete_selection(&mut pending.destination, &mut pending.cursor, &mut pending.selection_anchor);
+                text_field::insert_char(&mut pending.destination, &mut pending.cursor, c);
+            }
+        }
+        _ => {}
     }
 
     Ok(())

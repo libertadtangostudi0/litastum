@@ -1,6 +1,6 @@
 use color_eyre::eyre::Result;
 
-use crate::app::{App, Mode, PendingDelete};
+use crate::app::{App, Mode, PendingDelete, PendingTransfer, TransferOp};
 use crate::editor::Editor;
 use crate::keymap::Command;
 use crate::menu::MainMenu;
@@ -20,6 +20,9 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
         Command::ToggleActive => app.toggle_active(),
         Command::EditSelected => open_editor(app),
         Command::OpenMenu => app.mode = Mode::MainMenu(MainMenu::open()),
+        Command::CopySelected => request_transfer(app, TransferOp::Copy),
+        Command::MoveSelected => request_transfer(app, TransferOp::Move),
+        Command::RenameSelected => request_rename(app),
         Command::DeleteSelected => request_delete(app),
         Command::Quit => app.should_quit = true,
     }
@@ -65,4 +68,69 @@ fn request_delete(app: &mut App) {
         is_dir: entry.is_dir,
     };
     app.mode = Mode::ConfirmDelete(pending);
+}
+
+
+/// F5/F6: opens the "copy/move to?" prompt (`Mode::ConfirmTransfer`)
+/// for the entry under the cursor, pre-filled with the *other* panel's
+/// directory as the destination — Far Manager's own F5/F6 default.
+/// Does nothing for `..` or an empty panel, same as `request_delete`.
+fn request_transfer(app: &mut App, operation: TransferOp) {
+    let destination_dir = app.panels[1 - app.active].path.clone();
+
+    let panel = app.active_panel();
+    let Some(entry) = panel.current() else {
+        return;
+    };
+    if entry.name == ".." {
+        return;
+    }
+
+    let destination = destination_dir.join(&entry.name).to_string_lossy().into_owned();
+    let cursor = destination.chars().count();
+    let pending = PendingTransfer {
+        operation,
+        source: panel.path.join(&entry.name),
+        name: entry.name.clone(),
+        is_dir: entry.is_dir,
+        destination,
+        cursor,
+        selection_anchor: None,
+    };
+    app.mode = Mode::ConfirmTransfer(pending);
+}
+
+
+/// `Shift+F6`: opens the same `Mode::ConfirmTransfer` prompt as
+/// `request_transfer(_, Move)`, but the destination defaults to the
+/// entry's own directory instead of the other panel's — so confirming
+/// with the destination untouched is a no-op, and the actual use case
+/// (editing the name before confirming) renames in place via the same
+/// `fs_ops::move_entry` call `main.rs` already makes for a real
+/// cross-panel move. The cursor starts right after the directory part
+/// (at the start of the filename, not the end of the whole path) so
+/// typing immediately edits the name — the whole point of this
+/// binding — without needing `Home`/`Ctrl+Left` first.
+fn request_rename(app: &mut App) {
+    let panel = app.active_panel();
+    let Some(entry) = panel.current() else {
+        return;
+    };
+    if entry.name == ".." {
+        return;
+    }
+
+    let path = panel.path.join(&entry.name);
+    let destination = path.to_string_lossy().into_owned();
+    let cursor = destination.chars().count() - entry.name.chars().count();
+    let pending = PendingTransfer {
+        operation: TransferOp::Move,
+        source: path,
+        name: entry.name.clone(),
+        is_dir: entry.is_dir,
+        destination,
+        cursor,
+        selection_anchor: None,
+    };
+    app.mode = Mode::ConfirmTransfer(pending);
 }

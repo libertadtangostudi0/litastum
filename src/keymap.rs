@@ -18,6 +18,20 @@ pub enum Command {
     /// `Color schemes` (`theme_menu.rs`); a minimal analog of Far
     /// Manager's F9 menu, scoped to just that path for now.
     OpenMenu,
+    /// F5 — asks to copy the entry under the cursor into the *other*
+    /// panel's directory (`Mode::ConfirmTransfer`), Far Manager-style.
+    CopySelected,
+    /// F6 — same as `CopySelected` but moves instead of copying.
+    MoveSelected,
+    /// `Shift+F6` — Far Manager's own "Rename or move" binding: opens
+    /// the same `Mode::ConfirmTransfer` prompt as `MoveSelected`, but
+    /// defaulting the destination to the entry's *own* directory
+    /// (rather than the other panel's) so editing just the trailing
+    /// name renames it in place. Modifier-specific, so it's resolved
+    /// directly in `main.rs::handle_browsing_key` rather than through
+    /// this module's `resolve` table (which only keys off `KeyCode`,
+    /// not modifiers).
+    RenameSelected,
     /// F8 — asks to delete the entry under the cursor
     /// (`Mode::ConfirmDelete`), never deletes directly. Matches Far
     /// Manager's own F8 binding.
@@ -36,6 +50,8 @@ pub fn resolve(key: KeyCode) -> Option<Command> {
         KeyCode::Enter => Some(Command::EnterSelected),
         KeyCode::Tab => Some(Command::ToggleActive),
         KeyCode::F(4) => Some(Command::EditSelected),
+        KeyCode::F(5) => Some(Command::CopySelected),
+        KeyCode::F(6) => Some(Command::MoveSelected),
         KeyCode::F(8) => Some(Command::DeleteSelected),
         KeyCode::F(9) => Some(Command::OpenMenu),
         // Only F10 quits, matching real Far Manager -- bare letters
@@ -101,6 +117,16 @@ mod tests {
     #[test]
     fn f8_requests_delete() {
         assert_eq!(resolve(KeyCode::F(8)), Some(Command::DeleteSelected));
+    }
+
+    #[test]
+    fn f5_requests_copy() {
+        assert_eq!(resolve(KeyCode::F(5)), Some(Command::CopySelected));
+    }
+
+    #[test]
+    fn f6_requests_move() {
+        assert_eq!(resolve(KeyCode::F(6)), Some(Command::MoveSelected));
     }
 
     fn key(code: KeyCode) -> KeyEvent {

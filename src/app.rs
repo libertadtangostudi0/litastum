@@ -30,6 +30,10 @@ pub enum Mode {
     /// over the browser rather than deleting immediately — see
     /// `PendingDelete`.
     ConfirmDelete(PendingDelete),
+    /// F5/F6 was pressed on a real entry: shown as a "copy/move to?"
+    /// prompt with an editable destination path, defaulting to the
+    /// *other* panel's directory — see `PendingTransfer`.
+    ConfirmTransfer(PendingTransfer),
     /// The color-scheme picker, reached via F9 → Settings → Color
     /// schemes.
     ThemeMenu(ThemeMenu),
@@ -47,6 +51,42 @@ pub struct PendingDelete {
     pub path: PathBuf,
     pub name: String,
     pub is_dir: bool,
+}
+
+
+/// Which of F5/F6 opened `Mode::ConfirmTransfer`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferOp {
+    Copy,
+    Move,
+}
+
+
+/// The entry F5/F6 was pressed on, held while `Mode::ConfirmTransfer`
+/// asks for (and lets the user edit) a destination — captured up front
+/// for the same reason as `PendingDelete`: the prompt should still act
+/// on the entry it was opened for even if something else changed the
+/// active panel's cursor in the meantime (not currently possible while
+/// the prompt is up, but cheap to make robust to regardless).
+pub struct PendingTransfer {
+    pub operation: TransferOp,
+    pub source: PathBuf,
+    pub name: String,
+    pub is_dir: bool,
+    /// Editable text — defaults to the *other* panel's directory
+    /// joined with `name` (or, for `Shift+F6` rename, the entry's own
+    /// directory), but can be freely edited before confirming. Full
+    /// cursor movement (`text_field.rs`), not the command line's own
+    /// append/backspace-only editing — see `text_field.rs`'s module
+    /// doc for why this field gets a real cursor and the command line
+    /// doesn't.
+    pub destination: String,
+    /// Character index (not byte offset) into `destination` — see
+    /// `text_field.rs`.
+    pub cursor: usize,
+    /// `Shift+Left`/`Shift+Right` selection anchor, `None` when nothing
+    /// is selected — see `text_field.rs`'s selection section.
+    pub selection_anchor: Option<usize>,
 }
 
 

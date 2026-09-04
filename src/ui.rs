@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, Mode, PendingDelete, ShellMenu};
+use crate::app::{App, Mode, PendingDelete, PendingTransfer, ShellMenu, TransferOp};
 use crate::editor::Editor;
 use crate::menu::{MainMenu, MenuLevel};
 use crate::panel::{Entry, HighlightRole, Panel};
@@ -39,7 +39,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
             draw_confirm_discard_popup(frame, area, &theme);
             return [1, 1];
         }
-        Mode::Browsing | Mode::MainMenu(_) | Mode::ThemeMenu(_) | Mode::ShellMenu(_) | Mode::ConfirmDelete(_) => {}
+        Mode::Browsing
+        | Mode::MainMenu(_)
+        | Mode::ThemeMenu(_)
+        | Mode::ShellMenu(_)
+        | Mode::ConfirmDelete(_)
+        | Mode::ConfirmTransfer(_) => {}
     }
 
     let root = Layout::default()
@@ -82,6 +87,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
         Mode::ThemeMenu(menu) => draw_theme_menu(frame, area, menu, &theme),
         Mode::ShellMenu(menu) => draw_shell_menu(frame, area, menu, &app.shell_profiles, &theme),
         Mode::ConfirmDelete(pending) => draw_confirm_delete_popup(frame, area, pending, &theme),
+        Mode::ConfirmTransfer(pending) => {
+            let cursor = draw_confirm_transfer_popup(frame, area, pending, &theme);
+            frame.set_cursor_position(cursor);
+        }
         _ => {}
     }
 
@@ -280,6 +289,79 @@ fn draw_confirm_delete_popup(frame: &mut Frame, area: Rect, pending: &PendingDel
 }
 
 
+/// Renders the F5/F6 "copy/move to?" prompt: source name and operation
+/// on one line, an editable destination path on the next (defaults to
+/// the other panel's directory — see `command::request_transfer`).
+/// Returns where the real terminal cursor should sit, at the end of
+/// the destination text, same mechanism as the command line's own
+/// cursor (`ui::draw`).
+fn draw_confirm_transfer_popup(frame: &mut Frame, area: Rect, pending: &PendingTransfer, theme: &Theme) -> Position {
+    let popup = centered_rect(60, 6, area);
+
+    frame.render_widget(Clear, popup);
+
+    let verb = match pending.operation {
+        TransferOp::Copy => "Copy",
+        TransferOp::Move => "Move",
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent))
+        .title(format!(" {verb} "));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
+        .split(inner);
+
+    let source_line = Line::from(Span::styled(
+        format!("{verb} '{}' to:", pending.name),
+        Style::default().fg(theme.text),
+    ));
+    frame.render_widget(source_line, rows[0]);
+
+    frame.render_widget(destination_line(pending, theme), rows[1]);
+
+    let hint = Line::from(vec![
+        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {verb}   "), Style::default().fg(theme.text_dim)),
+        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" cancel", Style::default().fg(theme.text_dim)),
+    ]);
+    frame.render_widget(hint, rows[3]);
+
+    Position {
+        x: rows[1].x + pending.cursor as u16,
+        y: rows[1].y,
+    }
+}
+
+
+/// Renders the destination text with its `Shift+Left`/`Shift+Right`
+/// selection (`text_field::selection_range`), if any, picked out with
+/// the same highlight background used for the active row in a panel
+/// (`theme.current_row_bg`) — no selection just renders as plain text.
+fn destination_line(pending: &PendingTransfer, theme: &Theme) -> Line<'static> {
+    let Some(anchor) = pending.selection_anchor else {
+        return Line::from(Span::styled(pending.destination.clone(), Style::default().fg(theme.text)));
+    };
+
+    let (start, end) = crate::text_field::selection_range(anchor, pending.cursor);
+    let chars: Vec<char> = pending.destination.chars().collect();
+    let before: String = chars[..start].iter().collect();
+    let selected: String = chars[start..end].iter().collect();
+    let after: String = chars[end..].iter().collect();
+
+    Line::from(vec![
+        Span::styled(before, Style::default().fg(theme.text)),
+        Span::styled(selected, Style::default().fg(theme.text).bg(theme.current_row_bg)),
+        Span::styled(after, Style::default().fg(theme.text)),
+    ])
+}
+
+
 /// Renders the F9 top menu (`menu.rs`): whichever level's items are
 /// current (`MenuLevel::items`), with the highlighted row picked out.
 fn draw_main_menu(frame: &mut Frame, area: Rect, menu: &MainMenu, theme: &Theme) {
@@ -469,7 +551,7 @@ fn draw_command_line(frame: &mut Frame, area: Rect, command_line: &str, shell_na
 fn draw_function_keys(frame: &mut Frame, area: Rect, theme: &Theme) {
     const LABELS: [(&str, &str); 10] = [
         ("F1", "Help"), ("F2", "Bookmarks"), ("F3", "View"), ("F4", "Edit"),
-        ("F5", "Copy"), ("F6", "Move"), ("F7", "Folder"), ("F8", "Delete"),
+        ("F5", "Copy"), ("F6", "RenMov"), ("F7", "Folder"), ("F8", "Delete"),
         ("F9", "Menu"), ("F10", "Quit"),
     ];
 
