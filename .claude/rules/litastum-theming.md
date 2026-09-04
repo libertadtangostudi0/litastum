@@ -156,6 +156,18 @@ original design, not a stretch invented here:
 - `entity.name.function`, `support.function` → `blue`
 - `entity.name.type`, `entity.name.class`, `support.type` → `cyan`
 - `variable.parameter`, `entity.name.tag` → `red`
+- `markup.heading` (bold) → `cyan`, `markup.bold` (bold) → `yellow`,
+  `markup.italic`/`markup.quote` (italic) → `purple`/`brightBlack`,
+  `markup.list`/list-item punctuation → `red`, links → `blue`, code
+  spans/blocks → `green`, heading/bold/italic/link punctuation markers
+  → `brightBlack` — added after a report that `.md` files "have no
+  highlighting" under a *custom* `editor_theme`: the highlighter was
+  genuinely running (`syntect`'s bundled default set does include
+  Markdown), but every `markup.*` scope it emitted fell through to
+  plain `foreground` with nothing here naming it, since the original
+  scope list above was code-only. The built-in `dracula` fallback
+  theme already had real `markup.*` rules of its own, which is why
+  this only showed up once a custom scheme was applied
 - everything else (plain text, punctuation/operators) uses `foreground`
   unmodified — deliberately modest, not an exhaustive TextMate grammar
 
@@ -167,6 +179,41 @@ is still called first with the named theme regardless — it's also what
 resolves the file extension to the actual grammar (`SyntaxReference`)
 and bundles the matching `theme_set`/`syntax_set`; only the color
 `Theme` inside it gets swapped out.
+
+## Bundled grammars for what `syntect`'s default set is missing
+
+`syntect`'s bundled default syntax set doesn't cover every real-world
+extension — confirmed missing: PowerShell (`.ps1`/`.psm1`/`.psd1`).
+`editor.rs::custom_extension_highlighter` is the fallback path,
+consulted only when `SyntaxHighlighter::new` (the normal, `syntect`-
+bundled lookup) fails for a given extension:
+
+- `editor.rs::POWERSHELL_SYNTAX` — a `.sublime-syntax` (YAML) grammar
+  bundled at compile time via `include_str!`, from
+  github.com/SublimeText/PowerShell (MIT license — see
+  `assets/syntax/PowerShell.LICENSE.txt`).
+- **Why not github.com/PowerShell/EditorSyntax** (the obvious first
+  choice, Microsoft's own repo): it only ships a `.tmLanguage` (plist
+  XML) grammar, and `syntect` doesn't load that format for syntax
+  definitions at all — `SyntaxDefinition::load_from_str` only parses
+  YAML `.sublime-syntax`; `syntect`'s `plist-load` feature (on by
+  default) covers `.tmTheme` *color themes*, an entirely different
+  thing from `.tmLanguage` *grammars*. Downloaded it, discovered this,
+  swapped to the SublimeText/PowerShell source instead, which already
+  ships the YAML format.
+- `editor.rs::powershell_syntax_set()` loads it into its own minimal
+  `SyntaxSet` via `SyntaxSetBuilder`, lazily (only if a matching file
+  is actually opened) — not merged into `edtui`'s own shared default
+  `SyntaxSet`, since `syntect::parsing::SyntaxSet` isn't `Clone` and
+  there's no cheap way to extend the one `edtui` already loaded without
+  reloading the entire default bundle a second time just to add one
+  grammar.
+- Any future "extension X has no highlighting" report should check
+  `editor::tests::syntect_bundles_rust_but_not_powershell`-style first
+  (does `syntect`'s own bundled set actually lack it, like PowerShell —
+  or is it present but under-themed, like Markdown was — see the
+  `markup.*` scopes above) before assuming a new grammar needs bundling
+  at all.
 
 ## Explicitly out of scope for now
 

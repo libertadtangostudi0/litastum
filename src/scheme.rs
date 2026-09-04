@@ -1,5 +1,5 @@
 use edtui::syntect::highlighting::{
-    Color as SynColor, ScopeSelectors, StyleModifier, Theme as SynTheme, ThemeItem, ThemeSettings,
+    Color as SynColor, FontStyle, ScopeSelectors, StyleModifier, Theme as SynTheme, ThemeItem, ThemeSettings,
 };
 use ratatui::style::Color;
 use serde::Deserialize;
@@ -96,6 +96,21 @@ impl ColorScheme {
     /// keyword/string/comment/etc. roles (that mapping is base16's own
     /// original design, not a stretch we're inventing). Deliberately
     /// modest: common scopes only, not an exhaustive TextMate grammar.
+    ///
+    /// Includes `markup.*` (Markdown headings/bold/italic/lists/links/
+    /// quotes/code) alongside the original code-oriented scopes — found
+    /// missing after a report that `.md` files "have no highlighting"
+    /// under a custom `editor_theme`: `syntect`'s bundled default set
+    /// *does* include a Markdown grammar (unlike `.ps1` — see
+    /// `editor.rs`'s `syntect_bundles_rust_but_not_powershell` test),
+    /// so the highlighter was genuinely running, but every `markup.*`
+    /// scope it emitted fell through to this theme's plain `foreground`
+    /// with nothing here naming it — indistinguishable from "no
+    /// highlighting" even though it technically wasn't that. The
+    /// built-in `dracula` fallback theme (`editor.rs::SYNTAX_THEME`,
+    /// used with no `editor_theme` configured) already had real
+    /// `markup.*` rules of its own, which is why this gap only showed
+    /// up once a *custom* scheme was applied.
     pub fn to_syntax_theme(&self) -> SynTheme {
         let settings = ThemeSettings {
             background: Some(syn_rgb(&self.background)),
@@ -113,6 +128,21 @@ impl ColorScheme {
             scope_item("entity.name.function, support.function", &self.blue),
             scope_item("entity.name.type, entity.name.class, support.type", &self.cyan),
             scope_item("variable.parameter, entity.name.tag", &self.red),
+            // Markdown (and other markup-language) scopes -- picked to
+            // stay visually distinct from the code scopes above, not
+            // copied from any particular reference theme.
+            bold_scope_item("markup.heading", &self.cyan),
+            bold_scope_item("markup.bold", &self.yellow),
+            italic_scope_item("markup.italic", &self.purple),
+            scope_item("markup.list, punctuation.definition.list_item", &self.red),
+            italic_scope_item("markup.quote", &self.bright_black),
+            scope_item("markup.underline.link, markup.link, string.other.link", &self.blue),
+            scope_item("markup.raw, markup.raw.inline, markup.raw.block", &self.green),
+            scope_item(
+                "punctuation.definition.heading, punctuation.definition.bold, \
+                 punctuation.definition.italic, punctuation.definition.link",
+                &self.bright_black,
+            ),
         ];
 
         SynTheme {
@@ -129,12 +159,31 @@ impl ColorScheme {
 /// known-valid TextMate scope selector (never user input), so a parse
 /// failure here would mean a typo in this file, not bad theme data.
 fn scope_item(selector: &str, hex: &str) -> ThemeItem {
+    scope_item_with_style(selector, hex, None)
+}
+
+
+/// A scope rule rendered bold — `markup.heading`/`markup.bold`, so
+/// headings and bold text actually look bold in the editor, not just
+/// differently colored.
+fn bold_scope_item(selector: &str, hex: &str) -> ThemeItem {
+    scope_item_with_style(selector, hex, Some(FontStyle::BOLD))
+}
+
+
+/// A scope rule rendered italic — `markup.italic`/`markup.quote`.
+fn italic_scope_item(selector: &str, hex: &str) -> ThemeItem {
+    scope_item_with_style(selector, hex, Some(FontStyle::ITALIC))
+}
+
+
+fn scope_item_with_style(selector: &str, hex: &str, font_style: Option<FontStyle>) -> ThemeItem {
     ThemeItem {
         scope: selector.parse::<ScopeSelectors>().expect("hardcoded scope selector must be valid"),
         style: StyleModifier {
             foreground: Some(syn_rgb(hex)),
             background: None,
-            font_style: None,
+            font_style,
         },
     }
 }
@@ -264,5 +313,48 @@ mod tests {
         assert_eq!(syntax_theme.settings.background, Some(SynColor { r: 0x1e, g: 0x1e, b: 0x1e, a: 255 }));
         assert_eq!(syntax_theme.settings.foreground, Some(SynColor { r: 0xff, g: 0xff, b: 0xff, a: 255 }));
         assert!(!syntax_theme.scopes.is_empty());
+    }
+
+    /// Resolves the style `syntect` would actually apply to a single
+    /// TextMate scope under a derived theme — via the real
+    /// `highlighting::Highlighter`, not just checking our `scopes` list
+    /// contains a matching entry, so this fails if the selector syntax
+    /// itself is wrong (e.g. doesn't actually match what it's meant to)
+    /// as well as if the mapping is missing outright.
+    fn resolve_style(theme: &SynTheme, scope: &str) -> edtui::syntect::highlighting::Style {
+        use std::str::FromStr;
+
+        use edtui::syntect::highlighting::Highlighter;
+        use edtui::syntect::parsing::ScopeStack;
+
+        let stack = ScopeStack::from_str(scope).expect("valid scope string");
+        Highlighter::new(theme).style_for_stack(stack.as_slice())
+    }
+
+    /// Regression test for the "`.md` files have no highlighting under
+    /// a custom theme" report: before `markup.*` scopes were added to
+    /// `to_syntax_theme`, `markup.heading`/`markup.bold` resolved to the
+    /// plain foreground color with no bold, indistinguishable from
+    /// unstyled text — even though the highlighter itself was running
+    /// (`syntect`'s bundled Markdown grammar *is* present; see
+    /// `editor.rs`'s `syntect_bundles_rust_but_not_powershell` test for
+    /// the contrasting case where the grammar itself is missing).
+    #[test]
+    fn to_syntax_theme_gives_markdown_headings_and_bold_a_real_style() {
+        let scheme = ColorScheme::from_json_str(APPLE_SYSTEM_COLORS_JSON).unwrap();
+        let syntax_theme = scheme.to_syntax_theme();
+        let foreground = syn_rgb(&scheme.foreground);
+
+        let heading_style = resolve_style(&syntax_theme, "markup.heading");
+        assert_eq!(heading_style.foreground, syn_rgb(&scheme.cyan));
+        assert_ne!(heading_style.foreground, foreground, "should be colored, not plain foreground");
+        assert!(heading_style.font_style.contains(FontStyle::BOLD));
+
+        let bold_style = resolve_style(&syntax_theme, "markup.bold");
+        assert_eq!(bold_style.foreground, syn_rgb(&scheme.yellow));
+        assert!(bold_style.font_style.contains(FontStyle::BOLD));
+
+        let link_style = resolve_style(&syntax_theme, "markup.underline.link");
+        assert_eq!(link_style.foreground, syn_rgb(&scheme.blue));
     }
 }

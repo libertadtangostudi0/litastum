@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
 use arboard::Clipboard as OsClipboard;
 use crossterm::event::KeyEvent;
@@ -12,7 +13,8 @@ use edtui::actions::{
 use edtui::clipboard::ClipboardTrait;
 use edtui::events::{KeyEventHandler, KeyEventRegister, KeyInput};
 use edtui::syntect::highlighting::Theme as SynTheme;
-use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Lines, SyntaxHighlighter};
+use edtui::syntect::parsing::{SyntaxDefinition, SyntaxSet, SyntaxSetBuilder};
+use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Lines, SyntaxHighlighter, THEME_SET};
 use ratatui::style::Style;
 use ratatui::widgets::Block;
 use tracing::{debug, warn};
@@ -29,6 +31,60 @@ use crate::theme::Theme;
 /// the same way everywhere in the crate's docs, so there's no similar
 /// trap.
 const SYNTAX_THEME: &str = "dracula";
+
+/// A `.sublime-syntax` (YAML) PowerShell grammar, bundled at compile
+/// time — `syntect`'s own default syntax set (sourced from
+/// sublimehq/Packages) simply doesn't include PowerShell at all (see
+/// `syntect_bundles_rust_but_not_powershell` below). Fixing that for
+/// real needs a real grammar; `syntect` only loads the YAML
+/// `.sublime-syntax` format itself (its `plist-load` feature is for
+/// `.tmTheme` *color themes*, not `.tmLanguage` grammars — the obvious
+/// first choice, Microsoft's own github.com/PowerShell/EditorSyntax,
+/// ships only a `.tmLanguage` and turned out to be a dead end for that
+/// reason). This one is from github.com/SublimeText/PowerShell (MIT
+/// license, `assets/syntax/PowerShell.LICENSE.txt`), which already
+/// ships the YAML format `syntect` actually wants.
+const POWERSHELL_SYNTAX: &str = include_str!("../assets/syntax/PowerShell.sublime-syntax");
+
+
+/// A `SyntaxSet` containing just the bundled `POWERSHELL_SYNTAX` (not
+/// `edtui`'s own shared default set — `syntect::parsing::SyntaxSet`
+/// isn't `Clone`, so there's no cheap way to extend the one `edtui`
+/// already loaded; building a second, minimal one just for this is
+/// simpler than re-loading the entire default bundle a second time).
+/// Parsed once, lazily, only if a `.ps1`/`.psm1`/`.psd1` file is
+/// actually opened.
+fn powershell_syntax_set() -> &'static Arc<SyntaxSet> {
+    static SET: OnceLock<Arc<SyntaxSet>> = OnceLock::new();
+    SET.get_or_init(|| {
+        let mut builder = SyntaxSetBuilder::new();
+        match SyntaxDefinition::load_from_str(POWERSHELL_SYNTAX, true, None) {
+            Ok(syntax) => builder.add(syntax),
+            Err(err) => warn!(%err, "failed to parse bundled PowerShell.sublime-syntax"),
+        }
+        Arc::new(builder.build())
+    })
+}
+
+
+/// Builds a `SyntaxHighlighter` from our own bundled grammar
+/// (`powershell_syntax_set`) for an extension `syntect`'s bundled
+/// default set doesn't cover — `None` if `ext` isn't one this set
+/// actually has a syntax for (case-insensitively, same as `syntect`'s
+/// own `find_syntax_by_extension`) or if parsing the bundled grammar
+/// failed at startup (already logged there).
+fn custom_extension_highlighter(ext: &str, custom_syntax_theme: &Option<SynTheme>) -> Option<SyntaxHighlighter> {
+    let syntax_set = powershell_syntax_set();
+    let syntax_ref = syntax_set.find_syntax_by_extension(ext)?.clone();
+
+    let theme_set = THEME_SET.clone();
+    let theme = match custom_syntax_theme {
+        Some(custom) => custom.clone(),
+        None => theme_set.themes.get(SYNTAX_THEME)?.clone(),
+    };
+
+    Some(SyntaxHighlighter::with_sets(theme, theme_set, syntax_ref, syntax_set.clone()))
+}
 
 
 /// A single open-file editing session, backed by `edtui`. Owns the path
@@ -138,8 +194,10 @@ impl Editor {
                     Some(highlighter)
                 }
                 Err(err) => {
-                    debug!(?err, ext, "no syntax highlighting for this extension");
-                    None
+                    debug!(?err, ext, "not in syntect's bundled set, trying our own custom grammars");
+                    let highlighter = custom_extension_highlighter(ext, custom_syntax_theme);
+                    debug!(ext, found = highlighter.is_some(), "custom grammar lookup");
+                    highlighter
                 }
             }
         });
@@ -331,13 +389,47 @@ mod tests {
     /// Pins down what's actually true about `syntect`'s bundled default
     /// syntax set, found by hand while debugging a "no highlighting for
     /// .ps1" report: `.rs` is bundled, `.ps1` (PowerShell) is not — not
-    /// a bug in `Editor::view`'s extension lookup, an upstream gap. If
-    /// `syntect` ever adds/drops one of these, this will fail and flag
-    /// it rather than silently changing behavior.
+    /// a bug in `Editor::view`'s extension lookup, an upstream gap, and
+    /// the reason `custom_extension_highlighter`/`POWERSHELL_SYNTAX`
+    /// exist at all. If `syntect` ever adds/drops one of these, this
+    /// will fail and flag it rather than silently changing behavior.
     #[test]
     fn syntect_bundles_rust_but_not_powershell() {
         assert!(SyntaxHighlighter::new(SYNTAX_THEME, "rs").is_ok());
         assert!(SyntaxHighlighter::new(SYNTAX_THEME, "ps1").is_err());
+    }
+
+    /// The actual fix for the gap above: our own bundled
+    /// `.sublime-syntax` grammar covers what `syntect`'s default set
+    /// doesn't, for all three PowerShell extensions (case-insensitively,
+    /// matching `find_syntax_by_extension`'s own behavior) — and stays
+    /// `None` for something neither set has, rather than panicking.
+    #[test]
+    fn custom_extension_highlighter_covers_powershell_extensions() {
+        assert!(custom_extension_highlighter("ps1", &None).is_some());
+        assert!(custom_extension_highlighter("PS1", &None).is_some(), "should match case-insensitively");
+        assert!(custom_extension_highlighter("psm1", &None).is_some());
+        assert!(custom_extension_highlighter("psd1", &None).is_some());
+        assert!(custom_extension_highlighter("rs", &None).is_none(), "not our job -- syntect's own set already has this");
+        assert!(custom_extension_highlighter("made-up-extension", &None).is_none());
+    }
+
+    /// `Editor::view`'s actual fallback path, end to end: a `.ps1` file
+    /// gets a working `syntax_highlighter` from `EditorView`, not just
+    /// from calling `custom_extension_highlighter` directly.
+    #[test]
+    fn opening_a_ps1_file_gets_a_working_syntax_highlighter() {
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("litastum-editor-ps1-test-{}-{n}.ps1", std::process::id()));
+        fs::write(&path, "Write-Host 'hi'\n").expect("write test fixture file");
+        let mut editor = Editor::open(path, None).expect("open .ps1 test fixture");
+
+        // EditorView doesn't expose whether a highlighter ended up
+        // attached, so this only proves `view()` doesn't panic building
+        // one for `.ps1` -- `custom_extension_highlighter_covers_*`
+        // above is what actually pins down that it resolves to `Some`.
+        let _ = editor.view(&Theme::dark());
     }
 
     #[test]

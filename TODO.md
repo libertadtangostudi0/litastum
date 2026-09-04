@@ -34,14 +34,36 @@ Near-term, actionable items. Full staged plan:
       transitive dependency — built fine locally, but is this project's
       first non-pure-Rust dependency; watch for build issues on
       environments without a C toolchain — see [[litastum-stack]]
-- [ ] No syntax highlighting for `.ps1` (PowerShell) — confirmed by
-      hand (`editor::tests::syntect_bundles_rust_but_not_powershell`)
-      that `syntect`'s bundled default syntax set just doesn't include
-      PowerShell at all (`.rs`/Rust *is* bundled and works fine — this
-      isn't our extension-lookup logic being wrong). Fixing it for real
-      means sourcing and bundling a PowerShell `.sublime-syntax`/
-      `.tmLanguage` grammar file ourselves via `SyntaxSetBuilder`, not
-      done yet — a real, separate task, not attempted here
+- [x] Syntax highlighting for `.ps1`/`.psm1`/`.psd1` (PowerShell) —
+      `syntect`'s bundled default set doesn't include PowerShell at all
+      (confirmed by `editor::tests::syntect_bundles_rust_but_not_powershell`;
+      `.rs`/Rust *is* bundled, so this wasn't our extension-lookup logic
+      being wrong). Fixed by bundling our own grammar at compile time
+      (`editor.rs::POWERSHELL_SYNTAX`, `assets/syntax/PowerShell.sublime-syntax`
+      — from github.com/SublimeText/PowerShell, MIT license, see
+      `assets/syntax/PowerShell.LICENSE.txt`) and loading it into a
+      second, minimal `SyntaxSet` via `SyntaxSetBuilder`
+      (`editor.rs::powershell_syntax_set`), since `syntect` only loads
+      the YAML `.sublime-syntax` format itself — its `plist-load`
+      feature covers `.tmTheme` *color themes*, not `.tmLanguage`
+      *grammars*, which is why the obvious first choice
+      (github.com/PowerShell/EditorSyntax, `.tmLanguage`-only) turned
+      out to be a dead end and had to be swapped out
+- [x] Syntax highlighting for `.md` under a *custom* `editor_theme` —
+      `syntect`'s bundled Markdown grammar was always found fine (the
+      highlighter really was running), but `scheme.rs::to_syntax_theme`
+      only ever defined code-oriented scopes (keyword/string/comment/
+      ...), so every `markup.*` scope Markdown actually emits
+      (headings, bold, italic, lists, links, quotes, code spans) fell
+      through to plain foreground — indistinguishable from "no
+      highlighting" even though it technically wasn't that. The
+      built-in `dracula` fallback theme (used with no `editor_theme`
+      configured) already had real `markup.*` rules of its own, which
+      is why this only showed up once a custom scheme was applied.
+      Fixed by adding `markup.*` scope rules to `to_syntax_theme`,
+      verified with a test that resolves the actual style via
+      `syntect::highlighting::Highlighter` rather than just checking
+      the scope list contains an entry
 
 ## RESOLVED: Ctrl+S / Ctrl+C / Ctrl+V / Ctrl+X (2026-09-04)
 
