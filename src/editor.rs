@@ -14,7 +14,10 @@ use edtui::clipboard::ClipboardTrait;
 use edtui::events::{KeyEventHandler, KeyEventRegister, KeyInput};
 use edtui::syntect::highlighting::Theme as SynTheme;
 use edtui::syntect::parsing::{SyntaxDefinition, SyntaxSet, SyntaxSetBuilder};
-use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Lines, SyntaxHighlighter, THEME_SET};
+use edtui::{
+    EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, LineNumbers, Lines, SyntaxHighlighter,
+    THEME_SET,
+};
 use ratatui::style::Style;
 use ratatui::widgets::Block;
 use tracing::{debug, warn};
@@ -215,11 +218,19 @@ impl Editor {
             // which read as an odd shape rather than a normal caret.
             .hide_cursor()
             .selection_style(Style::default().fg(theme.text).bg(theme.current_row_bg))
-            .hide_status_line();
+            .hide_status_line()
+            // Absolute line numbers, themed to match the rest of the
+            // chrome (edtui's own default is a hardcoded black/gray
+            // gutter, unrelated to whatever scheme is active) rather
+            // than relative — this is a general-purpose text editor,
+            // not a modal vim-style one where relative numbers help
+            // with `dj`/`5k`-style motions.
+            .line_numbers_style(Style::default().fg(theme.text_dim).bg(theme.bg));
 
         EditorView::new(&mut self.state)
             .theme(editor_theme)
             .syntax_highlighter(syntax_highlighter)
+            .line_numbers(LineNumbers::Absolute)
     }
 
 

@@ -20,6 +20,12 @@ Near-term, actionable items. Full staged plan:
       `syntect`-backed) — switched engines from `tui-textarea` to
       `edtui` with our own non-modal keymap to get this; see
       [[litastum-stack]] for the full story and lessons learned
+- [x] Line numbers, on by default — `EditorView::line_numbers(LineNumbers::Absolute)`,
+      gutter themed via `EditorTheme::line_numbers_style` (`theme.text_dim`
+      on `theme.bg`) instead of `edtui`'s own hardcoded black/gray
+      default. Absolute, not relative — this is a standard (non-modal)
+      editor, not a vim-style one where relative numbers help with
+      motion counts
 - [ ] Handle non-UTF-8 / binary files without just silently doing
       nothing on F4 — at least a status-bar message once one exists
 - [ ] Ctrl+V over an active selection doesn't replace it (clears the
