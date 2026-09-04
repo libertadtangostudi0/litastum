@@ -68,9 +68,11 @@ feature.
   known-working example, found automatically via the cwd fallback
   above when run from the repo root — and it's also the fixture the
   tests in `scheme.rs` parse.
-- **F9 → Settings → Color schemes** opens `theme_menu.rs` (`menu.rs`
+- **F9 → Options → Color schemes** opens `theme_menu.rs` (`menu.rs`
   is the F9 top menu itself — not Far Manager's real top-menu bar,
-  just enough structure to reach this): lists whatever
+  just enough structure to reach this and `Options`' sibling `Save
+  setup`/`Commands`' `Find file`/`History` — see `TODO.md`): lists
+  whatever
   `list_theme_names()` finds in `themes/` at that moment, `Enter`
   applies the highlighted one as *both*
   `interface_theme` and `editor_theme` (the common case), `I`/`E` apply

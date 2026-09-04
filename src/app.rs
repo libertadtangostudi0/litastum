@@ -3,8 +3,9 @@ use std::path::PathBuf;
 
 use edtui::syntect::highlighting::Theme as SynTheme;
 
-use crate::command_line;
+use crate::command_line::{self, CommandHistoryMenu};
 use crate::editor::Editor;
+use crate::find_file::FindFileState;
 use crate::menu::MainMenu;
 use crate::panel::Panel;
 use crate::shell::{self, ShellProfile};
@@ -40,6 +41,10 @@ pub enum Mode {
     ThemeMenu(ThemeMenu),
     /// The Ctrl+P shell-profile picker popup, shown over the browser.
     ShellMenu(ShellMenu),
+    /// F9 → Commands → Find file.
+    FindFile(FindFileState),
+    /// F9 → Commands → History.
+    CommandHistory(CommandHistoryMenu),
 }
 
 
@@ -129,6 +134,10 @@ pub struct App {
     /// `shell.rs`. Never empty; `active_shell` indexes into it.
     pub shell_profiles: Vec<ShellProfile>,
     pub active_shell: usize,
+    /// Every command actually run from the command line, oldest first
+    /// — see `command_line::record_history`/`MAX_HISTORY` and the F9 →
+    /// Commands → History popup. Session-only, not persisted.
+    pub command_history: Vec<String>,
 }
 
 
@@ -148,6 +157,7 @@ impl App {
             command_line_completion: None,
             shell_profiles: shell::builtin_profiles(),
             active_shell: 0,
+            command_history: Vec::new(),
         })
     }
 

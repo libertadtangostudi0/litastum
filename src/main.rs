@@ -5,6 +5,7 @@ mod config;
 mod confirm;
 mod editor;
 mod editor_keymap;
+mod find_file;
 mod fs_ops;
 mod keymap;
 mod logging;
@@ -39,6 +40,16 @@ fn main() -> Result<()> {
     let mut terminal = setup_terminal()?;
     let (theme, syntax_theme) = config::load_active_theme();
     let mut app = App::new(start_dir, theme, syntax_theme)?;
+    // Applies a shell profile saved via F9 -> Options -> Save setup, if
+    // its name still matches one of the built-in profiles -- a name
+    // that no longer exists (profiles changed between runs) just falls
+    // back to the default at index 0, same as a broken theme choice
+    // falls back rather than failing startup.
+    if let Some(name) = config::load_active_shell() {
+        if let Some(index) = app.shell_profiles.iter().position(|profile| profile.name == name) {
+            app.active_shell = index;
+        }
+    }
     let result = run(&mut terminal, &mut app);
     restore_terminal(&mut terminal)?;
     result
@@ -96,6 +107,8 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
         Mode::MainMenu(_) => menu::handle_main_menu_key(app, key),
         Mode::ThemeMenu(_) => theme_menu::handle_theme_menu_key(app, key),
         Mode::ShellMenu(_) => shell::handle_shell_menu_key(app, key),
+        Mode::FindFile(_) => find_file::handle_find_file_key(app, key),
+        Mode::CommandHistory(_) => command_line::handle_history_key(app, key),
         Mode::Browsing => command_line::handle_browsing_key(app, key, terminal),
     }
 }

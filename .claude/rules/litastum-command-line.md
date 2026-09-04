@@ -48,6 +48,18 @@ already handle the key):
   which also resolves symlinks and — on Windows — prepends the ugly
   `\\?\` extended-length prefix, neither of which is wanted just to
   clean up `..`.
+- **`cls`/`clear` are special-cased too**, the same way `cd` is —
+  `run_command_line` calls `terminal.clear()` directly and never
+  suspends the TUI at all, instead of actually shelling out. Found by
+  running `cls` for real: a screen-clear command's entire job is
+  leaving nothing on screen, so shelling out to a real `cls` wiped even
+  the `"{cwd}> cls"` prompt line printed for every other command, and
+  the "Press any key to continue..." pause (which exists to protect
+  real command *output* from vanishing) ended up guarding nothing —
+  just a stray message on an otherwise blank screen, reported as a
+  broken-looking screen. `terminal.clear()` is what the command is
+  actually trying to accomplish anyway, far more directly than a
+  subprocess round-trip.
 - **A command actually runs by suspending the TUI and inheriting
   stdio** (`command_line.rs::run_command_line`) — not a captured/parsed
   output pane. This is deliberate: it's what makes interactive things

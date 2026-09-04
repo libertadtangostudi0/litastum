@@ -10,19 +10,23 @@ use ratatui::{
 use tracing::debug;
 
 use crate::app::{App, Mode};
+use crate::command_line::CommandHistoryMenu;
+use crate::config;
+use crate::find_file::FindFileState;
 use crate::theme::Theme;
 use crate::theme_menu::ThemeMenu;
 use crate::ui::centered_rect;
 
-/// F9's top menu. Currently just enough structure to reach the color
-/// scheme picker through a "Settings" submenu (what was actually
-/// asked for) — not Far Manager's full Left/Files/Commands/Options/
+/// F9's top menu. Enough structure to reach what's actually been asked
+/// for so far (Commands → Find file/History, Options → Color schemes/
+/// Save setup) — not Far Manager's full Left/Files/Commands/Options/
 /// View/Right top-menu bar; see `TODO.md` for what a real one would
 /// still need.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuLevel {
     Main,
-    Settings,
+    Commands,
+    Options,
 }
 
 
@@ -31,8 +35,9 @@ impl MenuLevel {
     /// indexes into this.
     pub fn items(self) -> &'static [&'static str] {
         match self {
-            MenuLevel::Main => &["Settings"],
-            MenuLevel::Settings => &["Color schemes"],
+            MenuLevel::Main => &["Commands", "Options"],
+            MenuLevel::Commands => &["Find file", "History"],
+            MenuLevel::Options => &["Color schemes", "Save setup"],
         }
     }
 }
@@ -62,19 +67,22 @@ impl MainMenu {
     }
 
 
-    /// Descends into the "Settings" submenu, resetting the cursor.
-    pub fn enter_settings(&mut self) {
-        self.level = MenuLevel::Settings;
+    /// Descends into `level`, resetting the cursor.
+    pub fn enter(&mut self, level: MenuLevel) {
+        self.level = level;
         self.selected = 0;
     }
 
 
     /// Backs up one level. Returns `true` if it moved up a level (the
     /// caller stays in the menu); `false` if already at the top level
-    /// (the caller should close the menu entirely).
+    /// (the caller should close the menu entirely). Every non-`Main`
+    /// level's parent is `Main` — fine while the menu stays two levels
+    /// deep; would need each level to know its own parent if a third
+    /// level is ever added.
     pub fn back(&mut self) -> bool {
         match self.level {
-            MenuLevel::Settings => {
+            MenuLevel::Commands | MenuLevel::Options => {
                 self.level = MenuLevel::Main;
                 self.selected = 0;
                 true
@@ -107,11 +115,11 @@ pub fn resolve(key: KeyEvent) -> MenuCommand {
 
 
 /// Key handling on the F9 top menu: `Up`/`Down` move, `Enter` descends
-/// into a submenu or, at the deepest level ("Color schemes"), opens
-/// `Mode::ThemeMenu`; `Esc` backs up one level, or closes the menu
-/// entirely if already at the top. Moved here from `main.rs` so this
-/// module owns its own state (`MainMenu`) *and* handling, the same way
-/// `theme_menu.rs` does for its own picker.
+/// into a submenu or, at a leaf item, runs whatever that item does;
+/// `Esc` backs up one level, or closes the menu entirely if already at
+/// the top. Moved here from `main.rs` so this module owns its own state
+/// (`MainMenu`) *and* handling, the same way `theme_menu.rs` does for
+/// its own picker.
 pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let Mode::MainMenu(menu_state) = &mut app.mode else {
         return Ok(());
@@ -128,14 +136,30 @@ pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
                 app.mode = Mode::Browsing;
             }
         }
+        // Matched on (level, item label) rather than a positional
+        // index, so adding/reordering an item in `MenuLevel::items`
+        // can't silently wire Select up to the wrong action.
         MenuCommand::Select => {
             let level = menu_state.level;
-            match level {
-                MenuLevel::Main => menu_state.enter_settings(),
-                // Only one item at Settings level today ("Color
-                // schemes"), so Select unconditionally opens it --
-                // revisit once Settings grows more than one item.
-                MenuLevel::Settings => app.mode = Mode::ThemeMenu(ThemeMenu::open()),
+            let item = level.items().get(menu_state.selected).copied();
+            match (level, item) {
+                (MenuLevel::Main, Some("Commands")) => menu_state.enter(MenuLevel::Commands),
+                (MenuLevel::Main, Some("Options")) => menu_state.enter(MenuLevel::Options),
+                (MenuLevel::Commands, Some("Find file")) => app.mode = Mode::FindFile(FindFileState::new()),
+                (MenuLevel::Commands, Some("History")) => app.mode = Mode::CommandHistory(CommandHistoryMenu::open()),
+                (MenuLevel::Options, Some("Color schemes")) => app.mode = Mode::ThemeMenu(ThemeMenu::open()),
+                (MenuLevel::Options, Some("Save setup")) => {
+                    // Far Manager's own Shift+F9 -- persists the
+                    // current session's choices (so far, just which
+                    // shell profile is active) rather than every
+                    // choice auto-persisting the moment it's made, the
+                    // way the theme picker's own choices already do.
+                    let name = app.shell_profiles[app.active_shell].name.clone();
+                    config::save_setup(&name);
+                    debug!(shell = name, "save setup: persisted active shell profile");
+                    app.mode = Mode::Browsing;
+                }
+                _ => {}
             }
         }
         MenuCommand::Ignore => {}
@@ -158,7 +182,8 @@ pub fn draw_main_menu(frame: &mut Frame, area: Rect, menu: &MainMenu, theme: &Th
 
     let title = match menu.level {
         MenuLevel::Main => " Menu ",
-        MenuLevel::Settings => " Settings ",
+        MenuLevel::Commands => " Commands ",
+        MenuLevel::Options => " Options ",
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -201,10 +226,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn move_down_clamped_at_last_item() {
-        let mut menu = MainMenu::open(); // Main level, one item: "Settings"
+    fn move_down_steps_through_main_level_items() {
+        let mut menu = MainMenu::open(); // Main level: ["Commands", "Options"]
         menu.move_down();
-        assert_eq!(menu.selected, 0, "only one item at Main level");
+        assert_eq!(menu.selected, 1);
+        menu.move_down();
+        assert_eq!(menu.selected, 1, "clamped at the last item");
     }
 
     #[test]
@@ -215,19 +242,30 @@ mod tests {
     }
 
     #[test]
-    fn enter_settings_switches_level_and_resets_cursor() {
+    fn enter_switches_level_and_resets_cursor() {
         let mut menu = MainMenu::open();
-        menu.selected = 0;
-        menu.enter_settings();
-        assert_eq!(menu.level, MenuLevel::Settings);
+        menu.selected = 1;
+        menu.enter(MenuLevel::Options);
+        assert_eq!(menu.level, MenuLevel::Options);
         assert_eq!(menu.selected, 0);
-        assert_eq!(menu.level.items(), &["Color schemes"]);
+        assert_eq!(menu.level.items(), &["Color schemes", "Save setup"]);
     }
 
     #[test]
-    fn back_from_settings_returns_to_main() {
+    fn back_from_options_returns_to_main() {
         let mut menu = MainMenu::open();
-        menu.enter_settings();
+        menu.enter(MenuLevel::Options);
+
+        let stayed_in_menu = menu.back();
+
+        assert!(stayed_in_menu);
+        assert_eq!(menu.level, MenuLevel::Main);
+    }
+
+    #[test]
+    fn back_from_commands_returns_to_main() {
+        let mut menu = MainMenu::open();
+        menu.enter(MenuLevel::Commands);
 
         let stayed_in_menu = menu.back();
 
@@ -270,20 +308,32 @@ mod tests {
     }
 
     #[test]
-    fn handle_main_menu_key_select_at_main_level_enters_settings() {
+    fn handle_main_menu_key_select_at_main_level_enters_commands() {
         let mut app = app_in_main_menu();
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
         let Mode::MainMenu(menu) = &app.mode else { panic!("expected Mode::MainMenu") };
-        assert_eq!(menu.level, MenuLevel::Settings);
+        assert_eq!(menu.level, MenuLevel::Commands, "first item at Main level");
     }
 
     #[test]
-    fn handle_main_menu_key_select_at_settings_level_opens_theme_menu() {
+    fn handle_main_menu_key_select_at_main_level_second_item_enters_options() {
         let mut app = app_in_main_menu();
         let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
-        menu.enter_settings();
+        menu.move_down();
+
+        handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        let Mode::MainMenu(menu) = &app.mode else { panic!("expected Mode::MainMenu") };
+        assert_eq!(menu.level, MenuLevel::Options);
+    }
+
+    #[test]
+    fn handle_main_menu_key_select_color_schemes_opens_theme_menu() {
+        let mut app = app_in_main_menu();
+        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
+        menu.enter(MenuLevel::Options); // ["Color schemes", "Save setup"]
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
@@ -291,10 +341,50 @@ mod tests {
     }
 
     #[test]
-    fn handle_main_menu_key_back_at_settings_level_returns_to_main() {
+    fn handle_main_menu_key_select_save_setup_closes_the_menu() {
+        // Doesn't assert the config.json write itself happened --
+        // config::save_setup goes through the real OS config dir, same
+        // reason config.rs's own tests don't exercise it directly (see
+        // that module). This only pins down the app-visible effect:
+        // the action runs (doesn't panic) and the menu closes.
         let mut app = app_in_main_menu();
         let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
-        menu.enter_settings();
+        menu.enter(MenuLevel::Options);
+        menu.move_down(); // "Save setup"
+
+        handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn handle_main_menu_key_select_find_file_opens_find_file_mode() {
+        let mut app = app_in_main_menu();
+        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
+        menu.enter(MenuLevel::Commands); // ["Find file", "History"]
+
+        handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert!(matches!(app.mode, Mode::FindFile(_)));
+    }
+
+    #[test]
+    fn handle_main_menu_key_select_history_opens_command_history_mode() {
+        let mut app = app_in_main_menu();
+        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
+        menu.enter(MenuLevel::Commands);
+        menu.move_down(); // "History"
+
+        handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert!(matches!(app.mode, Mode::CommandHistory(_)));
+    }
+
+    #[test]
+    fn handle_main_menu_key_back_at_options_level_returns_to_main() {
+        let mut app = app_in_main_menu();
+        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
+        menu.enter(MenuLevel::Options);
 
         handle_main_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
 

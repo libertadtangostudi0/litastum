@@ -10,7 +10,7 @@ use crate::app::{App, Mode};
 use crate::editor::Editor;
 use crate::panel::{Entry, HighlightRole, Panel};
 use crate::theme::Theme;
-use crate::{confirm, menu, shell, theme_menu};
+use crate::{command_line, confirm, find_file, menu, shell, theme_menu};
 
 /// Panels narrower than this (per column) fall back to a single column.
 const MIN_COLUMN_WIDTH: u16 = 24;
@@ -42,7 +42,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
         | Mode::ThemeMenu(_)
         | Mode::ShellMenu(_)
         | Mode::ConfirmDelete(_)
-        | Mode::ConfirmTransfer(_) => {}
+        | Mode::ConfirmTransfer(_)
+        | Mode::FindFile(_)
+        | Mode::CommandHistory(_) => {}
     }
 
     let root = Layout::default()
@@ -88,6 +90,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
         Mode::ConfirmTransfer(pending) => {
             let cursor = confirm::draw_confirm_transfer_popup(frame, area, pending, &theme);
             frame.set_cursor_position(cursor);
+        }
+        Mode::FindFile(state) => {
+            if let Some(cursor) = find_file::draw_find_file(frame, area, state, &theme) {
+                frame.set_cursor_position(cursor);
+            }
+        }
+        Mode::CommandHistory(menu) => {
+            command_line::draw_command_history(frame, area, menu, &app.command_history, &theme);
         }
         _ => {}
     }

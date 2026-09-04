@@ -151,7 +151,7 @@ keys, matching how Far Manager itself keeps those two systems separate.
 See [[litastum-theming]] for the full design and the mapping
 conventions.
 
-- [x] F9 → Settings → Color schemes in-app theme picker (`theme_menu.rs`,
+- [x] F9 → Options → Color schemes in-app theme picker (`theme_menu.rs`,
       reached through `menu.rs`) — lists `themes/*.json`, applies live
       (no restart) and persists to `config.json`. See "F9 menu" below
       for how much of a real top-menu bar this actually is (not much)
@@ -177,21 +177,37 @@ conventions.
       struct silences the warning deliberately rather than dropping
       the fields
 
-## F9 menu — two levels landed (Main → Settings → Color schemes), real menu still to do
+## F9 menu — Main → Commands/Options landed, real menu still to do
 
-- [x] `menu.rs` — F9 now opens a top menu (`Settings`) that descends
-      into a submenu (`Color schemes`, → `Mode::ThemeMenu`) instead of
-      jumping straight to the theme picker. `Esc` backs up one level at
-      a time rather than always closing outright.
+- [x] `menu.rs` — F9 opens a top menu (`Main`: `Commands`, `Options`)
+      that descends into a submenu instead of jumping straight to a
+      leaf action. `Esc` backs up one level at a time rather than
+      always closing outright. Dispatch on `Select` is matched on
+      `(level, item label)` rather than a positional index, so
+      reordering `MenuLevel::items` can't silently wire the wrong
+      action to a key.
+- [x] `Options` → `Color schemes` (`Mode::ThemeMenu`, unchanged) and
+      `Save setup` — Far Manager's own Shift+F9, reached only through
+      the menu here (no global hotkey binding, wasn't asked for):
+      persists the current session's choices to `config.json` on
+      demand rather than every choice auto-persisting immediately the
+      way the theme picker's own does. So far, that's just the active
+      shell profile (`config.rs::save_setup`/`load_active_shell`,
+      applied back at startup in `main.rs` if the saved name still
+      matches a built-in profile) — the one setting that wasn't already
+      being persisted somewhere.
+- [x] `Commands` → `Find file` and `History` — see their own sections
+      below.
 
-`menu.rs` is deliberately *just* enough structure to reach the one
-submenu that was actually asked for — not a real F9 top-menu bar (Far
+`menu.rs` is deliberately *just* enough structure to reach what's
+actually been asked for so far — not a real F9 top-menu bar (Far
 Manager's own F9 is Left/Files/Commands/Options/View/Right, each with
-real submenus of their own). Gaps if this grows toward that:
+real submenus of their own, and `Commands`/`Options` here only have two
+items apiece so far). Gaps if this grows toward that:
 
-- [ ] Only one item per level exists (`Settings`, then `Color
-      schemes`) — `MenuLevel::items` would need real content for
-      anything else to show up
+- [ ] `MainMenu::back()` hardcodes every non-`Main` level's parent as
+      `Main` — fine while the menu stays two levels deep, would need
+      each level to know its own parent if a third level is ever added
 - [ ] No keyboard shortcut letters (Far-style `S` for Settings, etc.) —
       `Up`/`Down`/`Enter` only
 - [ ] Ctrl+V-over-selection replacing text, syntax highlighting for a
@@ -205,6 +221,55 @@ real submenus of their own). Gaps if this grows toward that:
 - [ ] Long theme lists aren't scrolled, just clamped to the terminal
       height — fine for a handful of files, not for many
 
+## Find file (`find_file.rs`) — F9 → Commands → Find file, landed, gaps left
+
+Type a filename substring, `Enter` searches recursively from the active
+panel's directory, `Enter` on a result moves the active panel there
+with the file selected. Far Manager's own Alt+F7 — reached only through
+the menu here, no global hotkey (wasn't asked for).
+
+- [x] Recursive substring search (`find_file::search`, case-insensitive,
+      matches directory names too, not just files), capped at 200
+      results / 50,000 visited entries so a huge tree (a repo's own
+      `target/`, `.git/`, `node_modules/`, ...) can't hang the UI
+      indefinitely — deliberately no directory exclusions beyond that
+      cap, a plain substring search same as Far's own "Find file"
+      starts as
+- [ ] No glob/wildcard patterns (`*.rs`) — substring only
+- [ ] No exclusion of `.git`/`target`/`node_modules`/... by default —
+      relies entirely on the visited-entry cap to stay responsive in a
+      big tree, rather than skipping obviously-uninteresting
+      directories up front
+- [ ] Search runs synchronously on the key-handling thread — blocks
+      the UI (no spinner, no cancel) until it finishes; fine for the
+      repo sizes tried so far, would need a background thread for a
+      truly huge tree
+- [ ] No content search (Far's own Alt+F7 can also search *inside*
+      files) — file names only
+- [ ] Results aren't scrolled, just clamped to the terminal height
+
+## History (`command_line.rs`) — F9 → Commands → History, landed, gaps left
+
+Every command actually run from the command line is recorded
+(`command_line::record_history`, `App::command_history`, capped at 50,
+skips an immediate repeat) — F9 → Commands → History lists them,
+`Enter` copies the highlighted one into the command line (doesn't
+auto-run it — recalling something to tweak before running felt like
+the more common case, and never auto-executing is the safer default
+regardless), `Esc` cancels. Far Manager's own Alt+F8 — reached only
+through the menu here, no global hotkey, and deliberately *not*
+`Up`-arrow recall: arrows stay bound to panel navigation on the
+always-live command line (see [[litastum-command-line]]), which is
+exactly why a menu-driven popup was the way to add history at all
+without reopening that conflict.
+
+- [ ] Session-only — not persisted to `config.json`, resets to empty
+      every run
+- [ ] No search/filter within a long history list — just `Up`/`Down`
+- [ ] `cd`s are recorded like any other command, `cls`/`clear` are too
+      — no filtering of "boring" entries
+- [ ] Results aren't scrolled, just clamped to the terminal height
+
 ## Command line (`command_line.rs`, `shell.rs`) — landed, gaps left
 
 Always-live Far Manager-style command line with `cd` special-casing and
@@ -216,8 +281,8 @@ in more detail.
       only) — arrows are needed for panel navigation even while typing,
       so they can't double as text-cursor movement without real
       ambiguity
-- [ ] No command history (no up-arrow recall) — same reason, arrows
-      are taken
+- [ ] No `Up`-arrow history recall — same reason, arrows are taken; see
+      "History" above for the menu-driven way around this instead
 - [ ] Bare `cd` (no argument) is a no-op, not "go to home directory"
 - [x] `Tab` completes the last typed word as a filesystem path
       (`command_line::complete`) instead of always switching panels —
@@ -237,6 +302,13 @@ in more detail.
       None leaves the line untouched. No completion for command *names*
       themselves (`PATH` scanning), only paths — same scope as the
       existing `cd` handling
+- [x] `cls`/`clear` are special-cased like `cd` — `terminal.clear()`
+      directly, no subprocess, no TUI suspend at all. Found by actually
+      running `cls`: shelling out to a real `cls` wiped the `"{cwd}>
+      cls"` prompt line we print for every command, leaving just the
+      "Press any key to continue..." pause floating on an otherwise
+      blank screen — technically working as designed, but looked like
+      a broken/blank screen, reported as one
 - [ ] Shell profile picker has no Git Bash/WSL/pwsh/Azure Cloud Shell
       entries (unlike the Windows Terminal dropdown that prompted this
       feature) — only `cmd`/`powershell` (Windows) or `$SHELL`/`sh`

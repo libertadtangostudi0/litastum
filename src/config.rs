@@ -75,6 +75,13 @@ fn find_scheme(name: &str) -> Option<ColorScheme> {
 struct Config {
     interface_theme: Option<String>,
     editor_theme: Option<String>,
+    /// The `shell.rs::ShellProfile::name` last chosen via F9 → Commands
+    /// → ... wait, → Options → Save setup (Far Manager's own Shift+F9
+    /// "save setup" — persisting the current session's choices on
+    /// demand, rather than every choice auto-persisting the moment it's
+    /// made, the way the theme picker's own choices do). Applied back
+    /// at startup in `main.rs` if it names a profile that still exists.
+    active_shell: Option<String>,
 }
 
 
@@ -216,6 +223,31 @@ pub fn set_editor_theme(name: &str) -> Option<SynTheme> {
 }
 
 
+/// Far Manager's own "Save setup" (Shift+F9): persists `shell_profile_name`
+/// (`app.shell_profiles[app.active_shell].name`) as the shell to start
+/// up with next time — best-effort, same as the theme picker's own
+/// persistence (a write failure is logged but doesn't block anything,
+/// there's no "live preview" to protect here since the choice already
+/// took effect this session). See `load_active_shell` for the other
+/// half.
+pub fn save_setup(shell_profile_name: &str) {
+    if let Some(config_dir) = config_dir() {
+        persist(&config_dir, |config| config.active_shell = Some(shell_profile_name.to_string()));
+    }
+}
+
+
+/// The shell profile name saved by `save_setup`, if any — `main.rs`
+/// looks this up once at startup and applies it if a profile by that
+/// name still exists (`shell.rs::builtin_profiles()` could have changed
+/// between runs, e.g. after an OS upgrade removes `powershell` in favor
+/// of `pwsh`; a stale name just falls back to the default, index 0).
+pub fn load_active_shell() -> Option<String> {
+    let config_dir = config_dir()?;
+    read_config(&config_dir).active_shell
+}
+
+
 /// Reads the current `config.json` (or defaults, if there isn't one
 /// yet), applies `mutate`, and writes it back. Logs and gives up
 /// quietly on any I/O/serialization failure — never panics, and the
@@ -349,6 +381,35 @@ mod tests {
         let config = read_config(&dir);
         assert_eq!(config.interface_theme.as_deref(), Some("new"));
         assert_eq!(config.editor_theme.as_deref(), Some("keep-me"), "unrelated key must survive the write");
+    }
+
+    /// `save_setup`/`load_active_shell` themselves aren't tested
+    /// directly — like `set_interface_theme`/`set_editor_theme`, they
+    /// go through the real OS `config_dir()`, not an injectable path,
+    /// so exercising them here would mutate the actual user's
+    /// `config.json` as a side effect of running the test suite (same
+    /// limitation, same reasoning, as `theme_menu.rs`'s tests). This
+    /// pins down the `active_shell` round trip through the
+    /// injectable-path half both of them are thin wrappers around.
+    #[test]
+    fn active_shell_round_trips_through_try_persist_and_read_config() {
+        let dir = scratch_dir();
+        try_persist(&dir, |c| c.active_shell = Some("PowerShell".to_string())).unwrap();
+
+        let config = read_config(&dir);
+        assert_eq!(config.active_shell.as_deref(), Some("PowerShell"));
+    }
+
+    #[test]
+    fn saving_the_active_shell_does_not_clobber_an_existing_theme_choice() {
+        let dir = scratch_dir();
+        fs::write(dir.join("config.json"), r#"{"interface_theme": "keep-me"}"#).unwrap();
+
+        try_persist(&dir, |c| c.active_shell = Some("Command Prompt".to_string())).unwrap();
+
+        let config = read_config(&dir);
+        assert_eq!(config.interface_theme.as_deref(), Some("keep-me"));
+        assert_eq!(config.active_shell.as_deref(), Some("Command Prompt"));
     }
 
     // Regression coverage for a real bug: theme lookup only checked the
