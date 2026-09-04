@@ -6,13 +6,11 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, Mode, PendingDelete, PendingTransfer, ShellMenu, TransferOp};
+use crate::app::{App, Mode};
 use crate::editor::Editor;
-use crate::menu::{MainMenu, MenuLevel};
 use crate::panel::{Entry, HighlightRole, Panel};
-use crate::shell::ShellProfile;
 use crate::theme::Theme;
-use crate::theme_menu::ThemeMenu;
+use crate::{confirm, menu, shell, theme_menu};
 
 /// Panels narrower than this (per column) fall back to a single column.
 const MIN_COLUMN_WIDTH: u16 = 24;
@@ -83,12 +81,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
     // menu, not in place of it -- unlike Editing/ConfirmDiscard above,
     // which replace the whole screen.
     match &app.mode {
-        Mode::MainMenu(menu) => draw_main_menu(frame, area, menu, &theme),
-        Mode::ThemeMenu(menu) => draw_theme_menu(frame, area, menu, &theme),
-        Mode::ShellMenu(menu) => draw_shell_menu(frame, area, menu, &app.shell_profiles, &theme),
-        Mode::ConfirmDelete(pending) => draw_confirm_delete_popup(frame, area, pending, &theme),
+        Mode::MainMenu(menu) => menu::draw_main_menu(frame, area, menu, &theme),
+        Mode::ThemeMenu(menu) => theme_menu::draw_theme_menu(frame, area, menu, &theme),
+        Mode::ShellMenu(menu) => shell::draw_shell_menu(frame, area, menu, &app.shell_profiles, &theme),
+        Mode::ConfirmDelete(pending) => confirm::draw_confirm_delete_popup(frame, area, pending, &theme),
         Mode::ConfirmTransfer(pending) => {
-            let cursor = draw_confirm_transfer_popup(frame, area, pending, &theme);
+            let cursor = confirm::draw_confirm_transfer_popup(frame, area, pending, &theme);
             frame.set_cursor_position(cursor);
         }
         _ => {}
@@ -254,265 +252,11 @@ fn draw_confirm_discard_popup(frame: &mut Frame, area: Rect, theme: &Theme) {
 }
 
 
-/// Renders the F8 "delete this?" prompt over the browser (same shape
-/// as `draw_confirm_discard_popup`, but for a filesystem entry rather
-/// than unsaved editor text — separate popup since the two prompts
-/// answer unrelated questions and live in unrelated modes).
-fn draw_confirm_delete_popup(frame: &mut Frame, area: Rect, pending: &PendingDelete, theme: &Theme) {
-    let popup = centered_rect(50, 4, area);
-
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.danger))
-        .title(" Delete ");
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-
-    let question = if pending.is_dir {
-        format!("Delete directory '{}' and all its contents?", pending.name)
-    } else {
-        format!("Delete '{}'?", pending.name)
-    };
-
-    let lines = vec![
-        Line::from(Span::styled(question, Style::default().fg(theme.text))),
-        Line::from(vec![
-            Span::styled("Y", Style::default().fg(theme.danger).add_modifier(Modifier::BOLD)),
-            Span::styled(" delete    ", Style::default().fg(theme.text_dim)),
-            Span::styled("N", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-            Span::styled(" / Esc cancel", Style::default().fg(theme.text_dim)),
-        ]),
-    ];
-    frame.render_widget(Paragraph::new(lines), inner);
-}
-
-
-/// Renders the F5/F6 "copy/move to?" prompt: source name and operation
-/// on one line, an editable destination path on the next (defaults to
-/// the other panel's directory — see `command::request_transfer`).
-/// Returns where the real terminal cursor should sit, at the end of
-/// the destination text, same mechanism as the command line's own
-/// cursor (`ui::draw`).
-fn draw_confirm_transfer_popup(frame: &mut Frame, area: Rect, pending: &PendingTransfer, theme: &Theme) -> Position {
-    let popup = centered_rect(60, 6, area);
-
-    frame.render_widget(Clear, popup);
-
-    let verb = match pending.operation {
-        TransferOp::Copy => "Copy",
-        TransferOp::Move => "Move",
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
-        .title(format!(" {verb} "));
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
-        .split(inner);
-
-    let source_line = Line::from(Span::styled(
-        format!("{verb} '{}' to:", pending.name),
-        Style::default().fg(theme.text),
-    ));
-    frame.render_widget(source_line, rows[0]);
-
-    frame.render_widget(destination_line(pending, theme), rows[1]);
-
-    let hint = Line::from(vec![
-        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(format!(" {verb}   "), Style::default().fg(theme.text_dim)),
-        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" cancel", Style::default().fg(theme.text_dim)),
-    ]);
-    frame.render_widget(hint, rows[3]);
-
-    Position {
-        x: rows[1].x + pending.cursor as u16,
-        y: rows[1].y,
-    }
-}
-
-
-/// Renders the destination text with its `Shift+Left`/`Shift+Right`
-/// selection (`text_field::selection_range`), if any, picked out with
-/// the same highlight background used for the active row in a panel
-/// (`theme.current_row_bg`) — no selection just renders as plain text.
-fn destination_line(pending: &PendingTransfer, theme: &Theme) -> Line<'static> {
-    let Some(anchor) = pending.selection_anchor else {
-        return Line::from(Span::styled(pending.destination.clone(), Style::default().fg(theme.text)));
-    };
-
-    let (start, end) = crate::text_field::selection_range(anchor, pending.cursor);
-    let chars: Vec<char> = pending.destination.chars().collect();
-    let before: String = chars[..start].iter().collect();
-    let selected: String = chars[start..end].iter().collect();
-    let after: String = chars[end..].iter().collect();
-
-    Line::from(vec![
-        Span::styled(before, Style::default().fg(theme.text)),
-        Span::styled(selected, Style::default().fg(theme.text).bg(theme.current_row_bg)),
-        Span::styled(after, Style::default().fg(theme.text)),
-    ])
-}
-
-
-/// Renders the F9 top menu (`menu.rs`): whichever level's items are
-/// current (`MenuLevel::items`), with the highlighted row picked out.
-fn draw_main_menu(frame: &mut Frame, area: Rect, menu: &MainMenu, theme: &Theme) {
-    let items = menu.level.items();
-    let height = (items.len() as u16 + 4).clamp(6, area.height);
-    let popup = centered_rect(30, height, area);
-
-    frame.render_widget(Clear, popup);
-
-    let title = match menu.level {
-        MenuLevel::Main => " Menu ",
-        MenuLevel::Settings => " Settings ",
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
-        .title(title);
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner);
-
-    let list_items: Vec<ListItem> = items
-        .iter()
-        .enumerate()
-        .map(|(index, label)| {
-            let style = if index == menu.selected {
-                Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            ListItem::new(Line::from(Span::styled(*label, style)))
-        })
-        .collect();
-    frame.render_widget(List::new(list_items), rows[0]);
-
-    let hint = Line::from(vec![
-        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" open  ", Style::default().fg(theme.text_dim)),
-        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" back", Style::default().fg(theme.text_dim)),
-    ]);
-    frame.render_widget(hint, rows[1]);
-}
-
-
-/// Renders the F9 color-scheme picker popup: a list of theme names
-/// found in the config dir, or a hint that none were found.
-fn draw_theme_menu(frame: &mut Frame, area: Rect, menu: &ThemeMenu, theme: &Theme) {
-    let height = (menu.themes.len().max(1) as u16 + 4).clamp(6, area.height);
-    let popup = centered_rect(46, height, area);
-
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
-        .title(" Color scheme ");
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner);
-
-    if menu.themes.is_empty() {
-        let empty = Paragraph::new(Line::from(Span::styled(
-            "No themes found — drop a Windows Terminal scheme .json",
-            Style::default().fg(theme.text_dim),
-        )));
-        frame.render_widget(empty, rows[0]);
-    } else {
-        let items: Vec<ListItem> = menu
-            .themes
-            .iter()
-            .enumerate()
-            .map(|(index, name)| {
-                let style = if index == menu.selected {
-                    Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(theme.text)
-                };
-                ListItem::new(Line::from(Span::styled(name.clone(), style)))
-            })
-            .collect();
-        frame.render_widget(List::new(items), rows[0]);
-    }
-
-    let hint = Line::from(vec![
-        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" apply both  ", Style::default().fg(theme.text_dim)),
-        Span::styled("I", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled("nterface  ", Style::default().fg(theme.text_dim)),
-        Span::styled("E", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled("ditor  ", Style::default().fg(theme.text_dim)),
-        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" cancel", Style::default().fg(theme.text_dim)),
-    ]);
-    frame.render_widget(hint, rows[1]);
-}
-
-
-/// Renders the `Ctrl+P` shell-profile picker popup.
-fn draw_shell_menu(frame: &mut Frame, area: Rect, menu: &ShellMenu, profiles: &[ShellProfile], theme: &Theme) {
-    let height = (profiles.len() as u16 + 4).clamp(6, area.height);
-    let popup = centered_rect(36, height, area);
-
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
-        .title(" Shell ");
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner);
-
-    let items: Vec<ListItem> = profiles
-        .iter()
-        .enumerate()
-        .map(|(index, profile)| {
-            let style = if index == menu.selected {
-                Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            ListItem::new(Line::from(Span::styled(profile.name.clone(), style)))
-        })
-        .collect();
-    frame.render_widget(List::new(items), rows[0]);
-
-    let hint = Line::from(vec![
-        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" select  ", Style::default().fg(theme.text_dim)),
-        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" cancel", Style::default().fg(theme.text_dim)),
-    ]);
-    frame.render_widget(hint, rows[1]);
-}
-
-
 /// A `width`x`height` rectangle centered within `area`, clamped to fit.
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+/// `pub(crate)` since every popup drawer uses it, and most of those now
+/// live in their own mode-owning module (`menu.rs`, `theme_menu.rs`,
+/// `shell.rs`, `confirm.rs`) rather than here.
+pub(crate) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
     Rect {

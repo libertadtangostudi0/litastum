@@ -1,4 +1,8 @@
+use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tracing::debug;
+
+use crate::app::{App, Mode};
 
 
 /// A user-triggered action while a file is open in the built-in editor,
@@ -57,6 +61,96 @@ pub fn resolve_confirm_discard(key: KeyEvent) -> ConfirmDiscardCommand {
         KeyCode::Char('n' | 'N') | KeyCode::Esc => ConfirmDiscardCommand::Cancel,
         _ => ConfirmDiscardCommand::Ignore,
     }
+}
+
+
+/// Key handling while a file is open in the built-in editor. `Ctrl+S`
+/// and `Esc` are the only things this module resolves itself (`resolve`
+/// above) — everything else, including copy/cut/paste/selection, is
+/// `edtui`'s own concern once forwarded to `Editor::input`. `Esc` is
+/// special-cased further: with an active selection it's forwarded too
+/// (so `edtui`'s own binding cancels the selection), only closing the
+/// editor once there's nothing selected.
+///
+/// Moved here from `main.rs` alongside `resolve`/`resolve_confirm_discard`
+/// so this module owns editor key handling end to end, the same way
+/// `theme_menu.rs`/`menu.rs` each own their own state and handling —
+/// `main.rs` stays a thin dispatcher over `Mode`.
+pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    let command = resolve(key);
+    debug!(?key, ?command, "editor key");
+
+    if command == EditorCommand::Close {
+        let has_selection = matches!(&app.mode, Mode::Editing(editor) if editor.has_selection());
+        if has_selection {
+            let Mode::Editing(active_editor) = &mut app.mode else {
+                return Ok(());
+            };
+            active_editor.input(key);
+            return Ok(());
+        }
+        return close_editor_or_confirm(app);
+    }
+
+    let Mode::Editing(active_editor) = &mut app.mode else {
+        return Ok(());
+    };
+
+    match command {
+        EditorCommand::Close => unreachable!("handled above"),
+        EditorCommand::Save => active_editor.save()?,
+        EditorCommand::Forward => active_editor.input(key),
+    }
+
+    Ok(())
+}
+
+
+/// `Esc` in the editor: closes straight back to browsing if the buffer
+/// has no unsaved changes, otherwise moves to `Mode::ConfirmDiscard`
+/// instead of discarding them silently.
+fn close_editor_or_confirm(app: &mut App) -> Result<()> {
+    let Mode::Editing(editor) = &app.mode else {
+        return Ok(());
+    };
+
+    if !editor.is_dirty() {
+        app.mode = Mode::Browsing;
+        app.active_panel().reload()?;
+        return Ok(());
+    }
+
+    debug!("editor close: unsaved changes, asking to confirm discard");
+    let Mode::Editing(editor) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+        unreachable!("just matched Mode::Editing above");
+    };
+    app.mode = Mode::ConfirmDiscard(editor);
+    Ok(())
+}
+
+
+/// Key handling on the "discard unsaved changes?" prompt: `Y` discards
+/// and returns to browsing, `N`/`Esc` cancels back into the editor with
+/// nothing lost, anything else is ignored.
+pub fn handle_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    let command = resolve_confirm_discard(key);
+    debug!(?key, ?command, "confirm-discard key");
+
+    match command {
+        ConfirmDiscardCommand::Discard => {
+            app.mode = Mode::Browsing;
+            app.active_panel().reload()?;
+        }
+        ConfirmDiscardCommand::Cancel => {
+            let Mode::ConfirmDiscard(editor) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+                unreachable!("only called while in Mode::ConfirmDiscard");
+            };
+            app.mode = Mode::Editing(editor);
+        }
+        ConfirmDiscardCommand::Ignore => {}
+    }
+
+    Ok(())
 }
 
 

@@ -3,11 +3,17 @@
 ## Format: Windows Terminal color scheme JSON, reused as-is
 
 Theme files are exactly the JSON shape Windows Terminal itself uses for
-`colorSchemes`, and what sites like windowsterminalthemes.dev export —
-`name`, `black`..`white` + `bright*` (16 ANSI slots), `background`,
-`foreground`, `selectionBackground`, `cursorColor`, all `"#rrggbb"`.
-No conversion tool: a downloaded file drops straight into the themes
-directory. Parsing lives in `scheme.rs::ColorScheme`.
+`colorSchemes` — `name`, `black`..`white` + `bright*` (16 ANSI slots),
+`background`, `foreground`, `selectionBackground`, `cursorColor`, all
+`"#rrggbb"`. No conversion tool: a downloaded file drops straight into
+the themes directory. Parsing lives in `scheme.rs::ColorScheme`.
+
+**Source for ready-made schemes**: <https://windowsterminalthemes.dev/>
+— pick one there, download its JSON, and drop it into `themes/` (either
+next to the binary/repo, per the cwd fallback below, or the config
+dir's own `themes/` subdirectory). This is where the schemes bundled in
+this repo (`themes/apple-system-colors.json`, `themes/alien-blood.json`,
+`themes/dracula.json`) came from.
 
 ## Interface theme and editor theme are independent, like in Far Manager
 

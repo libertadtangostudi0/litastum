@@ -1,6 +1,18 @@
+use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    Frame,
+};
+use tracing::debug;
 
+use crate::app::{App, Mode};
 use crate::config;
+use crate::theme::Theme;
+use crate::ui::centered_rect;
 
 
 /// State for the F9 "pick a color scheme" popup — a minimal analog of
@@ -74,6 +86,108 @@ pub fn resolve(key: KeyEvent) -> ThemeMenuCommand {
         KeyCode::Esc => ThemeMenuCommand::Close,
         _ => ThemeMenuCommand::Ignore,
     }
+}
+
+
+/// Key handling on the F9 color-scheme picker: `Enter` applies the
+/// highlighted theme as both interface and editor theme, `I`/`E` apply
+/// just one side, `Esc` closes without changing anything. Applying
+/// updates `app.theme`/`app.syntax_theme` immediately — no restart —
+/// and persists the choice to `config.json` on a best-effort basis
+/// (`config.rs` logs and carries on if that write fails; the live
+/// preview still applies). Moved here from `main.rs` so this module
+/// owns its own state (`ThemeMenu`) *and* handling.
+pub fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    let Mode::ThemeMenu(menu) = &mut app.mode else {
+        return Ok(());
+    };
+
+    let command = resolve(key);
+    debug!(?key, ?command, "theme menu key");
+
+    match command {
+        ThemeMenuCommand::Up => menu.move_up(),
+        ThemeMenuCommand::Down => menu.move_down(),
+        ThemeMenuCommand::Close => app.mode = Mode::Browsing,
+        ThemeMenuCommand::ApplyBoth | ThemeMenuCommand::ApplyInterfaceOnly | ThemeMenuCommand::ApplyEditorOnly => {
+            let Some(name) = menu.selected_theme().map(str::to_string) else {
+                return Ok(());
+            };
+            if matches!(command, ThemeMenuCommand::ApplyBoth | ThemeMenuCommand::ApplyInterfaceOnly) {
+                if let Some(theme) = config::set_interface_theme(&name) {
+                    app.theme = theme;
+                }
+            }
+            if matches!(command, ThemeMenuCommand::ApplyBoth | ThemeMenuCommand::ApplyEditorOnly) {
+                if let Some(syntax_theme) = config::set_editor_theme(&name) {
+                    app.syntax_theme = Some(syntax_theme);
+                }
+            }
+            app.mode = Mode::Browsing;
+        }
+        ThemeMenuCommand::Ignore => {}
+    }
+
+    Ok(())
+}
+
+
+/// Renders the F9 color-scheme picker popup: a list of theme names
+/// found in the config dir, or a hint that none were found. Moved here
+/// from `ui.rs` so this module owns state, key handling, and rendering
+/// for its own popup.
+pub fn draw_theme_menu(frame: &mut Frame, area: Rect, menu: &ThemeMenu, theme: &Theme) {
+    let height = (menu.themes.len().max(1) as u16 + 4).clamp(6, area.height);
+    let popup = centered_rect(46, height, area);
+
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent))
+        .title(" Color scheme ");
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    if menu.themes.is_empty() {
+        let empty = Paragraph::new(Line::from(Span::styled(
+            "No themes found — drop a Windows Terminal scheme .json",
+            Style::default().fg(theme.text_dim),
+        )));
+        frame.render_widget(empty, rows[0]);
+    } else {
+        let items: Vec<ListItem> = menu
+            .themes
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                let style = if index == menu.selected {
+                    Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.text)
+                };
+                ListItem::new(Line::from(Span::styled(name.clone(), style)))
+            })
+            .collect();
+        frame.render_widget(List::new(items), rows[0]);
+    }
+
+    let hint = Line::from(vec![
+        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" apply both  ", Style::default().fg(theme.text_dim)),
+        Span::styled("I", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("nterface  ", Style::default().fg(theme.text_dim)),
+        Span::styled("E", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("ditor  ", Style::default().fg(theme.text_dim)),
+        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" cancel", Style::default().fg(theme.text_dim)),
+    ]);
+    frame.render_widget(hint, rows[1]);
 }
 
 

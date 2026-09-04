@@ -8,11 +8,11 @@ use crate::theme::Theme;
 
 
 /// A Windows Terminal-format color scheme — the exact JSON shape
-/// Windows Terminal itself uses for `colorSchemes`, and what sites like
-/// windowsterminalthemes.dev export, so a downloaded file drops in
-/// unmodified. See `.claude/rules/litastum-theming.md` for the mapping
-/// this drives onto our own `Theme` and the editor's syntax theme, and
-/// the reasoning behind it.
+/// Windows Terminal itself uses for `colorSchemes`, and what
+/// <https://windowsterminalthemes.dev/> exports, so a downloaded file
+/// drops in unmodified. See `.claude/rules/litastum-theming.md` for the
+/// mapping this drives onto our own `Theme` and the editor's syntax
+/// theme, and the reasoning behind it.
 ///
 /// `black`/`white`/most `bright*` fields aren't consumed by
 /// `to_theme`/`to_syntax_theme` yet (see the mapping table in
