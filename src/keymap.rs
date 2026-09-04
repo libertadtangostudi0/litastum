@@ -1,4 +1,4 @@
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyEvent};
 
 
 /// A user-triggered action, resolved from a raw key press. Keeps the
@@ -18,6 +18,10 @@ pub enum Command {
     /// `Color schemes` (`theme_menu.rs`); a minimal analog of Far
     /// Manager's F9 menu, scoped to just that path for now.
     OpenMenu,
+    /// F8 — asks to delete the entry under the cursor
+    /// (`Mode::ConfirmDelete`), never deletes directly. Matches Far
+    /// Manager's own F8 binding.
+    DeleteSelected,
     Quit,
 }
 
@@ -32,12 +36,36 @@ pub fn resolve(key: KeyCode) -> Option<Command> {
         KeyCode::Enter => Some(Command::EnterSelected),
         KeyCode::Tab => Some(Command::ToggleActive),
         KeyCode::F(4) => Some(Command::EditSelected),
+        KeyCode::F(8) => Some(Command::DeleteSelected),
         KeyCode::F(9) => Some(Command::OpenMenu),
         // Only F10 quits, matching real Far Manager -- bare letters
         // now type into the always-live command line (main.rs), so a
         // lone 'q' shortcut would swallow the start of typed commands.
         KeyCode::F(10) => Some(Command::Quit),
         _ => None,
+    }
+}
+
+
+/// The choice on the "delete this?" prompt (`Mode::ConfirmDelete`) —
+/// same Y/N/Esc shape as the editor's `ConfirmDiscardCommand`
+/// (`editor_keymap.rs`), kept as its own type rather than shared since
+/// this one lives in browsing mode, not the editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmDeleteCommand {
+    Confirm,
+    Cancel,
+    /// Anything else — the prompt only understands these two answers.
+    Ignore,
+}
+
+
+/// Resolves a raw key press on the delete-confirmation prompt.
+pub fn resolve_confirm_delete(key: KeyEvent) -> ConfirmDeleteCommand {
+    match key.code {
+        KeyCode::Char('y' | 'Y') => ConfirmDeleteCommand::Confirm,
+        KeyCode::Char('n' | 'N') | KeyCode::Esc => ConfirmDeleteCommand::Cancel,
+        _ => ConfirmDeleteCommand::Ignore,
     }
 }
 
@@ -68,5 +96,32 @@ mod tests {
         // any other letter -- only F10 quits, matching real Far
         // Manager. See ARCHITECTURE.md / the plan for this feature.
         assert_eq!(resolve(KeyCode::Char('q')), None);
+    }
+
+    #[test]
+    fn f8_requests_delete() {
+        assert_eq!(resolve(KeyCode::F(8)), Some(Command::DeleteSelected));
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn y_or_uppercase_y_confirms_delete() {
+        assert_eq!(resolve_confirm_delete(key(KeyCode::Char('y'))), ConfirmDeleteCommand::Confirm);
+        assert_eq!(resolve_confirm_delete(key(KeyCode::Char('Y'))), ConfirmDeleteCommand::Confirm);
+    }
+
+    #[test]
+    fn n_or_esc_cancels_delete() {
+        assert_eq!(resolve_confirm_delete(key(KeyCode::Char('n'))), ConfirmDeleteCommand::Cancel);
+        assert_eq!(resolve_confirm_delete(key(KeyCode::Esc)), ConfirmDeleteCommand::Cancel);
+    }
+
+    #[test]
+    fn other_keys_are_ignored_on_the_delete_prompt() {
+        assert_eq!(resolve_confirm_delete(key(KeyCode::Char('x'))), ConfirmDeleteCommand::Ignore);
+        assert_eq!(resolve_confirm_delete(key(KeyCode::Enter)), ConfirmDeleteCommand::Ignore);
     }
 }

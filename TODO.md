@@ -87,10 +87,11 @@ conventions.
       `Theme::success`/`warning` (from the original "color 2" plan,
       only `danger` had actually landed before) to drive it
 - [ ] `ColorScheme`'s `black`/`white`/most `bright*` fields are parsed
-      but not yet consumed by `to_theme`/`to_syntax_theme` — dead code
-      (`cargo build` warns on this), kept for format fidelity and
-      future mapping expansion, same situation as `Entry::size`/
-      `modified` below
+      but not yet consumed by `to_theme`/`to_syntax_theme` — kept for
+      format fidelity and future mapping expansion, same situation as
+      `Entry::size`/`modified` below; `#[allow(dead_code)]` on the
+      struct silences the warning deliberately rather than dropping
+      the fields
 
 ## F9 menu — two levels landed (Main → Settings → Color schemes), real menu still to do
 
@@ -147,12 +148,32 @@ in more detail.
       text is preserved and still there afterward, just easy to forget
       about since nothing currently calls it out
 
+## Delete (`F8`) — landed, gaps left
+
+Confirm-before-delete, same shape as the editor's `ConfirmDiscard`
+prompt: `F8` opens `Mode::ConfirmDelete(PendingDelete)` instead of
+deleting immediately, `Y` deletes (`fs::remove_file` for a file,
+`fs::remove_dir_all` for a directory — recurses without asking twice,
+matching Far Manager's own F8), `N`/`Esc` cancels with nothing touched.
+
+- [x] Confirmation prompt + actual delete, single entry under the
+      cursor (`keymap.rs::ConfirmDeleteCommand`,
+      `main.rs::handle_confirm_delete_key`)
+- [ ] No multi-select — Far Manager lets you mark several entries
+      (`Ins`) and delete them together; this only ever acts on the
+      entry currently under the cursor
+- [ ] A failed delete (permissions, file in use, ...) is only logged
+      (`debug!`), not shown to the user — no status-bar message surface
+      exists yet (same gap as the non-UTF-8-file case above)
+- [ ] No "move to Recycle Bin" option — always a hard, permanent delete
+
 ## Next up
 
 - [ ] Show item count / free space in each panel's footer (mockup has
       this; not yet in `Panel`/`ui.rs`)
 - [ ] Use `Entry::size`/`Entry::modified` for something, or drop them —
-      currently dead code (`cargo build` warns on this)
+      `#[allow(dead_code)]` on `Entry` silences the warning deliberately
+      in the meantime, not a fix in itself
 
 ## Housekeeping
 

@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, Mode, ShellMenu};
+use crate::app::{App, Mode, PendingDelete, ShellMenu};
 use crate::editor::Editor;
 use crate::menu::{MainMenu, MenuLevel};
 use crate::panel::{Entry, HighlightRole, Panel};
@@ -39,7 +39,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
             draw_confirm_discard_popup(frame, area, &theme);
             return [1, 1];
         }
-        Mode::Browsing | Mode::MainMenu(_) | Mode::ThemeMenu(_) | Mode::ShellMenu(_) => {}
+        Mode::Browsing | Mode::MainMenu(_) | Mode::ThemeMenu(_) | Mode::ShellMenu(_) | Mode::ConfirmDelete(_) => {}
     }
 
     let root = Layout::default()
@@ -81,6 +81,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
         Mode::MainMenu(menu) => draw_main_menu(frame, area, menu, &theme),
         Mode::ThemeMenu(menu) => draw_theme_menu(frame, area, menu, &theme),
         Mode::ShellMenu(menu) => draw_shell_menu(frame, area, menu, &app.shell_profiles, &theme),
+        Mode::ConfirmDelete(pending) => draw_confirm_delete_popup(frame, area, pending, &theme),
         _ => {}
     }
 
@@ -236,6 +237,41 @@ fn draw_confirm_discard_popup(frame: &mut Frame, area: Rect, theme: &Theme) {
         Line::from(vec![
             Span::styled("Y", Style::default().fg(theme.danger).add_modifier(Modifier::BOLD)),
             Span::styled(" discard    ", Style::default().fg(theme.text_dim)),
+            Span::styled("N", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(" / Esc cancel", Style::default().fg(theme.text_dim)),
+        ]),
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+
+/// Renders the F8 "delete this?" prompt over the browser (same shape
+/// as `draw_confirm_discard_popup`, but for a filesystem entry rather
+/// than unsaved editor text — separate popup since the two prompts
+/// answer unrelated questions and live in unrelated modes).
+fn draw_confirm_delete_popup(frame: &mut Frame, area: Rect, pending: &PendingDelete, theme: &Theme) {
+    let popup = centered_rect(50, 4, area);
+
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.danger))
+        .title(" Delete ");
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let question = if pending.is_dir {
+        format!("Delete directory '{}' and all its contents?", pending.name)
+    } else {
+        format!("Delete '{}'?", pending.name)
+    };
+
+    let lines = vec![
+        Line::from(Span::styled(question, Style::default().fg(theme.text))),
+        Line::from(vec![
+            Span::styled("Y", Style::default().fg(theme.danger).add_modifier(Modifier::BOLD)),
+            Span::styled(" delete    ", Style::default().fg(theme.text_dim)),
             Span::styled("N", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
             Span::styled(" / Esc cancel", Style::default().fg(theme.text_dim)),
         ]),

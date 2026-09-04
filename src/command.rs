@@ -1,6 +1,6 @@
 use color_eyre::eyre::Result;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, PendingDelete};
 use crate::editor::Editor;
 use crate::keymap::Command;
 use crate::menu::MainMenu;
@@ -20,6 +20,7 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
         Command::ToggleActive => app.toggle_active(),
         Command::EditSelected => open_editor(app),
         Command::OpenMenu => app.mode = Mode::MainMenu(MainMenu::open()),
+        Command::DeleteSelected => request_delete(app),
         Command::Quit => app.should_quit = true,
     }
     Ok(())
@@ -42,4 +43,26 @@ fn open_editor(app: &mut App) {
     if let Ok(editor) = Editor::open(path, syntax_theme) {
         app.mode = Mode::Editing(editor);
     }
+}
+
+
+/// F8: opens the "delete this?" prompt (`Mode::ConfirmDelete`) for the
+/// entry under the cursor. Does nothing for `..` (there's nothing
+/// sensible to delete) or an empty panel — never deletes directly, see
+/// `main.rs::handle_confirm_delete_key` for the actual filesystem call.
+fn request_delete(app: &mut App) {
+    let panel = app.active_panel();
+    let Some(entry) = panel.current() else {
+        return;
+    };
+    if entry.name == ".." {
+        return;
+    }
+
+    let pending = PendingDelete {
+        path: panel.path.join(&entry.name),
+        name: entry.name.clone(),
+        is_dir: entry.is_dir,
+    };
+    app.mode = Mode::ConfirmDelete(pending);
 }

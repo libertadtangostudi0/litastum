@@ -13,7 +13,15 @@ use crate::theme::Theme;
 /// unmodified. See `.claude/rules/litastum-theming.md` for the mapping
 /// this drives onto our own `Theme` and the editor's syntax theme, and
 /// the reasoning behind it.
+///
+/// `black`/`white`/most `bright*` fields aren't consumed by
+/// `to_theme`/`to_syntax_theme` yet (see the mapping table in
+/// `.claude/rules/litastum-theming.md`) — kept anyway, rather than
+/// dropped, for full round-trip fidelity with the WT JSON format and
+/// for future mapping expansion; `#[allow(dead_code)]` documents that
+/// as deliberate instead of silencing a real oversight.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct ColorScheme {
     #[serde(default)]
     pub name: String,

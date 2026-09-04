@@ -14,6 +14,7 @@ mod theme;
 mod theme_menu;
 mod ui;
 
+use std::fs;
 use std::io::{self, Stdout};
 
 use color_eyre::eyre::Result;
@@ -91,6 +92,7 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
     match &app.mode {
         Mode::Editing(_) => handle_editor_key(app, key),
         Mode::ConfirmDiscard(_) => handle_confirm_discard_key(app, key),
+        Mode::ConfirmDelete(_) => handle_confirm_delete_key(app, key),
         Mode::MainMenu(_) => handle_main_menu_key(app, key),
         Mode::ThemeMenu(_) => handle_theme_menu_key(app, key),
         Mode::ShellMenu(_) => handle_shell_menu_key(app, key),
@@ -282,6 +284,47 @@ fn handle_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<()> {
             app.mode = Mode::Editing(editor);
         }
         ConfirmDiscardCommand::Ignore => {}
+    }
+
+    Ok(())
+}
+
+
+/// Key handling on the F8 "delete this?" prompt: `Y` actually deletes
+/// (a file via `fs::remove_file`, a directory recursively via
+/// `fs::remove_dir_all` — no separate "is it empty" case, matching Far
+/// Manager's own F8 which recurses without asking twice) and reloads
+/// the panel; `N`/`Esc` cancels with nothing touched. A failed delete
+/// (permissions, a file in use, ...) is logged rather than crashing —
+/// there's no status-bar message surface yet to show it to the user
+/// (see `TODO.md`'s non-UTF-8-file gap, same underlying limitation).
+fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    use keymap::ConfirmDeleteCommand;
+
+    let Mode::ConfirmDelete(pending) = &app.mode else {
+        return Ok(());
+    };
+
+    let command = keymap::resolve_confirm_delete(key);
+    debug!(?key, ?command, path = %pending.path.display(), "confirm-delete key");
+
+    match command {
+        ConfirmDeleteCommand::Confirm => {
+            let Mode::ConfirmDelete(pending) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+                unreachable!("just matched Mode::ConfirmDelete above");
+            };
+            let result = if pending.is_dir {
+                fs::remove_dir_all(&pending.path)
+            } else {
+                fs::remove_file(&pending.path)
+            };
+            if let Err(err) = result {
+                debug!(path = %pending.path.display(), %err, "delete failed");
+            }
+            app.active_panel().reload()?;
+        }
+        ConfirmDeleteCommand::Cancel => app.mode = Mode::Browsing,
+        ConfirmDeleteCommand::Ignore => {}
     }
 
     Ok(())

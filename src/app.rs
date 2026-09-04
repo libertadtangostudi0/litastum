@@ -26,11 +26,27 @@ pub enum Mode {
     /// The F9 top menu (`menu.rs`) — currently `Settings` leading to
     /// `Color schemes` (below).
     MainMenu(MainMenu),
+    /// F8 was pressed on a real entry: shown as a "delete this?" prompt
+    /// over the browser rather than deleting immediately — see
+    /// `PendingDelete`.
+    ConfirmDelete(PendingDelete),
     /// The color-scheme picker, reached via F9 → Settings → Color
     /// schemes.
     ThemeMenu(ThemeMenu),
     /// The Ctrl+P shell-profile picker popup, shown over the browser.
     ShellMenu(ShellMenu),
+}
+
+
+/// The entry F8 was pressed on, held while `Mode::ConfirmDelete` asks
+/// for confirmation — captured up front (rather than re-reading
+/// `panel.current()` at confirm time) so the prompt still names and
+/// deletes the right entry even if the cursor moves or the panel
+/// reloads for some other reason while the prompt is up.
+pub struct PendingDelete {
+    pub path: PathBuf,
+    pub name: String,
+    pub is_dir: bool,
 }
 
 

@@ -6,7 +6,14 @@ use std::time::SystemTime;
 
 
 /// A single entry (file or directory) shown in a panel's file list.
+///
+/// `size`/`modified` aren't read anywhere yet — read from disk up
+/// front (`entry_from_dir_entry`) for the panel footer (item
+/// count/free space) and a future sort-by-date/size, neither built
+/// yet (see `TODO.md`'s "Next up"). `#[allow(dead_code)]` documents
+/// that as deliberate instead of silencing a real oversight.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Entry {
     pub name: String,
     pub is_dir: bool,
