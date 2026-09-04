@@ -94,11 +94,11 @@ cross-compilation targets) turns out to need this crate.
 
 **Bundling our own grammars for what `syntect`'s default set lacks**:
 `syntect`'s bundled syntax set (sourced from sublimehq/Packages) is
-missing some real-world extensions — confirmed for PowerShell
-(`editor.rs::POWERSHELL_SYNTAX`, see [[litastum-theming]]'s "Syntax
+missing some real-world extensions — confirmed for PowerShell and INI
+(`editor.rs::BUNDLED_GRAMMARS`, see [[litastum-theming]]'s "Syntax
 highlighting" section for the fix and why the first source tried for
-it, github.com/PowerShell/EditorSyntax, was a dead end). The general
-pattern for adding one: `syntect` only loads the YAML `.sublime-syntax`
+PowerShell, github.com/PowerShell/EditorSyntax, was a dead end). The
+general pattern for adding one: `syntect` only loads the YAML `.sublime-syntax`
 format via `SyntaxDefinition::load_from_str` — its `plist-load` feature
 covers `.tmTheme` *color themes*, not `.tmLanguage` *grammars*, so a
 `.tmLanguage`-only source needs converting first (not attempted here —

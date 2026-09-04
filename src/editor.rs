@@ -13,10 +13,10 @@ use edtui::actions::{
 use edtui::clipboard::ClipboardTrait;
 use edtui::events::{KeyEventHandler, KeyEventRegister, KeyInput};
 use edtui::syntect::highlighting::Theme as SynTheme;
-use edtui::syntect::parsing::{SyntaxDefinition, SyntaxSet, SyntaxSetBuilder};
+use edtui::syntect::parsing::{SyntaxDefinition, SyntaxReference, SyntaxSet, SyntaxSetBuilder};
 use edtui::{
     EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, LineNumbers, Lines, SyntaxHighlighter,
-    THEME_SET,
+    SYNTAX_SET, THEME_SET,
 };
 use ratatui::style::Style;
 use ratatui::widgets::Block;
@@ -35,58 +35,136 @@ use crate::theme::Theme;
 /// trap.
 const SYNTAX_THEME: &str = "dracula";
 
-/// A `.sublime-syntax` (YAML) PowerShell grammar, bundled at compile
-/// time — `syntect`'s own default syntax set (sourced from
-/// sublimehq/Packages) simply doesn't include PowerShell at all (see
-/// `syntect_bundles_rust_but_not_powershell` below). Fixing that for
-/// real needs a real grammar; `syntect` only loads the YAML
-/// `.sublime-syntax` format itself (its `plist-load` feature is for
-/// `.tmTheme` *color themes*, not `.tmLanguage` grammars — the obvious
-/// first choice, Microsoft's own github.com/PowerShell/EditorSyntax,
-/// ships only a `.tmLanguage` and turned out to be a dead end for that
-/// reason). This one is from github.com/SublimeText/PowerShell (MIT
-/// license, `assets/syntax/PowerShell.LICENSE.txt`), which already
-/// ships the YAML format `syntect` actually wants.
-const POWERSHELL_SYNTAX: &str = include_str!("../assets/syntax/PowerShell.sublime-syntax");
+/// `.sublime-syntax` (YAML) grammars for extensions `syntect`'s own
+/// bundled default set (sourced from sublimehq/Packages) doesn't cover
+/// at all — bundled at compile time via `include_str!`, licenses kept
+/// alongside each in `assets/syntax/`:
+///
+/// - PowerShell (`.ps1`/`.psm1`/`.psd1`) — confirmed missing by
+///   `syntect_bundles_rust_but_not_powershell` below. `syntect` only
+///   loads the YAML `.sublime-syntax` format itself (its `plist-load`
+///   feature is for `.tmTheme` *color themes*, not `.tmLanguage`
+///   grammars — the obvious first choice, Microsoft's own
+///   github.com/PowerShell/EditorSyntax, ships only a `.tmLanguage`
+///   and turned out to be a dead end for that reason). This one is
+///   from github.com/SublimeText/PowerShell (MIT license).
+/// - INI (`.ini`/`.cfg`/`.conf`, and — via its own `hidden_file_extensions`
+///   list — `.editorconfig` and a handful of other INI-shaped dotfiles)
+///   — sublimehq/Packages has no INI syntax at all (checked directly,
+///   not just syntect's build of it), so this isn't a syntect-specific
+///   gap either. From github.com/jwortmann/ini-syntax (Apache-2.0
+///   license).
+/// - TOML (`.toml`, and `Cargo.lock`/`Gopkg.lock`/... via its own
+///   `hidden_file_extensions`), Git Ignore (`.gitignore`), and Git
+///   Attributes (`.gitattributes`) — all three genuinely present in
+///   sublimehq/Packages (confirmed directly, browsing the repo) but,
+///   unlike almost everything else there, apparently not included in
+///   `syntect`'s own default bundle for some unknown reason. Same
+///   permissive license as the rest of that repo
+///   (`assets/syntax/sublimehq-Packages.LICENSE.txt`) — the exact
+///   source `syntect`'s own default set is already built from, so
+///   pulling a few more files from it raises no new licensing question.
+///   Git Ignore and Git Attributes both `include:` rules from a shared
+///   `Git Common.sublime-syntax` (`hidden: true` — not selectable by
+///   extension on its own, only usable as an include target); it has
+///   to be in this same `SyntaxSet` too or those includes silently
+///   resolve to nothing and the file opens with no highlighting at all
+///   (found by hand: `.gitignore` opened fine but rendered with zero
+///   color, since a `SyntaxHighlighter` still resolved even when a
+///   grammar's own internal includes don't — `syntect` doesn't treat
+///   that as a load error).
+/// - Git Config (`.gitconfig`/`.gitmodules` by name, and — via its own
+///   `first_line_match: ^\[core\]` — plain `.git/config`, which has no
+///   usable name or extension of its own at all). This is what pushed
+///   `resolve_syntax_highlighter` below to add a first-line lookup
+///   tier, not just name/extension: `.git/config` was never going to
+///   be reachable any other way, and the grammar itself already
+///   assumes that's how it'll be found.
+const BUNDLED_GRAMMARS: &[&str] = &[
+    include_str!("../assets/syntax/PowerShell.sublime-syntax"),
+    include_str!("../assets/syntax/INI.sublime-syntax"),
+    include_str!("../assets/syntax/TOML.sublime-syntax"),
+    include_str!("../assets/syntax/GitCommon.sublime-syntax"),
+    include_str!("../assets/syntax/GitIgnore.sublime-syntax"),
+    include_str!("../assets/syntax/GitAttributes.sublime-syntax"),
+    include_str!("../assets/syntax/GitConfig.sublime-syntax"),
+];
 
 
-/// A `SyntaxSet` containing just the bundled `POWERSHELL_SYNTAX` (not
-/// `edtui`'s own shared default set — `syntect::parsing::SyntaxSet`
-/// isn't `Clone`, so there's no cheap way to extend the one `edtui`
-/// already loaded; building a second, minimal one just for this is
-/// simpler than re-loading the entire default bundle a second time).
-/// Parsed once, lazily, only if a `.ps1`/`.psm1`/`.psd1` file is
-/// actually opened.
-fn powershell_syntax_set() -> &'static Arc<SyntaxSet> {
+/// A `SyntaxSet` containing just `BUNDLED_GRAMMARS` (not `edtui`'s own
+/// shared default set — `syntect::parsing::SyntaxSet` isn't `Clone`, so
+/// there's no cheap way to extend the one `edtui` already loaded;
+/// building a second, minimal one just for these is simpler than
+/// re-loading the entire default bundle a second time). Parsed once,
+/// lazily, only if a file needing one of them is actually opened.
+fn bundled_extra_syntax_set() -> &'static Arc<SyntaxSet> {
     static SET: OnceLock<Arc<SyntaxSet>> = OnceLock::new();
     SET.get_or_init(|| {
         let mut builder = SyntaxSetBuilder::new();
-        match SyntaxDefinition::load_from_str(POWERSHELL_SYNTAX, true, None) {
-            Ok(syntax) => builder.add(syntax),
-            Err(err) => warn!(%err, "failed to parse bundled PowerShell.sublime-syntax"),
+        for source in BUNDLED_GRAMMARS {
+            match SyntaxDefinition::load_from_str(source, true, None) {
+                Ok(syntax) => builder.add(syntax),
+                Err(err) => warn!(%err, "failed to parse a bundled .sublime-syntax grammar"),
+            }
         }
         Arc::new(builder.build())
     })
 }
 
 
-/// Builds a `SyntaxHighlighter` from our own bundled grammar
-/// (`powershell_syntax_set`) for an extension `syntect`'s bundled
-/// default set doesn't cover — `None` if `ext` isn't one this set
-/// actually has a syntax for (case-insensitively, same as `syntect`'s
-/// own `find_syntax_by_extension`) or if parsing the bundled grammar
-/// failed at startup (already logged there).
-fn custom_extension_highlighter(ext: &str, custom_syntax_theme: &Option<SynTheme>) -> Option<SyntaxHighlighter> {
-    let syntax_set = powershell_syntax_set();
-    let syntax_ref = syntax_set.find_syntax_by_extension(ext)?.clone();
+/// Resolves a `SyntaxHighlighter` for a file, general-purpose: tries
+/// `candidates` (typically `[file_name, extension]`) against `syntect`'s
+/// own bundled set, then our extra `BUNDLED_GRAMMARS`; if neither
+/// matched by name at all, falls back to `first_line` against both sets
+/// in the same order — matching `syntect`'s own convenience method
+/// `SyntaxSet::find_syntax_for_file`'s two-tier lookup (name, then
+/// first line), just spread across two `SyntaxSet`s instead of one.
+///
+/// The first-line tier exists specifically for files with no usable
+/// name of their own — `.git/config` has neither a recognizable
+/// extension nor (usually) any distinguishing part of its path, but
+/// `GitConfig.sublime-syntax` declares `first_line_match: ^\[core\]`
+/// for exactly this reason. Without this tier, *any* future grammar
+/// that leans on first-line detection (shebang scripts, XML doctypes,
+/// ...) would need its own one-off special case instead of just
+/// working the way its own grammar file already says it should.
+fn resolve_syntax_highlighter(candidates: &[&str], first_line: &str, custom_syntax_theme: &Option<SynTheme>) -> Option<SyntaxHighlighter> {
+    let extra_set = bundled_extra_syntax_set();
 
+    for candidate in candidates {
+        if let Some(syntax_ref) = SYNTAX_SET.find_syntax_by_extension(candidate) {
+            return build_highlighter(SYNTAX_SET.clone(), syntax_ref.clone(), custom_syntax_theme);
+        }
+    }
+    for candidate in candidates {
+        if let Some(syntax_ref) = extra_set.find_syntax_by_extension(candidate) {
+            return build_highlighter(extra_set.clone(), syntax_ref.clone(), custom_syntax_theme);
+        }
+    }
+
+    if let Some(syntax_ref) = SYNTAX_SET.find_syntax_by_first_line(first_line) {
+        return build_highlighter(SYNTAX_SET.clone(), syntax_ref.clone(), custom_syntax_theme);
+    }
+    if let Some(syntax_ref) = extra_set.find_syntax_by_first_line(first_line) {
+        return build_highlighter(extra_set.clone(), syntax_ref.clone(), custom_syntax_theme);
+    }
+
+    None
+}
+
+
+/// Builds a `SyntaxHighlighter` from an already-resolved `syntax_set`/
+/// `syntax_ref` pair, applying `custom_syntax_theme` in place of the
+/// named `SYNTAX_THEME` fallback if one is set. `None` only if
+/// `SYNTAX_THEME` itself somehow isn't in `THEME_SET` (would mean the
+/// bundled theme dump is broken, not a per-file lookup failure).
+fn build_highlighter(syntax_set: Arc<SyntaxSet>, syntax_ref: SyntaxReference, custom_syntax_theme: &Option<SynTheme>) -> Option<SyntaxHighlighter> {
     let theme_set = THEME_SET.clone();
     let theme = match custom_syntax_theme {
         Some(custom) => custom.clone(),
         None => theme_set.themes.get(SYNTAX_THEME)?.clone(),
     };
-
-    Some(SyntaxHighlighter::with_sets(theme, theme_set, syntax_ref, syntax_set.clone()))
+    Some(SyntaxHighlighter::with_sets(theme, theme_set, syntax_ref, syntax_set))
 }
 
 
@@ -105,6 +183,14 @@ pub struct Editor {
     /// custom color scheme configured — see `config::load_active_theme`
     /// and `.claude/rules/litastum-theming.md`.
     custom_syntax_theme: Option<SynTheme>,
+    /// The file's first line as of `open()` — the input to
+    /// `resolve_syntax_highlighter`'s first-line lookup tier (e.g.
+    /// `.git/config`'s `^\[core\]`). Captured once at open rather than
+    /// re-derived from the live buffer on every `view()` call: matches
+    /// what a real first-line grammar detection is meant to see (the
+    /// file as opened), and avoids re-flattening the jagged `Lines`
+    /// buffer into a `String` every frame just to peek at row 0.
+    first_line: String,
 }
 
 
@@ -117,6 +203,7 @@ impl Editor {
     pub fn open(path: PathBuf, custom_syntax_theme: Option<SynTheme>) -> io::Result<Self> {
         let contents = fs::read_to_string(&path)?;
         let lines = Lines::from(contents.as_str());
+        let first_line = contents.lines().next().unwrap_or("").to_string();
 
         let mut state = EditorState::new(lines.clone());
         state.mode = EditorMode::Insert;
@@ -128,6 +215,7 @@ impl Editor {
             event_handler: EditorEventHandler::new(standard_key_handler()),
             saved_snapshot: lines,
             custom_syntax_theme,
+            first_line,
         })
     }
 
@@ -174,36 +262,29 @@ impl Editor {
 
 
     /// Builds this frame's renderable view: the editor content plus
-    /// syntax highlighting (best-effort — silently skipped if the
-    /// file's extension isn't recognized) and our theme.
+    /// syntax highlighting (best-effort — silently skipped if nothing
+    /// recognizes this file, by name or by first line) and our theme.
     ///
     /// Takes `&mut self`, unlike a typical read-only render helper:
     /// `EditorView` tracks scroll position as part of rendering, so it
     /// needs write access to `EditorState` even just to draw.
     pub fn view(&mut self, theme: &Theme) -> EditorView<'_, '_> {
         let custom_syntax_theme = &self.custom_syntax_theme;
-        let syntax_highlighter = self.path.extension().and_then(|ext| ext.to_str()).and_then(|ext| {
-            // `SyntaxHighlighter::new` still does the real work even
-            // when we override its theme below: resolving `ext` to a
-            // `SyntaxReference` (the actual grammar) and bundling the
-            // matching `theme_set`/`syntax_set`.
-            match SyntaxHighlighter::new(SYNTAX_THEME, ext) {
-                Ok(highlighter) => {
-                    let highlighter = match custom_syntax_theme {
-                        Some(custom) => highlighter.custom_theme(custom.clone()),
-                        None => highlighter,
-                    };
-                    debug!(ext, custom = custom_syntax_theme.is_some(), "syntax highlighting active");
-                    Some(highlighter)
-                }
-                Err(err) => {
-                    debug!(?err, ext, "not in syntect's bundled set, trying our own custom grammars");
-                    let highlighter = custom_extension_highlighter(ext, custom_syntax_theme);
-                    debug!(ext, found = highlighter.is_some(), "custom grammar lookup");
-                    highlighter
-                }
-            }
-        });
+
+        // Try the full file name first, then just the extension —
+        // `syntect`'s own convenience lookup (`SyntaxSet::find_syntax_for_file`)
+        // does the same, and it matters for dotfiles like `.gitignore`/
+        // `.editorconfig`: `Path::extension()` returns `None` for those
+        // (Rust treats a leading dot with no further dot as "no
+        // extension", not as a hidden file with an empty name).
+        // `resolve_syntax_highlighter` falls back to `self.first_line`
+        // for files with no usable name at all, like `.git/config`.
+        let file_name = self.path.file_name().and_then(|n| n.to_str());
+        let extension = self.path.extension().and_then(|e| e.to_str());
+        let candidates: Vec<&str> = [file_name, extension].into_iter().flatten().collect();
+
+        let syntax_highlighter = resolve_syntax_highlighter(&candidates, &self.first_line, custom_syntax_theme);
+        debug!(?candidates, found = syntax_highlighter.is_some(), "syntax highlighter lookup");
 
         let editor_theme = EditorTheme::default()
             .base(Style::default().fg(theme.text).bg(theme.bg))
@@ -416,31 +497,135 @@ mod tests {
     /// matching `find_syntax_by_extension`'s own behavior) — and stays
     /// `None` for something neither set has, rather than panicking.
     #[test]
-    fn custom_extension_highlighter_covers_powershell_extensions() {
-        assert!(custom_extension_highlighter("ps1", &None).is_some());
-        assert!(custom_extension_highlighter("PS1", &None).is_some(), "should match case-insensitively");
-        assert!(custom_extension_highlighter("psm1", &None).is_some());
-        assert!(custom_extension_highlighter("psd1", &None).is_some());
-        assert!(custom_extension_highlighter("rs", &None).is_none(), "not our job -- syntect's own set already has this");
-        assert!(custom_extension_highlighter("made-up-extension", &None).is_none());
+    fn resolve_syntax_highlighter_covers_powershell_extensions() {
+        assert!(resolve_syntax_highlighter(&["ps1"], "", &None).is_some());
+        assert!(resolve_syntax_highlighter(&["PS1"], "", &None).is_some(), "should match case-insensitively");
+        assert!(resolve_syntax_highlighter(&["psm1"], "", &None).is_some());
+        assert!(resolve_syntax_highlighter(&["psd1"], "", &None).is_some());
+        assert!(
+            resolve_syntax_highlighter(&["rs"], "", &None).is_some(),
+            "should still resolve syntect's own bundled grammars, not just ours"
+        );
+        assert!(resolve_syntax_highlighter(&["made-up-extension"], "", &None).is_none());
     }
 
-    /// `Editor::view`'s actual fallback path, end to end: a `.ps1` file
-    /// gets a working `syntax_highlighter` from `EditorView`, not just
-    /// from calling `custom_extension_highlighter` directly.
     #[test]
-    fn opening_a_ps1_file_gets_a_working_syntax_highlighter() {
-        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("litastum-editor-ps1-test-{}-{n}.ps1", std::process::id()));
-        fs::write(&path, "Write-Host 'hi'\n").expect("write test fixture file");
-        let mut editor = Editor::open(path, None).expect("open .ps1 test fixture");
+    fn resolve_syntax_highlighter_covers_ini_extensions() {
+        assert!(resolve_syntax_highlighter(&["ini"], "", &None).is_some());
+        assert!(resolve_syntax_highlighter(&["INI"], "", &None).is_some(), "should match case-insensitively");
+        assert!(resolve_syntax_highlighter(&["cfg"], "", &None).is_some());
+        assert!(resolve_syntax_highlighter(&["conf"], "", &None).is_some());
+    }
 
-        // EditorView doesn't expose whether a highlighter ended up
-        // attached, so this only proves `view()` doesn't panic building
-        // one for `.ps1` -- `custom_extension_highlighter_covers_*`
-        // above is what actually pins down that it resolves to `Some`.
-        let _ = editor.view(&Theme::dark());
+    /// Not a new grammar of its own — `INI.sublime-syntax`'s own
+    /// `hidden_file_extensions` already lists `.editorconfig` (a full
+    /// *file name*, not a bare extension), so this comes for free once
+    /// the INI grammar was bundled for `.ini`/`.cfg`/`.conf`.
+    #[test]
+    fn resolve_syntax_highlighter_covers_editorconfig_via_the_ini_grammar() {
+        assert!(resolve_syntax_highlighter(&[".editorconfig"], "", &None).is_some());
+    }
+
+    #[test]
+    fn resolve_syntax_highlighter_covers_toml_and_git_formats() {
+        assert!(resolve_syntax_highlighter(&["toml"], "", &None).is_some());
+        assert!(resolve_syntax_highlighter(&["TOML"], "", &None).is_some(), "should match case-insensitively");
+        assert!(
+            resolve_syntax_highlighter(&["Cargo.lock"], "", &None).is_some(),
+            "TOML.sublime-syntax's own hidden_file_extensions covers this by full file name, not extension"
+        );
+        assert!(resolve_syntax_highlighter(&["gitignore"], "", &None).is_some());
+        assert!(resolve_syntax_highlighter(&["gitattributes"], "", &None).is_some());
+    }
+
+    #[test]
+    fn resolve_syntax_highlighter_covers_gitconfig_by_name() {
+        assert!(resolve_syntax_highlighter(&["gitconfig"], "", &None).is_some());
+        assert!(resolve_syntax_highlighter(&[".gitconfig"], "", &None).is_some());
+        assert!(resolve_syntax_highlighter(&[".gitmodules"], "", &None).is_some());
+    }
+
+    /// The actual point of the first-line lookup tier: `.git/config` has
+    /// no usable name of its own — its `file_name` candidate is just
+    /// `"config"`, which no grammar declares by name — but
+    /// `GitConfig.sublime-syntax`'s own `first_line_match: ^\[core\]`
+    /// makes it resolvable anyway once the first line is checked too.
+    #[test]
+    fn resolve_syntax_highlighter_finds_git_config_by_first_line_when_the_name_is_useless() {
+        assert!(
+            resolve_syntax_highlighter(&["config"], "", &None).is_none(),
+            "sanity: bare 'config' shouldn't match anything by name alone"
+        );
+        assert!(resolve_syntax_highlighter(&["config"], "[core]", &None).is_some());
+    }
+
+    /// Regression test for a real bug found by hand after the fixes
+    /// above shipped: `.gitignore` opened without a crash and name-based
+    /// lookup returned `Some`, but the file rendered with *zero*
+    /// color — Git Ignore's own grammar `include:`s rules from a
+    /// separate `Git Common.sublime-syntax` (`hidden: true`) that
+    /// hadn't been bundled alongside it, so every `include:` silently
+    /// resolved to nothing. `syntect` doesn't treat an unresolved
+    /// include as a load error, so a `SyntaxHighlighter` still resolved
+    /// regardless — the only way to actually catch this is to run real
+    /// highlighting and check it colors *something*, which
+    /// `resolve_syntax_highlighter_covers_*` above doesn't do.
+    #[test]
+    fn gitignore_comments_are_actually_colored_not_just_resolvable() {
+        use edtui::syntect::easy::HighlightLines;
+
+        let syntax_set = bundled_extra_syntax_set();
+        let syntax_ref = syntax_set.find_syntax_by_extension(".gitignore").expect("gitignore syntax should resolve");
+        let theme = THEME_SET.themes.get(SYNTAX_THEME).expect("dracula theme should be bundled").clone();
+
+        let mut highlighter = HighlightLines::new(syntax_ref, &theme);
+        let spans = highlighter.highlight_line("# a comment\n", syntax_set).expect("highlighting should succeed");
+
+        let base_foreground = theme.settings.foreground.expect("theme should define a foreground");
+        assert!(
+            spans.iter().any(|(style, _)| style.foreground != base_foreground),
+            "a comment line should get at least one span colored differently from plain \
+             foreground -- if this fails, an `include:` in the bundled grammar isn't resolving \
+             again (e.g. a missing shared/common .sublime-syntax dependency)"
+        );
+    }
+
+    /// `Editor::view`'s actual fallback path, end to end: a bundled-
+    /// grammar file gets a working `syntax_highlighter` from
+    /// `EditorView`, not just from calling `custom_extension_highlighter`
+    /// directly. Includes dotfiles (`.gitignore`/`.gitattributes`) to
+    /// pin down the file-name-first lookup fix in `view()` itself —
+    /// `Path::extension()` returns `None` for those, so before that fix
+    /// they'd never even have reached a highlighter lookup at all, let
+    /// alone a successful one.
+    #[test]
+    fn opening_a_bundled_grammar_file_gets_a_working_syntax_highlighter() {
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let fixtures = [
+            ("script.ps1", "Write-Host 'hi'\n"),
+            ("settings.ini", "[section]\nkey=value\n"),
+            ("Cargo.toml", "[package]\nname = \"x\"\n"),
+            (".gitignore", "/target\n"),
+            (".gitattributes", "* text=auto\n"),
+            // No usable name of its own (just "config") -- only
+            // resolvable via the first-line lookup tier, see
+            // `resolve_syntax_highlighter_finds_git_config_by_first_line_when_the_name_is_useless`.
+            ("config", "[core]\n\trepositoryformatversion = 0\n"),
+        ];
+        for (filename, contents) in fixtures {
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!("litastum-editor-bundled-test-{}-{n}", std::process::id()));
+            fs::create_dir_all(&dir).expect("create scratch dir");
+            let path = dir.join(filename);
+            fs::write(&path, contents).expect("write test fixture file");
+            let mut editor = Editor::open(path, None).expect("open test fixture");
+
+            // EditorView doesn't expose whether a highlighter ended up
+            // attached, so this only proves `view()` doesn't panic
+            // building one -- `resolve_syntax_highlighter_covers_*`
+            // above is what actually pins down that it resolves to `Some`.
+            let _ = editor.view(&Theme::dark());
+        }
     }
 
     #[test]

@@ -183,37 +183,103 @@ and bundles the matching `theme_set`/`syntax_set`; only the color
 ## Bundled grammars for what `syntect`'s default set is missing
 
 `syntect`'s bundled default syntax set doesn't cover every real-world
-extension — confirmed missing: PowerShell (`.ps1`/`.psm1`/`.psd1`).
-`editor.rs::custom_extension_highlighter` is the fallback path,
-consulted only when `SyntaxHighlighter::new` (the normal, `syntect`-
-bundled lookup) fails for a given extension:
+extension — confirmed missing: PowerShell (`.ps1`/`.psm1`/`.psd1`), INI
+(`.ini`/`.cfg`/`.conf`, and a handful of INI-shaped dotfiles like
+`.editorconfig`/`.pylintrc`/`.coveragerc` — see the grammar's own
+`hidden_file_extensions` list), TOML (`.toml`, plus `Cargo.lock` and
+other lockfiles via *its* `hidden_file_extensions`), Git Ignore
+(`.gitignore`), Git Attributes (`.gitattributes`), and Git Config
+(`.gitconfig`/`.gitmodules` by name, and plain `.git/config` — no
+usable name of its own — by *first line*).
+`editor.rs::resolve_syntax_highlighter` is the general-purpose
+resolver, tried on every file open:
 
-- `editor.rs::POWERSHELL_SYNTAX` — a `.sublime-syntax` (YAML) grammar
-  bundled at compile time via `include_str!`, from
-  github.com/SublimeText/PowerShell (MIT license — see
-  `assets/syntax/PowerShell.LICENSE.txt`).
-- **Why not github.com/PowerShell/EditorSyntax** (the obvious first
-  choice, Microsoft's own repo): it only ships a `.tmLanguage` (plist
-  XML) grammar, and `syntect` doesn't load that format for syntax
-  definitions at all — `SyntaxDefinition::load_from_str` only parses
-  YAML `.sublime-syntax`; `syntect`'s `plist-load` feature (on by
-  default) covers `.tmTheme` *color themes*, an entirely different
-  thing from `.tmLanguage` *grammars*. Downloaded it, discovered this,
-  swapped to the SublimeText/PowerShell source instead, which already
-  ships the YAML format.
-- `editor.rs::powershell_syntax_set()` loads it into its own minimal
-  `SyntaxSet` via `SyntaxSetBuilder`, lazily (only if a matching file
+- `editor.rs::BUNDLED_GRAMMARS` — `.sublime-syntax` (YAML) grammars
+  bundled at compile time via `include_str!`, one entry per language:
+  - PowerShell: github.com/SublimeText/PowerShell (MIT license — see
+    `assets/syntax/PowerShell.LICENSE.txt`).
+  - INI: github.com/jwortmann/ini-syntax (Apache-2.0 license — see
+    `assets/syntax/INI.LICENSE.txt`). Confirmed missing from
+    sublimehq/Packages itself, not just `syntect`'s build of it — INI
+    genuinely isn't one of the packages Sublime Text ships by default.
+  - TOML, Git Ignore, Git Attributes, Git Config, Git Common: all five
+    straight from sublimehq/Packages itself (confirmed present there
+    by browsing the repo) — permissively licensed, the exact same
+    source `syntect`'s own default bundle is built from, so pulling a
+    few more files off it raises no new licensing question
+    (`assets/syntax/sublimehq-Packages.LICENSE.txt`). Unlike
+    PowerShell/INI, these aren't a *sublimehq/Packages* gap, just
+    seemingly missing from `syntect`'s own dump of it for some unknown
+    reason.
+  - Git Ignore, Git Attributes, and Git Config all `include:` rules
+    from the shared `Git Common.sublime-syntax` (`hidden: true` — not
+    selectable by extension on its own, only usable as an include
+    target). It has to be bundled into the same `SyntaxSet` too, or
+    those `include:`s silently resolve to nothing — found by hand, in
+    the running app: `.gitignore` opened fine and resolved a
+    highlighter, but the file rendered with *zero* color. `syntect`
+    doesn't treat an unresolved include as a load error, so nothing
+    failed loudly — the bug was only catchable by actually running
+    highlighting on real content and checking it colored something,
+    not by checking a `SyntaxHighlighter` was merely constructible
+    (see `editor::tests::gitignore_comments_are_actually_colored_not_just_resolvable`,
+    which fails with `ParsingError(UnresolvedContextReference(..))` if
+    `Git Common.sublime-syntax` is ever removed from `BUNDLED_GRAMMARS`
+    again).
+- **Why not github.com/PowerShell/EditorSyntax** for PowerShell (the
+  obvious first choice, Microsoft's own repo): it only ships a
+  `.tmLanguage` (plist XML) grammar, and `syntect` doesn't load that
+  format for syntax definitions at all — `SyntaxDefinition::load_from_str`
+  only parses YAML `.sublime-syntax`; `syntect`'s `plist-load` feature
+  (on by default) covers `.tmTheme` *color themes*, an entirely
+  different thing from `.tmLanguage` *grammars*. Downloaded it,
+  discovered this, swapped to the SublimeText/PowerShell source
+  instead, which already ships the YAML format — the same
+  YAML-not-plist requirement is why the INI source was picked
+  carefully too, rather than grabbing the first INI package found.
+- `editor.rs::bundled_extra_syntax_set()` loads all of
+  `BUNDLED_GRAMMARS` into one shared minimal `SyntaxSet` via
+  `SyntaxSetBuilder`, lazily (only once *any* file needing one of them
   is actually opened) — not merged into `edtui`'s own shared default
   `SyntaxSet`, since `syntect::parsing::SyntaxSet` isn't `Clone` and
   there's no cheap way to extend the one `edtui` already loaded without
-  reloading the entire default bundle a second time just to add one
-  grammar.
+  reloading the entire default bundle a second time just to add a few
+  grammars.
+- **`resolve_syntax_highlighter` is a three-tier lookup**: `[file_name,
+  extension]` against `syntect`'s own bundled `SYNTAX_SET`, then the
+  same two against our `bundled_extra_syntax_set()`, then — only if
+  neither matched by name at all — the file's first line
+  (`Editor::first_line`, captured once at `open()`) against both sets
+  in the same order. Mirrors `syntect`'s own convenience method
+  `SyntaxSet::find_syntax_for_file`'s two-tier (name, then first line)
+  lookup, just spread across two `SyntaxSet`s instead of one. Landed in
+  two passes, from two different reports on the same underlying theme
+  ("some file that should highlight doesn't"):
+  - **Name-first, not extension-only**: `Path::extension()` returns
+    `None` for a dotfile like `.gitignore` (Rust treats a leading dot
+    with no further dot as "no extension", not as a hidden file with
+    an empty name), so an extension-only lookup silently skipped every
+    dotfile regardless of what grammars were bundled — a real bug in
+    our own dispatch, not a missing-grammar problem. Explains why some
+    grammars list full file names (`Cargo.lock`, `.editorconfig`, ...)
+    in their own `hidden_file_extensions`, not just bare extensions.
+  - **First-line as a third tier**: added specifically for `.git/config`
+    — its `file_name` candidate is just `"config"`, which no grammar
+    declares by name, but `GitConfig.sublime-syntax` declares
+    `first_line_match: ^\[core\]` for exactly this reason. Requested
+    explicitly as a *general* mechanism rather than a one-off special
+    case for that one file — this is why it's implemented as a real
+    lookup tier using `SyntaxSet::find_syntax_by_first_line`, not a
+    hardcoded "if file_name == config" branch: any future grammar
+    (bundled here or already in `syntect`'s own set) that identifies
+    itself by first line rather than name now just works.
 - Any future "extension X has no highlighting" report should check
   `editor::tests::syntect_bundles_rust_but_not_powershell`-style first
-  (does `syntect`'s own bundled set actually lack it, like PowerShell —
-  or is it present but under-themed, like Markdown was — see the
-  `markup.*` scopes above) before assuming a new grammar needs bundling
-  at all.
+  (does `syntect`'s own bundled set actually lack it, like PowerShell/
+  INI/TOML/Git formats — or is it present but under-themed, like
+  Markdown was — see the `markup.*` scopes above, or unreachable by
+  name at all, like `.git/config` above) before assuming a new grammar
+  needs bundling at all.
 
 ## Explicitly out of scope for now
 

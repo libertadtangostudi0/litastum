@@ -45,16 +45,72 @@ Near-term, actionable items. Full staged plan:
       (confirmed by `editor::tests::syntect_bundles_rust_but_not_powershell`;
       `.rs`/Rust *is* bundled, so this wasn't our extension-lookup logic
       being wrong). Fixed by bundling our own grammar at compile time
-      (`editor.rs::POWERSHELL_SYNTAX`, `assets/syntax/PowerShell.sublime-syntax`
-      — from github.com/SublimeText/PowerShell, MIT license, see
+      (`assets/syntax/PowerShell.sublime-syntax` — from
+      github.com/SublimeText/PowerShell, MIT license, see
       `assets/syntax/PowerShell.LICENSE.txt`) and loading it into a
       second, minimal `SyntaxSet` via `SyntaxSetBuilder`
-      (`editor.rs::powershell_syntax_set`), since `syntect` only loads
-      the YAML `.sublime-syntax` format itself — its `plist-load`
+      (`editor.rs::bundled_extra_syntax_set`), since `syntect` only
+      loads the YAML `.sublime-syntax` format itself — its `plist-load`
       feature covers `.tmTheme` *color themes*, not `.tmLanguage`
       *grammars*, which is why the obvious first choice
       (github.com/PowerShell/EditorSyntax, `.tmLanguage`-only) turned
       out to be a dead end and had to be swapped out
+- [x] Syntax highlighting for `.ini`/`.cfg`/`.conf` — same underlying
+      gap, but this time confirmed missing from sublimehq/Packages
+      itself (not just `syntect`'s build of it — the upstream source
+      genuinely has no INI syntax). Same fix, same mechanism
+      (`bundled_extra_syntax_set` now holds all the bundled grammars):
+      `assets/syntax/INI.sublime-syntax`, from
+      github.com/jwortmann/ini-syntax (Apache-2.0 license, see
+      `assets/syntax/INI.LICENSE.txt`). Its own `hidden_file_extensions`
+      also covers `.editorconfig` and a handful of other INI-shaped
+      dotfiles for free
+- [x] Syntax highlighting for `.toml`/`Cargo.lock`, `.gitignore`,
+      `.gitattributes` — genuinely present in sublimehq/Packages
+      (confirmed by browsing the repo directly) but, unlike almost
+      everything else there, not included in `syntect`'s own default
+      bundle for some unknown reason. Pulled `TOML.sublime-syntax`/
+      `Git Ignore.sublime-syntax`/`Git Attributes.sublime-syntax`
+      straight from that same repo (permissive license, see
+      `assets/syntax/sublimehq-Packages.LICENSE.txt` — the exact source
+      `syntect`'s own default set is already built from, so no new
+      licensing question). Also fixed a real bug found along the way:
+      `Editor::view` only ever looked up a highlighter by
+      `Path::extension()`, which returns `None` for dotfiles like
+      `.gitignore` (Rust treats a leading dot with no further dot as
+      "no extension") — so those never even reached a highlighter
+      lookup at all, regardless of what grammars were bundled. Now
+      tries the full file name first, then the extension, matching
+      `syntect`'s own `SyntaxSet::find_syntax_for_file` convenience
+      lookup. Second bug found by hand right after, testing the fix
+      above in the real app: `.gitignore` opened and a highlighter
+      *resolved* (name-based lookup returned `Some`), but rendered with
+      zero color — Git Ignore's/Git Attributes' grammars both
+      `include:` rules from a separate, shared `Git Common.sublime-syntax`
+      (`hidden: true`) that hadn't been bundled alongside them, so every
+      `include:` silently resolved to nothing (`syntect` doesn't treat
+      an unresolved include as a load error, so nothing failed loudly).
+      Fixed by bundling `Git Common.sublime-syntax` too; caught for
+      real this time by a test that actually runs highlighting and
+      checks a comment line gets colored, not just that a
+      `SyntaxHighlighter` was constructible
+      (`editor::tests::gitignore_comments_are_actually_colored_not_just_resolvable`)
+- [x] Syntax highlighting for `.git/config` (and, generally, any
+      bundled grammar that identifies itself by *content* rather than
+      name) — reported after `.gitignore`/`.gitattributes` above, and
+      explicitly asked to be solved generally rather than one file at a
+      time. `.git/config` has no usable name (`file_name` is just
+      `"config"`) or extension, but `GitConfig.sublime-syntax` (also
+      pulled from sublimehq/Packages) declares
+      `first_line_match: ^\[core\]` for exactly this reason — so
+      `editor.rs::resolve_syntax_highlighter` grew a third lookup tier,
+      tried only when nothing matched by name: `.first_line`
+      (captured once at `Editor::open`) against `syntect`'s own bundled
+      set, then ours, mirroring `syntect`'s own
+      `SyntaxSet::find_syntax_for_file` convenience method. This is the
+      "universal" half of the fix — any future grammar (bundled or
+      `syntect`'s own) that leans on first-line detection now works
+      without a one-off special case, not just Git Config
 - [x] Syntax highlighting for `.md` under a *custom* `editor_theme` —
       `syntect`'s bundled Markdown grammar was always found fine (the
       highlighter really was running), but `scheme.rs::to_syntax_theme`
