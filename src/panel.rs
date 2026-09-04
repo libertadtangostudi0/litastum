@@ -264,12 +264,106 @@ impl Panel {
     pub fn selected_path(&self) -> Option<PathBuf> {
         self.current().map(|entry| self.path.join(&entry.name))
     }
+
+
+    /// Changes to `target`, resolved relative to the current path (an
+    /// absolute `target` replaces it outright — `Path::join`'s own
+    /// behavior, no separate case needed) and lexically normalized
+    /// (`..` segments collapsed, so `cd ..` leaves a clean parent path
+    /// rather than `.../sub/..` — found by a test that (correctly)
+    /// expected the clean form). Used by the command line's `cd`
+    /// handling (`command_line::parse_cd_target`); a target that
+    /// doesn't resolve to a real directory is silently ignored rather
+    /// than erroring, matching a real shell's tolerance for a typo'd
+    /// `cd` not crashing anything.
+    pub fn change_dir(&mut self, target: &str) -> io::Result<()> {
+        let new_path = lexically_normalize(&self.path.join(target));
+        if !new_path.is_dir() {
+            return Ok(());
+        }
+        self.path = new_path;
+        self.selected = 0;
+        self.reload()
+    }
+}
+
+
+/// Collapses `.`/`..` path components without touching the filesystem
+/// (no symlink resolution, unlike `fs::canonicalize` — which also
+/// prepends the `\\?\` extended-length prefix on Windows, an ugly,
+/// separate annoyance not worth taking on just to normalize `..`).
+fn lexically_normalize(path: &std::path::Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                result.pop();
+            }
+            other => result.push(other.as_os_str()),
+        }
+    }
+    result
 }
 
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
     use super::*;
+
+    /// A real scratch directory with one real subdirectory (`sub`) in
+    /// it, for `change_dir` tests — unlike `panel_with` below, this
+    /// needs actual filesystem entries since `change_dir` checks
+    /// `is_dir()` and calls `reload()`. Distinct per test (`cargo
+    /// test` runs in parallel threads within one process).
+    fn scratch_panel() -> Panel {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("litastum-panel-test-{}-{n}", std::process::id()));
+        fs::create_dir_all(dir.join("sub")).expect("create scratch dirs");
+        Panel::new(dir).expect("open scratch panel")
+    }
+
+    #[test]
+    fn change_dir_descends_into_a_real_subdirectory() {
+        let mut panel = scratch_panel();
+        let original = panel.path.clone();
+
+        panel.change_dir("sub").unwrap();
+
+        assert_eq!(panel.path, original.join("sub"));
+        assert_eq!(panel.selected, 0);
+    }
+
+    #[test]
+    fn change_dir_ignores_a_target_that_is_not_a_directory() {
+        let mut panel = scratch_panel();
+        let original = panel.path.clone();
+
+        panel.change_dir("does-not-exist").unwrap();
+
+        assert_eq!(panel.path, original, "path should be unchanged");
+    }
+
+    #[test]
+    fn change_dir_up_via_dotdot() {
+        let mut panel = scratch_panel();
+        let original = panel.path.clone();
+        panel.change_dir("sub").unwrap();
+
+        panel.change_dir("..").unwrap();
+
+        assert_eq!(panel.path, original);
+    }
+
+    #[test]
+    fn lexically_normalize_collapses_parent_dir_segments() {
+        assert_eq!(lexically_normalize(std::path::Path::new("/a/b/../c")), PathBuf::from("/a/c"));
+        assert_eq!(lexically_normalize(std::path::Path::new("/a/b/..")), PathBuf::from("/a"));
+        assert_eq!(lexically_normalize(std::path::Path::new("/a/./b")), PathBuf::from("/a/b"));
+    }
 
     /// A panel with `count` dummy file entries, laid out in `columns`
     /// columns, cursor starting at index 0.

@@ -34,6 +34,14 @@ Near-term, actionable items. Full staged plan:
       transitive dependency — built fine locally, but is this project's
       first non-pure-Rust dependency; watch for build issues on
       environments without a C toolchain — see [[litastum-stack]]
+- [ ] No syntax highlighting for `.ps1` (PowerShell) — confirmed by
+      hand (`editor::tests::syntect_bundles_rust_but_not_powershell`)
+      that `syntect`'s bundled default syntax set just doesn't include
+      PowerShell at all (`.rs`/Rust *is* bundled and works fine — this
+      isn't our extension-lookup logic being wrong). Fixing it for real
+      means sourcing and bundling a PowerShell `.sublime-syntax`/
+      `.tmLanguage` grammar file ourselves via `SyntaxSetBuilder`, not
+      done yet — a real, separate task, not attempted here
 
 ## RESOLVED: Ctrl+S / Ctrl+C / Ctrl+V / Ctrl+X (2026-09-04)
 
@@ -59,11 +67,10 @@ keys, matching how Far Manager itself keeps those two systems separate.
 See [[litastum-theming]] for the full design and the mapping
 conventions.
 
-- [x] F9 in-app theme picker (`theme_menu.rs`) — lists `themes/*.json`,
-      applies live (no restart) and persists to `config.json`. A
-      minimal analog of Far Manager's F9 menu, scoped to just color
-      schemes — not the real Left/Files/Commands/Options/... top-menu
-      bar, see "F9 menu" below
+- [x] F9 → Settings → Color schemes in-app theme picker (`theme_menu.rs`,
+      reached through `menu.rs`) — lists `themes/*.json`, applies live
+      (no restart) and persists to `config.json`. See "F9 menu" below
+      for how much of a real top-menu bar this actually is (not much)
 - [ ] No hot-reload when a theme *file itself* is edited on disk while
       running (roadmap stage 5 territory, `notify` crate) — F9 re-scans
       the `themes/` directory each time it opens, but doesn't watch it
@@ -85,21 +92,60 @@ conventions.
       future mapping expansion, same situation as `Entry::size`/
       `modified` below
 
-## F9 menu — minimal color-scheme picker landed, real menu still to do
+## F9 menu — two levels landed (Main → Settings → Color schemes), real menu still to do
 
-`theme_menu.rs` is deliberately *only* a theme picker, not a real F9
-top-menu bar (Far Manager's own F9 is Left/Files/Commands/Options/
-View/Right, each with submenus). Gaps if this grows toward that:
+- [x] `menu.rs` — F9 now opens a top menu (`Settings`) that descends
+      into a submenu (`Color schemes`, → `Mode::ThemeMenu`) instead of
+      jumping straight to the theme picker. `Esc` backs up one level at
+      a time rather than always closing outright.
 
+`menu.rs` is deliberately *just* enough structure to reach the one
+submenu that was actually asked for — not a real F9 top-menu bar (Far
+Manager's own F9 is Left/Files/Commands/Options/View/Right, each with
+real submenus of their own). Gaps if this grows toward that:
+
+- [ ] Only one item per level exists (`Settings`, then `Color
+      schemes`) — `MenuLevel::items` would need real content for
+      anything else to show up
+- [ ] No keyboard shortcut letters (Far-style `S` for Settings, etc.) —
+      `Up`/`Down`/`Enter` only
 - [ ] Ctrl+V-over-selection replacing text, syntax highlighting for a
       *currently open* editor when its theme changes live — out of
       scope for the picker itself, listed here only because "apply
       live" doesn't retroactively re-theme an already-open `Editor`
       (the new `editor_theme` applies to the next file opened)
-- [ ] No preview while browsing the list — colors only change once
-      applied (Enter/I/E), not as you move the cursor over each name
+- [ ] No preview while browsing the theme list — colors only change
+      once applied (Enter/I/E), not as you move the cursor over each
+      name
 - [ ] Long theme lists aren't scrolled, just clamped to the terminal
       height — fine for a handful of files, not for many
+
+## Command line (`command_line.rs`, `shell.rs`) — landed, gaps left
+
+Always-live Far Manager-style command line with `cd` special-casing and
+a `Ctrl+P` shell-profile picker (PowerShell/Command Prompt today). See
+[[litastum-command-line]] for the full design and every scope cut below
+in more detail.
+
+- [ ] No cursor movement within the typed command (append/backspace
+      only) — arrows are needed for panel navigation even while typing,
+      so they can't double as text-cursor movement without real
+      ambiguity
+- [ ] No command history (no up-arrow recall) — same reason, arrows
+      are taken
+- [ ] Bare `cd` (no argument) is a no-op, not "go to home directory"
+- [ ] Shell profile picker has no Git Bash/WSL/pwsh/Azure Cloud Shell
+      entries (unlike the Windows Terminal dropdown that prompted this
+      feature) — only `cmd`/`powershell` (Windows) or `$SHELL`/`sh`
+      (Unix), which are universally present so need no detection.
+      Adding the others needs real `PATH`/install-dir probing, not done
+- [ ] Shell profile choice isn't persisted to `config.json` — resets to
+      the platform default every run (`config.rs` already has the
+      persistence pattern from the theme picker, if this is wanted)
+- [ ] Opening the editor (F4) or another popup (F9, `Ctrl+P` itself)
+      while text sits in the command line doesn't warn about it — the
+      text is preserved and still there afterward, just easy to forget
+      about since nothing currently calls it out
 
 ## Next up
 

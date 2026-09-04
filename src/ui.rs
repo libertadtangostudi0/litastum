@@ -1,14 +1,16 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
     Frame,
 };
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, ShellMenu};
 use crate::editor::Editor;
+use crate::menu::{MainMenu, MenuLevel};
 use crate::panel::{Entry, HighlightRole, Panel};
+use crate::shell::ShellProfile;
 use crate::theme::Theme;
 use crate::theme_menu::ThemeMenu;
 
@@ -37,7 +39,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
             draw_confirm_discard_popup(frame, area, &theme);
             return [1, 1];
         }
-        Mode::Browsing | Mode::ThemeMenu(_) => {}
+        Mode::Browsing | Mode::MainMenu(_) | Mode::ThemeMenu(_) | Mode::ShellMenu(_) => {}
     }
 
     let root = Layout::default()
@@ -56,14 +58,30 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
 
     let left_columns = draw_panel(frame, panels[0], &app.panels[0], app.active == 0, &theme);
     let right_columns = draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme);
-    draw_command_line(frame, root[1], &theme);
+    let shell_name = app.shell_profiles[app.active_shell].name.as_str();
+    draw_command_line(frame, root[1], &app.command_line, shell_name, &theme);
     draw_function_keys(frame, root[2], &theme);
 
-    // The F9 popup shows over the browser, like a Far Manager menu, not
-    // in place of it -- unlike Editing/ConfirmDiscard above, which
-    // replace the whole screen.
-    if let Mode::ThemeMenu(menu) = &app.mode {
-        draw_theme_menu(frame, area, menu, &theme);
+    // The real terminal cursor sits right after the typed text, same
+    // mechanism already used for the editor's cursor (see
+    // editor.rs::cursor_screen_position) -- only while nothing else is
+    // drawn over the command line (a popup below takes visual priority,
+    // and moving the cursor under it would be misleading).
+    if matches!(app.mode, Mode::Browsing) {
+        frame.set_cursor_position(Position {
+            x: root[1].x + 2 + app.command_line.chars().count() as u16,
+            y: root[1].y,
+        });
+    }
+
+    // The F9/Ctrl+P popups show over the browser, like a Far Manager
+    // menu, not in place of it -- unlike Editing/ConfirmDiscard above,
+    // which replace the whole screen.
+    match &app.mode {
+        Mode::MainMenu(menu) => draw_main_menu(frame, area, menu, &theme),
+        Mode::ThemeMenu(menu) => draw_theme_menu(frame, area, menu, &theme),
+        Mode::ShellMenu(menu) => draw_shell_menu(frame, area, menu, &app.shell_profiles, &theme),
+        _ => {}
     }
 
     [left_columns, right_columns]
@@ -226,6 +244,55 @@ fn draw_confirm_discard_popup(frame: &mut Frame, area: Rect, theme: &Theme) {
 }
 
 
+/// Renders the F9 top menu (`menu.rs`): whichever level's items are
+/// current (`MenuLevel::items`), with the highlighted row picked out.
+fn draw_main_menu(frame: &mut Frame, area: Rect, menu: &MainMenu, theme: &Theme) {
+    let items = menu.level.items();
+    let height = (items.len() as u16 + 4).clamp(6, area.height);
+    let popup = centered_rect(30, height, area);
+
+    frame.render_widget(Clear, popup);
+
+    let title = match menu.level {
+        MenuLevel::Main => " Menu ",
+        MenuLevel::Settings => " Settings ",
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent))
+        .title(title);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    let list_items: Vec<ListItem> = items
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let style = if index == menu.selected {
+                Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            ListItem::new(Line::from(Span::styled(*label, style)))
+        })
+        .collect();
+    frame.render_widget(List::new(list_items), rows[0]);
+
+    let hint = Line::from(vec![
+        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" open  ", Style::default().fg(theme.text_dim)),
+        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" back", Style::default().fg(theme.text_dim)),
+    ]);
+    frame.render_widget(hint, rows[1]);
+}
+
+
 /// Renders the F9 color-scheme picker popup: a list of theme names
 /// found in the config dir, or a hint that none were found.
 fn draw_theme_menu(frame: &mut Frame, area: Rect, menu: &ThemeMenu, theme: &Theme) {
@@ -283,6 +350,49 @@ fn draw_theme_menu(frame: &mut Frame, area: Rect, menu: &ThemeMenu, theme: &Them
 }
 
 
+/// Renders the `Ctrl+P` shell-profile picker popup.
+fn draw_shell_menu(frame: &mut Frame, area: Rect, menu: &ShellMenu, profiles: &[ShellProfile], theme: &Theme) {
+    let height = (profiles.len() as u16 + 4).clamp(6, area.height);
+    let popup = centered_rect(36, height, area);
+
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent))
+        .title(" Shell ");
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    let items: Vec<ListItem> = profiles
+        .iter()
+        .enumerate()
+        .map(|(index, profile)| {
+            let style = if index == menu.selected {
+                Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            ListItem::new(Line::from(Span::styled(profile.name.clone(), style)))
+        })
+        .collect();
+    frame.render_widget(List::new(items), rows[0]);
+
+    let hint = Line::from(vec![
+        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" select  ", Style::default().fg(theme.text_dim)),
+        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" cancel", Style::default().fg(theme.text_dim)),
+    ]);
+    frame.render_widget(hint, rows[1]);
+}
+
+
 /// A `width`x`height` rectangle centered within `area`, clamped to fit.
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let width = width.min(area.width);
@@ -296,9 +406,27 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 }
 
 
-fn draw_command_line(frame: &mut Frame, area: Rect, theme: &Theme) {
-    let line = Line::from(Span::styled("> ", Style::default().fg(theme.accent)));
-    frame.render_widget(line, area);
+/// The always-live command line (Far Manager-style — see
+/// `command_line.rs`). Shows the active shell profile's name at the
+/// right edge, since which one a typed command actually runs against
+/// is otherwise invisible (`Ctrl+P` to change it).
+fn draw_command_line(frame: &mut Frame, area: Rect, command_line: &str, shell_name: &str, theme: &Theme) {
+    let left = Line::from(vec![
+        Span::styled("> ", Style::default().fg(theme.accent)),
+        Span::styled(command_line.to_string(), Style::default().fg(theme.text)),
+    ]);
+    frame.render_widget(left, area);
+
+    let label = format!("Ctrl+P {shell_name} ");
+    let label_width = (label.chars().count() as u16).min(area.width);
+    let label_area = Rect {
+        x: area.x + area.width - label_width,
+        y: area.y,
+        width: label_width,
+        height: 1,
+    };
+    let right = Line::from(Span::styled(label, Style::default().fg(theme.text_dim)));
+    frame.render_widget(right, label_area);
 }
 
 

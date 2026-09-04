@@ -328,6 +328,18 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    /// Pins down what's actually true about `syntect`'s bundled default
+    /// syntax set, found by hand while debugging a "no highlighting for
+    /// .ps1" report: `.rs` is bundled, `.ps1` (PowerShell) is not — not
+    /// a bug in `Editor::view`'s extension lookup, an upstream gap. If
+    /// `syntect` ever adds/drops one of these, this will fail and flag
+    /// it rather than silently changing behavior.
+    #[test]
+    fn syntect_bundles_rust_but_not_powershell() {
+        assert!(SyntaxHighlighter::new(SYNTAX_THEME, "rs").is_ok());
+        assert!(SyntaxHighlighter::new(SYNTAX_THEME, "ps1").is_err());
+    }
+
     #[test]
     fn open_starts_clean() {
         let (editor, _path) = open_test_editor("hello\n");

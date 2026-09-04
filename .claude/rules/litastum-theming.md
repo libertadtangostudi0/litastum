@@ -62,10 +62,11 @@ feature.
   known-working example, found automatically via the cwd fallback
   above when run from the repo root — and it's also the fixture the
   tests in `scheme.rs` parse.
-- **F9** opens `theme_menu.rs`, a minimal picker (not Far Manager's
-  real top-menu bar — just this one function, scoped to color schemes):
-  lists whatever `list_theme_names()` finds in `themes/` at that
-  moment, `Enter` applies the highlighted one as *both*
+- **F9 → Settings → Color schemes** opens `theme_menu.rs` (`menu.rs`
+  is the F9 top menu itself — not Far Manager's real top-menu bar,
+  just enough structure to reach this): lists whatever
+  `list_theme_names()` finds in `themes/` at that moment, `Enter`
+  applies the highlighted one as *both*
   `interface_theme` and `editor_theme` (the common case), `I`/`E` apply
   to just one side (keeping them independent, per the section above).
   Applies live — no restart — and persists the choice back to
@@ -163,8 +164,6 @@ and bundles the matching `theme_set`/`syntax_set`; only the color
 
 ## Explicitly out of scope for now
 
-- No in-app theme picker/switcher (F9 menu?) — edit `config.json` by
-  hand, restart.
 - No hot-reload of an edited theme file — roadmap stage 5 territory
   (`notify` crate), requires restarting the app to pick up changes.
 - Real terminal cursor *color* (as opposed to shape, already themed via

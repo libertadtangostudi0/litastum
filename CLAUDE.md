@@ -5,5 +5,6 @@ See `.claude/rules/` for project decisions and conventions, and
 @.claude/rules/litastum-roadmap.md
 @.claude/rules/litastum-ui-theme.md
 @.claude/rules/litastum-theming.md
+@.claude/rules/litastum-command-line.md
 @.claude/rules/litastum-naming.md
 @.claude/rules/litastum-workflow.md

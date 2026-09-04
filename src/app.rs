@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use edtui::syntect::highlighting::Theme as SynTheme;
 
 use crate::editor::Editor;
+use crate::menu::MainMenu;
 use crate::panel::Panel;
+use crate::shell::{self, ShellProfile};
 use crate::theme::Theme;
 use crate::theme_menu::ThemeMenu;
 
@@ -21,8 +23,23 @@ pub enum Mode {
     /// silently closing. Holds the editor so `Editor` moves straight
     /// back into `Editing` on cancel, with no data loss either way.
     ConfirmDiscard(Editor),
-    /// The F9 color-scheme picker popup, shown over the browser.
+    /// The F9 top menu (`menu.rs`) — currently `Settings` leading to
+    /// `Color schemes` (below).
+    MainMenu(MainMenu),
+    /// The color-scheme picker, reached via F9 → Settings → Color
+    /// schemes.
     ThemeMenu(ThemeMenu),
+    /// The Ctrl+P shell-profile picker popup, shown over the browser.
+    ShellMenu(ShellMenu),
+}
+
+
+/// State for the `Ctrl+P` "pick a shell" popup — which row is
+/// highlighted while it's open. No file discovery step like
+/// `ThemeMenu::open` needs (the profile list is fixed, from
+/// `App::shell_profiles`), so this is just a cursor position.
+pub struct ShellMenu {
+    pub selected: usize,
 }
 
 
@@ -43,6 +60,14 @@ pub struct App {
     /// the zero-config default. Every `Editor` opened during the
     /// session is handed a clone of whatever this currently is.
     pub syntax_theme: Option<SynTheme>,
+    /// The always-live command line at the bottom of the browser (Far
+    /// Manager-style) — see `command_line.rs` for the editing logic
+    /// and `.claude/rules/litastum-stack.md` for the design.
+    pub command_line: String,
+    /// Shells the command line can run typed input through — see
+    /// `shell.rs`. Never empty; `active_shell` indexes into it.
+    pub shell_profiles: Vec<ShellProfile>,
+    pub active_shell: usize,
 }
 
 
@@ -58,6 +83,9 @@ impl App {
             should_quit: false,
             theme,
             syntax_theme,
+            command_line: String::new(),
+            shell_profiles: shell::builtin_profiles(),
+            active_shell: 0,
         })
     }
 

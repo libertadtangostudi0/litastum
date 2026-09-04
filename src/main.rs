@@ -1,12 +1,15 @@
 mod app;
 mod command;
+mod command_line;
 mod config;
 mod editor;
 mod editor_keymap;
 mod keymap;
 mod logging;
+mod menu;
 mod panel;
 mod scheme;
+mod shell;
 mod theme;
 mod theme_menu;
 mod ui;
@@ -16,15 +19,16 @@ use std::io::{self, Stdout};
 use color_eyre::eyre::Result;
 use crossterm::{
     cursor::SetCursorStyle,
-    event::{self, Event, KeyEvent, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::debug;
 
-use app::{App, Mode};
+use app::{App, Mode, ShellMenu};
 use editor_keymap::EditorCommand;
+use theme_menu::ThemeMenu;
 
 
 fn main() -> Result<()> {
@@ -70,13 +74,13 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Resu
         for (panel, cols) in app.panels.iter_mut().zip(columns) {
             panel.set_columns(cols);
         }
-        handle_event(app)?;
+        handle_event(app, terminal)?;
     }
     Ok(())
 }
 
 
-fn handle_event(app: &mut App) -> Result<()> {
+fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     let Event::Key(key) = event::read()? else {
         return Ok(());
     };
@@ -87,16 +91,113 @@ fn handle_event(app: &mut App) -> Result<()> {
     match &app.mode {
         Mode::Editing(_) => handle_editor_key(app, key),
         Mode::ConfirmDiscard(_) => handle_confirm_discard_key(app, key),
+        Mode::MainMenu(_) => handle_main_menu_key(app, key),
         Mode::ThemeMenu(_) => handle_theme_menu_key(app, key),
-        Mode::Browsing => {
-            debug!(?key, "browsing key");
-            if let Some(cmd) = keymap::resolve(key.code) {
-                debug!(?cmd, "browsing command");
-                command::execute(cmd, app)?;
+        Mode::ShellMenu(_) => handle_shell_menu_key(app, key),
+        Mode::Browsing => handle_browsing_key(app, key, terminal),
+    }
+}
+
+
+/// Key handling in the browser: `Ctrl+P` opens the shell picker (see
+/// `handle_shell_menu_key`); `Enter` with something typed runs it
+/// (`run_command_line`), otherwise the fixed `keymap::resolve` table
+/// (arrows, Tab, F4/F9/F10, and `Enter` on an *empty* command line —
+/// `EnterSelected`, unchanged) takes over; anything that table doesn't
+/// bind — plain characters, `Backspace`, `Esc` — edits the always-live
+/// command line at the bottom of the browser (Far Manager-style; see
+/// `.claude/rules/litastum-stack.md`). This is also why `q` no longer
+/// quits on its own (`keymap.rs`) — a bare letter now types into the
+/// command line like any other.
+fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    debug!(?key, "browsing key");
+
+    if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        app.mode = Mode::ShellMenu(ShellMenu { selected: app.active_shell });
+        return Ok(());
+    }
+
+    if key.code == KeyCode::Enter && !app.command_line.is_empty() {
+        return run_command_line(app, terminal);
+    }
+
+    if let Some(cmd) = keymap::resolve(key.code) {
+        debug!(?cmd, "browsing command");
+        return command::execute(cmd, app);
+    }
+
+    match key.code {
+        KeyCode::Esc => app.command_line.clear(),
+        KeyCode::Backspace => command_line::backspace(&mut app.command_line),
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            command_line::insert_char(&mut app.command_line, c);
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+
+/// Runs whatever's typed in `app.command_line`: `cd`-shaped input
+/// changes the active panel's directory directly (`Panel::change_dir`
+/// — a spawned shell's own `cd` could never affect our process, so
+/// this has to be handled ourselves, same as Far Manager does it);
+/// anything else suspends the TUI and hands the console to the
+/// configured shell profile (`app.shell_profiles[app.active_shell]`),
+/// inheriting stdio so interactive programs (an editor, a REPL, ...)
+/// work too, not just one-shot commands.
+fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    let input = app.command_line.trim().to_string();
+    app.command_line.clear();
+    if input.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(target) = command_line::parse_cd_target(&input) {
+        debug!(target, "command line: cd");
+        app.active_panel().change_dir(target)?;
+        return Ok(());
+    }
+
+    let profile = app.shell_profiles[app.active_shell].clone();
+    let cwd = app.active_panel().path.clone();
+    debug!(shell = profile.name, %input, cwd = %cwd.display(), "command line: running");
+
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+    println!("{}> {input}", cwd.display());
+    let status = std::process::Command::new(&profile.program)
+        .args(&profile.args_prefix)
+        .arg(&input)
+        .current_dir(&cwd)
+        .status();
+    match status {
+        Ok(status) if !status.success() => {
+            debug!(?status, "command exited non-zero");
+        }
+        Err(err) => println!("failed to launch '{}': {err}", profile.program),
+        Ok(_) => {}
+    }
+    println!("\nPress any key to continue...");
+
+    // Wait for one real keypress before redrawing -- otherwise output
+    // that scrolled by fast is gone the instant the panels repaint.
+    loop {
+        if let Event::Key(k) = event::read()? {
+            if k.kind == KeyEventKind::Press {
+                break;
             }
-            Ok(())
         }
     }
+
+    enable_raw_mode()?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    terminal.clear()?;
+
+    app.active_panel().reload()?;
+    Ok(())
 }
 
 
@@ -187,6 +288,45 @@ fn handle_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<()> {
 }
 
 
+/// Key handling on the F9 top menu (`menu.rs`): `Up`/`Down` move,
+/// `Enter` descends into a submenu or, at the deepest level ("Color
+/// schemes"), opens `Mode::ThemeMenu`; `Esc` backs up one level, or
+/// closes the menu entirely if already at the top.
+fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    use menu::{MenuCommand, MenuLevel};
+
+    let Mode::MainMenu(menu_state) = &mut app.mode else {
+        return Ok(());
+    };
+
+    let command = menu::resolve(key);
+    debug!(?key, ?command, "main menu key");
+
+    match command {
+        MenuCommand::Up => menu_state.move_up(),
+        MenuCommand::Down => menu_state.move_down(),
+        MenuCommand::Back => {
+            if !menu_state.back() {
+                app.mode = Mode::Browsing;
+            }
+        }
+        MenuCommand::Select => {
+            let level = menu_state.level;
+            match level {
+                MenuLevel::Main => menu_state.enter_settings(),
+                // Only one item at Settings level today ("Color
+                // schemes"), so Select unconditionally opens it --
+                // revisit once Settings grows more than one item.
+                MenuLevel::Settings => app.mode = Mode::ThemeMenu(ThemeMenu::open()),
+            }
+        }
+        MenuCommand::Ignore => {}
+    }
+
+    Ok(())
+}
+
+
 /// Key handling on the F9 color-scheme picker: `Enter` applies the
 /// highlighted theme as both interface and editor theme, `I`/`E` apply
 /// just one side (see `theme_menu::ThemeMenuCommand`), `Esc` closes
@@ -225,6 +365,35 @@ fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
             app.mode = Mode::Browsing;
         }
         ThemeMenuCommand::Ignore => {}
+    }
+
+    Ok(())
+}
+
+
+/// Key handling on the `Ctrl+P` shell picker: `Up`/`Down` to move,
+/// `Enter` sets `app.active_shell` and closes, `Esc` cancels. Not
+/// persisted to `config.json` — resets to the platform default each
+/// run (see the plan doc / `.claude/rules/litastum-stack.md`).
+fn handle_shell_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    let Mode::ShellMenu(menu) = &mut app.mode else {
+        return Ok(());
+    };
+    debug!(?key, selected = menu.selected, "shell menu key");
+
+    match key.code {
+        KeyCode::Up => menu.selected = menu.selected.saturating_sub(1),
+        KeyCode::Down => {
+            if menu.selected + 1 < app.shell_profiles.len() {
+                menu.selected += 1;
+            }
+        }
+        KeyCode::Enter => {
+            app.active_shell = menu.selected;
+            app.mode = Mode::Browsing;
+        }
+        KeyCode::Esc => app.mode = Mode::Browsing,
+        _ => {}
     }
 
     Ok(())

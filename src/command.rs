@@ -3,7 +3,7 @@ use color_eyre::eyre::Result;
 use crate::app::{App, Mode};
 use crate::editor::Editor;
 use crate::keymap::Command;
-use crate::theme_menu::ThemeMenu;
+use crate::menu::MainMenu;
 
 
 /// Executes a resolved `Command` against the app state. This is the one
@@ -19,7 +19,7 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
         Command::EnterSelected => app.active_panel().enter_selected()?,
         Command::ToggleActive => app.toggle_active(),
         Command::EditSelected => open_editor(app),
-        Command::OpenThemeMenu => app.mode = Mode::ThemeMenu(ThemeMenu::open()),
+        Command::OpenMenu => app.mode = Mode::MainMenu(MainMenu::open()),
         Command::Quit => app.should_quit = true,
     }
     Ok(())

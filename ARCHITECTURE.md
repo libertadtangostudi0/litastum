@@ -180,10 +180,10 @@ becomes the one chokepoint both keyboard and scripts go through.
 - Multi-select (`marked` set) — needed for real Copy/Move/Delete-on-
   selection, but the mockup only shows the *visual* state, not the
   interaction; add when F5/F6/F8 stop being cursor-only.
-- Status bar / command-line input (mockup's bottom `cargo build --release`
-  line) — cosmetic only for now; wiring a real shell there is a separate
-  , larger feature (subprocess + PTY concerns), not part of this pass.
-- `vfs.rs`, `editor.rs`, `config.rs`, `script.rs` — stubbed as module
+- ~~Status bar / command-line input~~ — done since this sketch was
+  written: `command_line.rs` + `shell.rs`, see
+  `.claude/rules/litastum-command-line.md`.
+- `vfs.rs`, `script.rs` — stubbed as module
   names above for where they'll live per `CLAUDE.md`'s staged roadmap;
   not designed here since they're several stages out.
 
