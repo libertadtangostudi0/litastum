@@ -313,34 +313,135 @@ fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &s
 
 
 /// The default F-key row, and the row shown while `Alt` is held
-/// (`App::alt_held` — see its doc for why that's an approximation, not
-/// exact hold/release tracking). Only `F7` actually changes binding
-/// (`Alt+F7` opens Find file, `command_line.rs`'s own special case,
-/// same as `Shift+F6`) — the rest keep their default action and are
-/// just relabeled here to match, since Far Manager's real Alt row
-/// doesn't rebind them either.
+/// (`App::alt_held`). Only `F7` actually changes binding (`Alt+F7`
+/// opens Find file, `command_line.rs`'s own special case, same as
+/// `Shift+F6`) — the rest keep their default action and are just
+/// relabeled here to match, since Far Manager's real Alt row doesn't
+/// rebind them either.
+///
+/// Laid out in 10 fixed-width columns spanning the full row width
+/// (`Constraint::Ratio(1, 10)` each), rather than one flowing `Line`
+/// with each label's own natural width — the column boundaries depend
+/// only on `area`'s width, never on which label set is showing, so
+/// switching between the default and `Alt` labels (`"Folder"` vs.
+/// `"Find"`, six characters vs. four) can't shift anything to the
+/// right of the changed column. An earlier version used a single
+/// flowing line, which visibly reflowed every key from F7 onward the
+/// instant `Alt` was pressed or released — reported as jarring; see
+/// `tests::switching_alt_labels_does_not_shift_later_columns`, which
+/// checks this against a real rendered buffer, not just the layout
+/// math.
 fn draw_function_keys(frame: &mut Frame, area: Rect, theme: &Theme, alt: bool) {
-    const DEFAULT_LABELS: [(&str, &str); 10] = [
-        ("F1", "Help"), ("F2", "Bookmarks"), ("F3", "View"), ("F4", "Edit"),
-        ("F5", "Copy"), ("F6", "RenMov"), ("F7", "Folder"), ("F8", "Delete"),
-        ("F9", "Menu"), ("F10", "Quit"),
-    ];
-    const ALT_LABELS: [(&str, &str); 10] = [
-        ("F1", "Help"), ("F2", "Bookmarks"), ("F3", "View"), ("F4", "Edit"),
-        ("F5", "Copy"), ("F6", "RenMov"), ("F7", "Find"), ("F8", "Delete"),
-        ("F9", "Menu"), ("F10", "Quit"),
-    ];
     let labels = if alt { &ALT_LABELS } else { &DEFAULT_LABELS };
 
-    let spans: Vec<Span> = labels
-        .iter()
-        .flat_map(|(key, label)| {
-            [
-                Span::styled(format!("{key} "), Style::default().fg(theme.accent)),
-                Span::styled(format!("{label}  "), Style::default().fg(theme.text_dim)),
-            ]
-        })
-        .collect();
+    for (column, &(key, label)) in function_key_columns(area).into_iter().zip(labels.iter()) {
+        let line = Line::from(vec![
+            Span::styled(format!("{key} "), Style::default().fg(theme.accent)),
+            Span::styled(label, Style::default().fg(theme.text_dim)),
+        ]);
+        frame.render_widget(line, column);
+    }
+}
 
-    frame.render_widget(Line::from(spans), area);
+/// Keep every label at 6 characters or fewer — Far Manager's own
+/// convention for this row (`"UserMn"`, `"MkFold"`, `"ConfMn"`, ...),
+/// and not just cosmetic: with 10 equal-width columns spanning the
+/// terminal, a longer label eats into (or overruns, at narrow widths)
+/// the next column's space, since there's no gap reserved between
+/// columns — found by hand as `"Bookmarks"` (9 characters) visibly
+/// running into `"F3 View"` with no space between them. Enforced by
+/// `tests::labels_stay_within_the_six_character_budget`, not just left
+/// as a comment to remember.
+const DEFAULT_LABELS: [(&str, &str); 10] = [
+    ("F1", "Help"), ("F2", "Menu"), ("F3", "View"), ("F4", "Edit"),
+    ("F5", "Copy"), ("F6", "RenMov"), ("F7", "Folder"), ("F8", "Delete"),
+    ("F9", "Menu"), ("F10", "Quit"),
+];
+const ALT_LABELS: [(&str, &str); 10] = [
+    ("F1", "Help"), ("F2", "Menu"), ("F3", "View"), ("F4", "Edit"),
+    ("F5", "Copy"), ("F6", "RenMov"), ("F7", "Find"), ("F8", "Delete"),
+    ("F9", "Menu"), ("F10", "Quit"),
+];
+
+/// The 10 equal-width column rects the F-key row is split into —
+/// depends only on `area`, never on the labels drawn inside it.
+fn function_key_columns(area: Rect) -> [Rect; 10] {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Ratio(1, 10); 10])
+        .split(area);
+    std::array::from_fn(|i| columns[i])
+}
+
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+
+    use super::*;
+
+    /// Reads back the visible text of row `y`, column start inclusive,
+    /// by concatenating each cell's symbol — the same shape a real
+    /// terminal would show, so an `x` found in this string lines up
+    /// with an actual on-screen column.
+    fn rendered_row(terminal: &Terminal<TestBackend>, y: u16) -> String {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect()
+    }
+
+    fn render_function_keys(width: u16, alt: bool) -> String {
+        let backend = TestBackend::new(width, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::dark();
+        terminal
+            .draw(|frame| draw_function_keys(frame, Rect::new(0, 0, width, 1), &theme, alt))
+            .unwrap();
+        rendered_row(&terminal, 0)
+    }
+
+    /// The actual reported bug: the row used to be one flowing `Line`
+    /// with each label's own natural width, so switching `Alt` (e.g.
+    /// `"Folder"` <-> `"Find"`, six characters vs. four) visibly
+    /// reflowed every key from F7 onward. Column layout fixes this —
+    /// this test renders both label sets into a real buffer and checks
+    /// that every later key's own column (found by its own `"F<n> "`
+    /// prefix) starts at the exact same `x` regardless of which set is
+    /// showing, not just that the layout math looks right on paper.
+    #[test]
+    fn switching_alt_labels_does_not_shift_later_columns() {
+        let default_row = render_function_keys(120, false);
+        let alt_row = render_function_keys(120, true);
+
+        for key in ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"] {
+            let default_pos = default_row.find(key).unwrap_or_else(|| panic!("{key} missing from default row: {default_row:?}"));
+            let alt_pos = alt_row.find(key).unwrap_or_else(|| panic!("{key} missing from alt row: {alt_row:?}"));
+            assert_eq!(default_pos, alt_pos, "{key} shifted position when switching labels (default row: {default_row:?}, alt row: {alt_row:?})");
+        }
+    }
+
+    /// The row should use the full width available to it (10 equal
+    /// columns spanning `area`), not just as much as the longest
+    /// label set happens to need — `function_key_columns`'s last
+    /// column should reach the right edge.
+    #[test]
+    fn columns_span_the_full_available_width() {
+        let columns = function_key_columns(Rect::new(0, 0, 100, 1));
+        let last = columns.last().unwrap();
+        assert_eq!(last.x + last.width, 100, "last column should reach the right edge: {columns:?}");
+    }
+
+    /// Regression test for a real reported bug: `"Bookmarks"` (9
+    /// characters) visibly ran into the next column with no gap, since
+    /// equal-width columns reserve no padding between them. Caps every
+    /// label (both label sets) at Far Manager's own 6-character
+    /// convention (`"UserMn"`, `"MkFold"`, `"ConfMn"`, ...) so this
+    /// can't silently regress if a label is ever lengthened.
+    #[test]
+    fn labels_stay_within_the_six_character_budget() {
+        for &(key, label) in DEFAULT_LABELS.iter().chain(ALT_LABELS.iter()) {
+            assert!(label.len() <= 6, "{key}'s label {label:?} is {} characters, over the 6-character budget", label.len());
+        }
+    }
 }

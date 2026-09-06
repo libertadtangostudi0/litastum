@@ -134,21 +134,25 @@ pub struct App {
     /// — see `command_line::record_history`/`MAX_HISTORY` and the F9 →
     /// Commands → History popup. Session-only, not persisted.
     pub command_history: Vec<String>,
-    /// Whether the *last processed key event* carried the `Alt`
-    /// modifier — drives which row `ui::draw_function_keys` shows, Far
-    /// Manager-style. Set fresh in `main.rs::handle_event` from every
-    /// key event, browsing or not.
+    /// Whether `Alt` is currently held down — drives which row
+    /// `ui::draw_function_keys` shows, Far Manager-style.
     ///
-    /// This is an approximation, not true "Alt held down" tracking:
-    /// terminals (including the Windows Console API, this project's
-    /// main target) generally don't deliver a standalone press/release
-    /// event for a bare modifier key — only modifier flags riding along
-    /// with an actual keypress. So the alternate row appears the
+    /// True hold/release tracking on Windows: `crossterm`'s Windows
+    /// Console backend never delivers a standalone press/release event
+    /// for a bare modifier key on its own (only modifier flags riding
+    /// along with an actual keypress), so `main.rs::wait_for_event`
+    /// polls the OS directly (`alt_key::is_physically_down`,
+    /// `GetAsyncKeyState`) while otherwise idle and updates this the
+    /// instant the physical key state changes — see `alt_key.rs`'s own
+    /// doc for the full story.
+    ///
+    /// On other platforms there's no equivalent poll, so this falls
+    /// back to the same approximation as before: set fresh in
+    /// `main.rs::handle_event` from whether the *last processed key
+    /// event* carried the `Alt` modifier. The alternate row appears the
     /// instant an `Alt+`-something is pressed (correct) but only
-    /// reverts on the *next* key press without `Alt` (not the instant
-    /// `Alt` itself is released, since we're never told that
-    /// happened). Good enough to make `Alt+F7` discoverable; not a
-    /// claim of pixel-perfect Far Manager parity.
+    /// reverts on the *next* key press without `Alt`, not the instant
+    /// `Alt` itself is released.
     pub alt_held: bool,
 }
 

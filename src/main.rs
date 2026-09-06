@@ -1,3 +1,5 @@
+#[cfg(windows)]
+mod alt_key;
 mod app;
 mod command_line;
 mod editor;
@@ -76,9 +78,42 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Resu
         for (panel, cols) in app.panels.iter_mut().zip(columns) {
             panel.set_columns(cols);
         }
-        handle_event(app, terminal)?;
+        wait_for_event(app, terminal)?;
     }
     Ok(())
+}
+
+
+/// Blocks until either a real terminal event arrives (dispatched via
+/// `handle_event`) or -- Windows only -- the physical `Alt` key's
+/// actual held state (`alt_key::is_physically_down`) changes, so the
+/// alt-labels F-key row can react to `Alt` genuinely being held down,
+/// not just to the next keypress that happens to carry the `Alt`
+/// modifier. See `alt_key.rs`'s own doc for why that distinction
+/// matters: `crossterm`'s Windows backend never emits an event for a
+/// bare modifier key on its own, so relying on keypress modifiers
+/// alone means the row only ever updates in the same frame an `Alt+`
+/// shortcut already fired -- too late to be a preview. Elsewhere
+/// (`cfg(not(windows))`), this just blocks on the next real event,
+/// same as before; the keystroke-modifier approximation in
+/// `handle_event` below is what drives `alt_held` there.
+#[cfg(windows)]
+fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    loop {
+        if event::poll(alt_key::POLL_INTERVAL)? {
+            return handle_event(app, terminal);
+        }
+        let alt_down = alt_key::is_physically_down();
+        if alt_down != app.alt_held {
+            app.alt_held = alt_down;
+            return Ok(());
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    handle_event(app, terminal)
 }
 
 
@@ -90,9 +125,12 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
         return Ok(());
     }
 
-    // Drives the alternate F-key row (`ui::draw_function_keys`) -- see
-    // `App::alt_held`'s doc for why this is "did the last key event
-    // carry Alt" rather than true hold/release tracking.
+    // Drives the alternate F-key row (`ui::draw_function_keys`). On
+    // Windows this is mostly redundant with `wait_for_event`'s own
+    // `GetAsyncKeyState` poll (which already catches real hold/release
+    // even between keystrokes) but harmless to also set here; on other
+    // platforms this keystroke-modifier reading is the only signal
+    // there is -- see `App::alt_held`'s doc.
     app.alt_held = key.modifiers.contains(KeyModifiers::ALT);
 
     match &app.mode {
