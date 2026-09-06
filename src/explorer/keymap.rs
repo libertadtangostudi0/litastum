@@ -89,6 +89,7 @@ pub fn resolve_confirm_delete(key: KeyEvent) -> ConfirmDeleteCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::key;
 
     #[test]
     fn unbound_key_resolves_to_none() {
@@ -127,10 +128,6 @@ mod tests {
     #[test]
     fn f6_requests_move() {
         assert_eq!(resolve(KeyCode::F(6)), Some(Command::MoveSelected));
-    }
-
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
     }
 
     #[test]

@@ -53,19 +53,11 @@ pub fn move_entry(src: &Path, dst: &Path, is_dir: bool) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
+    use crate::test_support::unique_scratch_dir;
 
-    /// A fresh scratch directory under the OS temp dir, unique per test
-    /// (`cargo test` runs in parallel threads within one process — same
-    /// pattern as `panel.rs::scratch_panel`).
     fn scratch_dir() -> std::path::PathBuf {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("litastum-fs-ops-test-{}-{n}", std::process::id()));
-        fs::create_dir_all(&dir).expect("create scratch dir");
-        dir
+        unique_scratch_dir("fs-ops")
     }
 
     #[test]

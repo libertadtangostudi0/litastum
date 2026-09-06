@@ -245,14 +245,17 @@ real Far.
       query actually contains a wildcard character; a plain query with
       neither still matches by substring, so "just type part of the
       name" keeps working without forcing `*name*` on every search
-- [ ] No exclusion of `.git`/`target`/`node_modules`/... by default —
-      relies entirely on the visited-entry cap to stay responsive in a
-      big tree, rather than skipping obviously-uninteresting
-      directories up front
-- [ ] Search runs synchronously on the key-handling thread — blocks
-      the UI (no spinner, no cancel) until it finishes; fine for the
-      repo sizes tried so far, would need a background thread for a
-      truly huge tree
+- [ ] **Flagged performance risk, not yet a reported problem**:
+      `find_file/search.rs`'s recursive walk is synchronous, single-
+      threaded, and runs directly on the key-handling thread — no
+      spinner, no cancel, and no default exclusion of `.git`/`target`/
+      `node_modules`/... (the only safety net is the `MAX_RESULTS`/
+      `MAX_VISITED` visited-entry cap, which bounds the damage but
+      doesn't make a big search *fast*). Fine for every repo size tried
+      so far; revisit if a genuinely large tree makes this noticeably
+      slow or freezes the UI — see `search.rs`'s own doc comment for
+      the fix directions (ignore-pattern pruning, a background thread
+      with cancel, or parallelizing the walk)
 - [ ] No content search (Far's own Alt+F7 can also search *inside*
       files) — file names only
 - [ ] Results aren't scrolled, just clamped to the terminal height

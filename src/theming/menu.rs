@@ -163,11 +163,7 @@ pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theming::Theme;
-
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
-    }
+    use crate::test_support::{key, unique_scratch_dir};
 
     mod main_menu_state_tests {
         use super::*;
@@ -248,12 +244,7 @@ mod tests {
     /// `handle_main_menu_key` end to end rather than just `MainMenu`'s
     /// own methods.
     fn app_in_main_menu() -> App {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("litastum-menu-test-{}-{n}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("create scratch dir");
-        let mut app = App::new(dir, Theme::dark(), None).expect("build app");
+        let mut app = crate::test_support::test_app(unique_scratch_dir("menu"));
         app.mode = Mode::MainMenu(MainMenu::open());
         app
     }

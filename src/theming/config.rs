@@ -269,20 +269,14 @@ fn try_persist(config_dir: &Path, mutate: impl FnOnce(&mut Config)) -> io::Resul
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
+    use crate::test_support::unique_scratch_dir;
 
-    /// A distinct scratch directory per test (`cargo test` runs in
-    /// parallel threads within one process) — never the user's real
+    /// A distinct scratch directory per test — never the user's real
     /// config dir, since `config_dir: &Path` is a plain parameter on
     /// both functions under test here.
     fn scratch_dir() -> PathBuf {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("litastum-config-test-{}-{n}", std::process::id()));
-        fs::create_dir_all(&dir).expect("create scratch config dir");
-        dir
+        unique_scratch_dir("config")
     }
 
     mod read_config_tests {

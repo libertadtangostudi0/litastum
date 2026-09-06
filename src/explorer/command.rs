@@ -139,19 +139,12 @@ fn request_rename(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::theming::Theme;
+    use crate::test_support::{test_app, unique_scratch_dir};
 
-    /// A fresh scratch directory under the OS temp dir, unique per test
-    /// (same pattern as `fs_ops.rs`/`panel.rs`'s own scratch helpers).
     fn scratch_dir() -> std::path::PathBuf {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("litastum-command-test-{}-{n}", std::process::id()));
-        fs::create_dir_all(&dir).expect("create scratch dir");
-        dir
+        unique_scratch_dir("command")
     }
 
     /// Both panels rooted at a real scratch directory containing one
@@ -160,7 +153,7 @@ mod tests {
     fn app_with_selected_file(name: &str) -> App {
         let dir = scratch_dir();
         fs::write(dir.join(name), b"data").expect("write scratch file");
-        let mut app = App::new(dir, Theme::dark(), None).expect("build app");
+        let mut app = test_app(dir);
         let idx = app.panels[0].entries.iter().position(|e| e.name == name).expect("entry listed");
         app.panels[0].selected = idx;
         app
@@ -193,7 +186,7 @@ mod tests {
 
     #[test]
     fn request_delete_on_an_empty_panel_does_nothing() {
-        let mut app = App::new(scratch_dir(), Theme::dark(), None).expect("build app");
+        let mut app = test_app(scratch_dir());
 
         request_delete(&mut app);
 

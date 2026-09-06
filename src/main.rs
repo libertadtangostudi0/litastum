@@ -3,6 +3,8 @@ mod command_line;
 mod editor;
 mod explorer;
 mod logging;
+#[cfg(test)]
+mod test_support;
 mod text_field;
 mod theming;
 mod ui;

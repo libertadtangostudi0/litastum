@@ -126,14 +126,10 @@ pub fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theming::Theme;
+    use crate::test_support::key;
 
     fn menu_with(themes: Vec<&str>) -> ThemeMenu {
         ThemeMenu { themes: themes.into_iter().map(String::from).collect(), selected: 0 }
-    }
-
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
     }
 
     mod theme_menu_state_tests {
@@ -209,12 +205,7 @@ mod tests {
     /// is worse than not testing that path at all. `config.rs`'s own
     /// tests have the same limitation, for the same reason.
     fn app_in_theme_menu(themes: Vec<&str>) -> App {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("litastum-theme-menu-test-{}-{n}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("create scratch dir");
-        let mut app = App::new(dir, Theme::dark(), None).expect("build app");
+        let mut app = crate::test_support::test_app(crate::test_support::unique_scratch_dir("theme-menu"));
         app.mode = Mode::ThemeMenu(menu_with(themes));
         app
     }

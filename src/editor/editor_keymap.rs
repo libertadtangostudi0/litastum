@@ -158,38 +158,22 @@ pub fn handle_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<()> {
 mod tests {
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
     use crate::editor::Editor;
-    use crate::theming::Theme;
-
-    fn ctrl_key(c: char) -> KeyEvent {
-        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
-    }
-
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn shift_key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::SHIFT)
-    }
+    use crate::test_support::{ctrl_key, key, shift_key, test_app, unique_scratch_dir};
 
     /// A real `App` (no terminal needed) in `Mode::Editing`, with the
     /// panel rooted in the same scratch directory as the opened file so
     /// `close_editor_or_confirm`'s `app.active_panel().reload()` has
     /// somewhere real to reload.
     fn open_editor_app(contents: &str) -> (App, PathBuf) {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("litastum-editor-keymap-test-{}-{n}", std::process::id()));
-        fs::create_dir_all(&dir).expect("create scratch dir");
+        let dir = unique_scratch_dir("editor-keymap");
         let file_path = dir.join("file.txt");
         fs::write(&file_path, contents).expect("write test fixture file");
 
         let editor = Editor::open(file_path.clone(), None).expect("open test fixture file");
-        let mut app = App::new(dir, Theme::dark(), None).expect("build app");
+        let mut app = test_app(dir);
         app.mode = Mode::Editing(editor);
         (app, file_path)
     }

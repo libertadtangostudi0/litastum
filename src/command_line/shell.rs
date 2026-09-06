@@ -90,32 +90,20 @@ pub fn handle_shell_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use crossterm::event::KeyModifiers;
-
     use super::*;
     use crate::app::ShellMenu;
-    use crate::theming::Theme;
+    use crate::test_support::{key, test_app, unique_scratch_dir};
 
     #[test]
     fn builtin_profiles_is_never_empty() {
         assert!(!builtin_profiles().is_empty());
     }
 
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
     /// A real `App` (no terminal needed) in `Mode::ShellMenu`, cursor on
     /// row 0 — `App::new` always seeds at least one built-in profile, so
     /// there's always something to navigate.
     fn app_in_shell_menu() -> App {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("litastum-shell-menu-test-{}-{n}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("create scratch dir");
-        let mut app = App::new(dir, Theme::dark(), None).expect("build app");
+        let mut app = test_app(unique_scratch_dir("shell-menu"));
         app.mode = Mode::ShellMenu(ShellMenu { selected: 0 });
         app
     }

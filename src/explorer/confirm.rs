@@ -192,31 +192,16 @@ fn run_confirmed_transfer(app: &mut App) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use crossterm::event::KeyModifiers;
-
     use super::*;
     use crate::app::{App, PendingDelete, PendingTransfer};
-    use crate::theming::Theme;
+    use crate::test_support::{key, test_app, unique_scratch_dir};
 
-    /// A fresh scratch directory under the OS temp dir, unique per test
-    /// (same pattern as `fs_ops.rs`/`panel.rs`/`command.rs`'s own
-    /// scratch helpers).
     fn scratch_dir() -> PathBuf {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("litastum-confirm-test-{}-{n}", std::process::id()));
-        fs::create_dir_all(&dir).expect("create scratch dir");
-        dir
+        unique_scratch_dir("confirm")
     }
 
     fn scratch_app() -> App {
-        App::new(scratch_dir(), Theme::dark(), None).expect("build app")
-    }
-
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
+        test_app(scratch_dir())
     }
 
     #[test]
