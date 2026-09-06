@@ -4,7 +4,7 @@ use edtui::syntect::highlighting::{
 use ratatui::style::Color;
 use serde::Deserialize;
 
-use crate::theme::Theme;
+use super::theme::Theme;
 
 
 /// A Windows Terminal-format color scheme — the exact JSON shape

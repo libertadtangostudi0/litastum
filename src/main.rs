@@ -1,21 +1,10 @@
 mod app;
-mod command;
 mod command_line;
-mod config;
-mod confirm;
 mod editor;
-mod editor_keymap;
-mod find_file;
-mod fs_ops;
-mod keymap;
+mod explorer;
 mod logging;
-mod menu;
-mod panel;
-mod scheme;
-mod shell;
 mod text_field;
-mod theme;
-mod theme_menu;
+mod theming;
 mod ui;
 
 use std::io::{self, Stdout};
@@ -38,14 +27,14 @@ fn main() -> Result<()> {
     let start_dir = std::env::current_dir()?;
 
     let mut terminal = setup_terminal()?;
-    let (theme, syntax_theme) = config::load_active_theme();
+    let (theme, syntax_theme) = theming::config::load_active_theme();
     let mut app = App::new(start_dir, theme, syntax_theme)?;
     // Applies a shell profile saved via F9 -> Options -> Save setup, if
     // its name still matches one of the built-in profiles -- a name
     // that no longer exists (profiles changed between runs) just falls
     // back to the default at index 0, same as a broken theme choice
     // falls back rather than failing startup.
-    if let Some(name) = config::load_active_shell() {
+    if let Some(name) = theming::config::load_active_shell() {
         if let Some(index) = app.shell_profiles.iter().position(|profile| profile.name == name) {
             app.active_shell = index;
         }
@@ -105,14 +94,14 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
     app.alt_held = key.modifiers.contains(KeyModifiers::ALT);
 
     match &app.mode {
-        Mode::Editing(_) => editor_keymap::handle_editor_key(app, key),
-        Mode::ConfirmDiscard(_) => editor_keymap::handle_confirm_discard_key(app, key),
-        Mode::ConfirmDelete(_) => confirm::handle_confirm_delete_key(app, key),
-        Mode::ConfirmTransfer(_) => confirm::handle_confirm_transfer_key(app, key),
-        Mode::MainMenu(_) => menu::handle_main_menu_key(app, key),
-        Mode::ThemeMenu(_) => theme_menu::handle_theme_menu_key(app, key),
-        Mode::ShellMenu(_) => shell::handle_shell_menu_key(app, key),
-        Mode::FindFile(_) => find_file::handle_find_file_key(app, key),
+        Mode::Editing(_) => editor::handle_editor_key(app, key),
+        Mode::ConfirmDiscard(_) => editor::handle_confirm_discard_key(app, key),
+        Mode::ConfirmDelete(_) => explorer::handle_confirm_delete_key(app, key),
+        Mode::ConfirmTransfer(_) => explorer::handle_confirm_transfer_key(app, key),
+        Mode::MainMenu(_) => theming::handle_main_menu_key(app, key),
+        Mode::ThemeMenu(_) => theming::handle_theme_menu_key(app, key),
+        Mode::ShellMenu(_) => command_line::handle_shell_menu_key(app, key),
+        Mode::FindFile(_) => explorer::handle_find_file_key(app, key),
         Mode::CommandHistory(_) => command_line::handle_history_key(app, key),
         Mode::Browsing => command_line::handle_browsing_key(app, key, terminal),
     }

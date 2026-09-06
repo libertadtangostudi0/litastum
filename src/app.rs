@@ -3,14 +3,10 @@ use std::path::PathBuf;
 
 use edtui::syntect::highlighting::Theme as SynTheme;
 
-use crate::command_line::{self, CommandHistoryMenu};
+use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
 use crate::editor::Editor;
-use crate::find_file::FindFileState;
-use crate::menu::MainMenu;
-use crate::panel::Panel;
-use crate::shell::{self, ShellProfile};
-use crate::theme::Theme;
-use crate::theme_menu::ThemeMenu;
+use crate::explorer::{FindFileState, Panel};
+use crate::theming::{MainMenu, Theme, ThemeMenu};
 
 
 /// What the app is currently showing. Only one at a time — there's no
@@ -171,7 +167,7 @@ impl App {
             syntax_theme,
             command_line: String::new(),
             command_line_completion: None,
-            shell_profiles: shell::builtin_profiles(),
+            shell_profiles: builtin_profiles(),
             active_shell: 0,
             command_history: Vec::new(),
             alt_held: false,

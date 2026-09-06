@@ -320,6 +320,9 @@ mod tests {
 
     use super::*;
 
+    mod change_dir_tests {
+        use super::*;
+
     /// A real scratch directory with one real subdirectory (`sub`) in
     /// it, for `change_dir` tests — unlike `panel_with` below, this
     /// needs actual filesystem entries since `change_dir` checks
@@ -371,25 +374,10 @@ mod tests {
         assert_eq!(lexically_normalize(std::path::Path::new("/a/b/..")), PathBuf::from("/a"));
         assert_eq!(lexically_normalize(std::path::Path::new("/a/./b")), PathBuf::from("/a/b"));
     }
-
-    /// A panel with `count` dummy file entries, laid out in `columns`
-    /// columns, cursor starting at index 0.
-    fn panel_with(count: usize, columns: usize) -> Panel {
-        let entries = (0..count)
-            .map(|i| Entry {
-                name: i.to_string(),
-                is_dir: false,
-                size: 0,
-                modified: None,
-            })
-            .collect();
-        Panel {
-            path: PathBuf::new(),
-            entries,
-            selected: 0,
-            columns,
-        }
     }
+
+    mod highlight_role_tests {
+        use super::*;
 
     fn entry(name: &str, is_dir: bool) -> Entry {
         Entry { name: name.to_string(), is_dir, size: 0, modified: None }
@@ -434,6 +422,29 @@ mod tests {
     fn everything_else_is_other() {
         assert_eq!(entry("README.md", false).highlight_role(), HighlightRole::Other);
         assert_eq!(entry("no_extension", false).highlight_role(), HighlightRole::Other);
+    }
+    }
+
+    mod navigation_tests {
+        use super::*;
+
+    /// A panel with `count` dummy file entries, laid out in `columns`
+    /// columns, cursor starting at index 0.
+    fn panel_with(count: usize, columns: usize) -> Panel {
+        let entries = (0..count)
+            .map(|i| Entry {
+                name: i.to_string(),
+                is_dir: false,
+                size: 0,
+                modified: None,
+            })
+            .collect();
+        Panel {
+            path: PathBuf::new(),
+            entries,
+            selected: 0,
+            columns,
+        }
     }
 
     // 5 entries, 2 columns -> rows = 3: col0 = [0,1,2], col1 = [3,4]
@@ -512,5 +523,6 @@ mod tests {
         panel.entries.truncate(2);
         panel.set_columns(1);
         assert_eq!(panel.selected, 1);
+    }
     }
 }

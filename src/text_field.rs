@@ -203,6 +203,9 @@ pub fn delete_selection(text: &mut String, cursor: &mut usize, anchor: &mut Opti
 mod tests {
     use super::*;
 
+    mod editing_tests {
+        use super::*;
+
     #[test]
     fn insert_char_at_cursor_not_just_at_the_end() {
         let mut text = "helo".to_string();
@@ -254,6 +257,10 @@ mod tests {
         delete_forward(&mut text, &mut cursor);
         assert_eq!(text, "hello");
     }
+    }
+
+    mod movement_tests {
+        use super::*;
 
     #[test]
     fn move_left_and_right_are_clamped() {
@@ -306,6 +313,10 @@ mod tests {
         move_word_right(text, &mut cursor);
         assert_eq!(cursor, text.chars().count());
     }
+    }
+
+    mod selection_tests {
+        use super::*;
 
     #[test]
     fn shift_right_starts_and_extends_a_selection() {
@@ -381,5 +392,6 @@ mod tests {
         assert!(!deleted);
         assert_eq!(text, "hello");
         assert_eq!(cursor, 2);
+    }
     }
 }

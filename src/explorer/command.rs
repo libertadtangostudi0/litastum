@@ -2,8 +2,8 @@ use color_eyre::eyre::Result;
 
 use crate::app::{App, Mode, PendingDelete, PendingTransfer, TransferOp};
 use crate::editor::Editor;
-use crate::keymap::Command;
-use crate::menu::MainMenu;
+use crate::theming::MainMenu;
+use super::keymap::Command;
 
 
 /// Executes a resolved `Command` against the app state. This is the one
@@ -142,7 +142,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::theme::Theme;
+    use crate::theming::Theme;
 
     /// A fresh scratch directory under the OS temp dir, unique per test
     /// (same pattern as `fs_ops.rs`/`panel.rs`'s own scratch helpers).

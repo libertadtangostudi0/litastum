@@ -10,9 +10,15 @@ use ratatui::{
 
 use crate::app::{App, Mode};
 use crate::editor::Editor;
-use crate::panel::{Entry, HighlightRole, Panel};
-use crate::theme::Theme;
-use crate::{command_line, confirm, find_file, menu, shell, theme_menu};
+use crate::explorer::{Entry, HighlightRole, Panel};
+use crate::theming::Theme;
+
+mod command_line;
+mod confirm;
+mod find_file;
+mod menu;
+mod shell;
+mod theme_menu;
 
 /// Panels narrower than this (per column) fall back to a single column.
 const MIN_COLUMN_WIDTH: u16 = 24;
@@ -85,7 +91,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
     // menu, not in place of it -- unlike Editing/ConfirmDiscard above,
     // which replace the whole screen.
     match &app.mode {
-        Mode::MainMenu(menu) => menu::draw_main_menu(frame, area, menu, &theme),
+        Mode::MainMenu(state) => menu::draw_main_menu(frame, area, state, &theme),
         Mode::ThemeMenu(menu) => theme_menu::draw_theme_menu(frame, area, menu, &theme),
         Mode::ShellMenu(menu) => shell::draw_shell_menu(frame, area, menu, &app.shell_profiles, &theme),
         Mode::ConfirmDelete(pending) => confirm::draw_confirm_delete_popup(frame, area, pending, &theme),

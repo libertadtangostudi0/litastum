@@ -11,19 +11,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use directories::UserDirs;
-use ratatui::{
-    layout::{Constraint, Direction, Layout, Position, Rect},
-    style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
-    Frame,
-};
 use tracing::debug;
 
 use crate::app::{App, Mode};
 use crate::text_field;
-use crate::theme::Theme;
-use crate::ui::centered_rect;
 
 /// Search results are capped, and the walk itself gives up after
 /// visiting this many entries — a huge tree (a repo's own `target/`,
@@ -403,130 +394,12 @@ fn open_selected_result(app: &mut App) -> Result<()> {
 }
 
 
-/// Renders whichever phase is current. Returns where the real terminal
-/// cursor should sit — only meaningful during `Typing` (same mechanism
-/// as the command line's own cursor, `ui::draw`); `None` during
-/// `Results`, which has no text entry to place a cursor in.
-pub fn draw_find_file(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Theme) -> Option<Position> {
-    match state.phase {
-        FindFilePhase::Typing => Some(draw_typing(frame, area, state, theme)),
-        FindFilePhase::Results => {
-            draw_results(frame, area, state, theme);
-            None
-        }
-    }
-}
-
-
-fn draw_typing(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Theme) -> Position {
-    let popup = centered_rect(50, 5, area);
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
-        .title(" Find file ");
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
-        .split(inner);
-
-    let label = Line::from(Span::styled("File name to find:", Style::default().fg(theme.text)));
-    frame.render_widget(label, rows[0]);
-
-    let query = Line::from(Span::styled(state.query.clone(), Style::default().fg(theme.text)));
-    frame.render_widget(query, rows[1]);
-
-    let hint = Line::from(vec![
-        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" search  ", Style::default().fg(theme.text_dim)),
-        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" cancel", Style::default().fg(theme.text_dim)),
-    ]);
-    frame.render_widget(hint, rows[2]);
-
-    Position { x: rows[1].x + state.cursor as u16, y: rows[1].y }
-}
-
-
-fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Theme) {
-    let height = (state.results.len().max(1) as u16 + 6).clamp(8, area.height);
-    let popup = centered_rect(70, height, area);
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
-        .title(format!(" Find file: \"{}\" ", state.query));
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-
-    // Two fixed rows for the export message (label + detail, e.g.
-    // "Exported to:" / the actual path) even when there isn't one --
-    // simpler than resizing the popup depending on whether a message
-    // is currently showing, at the cost of a little blank space in the
-    // common "haven't exported yet" case.
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
-        .split(inner);
-
-    if state.results.is_empty() {
-        let empty = Paragraph::new(Line::from(Span::styled("No matches found", Style::default().fg(theme.text_dim))));
-        frame.render_widget(empty, rows[0]);
-    } else {
-        let items: Vec<ListItem> = state
-            .results
-            .iter()
-            .enumerate()
-            .map(|(index, path)| {
-                let style = if index == state.selected {
-                    Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(theme.text)
-                };
-                ListItem::new(Line::from(Span::styled(path.to_string_lossy().into_owned(), style)))
-            })
-            .collect();
-        frame.render_widget(List::new(items), rows[0]);
-    }
-
-    if let Some((label, detail)) = &state.export_message {
-        let label_line = Line::from(Span::styled(label.clone(), Style::default().fg(theme.text_dim)));
-        frame.render_widget(label_line, rows[1]);
-        // A real Downloads path is easily wide enough to overflow the
-        // popup on one line together with the label -- ratatui clips
-        // rather than wraps a `Line` that's too long for its area, so
-        // splitting the detail onto its own row (still just clipped if
-        // it's *itself* wider than the popup, but that's a much rarer
-        // case than "label + path together" was) is the fix here, not
-        // a text-wrapping widget for what's meant to be a one-line
-        // status.
-        let detail_line = Line::from(Span::styled(detail.clone(), Style::default().fg(theme.text)));
-        frame.render_widget(detail_line, rows[2]);
-    }
-
-    let hint = Line::from(vec![
-        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" go to  ", Style::default().fg(theme.text_dim)),
-        Span::styled("Ctrl+S", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" export  ", Style::default().fg(theme.text_dim)),
-        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" cancel", Style::default().fg(theme.text_dim)),
-    ]);
-    frame.render_widget(hint, rows[3]);
-}
-
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::theme::Theme;
+    use crate::theming::Theme;
 
     fn scratch_dir() -> PathBuf {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -540,8 +413,11 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    #[test]
-    fn search_finds_a_matching_file_at_the_root() {
+    mod search_tests {
+        use super::*;
+
+        #[test]
+        fn search_finds_a_matching_file_at_the_root() {
         let dir = scratch_dir();
         fs::write(dir.join("readme.txt"), b"hi").unwrap();
         fs::write(dir.join("other.txt"), b"hi").unwrap();
@@ -630,6 +506,10 @@ mod tests {
         assert!(!glob_match("a", ""));
         assert!(glob_match("*", ""), "a bare * matches even an empty string");
     }
+    }
+
+    mod filename_sanitizing_tests {
+        use super::*;
 
     #[test]
     fn sanitize_for_filename_replaces_windows_illegal_characters() {
@@ -649,6 +529,10 @@ mod tests {
         // fallback (for a literally empty input) doesn't kick in here.
         assert_eq!(sanitize_for_filename("***"), "___");
     }
+    }
+
+    mod date_time_tests {
+        use super::*;
 
     #[test]
     fn civil_from_days_epoch_is_1970_01_01() {
@@ -687,6 +571,10 @@ mod tests {
             "everything but the separators should be digits: {timestamp}"
         );
     }
+    }
+
+    mod export_tests {
+        use super::*;
 
     #[test]
     fn write_results_writes_one_path_per_line() {
@@ -731,6 +619,10 @@ mod tests {
     // would write into the real user's Downloads folder as a side
     // effect of running the test suite. `write_results` above covers
     // everything export-related that's actually injectable.
+    }
+
+    mod key_handling_tests {
+        use super::*;
 
     fn app_with_find_file(state: FindFileState) -> App {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -822,5 +714,6 @@ mod tests {
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
         assert_eq!(state.selected, 1);
+    }
     }
 }

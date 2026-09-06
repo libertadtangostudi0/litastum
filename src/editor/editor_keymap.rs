@@ -156,11 +156,46 @@ pub fn handle_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
+    use crate::editor::Editor;
+    use crate::theming::Theme;
 
     fn ctrl_key(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn shift_key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
+    /// A real `App` (no terminal needed) in `Mode::Editing`, with the
+    /// panel rooted in the same scratch directory as the opened file so
+    /// `close_editor_or_confirm`'s `app.active_panel().reload()` has
+    /// somewhere real to reload.
+    fn open_editor_app(contents: &str) -> (App, PathBuf) {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("litastum-editor-keymap-test-{}-{n}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create scratch dir");
+        let file_path = dir.join("file.txt");
+        fs::write(&file_path, contents).expect("write test fixture file");
+
+        let editor = Editor::open(file_path.clone(), None).expect("open test fixture file");
+        let mut app = App::new(dir, Theme::dark(), None).expect("build app");
+        app.mode = Mode::Editing(editor);
+        (app, file_path)
+    }
+
+    mod resolve_editor_key_tests {
+        use super::*;
 
     #[test]
     fn ctrl_s_resolves_to_save() {
@@ -196,10 +231,10 @@ mod tests {
         // keymap in editor.rs) -- this module no longer special-cases them.
         assert_eq!(resolve(ctrl_key('c')), EditorCommand::Forward);
     }
-
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
     }
+
+    mod resolve_confirm_discard_tests {
+        use super::*;
 
     #[test]
     fn y_or_uppercase_y_confirms_discard() {
@@ -218,31 +253,10 @@ mod tests {
         assert_eq!(resolve_confirm_discard(key(KeyCode::Char('x'))), ConfirmDiscardCommand::Ignore);
         assert_eq!(resolve_confirm_discard(key(KeyCode::Enter)), ConfirmDiscardCommand::Ignore);
     }
-
-    use std::fs;
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use crate::editor::Editor;
-    use crate::theme::Theme;
-
-    /// A real `App` (no terminal needed) in `Mode::Editing`, with the
-    /// panel rooted in the same scratch directory as the opened file so
-    /// `close_editor_or_confirm`'s `app.active_panel().reload()` has
-    /// somewhere real to reload.
-    fn open_editor_app(contents: &str) -> (App, PathBuf) {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("litastum-editor-keymap-test-{}-{n}", std::process::id()));
-        fs::create_dir_all(&dir).expect("create scratch dir");
-        let file_path = dir.join("file.txt");
-        fs::write(&file_path, contents).expect("write test fixture file");
-
-        let editor = Editor::open(file_path.clone(), None).expect("open test fixture file");
-        let mut app = App::new(dir, Theme::dark(), None).expect("build app");
-        app.mode = Mode::Editing(editor);
-        (app, file_path)
     }
+
+    mod handle_editor_key_tests {
+        use super::*;
 
     #[test]
     fn handle_editor_key_ctrl_s_saves_and_clears_dirty() {
@@ -300,10 +314,10 @@ mod tests {
         };
         assert!(!editor.has_selection());
     }
-
-    fn shift_key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::SHIFT)
     }
+
+    mod handle_confirm_discard_key_tests {
+        use super::*;
 
     #[test]
     fn handle_confirm_discard_key_y_discards_and_returns_to_browsing() {
@@ -340,5 +354,6 @@ mod tests {
         handle_confirm_discard_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 
         assert!(matches!(app.mode, Mode::ConfirmDiscard(_)));
+    }
     }
 }

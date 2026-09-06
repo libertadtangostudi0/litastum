@@ -7,8 +7,8 @@ use edtui::syntect::highlighting::Theme as SynTheme;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-use crate::scheme::ColorScheme;
-use crate::theme::Theme;
+use super::scheme::ColorScheme;
+use super::theme::Theme;
 
 
 /// This app's config directory (`<OS config dir>/litastum/`), if the
@@ -273,16 +273,6 @@ mod tests {
 
     use super::*;
 
-    const VALID_SCHEME_JSON: &str = r##"{
-        "name": "Test", "black": "#000000", "red": "#ff0000", "green": "#00ff00",
-        "yellow": "#ffff00", "blue": "#0000ff", "purple": "#ff00ff", "cyan": "#00ffff",
-        "white": "#ffffff", "brightBlack": "#111111", "brightRed": "#ff1111",
-        "brightGreen": "#11ff11", "brightYellow": "#ffff11", "brightBlue": "#1111ff",
-        "brightPurple": "#ff11ff", "brightCyan": "#11ffff", "brightWhite": "#eeeeee",
-        "background": "#000000", "foreground": "#ffffff",
-        "selectionBackground": "#222222", "cursorColor": "#333333"
-    }"##;
-
     /// A distinct scratch directory per test (`cargo test` runs in
     /// parallel threads within one process) — never the user's real
     /// config dir, since `config_dir: &Path` is a plain parameter on
@@ -294,6 +284,9 @@ mod tests {
         fs::create_dir_all(&dir).expect("create scratch config dir");
         dir
     }
+
+    mod read_config_tests {
+        use super::*;
 
     #[test]
     fn read_config_falls_back_to_default_when_file_is_missing() {
@@ -328,6 +321,20 @@ mod tests {
         assert_eq!(config.interface_theme.as_deref(), Some("a"));
         assert_eq!(config.editor_theme, None);
     }
+    }
+
+    mod load_scheme_tests {
+        use super::*;
+
+    const VALID_SCHEME_JSON: &str = r##"{
+        "name": "Test", "black": "#000000", "red": "#ff0000", "green": "#00ff00",
+        "yellow": "#ffff00", "blue": "#0000ff", "purple": "#ff00ff", "cyan": "#00ffff",
+        "white": "#ffffff", "brightBlack": "#111111", "brightRed": "#ff1111",
+        "brightGreen": "#11ff11", "brightYellow": "#ffff11", "brightBlue": "#1111ff",
+        "brightPurple": "#ff11ff", "brightCyan": "#11ffff", "brightWhite": "#eeeeee",
+        "background": "#000000", "foreground": "#ffffff",
+        "selectionBackground": "#222222", "cursorColor": "#333333"
+    }"##;
 
     #[test]
     fn load_scheme_returns_none_when_theme_file_is_missing() {
@@ -360,6 +367,10 @@ mod tests {
         assert!(interface.is_some(), "interface theme should still load");
         assert!(editor.is_none(), "missing editor theme file should just be None, not a panic");
     }
+    }
+
+    mod persist_tests {
+        use super::*;
 
     #[test]
     fn try_persist_writes_a_fresh_config_when_none_existed() {
@@ -411,6 +422,10 @@ mod tests {
         assert_eq!(config.interface_theme.as_deref(), Some("keep-me"));
         assert_eq!(config.active_shell.as_deref(), Some("Command Prompt"));
     }
+    }
+
+    mod theme_discovery_tests {
+        use super::*;
 
     // Regression coverage for a real bug: theme lookup only checked the
     // OS config dir, so the repo's own bundled `themes/apple-system-
@@ -434,5 +449,6 @@ mod tests {
     fn find_scheme_finds_the_second_bundled_example_too() {
         let scheme = find_scheme("alien-blood").expect("alien-blood.json should parse");
         assert_eq!(scheme.name, "AlienBlood");
+    }
     }
 }
