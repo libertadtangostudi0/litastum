@@ -235,7 +235,15 @@ the menu here, no global hotkey (wasn't asked for).
       indefinitely — deliberately no directory exclusions beyond that
       cap, a plain substring search same as Far's own "Find file"
       starts as
-- [ ] No glob/wildcard patterns (`*.rs`) — substring only
+- [x] Glob patterns (`*`/`?`, e.g. `*.md`) — reported as a real bug
+      almost immediately: `*.md` was being searched for as the
+      *literal* six-character substring `"*.md"`, which matches no
+      real file name. `find_file::matches_query` now switches to
+      `glob_match` (a hand-rolled, classic greedy two-pointer `*`/`?`
+      matcher — no `[...]` character classes, no escaping) whenever the
+      query actually contains a wildcard character; a plain query with
+      neither still matches by substring, so "just type part of the
+      name" keeps working without forcing `*name*` on every search
 - [ ] No exclusion of `.git`/`target`/`node_modules`/... by default —
       relies entirely on the visited-entry cap to stay responsive in a
       big tree, rather than skipping obviously-uninteresting
