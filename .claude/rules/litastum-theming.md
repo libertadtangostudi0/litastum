@@ -228,6 +228,26 @@ resolver, tried on every file open:
     which fails with `ParsingError(UnresolvedContextReference(..))` if
     `Git Common.sublime-syntax` is ever removed from `BUNDLED_GRAMMARS`
     again).
+  - CMake (`CMakeLists.txt` by name, `.cmake` by extension):
+    github.com/zyxar/Sublime-CMakeLists (MIT license — see
+    `assets/syntax/CMake.LICENSE.txt`). Missing for a different reason
+    than PowerShell/INI: Sublime Text has never shipped CMake support
+    out of the box at all (it's always been a third-party package), so
+    `syntect`'s own bundle — built from what Sublime actually ships —
+    doesn't have it either, even though it does exist upstream (unlike
+    INI, which genuinely has no source at all). Same
+    `include:`-a-hidden-dependency shape as the Git formats above:
+    `CMake.sublime-syntax`'s `main` context includes
+    `CMakeCommands.sublime-syntax` (scope `commands.builtin.cmake`,
+    `hidden: true`) for command-argument highlighting, so both files
+    are bundled together — confirmed with the same "actually run
+    highlighting and check it colored something" test shape
+    (`editor::tests::cmake_commands_include_is_actually_resolved_not_just_present`).
+    Reported for `CMakeLists.txt.sdk` template files (this project's
+    own build-system naming convention, not a general one) — handled
+    by `Editor::view` trying the name/extension again with one trailing
+    `.sdk` stripped, rather than teaching the grammar itself about a
+    project-specific suffix it has no reason to know about.
 - **Why not github.com/PowerShell/EditorSyntax** for PowerShell (the
   obvious first choice, Microsoft's own repo): it only ships a
   `.tmLanguage` (plist XML) grammar, and `syntect` doesn't load that

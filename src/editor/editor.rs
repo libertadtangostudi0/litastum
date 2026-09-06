@@ -1,6 +1,6 @@
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crossterm::event::KeyEvent;
 use edtui::syntect::highlighting::Theme as SynTheme;
@@ -128,7 +128,22 @@ impl Editor {
         // for files with no usable name at all, like `.git/config`.
         let file_name = self.path.file_name().and_then(|n| n.to_str());
         let extension = self.path.extension().and_then(|e| e.to_str());
-        let candidates: Vec<&str> = [file_name, extension].into_iter().flatten().collect();
+        let mut candidates: Vec<&str> = [file_name, extension].into_iter().flatten().collect();
+
+        // A ".sdk" suffix on top of an otherwise-recognizable file name
+        // is this project's own build-system convention for a template
+        // that becomes the inner file once processed (e.g.
+        // "CMakeLists.txt.sdk" is a CMake template) -- also try the
+        // name/extension with that one suffix stripped, so these
+        // templates get the same highlighting the real file would, on
+        // top of (not instead of) the direct candidates above.
+        let inner_name = file_name.and_then(|name| name.strip_suffix(".sdk"));
+        if let Some(inner_name) = inner_name {
+            candidates.push(inner_name);
+            if let Some(inner_extension) = Path::new(inner_name).extension().and_then(|e| e.to_str()) {
+                candidates.push(inner_extension);
+            }
+        }
 
         let syntax_highlighter = resolve_syntax_highlighter(&candidates, &self.first_line, custom_syntax_theme);
         debug!(?candidates, found = syntax_highlighter.is_some(), "syntax highlighter lookup");

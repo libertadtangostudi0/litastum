@@ -1,0 +1,58 @@
+%YAML 1.2
+---
+# Self-authored, not sourced from any external package -- unlike the
+# other files in this directory, this one has no upstream LICENSE.txt
+# because there's nothing to attribute. No suitable existing grammar
+# was found: the only public ".dcl" grammar (OpenVMS's "DIGITAL Command
+# Language") is an unrelated language that happens to share the
+# extension, and would mis-highlight AutoCAD's Dialog Control Language
+# rather than not highlight it -- same trap as Android's init.rc for
+# ".rc" (see EXTENSION_ALIASES in syntax.rs).
+#
+# Deliberately modest, matching this project's own stated preference
+# (see litastum-theming.md's syntax-highlighting section) for a small,
+# honest grammar over an exhaustive one: comments, strings, numbers,
+# punctuation, tile-type labels (`name : type {`) and attribute names
+# (`attr = value;`) -- not an exhaustive enumeration of DCL's full tile
+# and attribute vocabulary, which would need constant upkeep against
+# Autodesk's own reference to stay accurate.
+name: DCL
+file_extensions:
+  - dcl
+scope: source.dcl
+
+contexts:
+  main:
+    - match: '//.*$'
+      scope: comment.line.double-slash.dcl
+
+    - match: '"'
+      scope: punctuation.definition.string.begin.dcl
+      push: double_quoted_string
+
+    - match: '\b\d+\b'
+      scope: constant.numeric.dcl
+
+    # A tile's own type label, e.g. "row : cluster {" -- the identifier
+    # just before a colon.
+    - match: '\b[A-Za-z_][A-Za-z0-9_]*\b(?=\s*:)'
+      scope: entity.name.type.dcl
+
+    # An attribute name, e.g. "horizontal_margin = none;" -- the
+    # identifier just before an equals sign.
+    - match: '\b[A-Za-z_][A-Za-z0-9_]*\b(?=\s*=)'
+      scope: variable.parameter.dcl
+
+    - match: '[{}]'
+      scope: punctuation.section.block.dcl
+
+    - match: '[:;=]'
+      scope: punctuation.separator.dcl
+
+  double_quoted_string:
+    - meta_scope: string.quoted.double.dcl
+    - match: '\\.'
+      scope: constant.character.escape.dcl
+    - match: '"'
+      scope: punctuation.definition.string.end.dcl
+      pop: true

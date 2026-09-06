@@ -126,6 +126,17 @@ Near-term, actionable items. Full staged plan:
       verified with a test that resolves the actual style via
       `syntect::highlighting::Highlighter` rather than just checking
       the scope list contains an entry
+- [x] Syntax highlighting for `CMakeLists.txt`/`.cmake`, and for this
+      project's own `CMakeLists.txt.sdk` build-template convention —
+      Sublime Text has never shipped CMake support by default (a
+      third-party package there), so `syntect`'s own bundle lacks it
+      too; fixed the same way as PowerShell/INI, bundling
+      github.com/zyxar/Sublime-CMakeLists's grammar (plus its hidden
+      `CMakeCommands.sublime-syntax` include dependency — see
+      [[litastum-theming]]'s "Syntax highlighting" section). The `.sdk`
+      suffix itself is handled in `Editor::view`, not the grammar: it
+      retries the same name/extension lookup with one trailing `.sdk`
+      stripped, a general mechanism rather than a CMake-specific hack
 
 ## RESOLVED: Ctrl+S / Ctrl+C / Ctrl+V / Ctrl+X (2026-09-04)
 
