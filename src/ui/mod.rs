@@ -15,6 +15,7 @@ use crate::theming::Theme;
 
 mod command_line;
 mod confirm;
+mod drive_menu;
 mod find_file;
 mod menu;
 mod shell;
@@ -52,7 +53,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
         | Mode::ConfirmDelete(_)
         | Mode::ConfirmTransfer(_)
         | Mode::FindFile(_)
-        | Mode::CommandHistory(_) => {}
+        | Mode::CommandHistory(_)
+        | Mode::ChangeDrive(_) => {}
     }
 
     let root = Layout::default()
@@ -107,6 +109,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
         Mode::CommandHistory(menu) => {
             command_line::draw_command_history(frame, area, menu, &app.command_history, &theme);
         }
+        Mode::ChangeDrive(menu) => drive_menu::draw_drive_menu(frame, area, menu, &theme),
         _ => {}
     }
 
@@ -313,11 +316,12 @@ fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &s
 
 
 /// The default F-key row, and the row shown while `Alt` is held
-/// (`App::alt_held`). Only `F7` actually changes binding (`Alt+F7`
-/// opens Find file, `command_line.rs`'s own special case, same as
-/// `Shift+F6`) — the rest keep their default action and are just
-/// relabeled here to match, since Far Manager's real Alt row doesn't
-/// rebind them either.
+/// (`App::alt_held`). `F1`, `F2`, and `F7` actually change binding
+/// (`Alt+F1`/`Alt+F2` open the left/right "change drive" popup,
+/// `Alt+F7` opens Find file — all three are `command_line/browsing.rs`'s
+/// own raw-modifier special cases, same reasoning as `Shift+F6`) — the
+/// rest keep their default action and are just relabeled here to
+/// match, since Far Manager's real Alt row doesn't rebind them either.
 ///
 /// Laid out in 10 fixed-width columns spanning the full row width
 /// (`Constraint::Ratio(1, 10)` each), rather than one flowing `Line`
@@ -358,7 +362,7 @@ const DEFAULT_LABELS: [(&str, &str); 10] = [
     ("F9", "Menu"), ("F10", "Quit"),
 ];
 const ALT_LABELS: [(&str, &str); 10] = [
-    ("F1", "Help"), ("F2", "Menu"), ("F3", "View"), ("F4", "Edit"),
+    ("F1", "DscLft"), ("F2", "DscRht"), ("F3", "View"), ("F4", "Edit"),
     ("F5", "Copy"), ("F6", "RenMov"), ("F7", "Find"), ("F8", "Delete"),
     ("F9", "Menu"), ("F10", "Quit"),
 ];

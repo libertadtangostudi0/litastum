@@ -10,7 +10,7 @@ use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::debug;
 
 use crate::app::{App, Mode, ShellMenu};
-use crate::explorer::{execute, resolve, Command, FindFileState};
+use crate::explorer::{execute, resolve, Command, DriveMenu, FindFileState};
 
 use super::completion::complete;
 use super::history::record_history;
@@ -47,6 +47,19 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     // Same reason as Shift+F6 above: needs the raw modifier.
     if key.code == KeyCode::F(7) && key.modifiers.contains(KeyModifiers::ALT) {
         app.mode = Mode::FindFile(FindFileState::new());
+        return Ok(());
+    }
+
+    // Alt+F1/Alt+F2 -- real Far Manager's own per-panel "change drive"
+    // popup. Always the left/right panel respectively, not whichever
+    // one currently has focus (`DriveMenu::open`'s `target_panel`),
+    // matching real Far -- same raw-modifier reasoning as above.
+    if key.code == KeyCode::F(1) && key.modifiers.contains(KeyModifiers::ALT) {
+        app.mode = Mode::ChangeDrive(DriveMenu::open(0));
+        return Ok(());
+    }
+    if key.code == KeyCode::F(2) && key.modifiers.contains(KeyModifiers::ALT) {
+        app.mode = Mode::ChangeDrive(DriveMenu::open(1));
         return Ok(());
     }
 

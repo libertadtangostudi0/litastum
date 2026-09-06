@@ -143,6 +143,7 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
         Mode::ShellMenu(_) => command_line::handle_shell_menu_key(app, key),
         Mode::FindFile(_) => explorer::handle_find_file_key(app, key),
         Mode::CommandHistory(_) => command_line::handle_history_key(app, key),
+        Mode::ChangeDrive(_) => explorer::handle_drive_menu_key(app, key),
         Mode::Browsing => command_line::handle_browsing_key(app, key, terminal),
     }
 }

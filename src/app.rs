@@ -5,7 +5,7 @@ use edtui::syntect::highlighting::Theme as SynTheme;
 
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
 use crate::editor::Editor;
-use crate::explorer::{FindFileState, Panel};
+use crate::explorer::{DriveMenu, FindFileState, Panel};
 use crate::theming::{MainMenu, Theme, ThemeMenu};
 
 
@@ -41,6 +41,8 @@ pub enum Mode {
     FindFile(FindFileState),
     /// F9 → Commands → History.
     CommandHistory(CommandHistoryMenu),
+    /// `Alt+F1`/`Alt+F2` — the per-panel "change drive" popup.
+    ChangeDrive(DriveMenu),
 }
 
 

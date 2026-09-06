@@ -448,14 +448,18 @@ matching Far Manager's own F8), `N`/`Esc` cancels with nothing touched.
       live in code that already has no unit tests for the same reason
       (`main.rs::handle_event`/`command_line.rs::handle_browsing_key`
       need a real `Terminal`)
-- [ ] `Alt+F1`/`Alt+F2` — Far Manager's own per-panel drive-switching
-      menu: pressed on the left/right panel respectively, pops up a
-      list of available drives (on Windows, logical drive letters —
-      `C:`, `D:`, ...) and navigates that panel to the picked one's
-      root. Requested explicitly; not designed yet — needs a
-      cross-platform way to enumerate drives (Windows-only concept as
-      such; a Unix equivalent would be closer to mount points, out of
-      scope for a first pass)
+- [x] `Alt+F1`/`Alt+F2` — Far Manager's own per-panel drive-switching
+      menu (`explorer/drive_menu.rs`, `ui/drive_menu.rs`): `Alt+F1`
+      always targets the left panel, `Alt+F2` always the right one
+      (`DriveMenu::target_panel`, fixed at open time — independent of
+      which panel currently has focus, matching real Far), lists
+      logical drives with type and total/free space
+      (`GetLogicalDrives`/`GetDriveTypeW`/`GetDiskFreeSpaceExW` via
+      `windows-sys`, a new Windows-only dependency), `Enter` navigates
+      via the existing `Panel::change_dir`. Windows-only real
+      enumeration; the Unix build gets a single `"/"` entry rather than
+      real mount-point enumeration — same scope cut as `shell.rs`'s
+      Unix shell-profile fallback, not attempted here either
 
 ## Housekeeping
 
