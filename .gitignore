@@ -102,3 +102,13 @@ assets/debug/
 # patch files
 *.patch
 *.diff
+
+# ======================================
+# litastum
+# ======================================
+
+# Command-line history (command_line/history.rs) -- a plain file next
+# to the binary/repo root for now (cwd-relative, not the OS config
+# dir), so it lands here during `cargo run`/`cargo test` from the repo
+# root and shouldn't be committed.
+/command_history.txt
