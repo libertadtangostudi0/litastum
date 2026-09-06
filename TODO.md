@@ -381,6 +381,24 @@ in more detail.
       while text sits in the command line doesn't warn about it — the
       text is preserved and still there afterward, just easy to forget
       about since nothing currently calls it out
+- [ ] No persistent, resizable console/output area below the panels —
+      real Far Manager keeps one, adjustable with `Ctrl+Up`/`Ctrl+Down`
+      (shrinks/grows the panel area to reveal more or less of it) and
+      scrollable on its own with `Ctrl+Shift+Up`/`Ctrl+Shift+Down`.
+      Reported directly against the current design's real limitation:
+      one command's output replaces the previous one's the instant the
+      next command runs (full TUI takeover + "Press any key to
+      continue..." pause, see `print_themed`'s own doc comment in
+      `command_line/browsing.rs`) — there's no on-screen history of
+      what earlier commands printed at all, let alone a resizable or
+      scrollable view onto it. This needs real output *capture* (a PTY
+      or at least a piped/buffered child process, keeping a scrollback
+      buffer in `App`) instead of today's "suspend the TUI, inherit
+      stdio directly, let the terminal itself render it" approach — the
+      same architectural gap already called out for why the shelled
+      command's own output can't be recolored either. A genuinely
+      bigger redesign than the other command-line gaps above, not a
+      small addition on top of the current model.
 
 ## Copy / Move (`F5`/`F6`) — landed, gaps left
 
