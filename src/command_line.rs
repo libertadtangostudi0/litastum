@@ -30,14 +30,16 @@ use ratatui::{
 use tracing::debug;
 
 use crate::app::{App, Mode, ShellMenu};
+use crate::find_file::FindFileState;
 use crate::theme::Theme;
 use crate::{command, keymap};
 
 
 /// Key handling in the browser: `Ctrl+P` opens the shell picker,
-/// `Shift+F6` opens the rename prompt (both need the raw modifier,
-/// which `keymap::resolve`'s table can't see since it only keys off
-/// `KeyCode`), `Enter` with something typed runs it (`run_command_line`),
+/// `Shift+F6` opens the rename prompt, `Alt+F7` opens Find file (all
+/// three need the raw modifier, which `keymap::resolve`'s table can't
+/// see since it only keys off `KeyCode`), `Enter` with something typed
+/// runs it (`run_command_line`),
 /// otherwise the fixed `keymap::resolve` table (arrows, Tab, F4/F9/F10,
 /// and `Enter` on an *empty* command line — `EnterSelected`, unchanged)
 /// takes over; anything that table doesn't bind — plain characters,
@@ -58,6 +60,14 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     // to be special-cased ahead of it, same as Ctrl+P above.
     if key.code == KeyCode::F(6) && key.modifiers.contains(KeyModifiers::SHIFT) {
         return command::execute(keymap::Command::RenameSelected, app);
+    }
+
+    // Alt+F7 -- real Far Manager's own global shortcut for "Find file",
+    // previously only reachable through F9 -> Commands -> Find file.
+    // Same reason as Shift+F6 above: needs the raw modifier.
+    if key.code == KeyCode::F(7) && key.modifiers.contains(KeyModifiers::ALT) {
+        app.mode = Mode::FindFile(FindFileState::new());
+        return Ok(());
     }
 
     if key.code == KeyCode::Enter && !app.command_line.is_empty() {

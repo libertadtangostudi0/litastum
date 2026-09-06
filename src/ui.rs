@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Modifier, Style},
@@ -63,9 +65,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
 
     let left_columns = draw_panel(frame, panels[0], &app.panels[0], app.active == 0, &theme);
     let right_columns = draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme);
-    let shell_name = app.shell_profiles[app.active_shell].name.as_str();
-    draw_command_line(frame, root[1], &app.command_line, shell_name, &theme);
-    draw_function_keys(frame, root[2], &theme);
+    let cwd = app.panels[app.active].path.clone();
+    let prefix_len = draw_command_line(frame, root[1], &cwd, &app.command_line, &theme);
+    draw_function_keys(frame, root[2], &theme, app.alt_held);
 
     // The real terminal cursor sits right after the typed text, same
     // mechanism already used for the editor's cursor (see
@@ -74,7 +76,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
     // and moving the cursor under it would be misleading).
     if matches!(app.mode, Mode::Browsing) {
         frame.set_cursor_position(Position {
-            x: root[1].x + 2 + app.command_line.chars().count() as u16,
+            x: root[1].x + prefix_len + app.command_line.chars().count() as u16,
             y: root[1].y,
         });
     }
@@ -282,34 +284,49 @@ pub(crate) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 /// `command_line.rs`). Shows the active shell profile's name at the
 /// right edge, since which one a typed command actually runs against
 /// is otherwise invisible (`Ctrl+P` to change it).
-fn draw_command_line(frame: &mut Frame, area: Rect, command_line: &str, shell_name: &str, theme: &Theme) {
-    let left = Line::from(vec![
-        Span::styled("> ", Style::default().fg(theme.accent)),
+/// Renders `"{cwd}> {typed}"`, matching real Far Manager's own command
+/// line (which always shows the active panel's path, not just a bare
+/// `>` prompt with no indication of where a command would actually
+/// run). Returns the prefix's character count — `ui::draw` needs it to
+/// place the real terminal cursor right after the typed text, since
+/// that position now depends on `cwd`'s length, not a fixed `"> "`.
+///
+/// No shell-profile-name hint on the right edge anymore (an earlier
+/// version had one, `"Ctrl+P {shell_name}"`) — reported as visual
+/// clutter that doesn't belong on a Far-style command line; `Ctrl+P`'s
+/// own picker already shows which profile is active when opened.
+fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &str, theme: &Theme) -> u16 {
+    let prefix = format!("{}> ", cwd.display());
+    let line = Line::from(vec![
+        Span::styled(prefix.clone(), Style::default().fg(theme.accent)),
         Span::styled(command_line.to_string(), Style::default().fg(theme.text)),
     ]);
-    frame.render_widget(left, area);
-
-    let label = format!("Ctrl+P {shell_name} ");
-    let label_width = (label.chars().count() as u16).min(area.width);
-    let label_area = Rect {
-        x: area.x + area.width - label_width,
-        y: area.y,
-        width: label_width,
-        height: 1,
-    };
-    let right = Line::from(Span::styled(label, Style::default().fg(theme.text_dim)));
-    frame.render_widget(right, label_area);
+    frame.render_widget(line, area);
+    prefix.chars().count() as u16
 }
 
 
-fn draw_function_keys(frame: &mut Frame, area: Rect, theme: &Theme) {
-    const LABELS: [(&str, &str); 10] = [
+/// The default F-key row, and the row shown while `Alt` is held
+/// (`App::alt_held` — see its doc for why that's an approximation, not
+/// exact hold/release tracking). Only `F7` actually changes binding
+/// (`Alt+F7` opens Find file, `command_line.rs`'s own special case,
+/// same as `Shift+F6`) — the rest keep their default action and are
+/// just relabeled here to match, since Far Manager's real Alt row
+/// doesn't rebind them either.
+fn draw_function_keys(frame: &mut Frame, area: Rect, theme: &Theme, alt: bool) {
+    const DEFAULT_LABELS: [(&str, &str); 10] = [
         ("F1", "Help"), ("F2", "Bookmarks"), ("F3", "View"), ("F4", "Edit"),
         ("F5", "Copy"), ("F6", "RenMov"), ("F7", "Folder"), ("F8", "Delete"),
         ("F9", "Menu"), ("F10", "Quit"),
     ];
+    const ALT_LABELS: [(&str, &str); 10] = [
+        ("F1", "Help"), ("F2", "Bookmarks"), ("F3", "View"), ("F4", "Edit"),
+        ("F5", "Copy"), ("F6", "RenMov"), ("F7", "Find"), ("F8", "Delete"),
+        ("F9", "Menu"), ("F10", "Quit"),
+    ];
+    let labels = if alt { &ALT_LABELS } else { &DEFAULT_LABELS };
 
-    let spans: Vec<Span> = LABELS
+    let spans: Vec<Span> = labels
         .iter()
         .flat_map(|(key, label)| {
             [

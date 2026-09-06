@@ -138,6 +138,22 @@ pub struct App {
     /// — see `command_line::record_history`/`MAX_HISTORY` and the F9 →
     /// Commands → History popup. Session-only, not persisted.
     pub command_history: Vec<String>,
+    /// Whether the *last processed key event* carried the `Alt`
+    /// modifier — drives which row `ui::draw_function_keys` shows, Far
+    /// Manager-style. Set fresh in `main.rs::handle_event` from every
+    /// key event, browsing or not.
+    ///
+    /// This is an approximation, not true "Alt held down" tracking:
+    /// terminals (including the Windows Console API, this project's
+    /// main target) generally don't deliver a standalone press/release
+    /// event for a bare modifier key — only modifier flags riding along
+    /// with an actual keypress. So the alternate row appears the
+    /// instant an `Alt+`-something is pressed (correct) but only
+    /// reverts on the *next* key press without `Alt` (not the instant
+    /// `Alt` itself is released, since we're never told that
+    /// happened). Good enough to make `Alt+F7` discoverable; not a
+    /// claim of pixel-perfect Far Manager parity.
+    pub alt_held: bool,
 }
 
 
@@ -158,6 +174,7 @@ impl App {
             shell_profiles: shell::builtin_profiles(),
             active_shell: 0,
             command_history: Vec::new(),
+            alt_held: false,
         })
     }
 

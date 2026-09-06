@@ -23,7 +23,7 @@ use std::io::{self, Stdout};
 use color_eyre::eyre::Result;
 use crossterm::{
     cursor::SetCursorStyle,
-    event::{self, Event, KeyEventKind},
+    event::{self, Event, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -98,6 +98,11 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
     if key.kind != KeyEventKind::Press {
         return Ok(());
     }
+
+    // Drives the alternate F-key row (`ui::draw_function_keys`) -- see
+    // `App::alt_held`'s doc for why this is "did the last key event
+    // carry Alt" rather than true hold/release tracking.
+    app.alt_held = key.modifiers.contains(KeyModifiers::ALT);
 
     match &app.mode {
         Mode::Editing(_) => editor_keymap::handle_editor_key(app, key),

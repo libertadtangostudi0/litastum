@@ -394,6 +394,37 @@ matching Far Manager's own F8), `N`/`Esc` cancels with nothing touched.
 - [ ] Use `Entry::size`/`Entry::modified` for something, or drop them —
       `#[allow(dead_code)]` on `Entry` silences the warning deliberately
       in the meantime, not a fix in itself
+- [x] `Alt` swapping the F-key hint bar to a second row of labels — the
+      earlier bullet here guessed this meant a console/"additional
+      screen" toggle; a follow-up screenshot clarified it's Far
+      Manager's actual bottom bar changing labels while `Alt` is held.
+      Landed as `App::alt_held` (set from every key event's modifiers
+      in `main.rs::handle_event`) driving `ui::draw_function_keys`'s
+      choice between `DEFAULT_LABELS`/`ALT_LABELS`, plus the one label
+      that's an actual rebinding rather than cosmetic: `Alt+F7` opens
+      Find file directly (`command_line.rs`, same special-casing
+      pattern as `Shift+F6`), matching real Far's own global shortcut
+      for it — previously only reachable through F9 → Commands → Find
+      file. **Known limitation, not a bug**: terminals (including the
+      Windows Console API this project mainly targets) generally don't
+      deliver a standalone press/release event for a bare modifier key
+      on its own — only modifier flags riding along with an actual
+      keypress. So the alt row appears the instant `Alt+`-something is
+      pressed, but only reverts on the *next* key event without `Alt`,
+      not the instant `Alt` alone is released (`App::alt_held`'s own
+      doc comment has the full explanation). No test coverage added —
+      both the modifier-tracking assignment and the `Alt+F7` branch
+      live in code that already has no unit tests for the same reason
+      (`main.rs::handle_event`/`command_line.rs::handle_browsing_key`
+      need a real `Terminal`)
+- [ ] `Alt+F1`/`Alt+F2` — Far Manager's own per-panel drive-switching
+      menu: pressed on the left/right panel respectively, pops up a
+      list of available drives (on Windows, logical drive letters —
+      `C:`, `D:`, ...) and navigates that panel to the picked one's
+      root. Requested explicitly; not designed yet — needs a
+      cross-platform way to enumerate drives (Windows-only concept as
+      such; a Unix equivalent would be closer to mount points, out of
+      scope for a first pass)
 
 ## Housekeeping
 
