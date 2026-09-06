@@ -223,10 +223,11 @@ items apiece so far). Gaps if this grows toward that:
 
 ## Find file (`find_file.rs`) — F9 → Commands → Find file, landed, gaps left
 
-Type a filename substring, `Enter` searches recursively from the active
-panel's directory, `Enter` on a result moves the active panel there
-with the file selected. Far Manager's own Alt+F7 — reached only through
-the menu here, no global hotkey (wasn't asked for).
+Type a filename substring or glob, `Enter` searches recursively from
+the active panel's directory, `Enter` on a result moves the active
+panel there with the file selected. Far Manager's own Alt+F7 — reached
+through the menu *and* bound directly (`command_line.rs`), matching
+real Far.
 
 - [x] Recursive substring search (`find_file::search`, case-insensitive,
       matches directory names too, not just files), capped at 200
@@ -255,6 +256,25 @@ the menu here, no global hotkey (wasn't asked for).
 - [ ] No content search (Far's own Alt+F7 can also search *inside*
       files) — file names only
 - [ ] Results aren't scrolled, just clamped to the terminal height
+- [x] `Ctrl+S` on the results popup exports the full list (one full
+      path per line) to a new file in the user's Downloads directory
+      (`directories::UserDirs::download_dir()`, already a dependency)
+      — requested explicitly. File name embeds the query and a
+      hand-rolled `YYYY-MM-DD_HHMMSS` timestamp
+      (`find_file::timestamp_for_filename`/`civil_from_days` — Howard
+      Hinnant's public-domain days-to-civil-date algorithm, computed by
+      hand from `SystemTime` rather than pulling in a date/time crate
+      for one file name) so repeated exports never overwrite each
+      other; the query is sanitized for Windows-illegal filename
+      characters first (`*`/`?` show up constantly here, being glob
+      syntax). Both the finding-Downloads half and the actual
+      file-writing half are split apart
+      (`export_results`/`write_results`) so the latter has real test
+      coverage against a scratch directory — same reasoning as
+      `config.rs`'s `set_interface_theme` vs. `try_persist` split, since
+      the former goes through a real, un-injectable OS path. Success or
+      failure both show a message under the results list (no other
+      status-bar surface exists yet)
 
 ## History (`command_line.rs`) — F9 → Commands → History, landed, gaps left
 
