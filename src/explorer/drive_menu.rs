@@ -122,33 +122,58 @@ pub fn format_bytes(bytes: u64) -> String {
 }
 
 /// Key handling on the `Alt+F1`/`Alt+F2` popup: `Up`/`Down` move,
-/// `Enter` navigates `target_panel` to the highlighted drive's root
-/// and closes, `Esc` cancels with nothing touched.
+/// typing a letter jumps straight to the first drive whose label
+/// starts with it *and* selects it, same as pressing `Enter` on it
+/// (Far Manager's own convention — `C` picks `C:` in one keystroke,
+/// no need to arrow down to it first and press `Enter` separately),
+/// `Enter` itself navigates `target_panel` to the highlighted drive's
+/// root and closes, `Esc` cancels with nothing touched.
 pub fn handle_drive_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let Mode::ChangeDrive(menu) = &mut app.mode else {
         return Ok(());
     };
 
     match key.code {
-        KeyCode::Up => menu.selected = menu.selected.saturating_sub(1),
+        KeyCode::Up => {
+            menu.selected = menu.selected.saturating_sub(1);
+            Ok(())
+        }
         KeyCode::Down => {
             if menu.selected + 1 < menu.drives.len() {
                 menu.selected += 1;
             }
+            Ok(())
         }
         KeyCode::Enter => {
-            let Mode::ChangeDrive(menu) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-                unreachable!("just matched Mode::ChangeDrive above");
-            };
-            if let Some(drive) = menu.drives.get(menu.selected) {
-                debug!(root = %drive.root, panel = menu.target_panel, "change drive");
-                app.panels[menu.target_panel].change_dir(&drive.root)?;
+            let index = menu.selected;
+            select_drive(app, index)
+        }
+        KeyCode::Esc => {
+            app.mode = Mode::Browsing;
+            Ok(())
+        }
+        KeyCode::Char(c) => {
+            let starts_with_c = |drive: &DriveInfo| drive.label.chars().next().is_some_and(|first| first.eq_ignore_ascii_case(&c));
+            match menu.drives.iter().position(starts_with_c) {
+                Some(index) => select_drive(app, index),
+                None => Ok(()),
             }
         }
-        KeyCode::Esc => app.mode = Mode::Browsing,
-        _ => {}
+        _ => Ok(()),
     }
+}
 
+/// Navigates `Mode::ChangeDrive`'s `target_panel` to `drives[index]`'s
+/// root and closes the popup — shared by `Enter` and by typing a
+/// letter that matches a drive directly.
+fn select_drive(app: &mut App, index: usize) -> Result<()> {
+    let Mode::ChangeDrive(menu) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+        unreachable!("only called while Mode::ChangeDrive is active");
+    };
+    if let Some(drive) = menu.drives.get(index) {
+        debug!(root = %drive.root, panel = menu.target_panel, "change drive");
+        app.panels[menu.target_panel].change_dir(&drive.root)?;
+    }
     Ok(())
 }
 
@@ -192,6 +217,42 @@ mod tests {
         }
         let Mode::ChangeDrive(menu) = &app.mode else { panic!("expected Mode::ChangeDrive") };
         assert_eq!(menu.selected, 1);
+    }
+
+    #[test]
+    fn typing_a_letter_selects_the_matching_drive_immediately() {
+        // Typing a letter isn't just a jump-to-row cursor move -- it
+        // should act exactly like pressing Enter on that row (Far
+        // Manager's own convention), so this uses real scratch
+        // directories as the "drive" roots and checks the panel
+        // actually navigated and the popup closed, not just that
+        // `selected` changed.
+        let mut app = test_app(unique_scratch_dir("drive-menu-letter"));
+        let c_root = unique_scratch_dir("drive-menu-letter-c");
+        let w_root = unique_scratch_dir("drive-menu-letter-w");
+        app.mode = Mode::ChangeDrive(DriveMenu {
+            drives: vec![
+                DriveInfo { root: c_root.display().to_string(), label: "C:".to_string(), kind: "fixed", total_bytes: None, free_bytes: None },
+                DriveInfo { root: w_root.display().to_string(), label: "W:".to_string(), kind: "fixed", total_bytes: None, free_bytes: None },
+            ],
+            selected: 0,
+            target_panel: 0,
+        });
+
+        handle_drive_menu_key(&mut app, key(KeyCode::Char('w'))).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing), "typing a matching letter should close the popup, not just move the cursor");
+        assert_eq!(app.panels[0].path, w_root, "lowercase 'w' should match and select 'W:' case-insensitively");
+    }
+
+    #[test]
+    fn typing_an_unmatched_letter_leaves_the_selection_untouched() {
+        let mut app = app_with_drive_menu(0, &["C:", "G:", "W:"]);
+
+        handle_drive_menu_key(&mut app, key(KeyCode::Char('z'))).unwrap();
+
+        let Mode::ChangeDrive(menu) = &app.mode else { panic!("expected Mode::ChangeDrive") };
+        assert_eq!(menu.selected, 0);
     }
 
     #[test]
