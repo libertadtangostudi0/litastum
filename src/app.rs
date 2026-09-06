@@ -128,6 +128,13 @@ pub struct App {
     /// if one's in progress — `None` whenever nothing's being cycled.
     /// See `command_line::CompletionCycle`.
     pub command_line_completion: Option<command_line::CompletionCycle>,
+    /// Highlighted row in the auto-popping history-suggestion list
+    /// (`command_line::suggest_history`, `ui::draw_history_suggestions`)
+    /// — reset to `0` on every edit to `command_line`, same shape as
+    /// `CommandHistoryMenu::selected` but living directly on `App`
+    /// since this list isn't a separate `Mode`, just an overlay shown
+    /// while `Mode::Browsing`'s own command line has matches.
+    pub command_line_suggestion_selected: usize,
     /// Shells the command line can run typed input through — see
     /// `shell.rs`. Never empty; `active_shell` indexes into it.
     pub shell_profiles: Vec<ShellProfile>,
@@ -173,6 +180,7 @@ impl App {
             syntax_theme,
             command_line: String::new(),
             command_line_completion: None,
+            command_line_suggestion_selected: 0,
             shell_profiles: builtin_profiles(),
             active_shell: 0,
             command_history: Vec::new(),

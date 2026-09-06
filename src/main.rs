@@ -43,6 +43,12 @@ fn main() -> Result<()> {
             app.active_shell = index;
         }
     }
+    // Loaded here rather than in `App::new` itself so every test that
+    // builds an `App` (nearly all of them, via `test_support::test_app`)
+    // stays isolated from whatever real `command_history.txt` happens
+    // to sit in the test-running directory -- same reasoning as the
+    // shell profile above not living inside `App::new` either.
+    app.command_history = command_line::load_history();
     let result = run(&mut terminal, &mut app);
     restore_terminal(&mut terminal)?;
     result

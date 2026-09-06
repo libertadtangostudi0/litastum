@@ -13,19 +13,26 @@ use crate::app::{App, Mode, ShellMenu};
 use crate::explorer::{execute, resolve, Command, DriveMenu, FindFileState};
 
 use super::completion::complete;
-use super::history::record_history;
+use super::history::{record_history, save_history, suggest_history, CommandHistoryMenu};
 
 /// Key handling in the browser: `Ctrl+P` opens the shell picker,
-/// `Shift+F6` opens the rename prompt, `Alt+F7` opens Find file (all
-/// three need the raw modifier, which `keymap::resolve`'s table can't
-/// see since it only keys off `KeyCode`), `Enter` with something typed
-/// runs it (`run_command_line`),
-/// otherwise the fixed `keymap::resolve` table (arrows, Tab, F4/F9/F10,
-/// and `Enter` on an *empty* command line — `EnterSelected`, unchanged)
-/// takes over; anything that table doesn't bind — plain characters,
-/// `Backspace`, `Esc` — edits the always-live command line at the
-/// bottom of the browser. This is also why `q` no longer quits on its
-/// own (`keymap.rs`) — a bare letter now types into the command line
+/// `Shift+F6` opens the rename prompt, `Alt+F1`/`Alt+F2`/`Alt+F7`/
+/// `Alt+F8` open their own popups (all need the raw modifier, which
+/// `keymap::resolve`'s table can't see since it only keys off
+/// `KeyCode`), `Enter` with something typed runs it
+/// (`run_command_line`). While an auto-popping history-suggestion list
+/// is actually showing (`suggest_history` found at least one match),
+/// `Up`/`Down` move within it and `Tab` accepts the highlighted entry
+/// into the command line instead of their usual meaning (panel
+/// navigation / path completion) — see the dedicated check below for
+/// why `Enter` is deliberately *not* part of that. Otherwise `Tab`
+/// completes a path while something's typed, then the fixed
+/// `keymap::resolve` table (arrows, Tab, F4/F9/F10, and `Enter` on an
+/// *empty* command line — `EnterSelected`, unchanged) takes over;
+/// anything that table doesn't bind — plain characters, `Backspace`,
+/// `Esc` — edits the always-live command line at the bottom of the
+/// browser. This is also why `q` no longer quits on its own
+/// (`keymap.rs`) — a bare letter now types into the command line
 /// like any other.
 pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     debug!(?key, "browsing key");
@@ -63,9 +70,55 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         return Ok(());
     }
 
+    // Alt+F8 -- real Far Manager's own global shortcut for "History",
+    // previously only reachable through F9 -> Commands -> History.
+    // Same raw-modifier reasoning as above.
+    if key.code == KeyCode::F(8) && key.modifiers.contains(KeyModifiers::ALT) {
+        app.mode = Mode::CommandHistory(CommandHistoryMenu::open());
+        return Ok(());
+    }
+
     if key.code == KeyCode::Enter && !app.command_line.is_empty() {
         app.command_line_completion = None;
         return run_command_line(app, terminal);
+    }
+
+    // Auto-popping history suggestions (`ui::draw_history_suggestions`)
+    // claim Up/Down/Tab while they're actually showing -- i.e. only
+    // once there's a non-empty command line with at least one deduped
+    // substring match (`suggest_history`), same "only while something
+    // matters" guard the older Tab-path-completion check below already
+    // uses. Checked ahead of that Tab check so a showing suggestion
+    // list wins the key over path completion; falls through untouched
+    // to normal panel navigation / path completion whenever there's
+    // nothing to suggest, so this never steals arrows or Tab
+    // otherwise. `Enter` is deliberately left alone here -- it always
+    // just runs whatever's literally typed (`run_command_line`,
+    // below), suggestion showing or not, so accepting one never
+    // surprises you into running something you didn't type.
+    let suggestions = suggest_history(&app.command_history, &app.command_line);
+    if !app.command_line.is_empty() && !suggestions.is_empty() {
+        match key.code {
+            KeyCode::Up => {
+                app.command_line_suggestion_selected = app.command_line_suggestion_selected.saturating_sub(1);
+                return Ok(());
+            }
+            KeyCode::Down => {
+                if app.command_line_suggestion_selected + 1 < suggestions.len() {
+                    app.command_line_suggestion_selected += 1;
+                }
+                return Ok(());
+            }
+            KeyCode::Tab => {
+                if let Some(&entry) = suggestions.get(app.command_line_suggestion_selected) {
+                    app.command_line = entry.to_string();
+                    app.command_line_completion = None;
+                }
+                app.command_line_suggestion_selected = 0;
+                return Ok(());
+            }
+            _ => {}
+        }
     }
 
     // Tab completes the command line's typed text (below) while
@@ -88,6 +141,7 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         // but there's nothing left to cycle through once the mode
         // changes or the panel does, so drop it regardless.
         app.command_line_completion = None;
+        app.command_line_suggestion_selected = 0;
         return execute(cmd, app);
     }
 
@@ -95,14 +149,17 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         KeyCode::Esc => {
             app.command_line.clear();
             app.command_line_completion = None;
+            app.command_line_suggestion_selected = 0;
         }
         KeyCode::Backspace => {
             backspace(&mut app.command_line);
             app.command_line_completion = None;
+            app.command_line_suggestion_selected = 0;
         }
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             insert_char(&mut app.command_line, c);
             app.command_line_completion = None;
+            app.command_line_suggestion_selected = 0;
         }
         _ => {}
     }
@@ -126,6 +183,7 @@ fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdo
         return Ok(());
     }
     record_history(app, &input);
+    save_history(&app.command_history);
 
     if let Some(target) = parse_cd_target(&input) {
         debug!(target, "command line: cd");

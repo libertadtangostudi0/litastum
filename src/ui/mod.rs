@@ -77,12 +77,30 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
     let prefix_len = draw_command_line(frame, root[1], &cwd, &app.command_line, &theme);
     draw_function_keys(frame, root[2], &theme, app.alt_held);
 
+    // Auto-popping history suggestions, Far Manager-style: shown right
+    // above the command line the instant there's a substring match,
+    // no explicit key needed to open it (unlike the Alt+F8 popup,
+    // which stays as an always-available manual search). Only in
+    // Mode::Browsing -- once a popup/mode below has its own meaning
+    // for the command line (or none at all), this shouldn't also be
+    // showing over it.
+    if matches!(app.mode, Mode::Browsing) {
+        let suggestions = crate::command_line::suggest_history(&app.command_history, &app.command_line);
+        if !suggestions.is_empty() {
+            command_line::draw_history_suggestions(frame, root[1], &suggestions, app.command_line_suggestion_selected, &theme);
+        }
+    }
+
     // The real terminal cursor sits right after the typed text, same
     // mechanism already used for the editor's cursor (see
     // editor.rs::cursor_screen_position) -- only while nothing else is
     // drawn over the command line (a popup below takes visual priority,
-    // and moving the cursor under it would be misleading).
-    if matches!(app.mode, Mode::Browsing) {
+    // and moving the cursor under it would be misleading). `CommandHistory`
+    // is the one exception: its popup filters live against this same
+    // command line rather than owning a text field of its own (Far
+    // Manager's own `Alt+F8` behaves the same way), so the cursor
+    // still belongs down here, visible under the popup.
+    if matches!(app.mode, Mode::Browsing | Mode::CommandHistory(_)) {
         frame.set_cursor_position(Position {
             x: root[1].x + prefix_len + app.command_line.chars().count() as u16,
             y: root[1].y,
@@ -107,7 +125,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
             }
         }
         Mode::CommandHistory(menu) => {
-            command_line::draw_command_history(frame, area, menu, &app.command_history, &theme);
+            command_line::draw_command_history(frame, area, menu, &app.command_history, &app.command_line, &theme);
         }
         Mode::ChangeDrive(menu) => drive_menu::draw_drive_menu(frame, area, menu, &theme),
         _ => {}
@@ -316,12 +334,13 @@ fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &s
 
 
 /// The default F-key row, and the row shown while `Alt` is held
-/// (`App::alt_held`). `F1`, `F2`, and `F7` actually change binding
-/// (`Alt+F1`/`Alt+F2` open the left/right "change drive" popup,
-/// `Alt+F7` opens Find file — all three are `command_line/browsing.rs`'s
-/// own raw-modifier special cases, same reasoning as `Shift+F6`) — the
-/// rest keep their default action and are just relabeled here to
-/// match, since Far Manager's real Alt row doesn't rebind them either.
+/// (`App::alt_held`). `F1`, `F2`, `F7`, and `F8` actually change
+/// binding (`Alt+F1`/`Alt+F2` open the left/right "change drive"
+/// popup, `Alt+F7` opens Find file, `Alt+F8` opens History — all four
+/// are `command_line/browsing.rs`'s own raw-modifier special cases,
+/// same reasoning as `Shift+F6`) — the rest keep their default action
+/// and are just relabeled here to match, since Far Manager's real Alt
+/// row doesn't rebind them either.
 ///
 /// Laid out in 10 fixed-width columns spanning the full row width
 /// (`Constraint::Ratio(1, 10)` each), rather than one flowing `Line`
@@ -363,7 +382,7 @@ const DEFAULT_LABELS: [(&str, &str); 10] = [
 ];
 const ALT_LABELS: [(&str, &str); 10] = [
     ("F1", "DscLft"), ("F2", "DscRht"), ("F3", "View"), ("F4", "Edit"),
-    ("F5", "Copy"), ("F6", "RenMov"), ("F7", "Find"), ("F8", "Delete"),
+    ("F5", "Copy"), ("F6", "RenMov"), ("F7", "Find"), ("F8", "Histry"),
     ("F9", "Menu"), ("F10", "Quit"),
 ];
 
