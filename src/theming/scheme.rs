@@ -55,6 +55,19 @@ pub struct ColorScheme {
     pub selection_background: String,
     #[serde(rename = "cursorColor")]
     pub cursor_color: String,
+    /// Optional, litastum-specific extension to the standard Windows
+    /// Terminal JSON shape — not part of the format WT itself writes,
+    /// so absent from every scheme sourced from
+    /// <https://windowsterminalthemes.dev/>. Exists because real Far
+    /// Manager's own `CommandLine.Prefix` color (bold, a distinct
+    /// terracotta/orange in the "far-lts-alien" scheme) doesn't
+    /// correspond to any of the 16 standard ANSI slots above — there's
+    /// no principled way to derive it from them the way every other
+    /// `Theme` field is derived. `#[serde(default)]` so existing scheme
+    /// files without it keep parsing exactly as before; `to_theme`
+    /// falls back to the same `accent` color when it's absent.
+    #[serde(default, rename = "commandLinePrefix")]
+    pub command_line_prefix: Option<String>,
 }
 
 
@@ -76,6 +89,8 @@ impl ColorScheme {
             rgb(&self.cursor_color)
         };
 
+        let command_line_prefix = self.command_line_prefix.as_deref().map(rgb).unwrap_or(accent);
+
         Theme {
             bg: rgb(&self.background),
             border: rgb(&self.bright_black),
@@ -86,6 +101,7 @@ impl ColorScheme {
             warning: rgb(&self.yellow),
             success: rgb(&self.green),
             current_row_bg: rgb(&self.selection_background),
+            command_line_prefix,
         }
     }
 
@@ -304,6 +320,40 @@ mod tests {
         let mut scheme = ColorScheme::from_json_str(APPLE_SYSTEM_COLORS_JSON).unwrap();
         scheme.cursor_color = scheme.foreground.clone();
         assert_eq!(scheme.to_theme().accent, rgb(&scheme.blue));
+    }
+
+    /// The `commandLinePrefix` extension is optional -- a real,
+    /// unmodified Windows Terminal scheme (like the fixture above, which
+    /// has no such key) must still parse, and `to_theme` should fall
+    /// back to the same `accent` color it always used before this field
+    /// existed.
+    #[test]
+    fn to_theme_command_line_prefix_falls_back_to_accent_when_absent() {
+        let scheme = ColorScheme::from_json_str(APPLE_SYSTEM_COLORS_JSON).unwrap();
+        assert_eq!(scheme.command_line_prefix, None);
+        let theme = scheme.to_theme();
+        assert_eq!(theme.command_line_prefix, theme.accent);
+    }
+
+    /// When a scheme *does* set the extension (as `far-lts-alien.json`
+    /// does, to reproduce real Far Manager's own bold terracotta
+    /// `CommandLine.Prefix` color -- not derivable from any of the 16
+    /// standard ANSI slots), it should win over the `accent` fallback.
+    #[test]
+    fn to_theme_command_line_prefix_uses_the_extension_when_present() {
+        let json = r##"{
+            "name": "with-prefix",
+            "black": "#000000", "red": "#ff0000", "green": "#00ff00", "yellow": "#ffff00",
+            "blue": "#0000ff", "purple": "#ff00ff", "cyan": "#00ffff", "white": "#ffffff",
+            "brightBlack": "#000000", "brightRed": "#ff0000", "brightGreen": "#00ff00", "brightYellow": "#ffff00",
+            "brightBlue": "#0000ff", "brightPurple": "#ff00ff", "brightCyan": "#00ffff", "brightWhite": "#ffffff",
+            "background": "#111111", "foreground": "#eeeeee",
+            "selectionBackground": "#222222", "cursorColor": "#333333",
+            "commandLinePrefix": "#d7875f"
+        }"##;
+        let scheme = ColorScheme::from_json_str(json).unwrap();
+        assert_eq!(scheme.command_line_prefix.as_deref(), Some("#d7875f"));
+        assert_eq!(scheme.to_theme().command_line_prefix, Color::Rgb(0xd7, 0x87, 0x5f));
     }
 
     #[test]

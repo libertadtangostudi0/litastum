@@ -323,6 +323,24 @@ in more detail.
       only) — arrows are needed for panel navigation even while typing,
       so they can't double as text-cursor movement without real
       ambiguity
+- [ ] No text selection in the command line either — real Far has a
+      distinct "Selected text" color group for the console/command
+      line (black text on an olive-green background, not reused from
+      the panel's own selection color), confirming this is meant to be
+      a real, visible feature there, not just in dialogs/panels. Bare
+      arrows are ruled out by the bullet above, but `Shift+Left`/
+      `Shift+Right` are NOT already claimed by panel navigation (only
+      bare arrows are) — `text_field.rs`'s destination-field selection
+      in Copy/Move already proves this exact pattern works
+      (`selection_anchor`, typing replaces the selection,
+      `Backspace`/`Delete` remove it, plain arrows collapse to an
+      edge). The command line itself has no cursor position to anchor
+      from yet (append/backspace-only, per the bullet above) — adding
+      selection likely means adding real cursor-position tracking to
+      `command_line.rs` too, not just the anchor/extend logic. No
+      matching `Theme` color exists yet — would need its own field,
+      distinct from `current_row_bg`, same gap noted for panel
+      multi-select above
 - [ ] No `Up`-arrow history recall — same reason, arrows are taken; see
       "History" above for the menu-driven way around this instead
 - [ ] Bare `cd` (no argument) is a no-op, not "go to home directory"
@@ -431,6 +449,22 @@ matching Far Manager's own F8), `N`/`Esc` cancels with nothing touched.
 
 ## Next up
 
+- [ ] Multi-select in the file panel — `Ins` toggles the entry under the
+      cursor and moves down one (Far Manager's own convention);
+      `Shift+Up`/`Shift+Down` extends/shrinks a marked range from the
+      cursor as it moves, `Shift+Left`/`Shift+Right` doing the same
+      across the column-major 2-column layout (see
+      `.claude/rules/litastum-ui-theme.md`'s "2 columns, column-major
+      fill" layout — `Shift+Left`/`Right` need to move to the matching
+      row in the other column, not just adjacent index). Needed by
+      Copy/Move and Delete's own "No multi-select" gaps below, which
+      currently only ever act on the entry under the cursor. No
+      dedicated `Theme` color exists yet for a marked entry, distinct
+      from `current_row_bg` (today's single "current line" highlight,
+      matching Far's own "Normal/Selected cursor" color group) — Far
+      itself uses a separate "Selected text" group (marked files'
+      *text* colored distinctly, not a background bar) for this, which
+      would need its own `Theme` field to reproduce.
 - [ ] Show item count / free space in each panel's footer (mockup has
       this; not yet in `Panel`/`ui.rs`)
 - [ ] Use `Entry::size`/`Entry::modified` for something, or drop them —

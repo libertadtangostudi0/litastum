@@ -32,6 +32,18 @@ pub struct Theme {
     /// focus — `accent` blended over `bg` at ~15% alpha (ratatui has no
     /// real alpha blending, so this is precomputed).
     pub current_row_bg: Color,
+    /// The `"{cwd}> "` prefix shown before typed text on the command
+    /// line. Defaults to `accent` (and always did, before this field
+    /// existed) — kept as its own field rather than folded into
+    /// `accent` because a Windows Terminal scheme has no field this can
+    /// be derived from in general (real Far Manager uses a distinct,
+    /// bold, un-named accent color here — `CommandLine.Prefix` in its
+    /// own color scheme — that doesn't correspond to any of the 16
+    /// standard ANSI slots a WT scheme defines). See
+    /// `ColorScheme::to_theme`/`ColorScheme::command_line_prefix` for
+    /// the optional, litastum-specific `commandLinePrefix` JSON
+    /// extension this comes from.
+    pub command_line_prefix: Color,
 }
 
 
@@ -48,6 +60,7 @@ impl Theme {
             warning: Color::Rgb(0xd2, 0x99, 0x22),
             success: Color::Rgb(0x3f, 0xb9, 0x50),
             current_row_bg: Color::Rgb(0x18, 0x27, 0x3a),
+            command_line_prefix: Color::Rgb(0x58, 0xa6, 0xff),
         }
     }
 }

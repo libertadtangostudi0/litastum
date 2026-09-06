@@ -325,7 +325,7 @@ pub(crate) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &str, theme: &Theme) -> u16 {
     let prefix = format!("{}> ", cwd.display());
     let line = Line::from(vec![
-        Span::styled(prefix.clone(), Style::default().fg(theme.accent)),
+        Span::styled(prefix.clone(), Style::default().fg(theme.command_line_prefix).add_modifier(Modifier::BOLD)),
         Span::styled(command_line.to_string(), Style::default().fg(theme.text)),
     ]);
     frame.render_widget(line, area);

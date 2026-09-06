@@ -4,6 +4,7 @@ use color_eyre::eyre::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
+    style::{Color as CtColor, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{prelude::CrosstermBackend, Terminal};
@@ -176,6 +177,40 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     Ok(())
 }
 
+/// Prints one line to the real (TUI-suspended) console using
+/// `theme.text` on `theme.bg` -- as close as this project's "inherit
+/// stdio, don't capture it" design (see
+/// `.claude/rules/litastum-command-line.md`) can get to real Far
+/// Manager's own `CommandLine.UserScreen` color group. This only
+/// colors litastum's *own* printed lines (the echoed `"{cwd}> "`
+/// prompt and the "Press any key..." pause) -- the shelled-out
+/// command's own output is never touched, since it's real inherited
+/// stdio, not something rendered through our own buffer the way Far's
+/// full-screen text-mode architecture lets it recolor everything
+/// (including a child process's output). Reproducing that would need
+/// a PTY-based capture-and-recolor layer -- a much bigger redesign
+/// than this project's current "suspend the TUI and hand off stdio
+/// directly" approach.
+fn print_themed(theme: &crate::theming::Theme, args: std::fmt::Arguments) -> Result<()> {
+    execute!(
+        std::io::stdout(),
+        SetForegroundColor(to_crossterm_color(theme.text)),
+        SetBackgroundColor(to_crossterm_color(theme.bg)),
+        Print(args),
+        ResetColor,
+    )?;
+    Ok(())
+}
+
+
+fn to_crossterm_color(color: ratatui::style::Color) -> CtColor {
+    match color {
+        ratatui::style::Color::Rgb(r, g, b) => CtColor::Rgb { r, g, b },
+        _ => CtColor::Reset,
+    }
+}
+
+
 /// Runs whatever's typed in `app.command_line`: `cd`-shaped input
 /// changes the active panel's directory directly (`Panel::change_dir`
 /// — a spawned shell's own `cd` could never affect our process, so
@@ -225,7 +260,7 @@ fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdo
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-    println!("{}> {input}", cwd.display());
+    print_themed(&app.theme, format_args!("{}> {input}\n", cwd.display()))?;
     let status = std::process::Command::new(&profile.program)
         .args(&profile.args_prefix)
         .arg(&input)
@@ -235,10 +270,10 @@ fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdo
         Ok(status) if !status.success() => {
             debug!(?status, "command exited non-zero");
         }
-        Err(err) => println!("failed to launch '{}': {err}", profile.program),
+        Err(err) => print_themed(&app.theme, format_args!("failed to launch '{}': {err}\n", profile.program))?,
         Ok(_) => {}
     }
-    println!("\nPress any key to continue...");
+    print_themed(&app.theme, format_args!("\nPress any key to continue...\n"))?;
 
     // Wait for one real keypress before redrawing -- otherwise output
     // that scrolled by fast is gone the instant the panels repaint.

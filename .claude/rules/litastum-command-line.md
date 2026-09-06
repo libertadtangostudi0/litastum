@@ -67,6 +67,22 @@ already handle the key):
   gives real colors/prompts, matching Far Manager's own behavior. A
   `Press any key to continue...` pause follows so fast-scrolling output
   isn't gone the instant the panels redraw over it.
+- **litastum's two own printed lines** (the echoed `"{cwd}> {input}"`
+  prompt and the `Press any key...` pause) are colored via
+  `browsing.rs::print_themed` — `theme.text` on `theme.bg`, the closest
+  match to real Far's own `CommandLine.UserScreen` color group
+  (requested directly from a Far color-picker screenshot). **The
+  shelled-out command's own output is never colored by us** — real
+  inherited stdio means the terminal itself renders it, unlike Far's
+  own full-screen text-mode architecture, which draws even a child
+  process's output through its own buffer and can therefore recolor
+  it. Reproducing that would need a PTY-based capture-and-recolor
+  layer, well beyond this project's current inherit-stdio design.
+  Approximated with `theme.text` rather than adding a dedicated
+  `Theme` field for Far's exact `brightWhite` — close enough
+  (`#cccccc` vs. `#f2f2f2` in `far-lts-alien.json`) that a whole new
+  field for a two-line, rarely-focused-on piece of chrome wasn't
+  judged worth it.
 
 ## Tab completion (`command_line::complete`)
 

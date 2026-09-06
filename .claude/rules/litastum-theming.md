@@ -99,11 +99,36 @@ onto our own `Theme` (`scheme.rs::ColorScheme::to_theme`):
 | `warning`          | `yellow`                                            |
 | `success`          | `green`                                             |
 | `accent`           | `cursorColor`, unless it equals `background` or `foreground` (falls back to `blue`) |
+| `command_line_prefix` | `commandLinePrefix` (litastum-specific extension, see below), falls back to `accent` if absent |
 
 `success`/`warning` were in the original "color 2" plan
 (`.claude/rules/litastum-ui-theme.md`) but only `danger` actually
 landed in `Theme` initially — added properly once file-type coloring
 below needed them.
+
+### `commandLinePrefix`: one litastum-specific, non-standard field
+
+Every other `Theme` field is derived from one of the 16 standard ANSI
+slots or the 4 standard WT UI slots — a real Windows Terminal scheme
+JSON always has enough to fill in the whole mapping table above. The
+command line's own `"{cwd}> "` prefix broke that pattern: reproducing
+real Far Manager's own color scheme (`far-lts-alien.json`, extracted
+from a real Far install's `colors.db` + console palette — see its own
+`CommandLine.Prefix` color group) needed a bold terracotta/orange
+(`#d7875f`) that doesn't correspond to any of the 16 named ANSI colors,
+so there's no principled way to derive it the way `accent`/`danger`/
+etc. are derived.
+
+`ColorScheme::command_line_prefix: Option<String>` is an optional
+`#[serde(default)]` field for exactly this — an extra, non-standard
+`"commandLinePrefix": "#rrggbb"` key that a plain Windows Terminal
+scheme (from windowsterminalthemes.dev or exported by the terminal
+itself) will never have, and doesn't need: `to_theme()` falls back to
+the same `accent` color when it's absent, which is what every scheme
+predating this field already effectively got (the command line prefix
+used `theme.accent` directly before `Theme::command_line_prefix`
+existed). Rendered bold (`ui/mod.rs::draw_command_line`), matching real
+Far's own `[x] Bold` style flag on this color group.
 
 ## File-type coloring (`panel.rs::HighlightRole`)
 
