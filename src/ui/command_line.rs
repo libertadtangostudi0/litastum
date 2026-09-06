@@ -74,11 +74,15 @@ pub fn draw_command_history(frame: &mut Frame, area: Rect, menu: &CommandHistory
 /// list is actually showing).
 pub fn draw_history_suggestions(frame: &mut Frame, command_line_area: Rect, suggestions: &[&str], selected: usize, theme: &Theme) {
     let height = (suggestions.len() as u16 + 2).min(10);
-    let width = command_line_area.width.clamp(20, 70);
     let popup = Rect {
         x: command_line_area.x,
         y: command_line_area.y.saturating_sub(height),
-        width,
+        // Full width of the panels above (`command_line_area` already
+        // spans that same width, same as `root[0]`/`root[1]` in
+        // `ui::draw`) rather than clamped to some fixed max -- a long
+        // command needs the room, and there's a full row's worth of
+        // width sitting right there unused.
+        width: command_line_area.width,
         height,
     };
 

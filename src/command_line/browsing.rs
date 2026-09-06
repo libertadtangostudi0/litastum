@@ -97,7 +97,7 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     // below), suggestion showing or not, so accepting one never
     // surprises you into running something you didn't type.
     let suggestions = suggest_history(&app.command_history, &app.command_line);
-    if !app.command_line.is_empty() && !suggestions.is_empty() {
+    if !app.command_line.is_empty() && !suggestions.is_empty() && !app.command_line_suggestion_dismissed {
         match key.code {
             KeyCode::Up => {
                 app.command_line_suggestion_selected = app.command_line_suggestion_selected.saturating_sub(1);
@@ -115,6 +115,12 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
                     app.command_line_completion = None;
                 }
                 app.command_line_suggestion_selected = 0;
+                // The just-accepted command line is always itself a
+                // substring match of the entry it came from, so the
+                // same list would otherwise reappear unchanged on the
+                // very next frame -- suppress it until an actual edit
+                // (insert_char/backspace/Esc, below) clears this again.
+                app.command_line_suggestion_dismissed = true;
                 return Ok(());
             }
             _ => {}
@@ -150,16 +156,19 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
             app.command_line.clear();
             app.command_line_completion = None;
             app.command_line_suggestion_selected = 0;
+            app.command_line_suggestion_dismissed = false;
         }
         KeyCode::Backspace => {
             backspace(&mut app.command_line);
             app.command_line_completion = None;
             app.command_line_suggestion_selected = 0;
+            app.command_line_suggestion_dismissed = false;
         }
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             insert_char(&mut app.command_line, c);
             app.command_line_completion = None;
             app.command_line_suggestion_selected = 0;
+            app.command_line_suggestion_dismissed = false;
         }
         _ => {}
     }

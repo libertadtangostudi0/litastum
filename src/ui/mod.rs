@@ -84,7 +84,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
     // Mode::Browsing -- once a popup/mode below has its own meaning
     // for the command line (or none at all), this shouldn't also be
     // showing over it.
-    if matches!(app.mode, Mode::Browsing) {
+    if matches!(app.mode, Mode::Browsing) && !app.command_line_suggestion_dismissed {
         let suggestions = crate::command_line::suggest_history(&app.command_history, &app.command_line);
         if !suggestions.is_empty() {
             command_line::draw_history_suggestions(frame, root[1], &suggestions, app.command_line_suggestion_selected, &theme);

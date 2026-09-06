@@ -135,6 +135,15 @@ pub struct App {
     /// since this list isn't a separate `Mode`, just an overlay shown
     /// while `Mode::Browsing`'s own command line has matches.
     pub command_line_suggestion_selected: usize,
+    /// Set by `Tab`-accepting a history suggestion, cleared by any
+    /// further edit to `command_line` (`insert_char`/`backspace`/`Esc`)
+    /// — suppresses `ui::draw_history_suggestions` from immediately
+    /// popping right back up, since the just-accepted command line is
+    /// itself always a substring match of the entry it came from.
+    /// Reported as a real annoyance: without this, accepting a
+    /// suggestion did nothing visible because the same list reappeared
+    /// unchanged on the very next frame.
+    pub command_line_suggestion_dismissed: bool,
     /// Shells the command line can run typed input through — see
     /// `shell.rs`. Never empty; `active_shell` indexes into it.
     pub shell_profiles: Vec<ShellProfile>,
@@ -181,6 +190,7 @@ impl App {
             command_line: String::new(),
             command_line_completion: None,
             command_line_suggestion_selected: 0,
+            command_line_suggestion_dismissed: false,
             shell_profiles: builtin_profiles(),
             active_shell: 0,
             command_history: Vec::new(),
