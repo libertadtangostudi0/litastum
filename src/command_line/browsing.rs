@@ -22,8 +22,9 @@ use super::history::{record_history, save_history, suggest_history, CommandHisto
 /// `Alt+F8` open their own popups (all need the raw modifier, which
 /// `keymap::resolve`'s table can't see since it only keys off
 /// `KeyCode`), `Shift+Left`/`Right` and `Ctrl+Shift+Left`/`Right`
-/// select within the command line (character- and word-wise —
-/// `text_field.rs`'s selection functions, reused against
+/// select within the command line (character- and word-wise), plain
+/// `Ctrl+Left`/`Right` moves the cursor by a word with no selection —
+/// all reusing `text_field.rs`'s cursor/selection functions against
 /// `App::command_line_cursor`/`command_line_selection_anchor`; bare
 /// `Left`/`Right` are still panel navigation only, never touched
 /// here), `Enter` with something typed runs it
@@ -112,6 +113,28 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         } else {
             text_field::extend_selection_right(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
         }
+        return Ok(());
+    }
+
+    // Ctrl+Left/Right (no Shift) -- plain word-wise cursor movement,
+    // no selection. `resolve(key.code)` below only sees `KeyCode`, not
+    // modifiers, so without this check Ctrl+Left/Right would silently
+    // fall through to the exact same panel-navigation move as a bare
+    // arrow -- not a loss of any existing behavior (bare Left/Right
+    // already cover that), just Ctrl+arrow having done nothing of its
+    // own until now. Clears a selection rather than collapsing to its
+    // edge (`text_field::collapse_selection_left/right`'s own
+    // behavior): a real editor's Ctrl+arrow moves *from* the cursor by
+    // a word and drops the selection, it doesn't jump to whichever
+    // edge is already closer.
+    if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) {
+        app.command_line_selection_anchor = None;
+        text_field::move_word_left(&app.command_line, &mut app.command_line_cursor);
+        return Ok(());
+    }
+    if key.code == KeyCode::Right && key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) {
+        app.command_line_selection_anchor = None;
+        text_field::move_word_right(&app.command_line, &mut app.command_line_cursor);
         return Ok(());
     }
 

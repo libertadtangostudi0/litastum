@@ -339,6 +339,17 @@ in more detail.
       judged not worth a dedicated `Theme` field for this one highlight,
       reusing the one that's already there for the same *kind* of
       selection elsewhere).
+- [x] Plain `Ctrl+Left`/`Right` (no `Shift`) moves the command-line
+      cursor by a word with no selection — `text_field::move_word_left/
+      right`, clearing any active selection rather than collapsing to
+      its edge (a real editor's Ctrl+arrow moves from the cursor and
+      drops the selection, it doesn't jump to whichever edge is
+      closer). Added right after the Shift-selection work above, once
+      it was pointed out plain Ctrl+arrow cursor movement (no
+      selecting) was still missing — `resolve(key.code)` only sees
+      `KeyCode`, not modifiers, so before this Ctrl+Left/Right silently
+      fell through to the exact same panel-navigation move as a bare
+      arrow (not a behavior loss — bare arrows already did that).
 - [ ] No `Up`-arrow history recall — same reason, arrows are taken; see
       "History" above for the menu-driven way around this instead
 - [ ] Bare `cd` (no argument) is a no-op, not "go to home directory"
