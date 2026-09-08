@@ -44,7 +44,22 @@ already handle the key):
   new word-wise ones, `extend_selection_word_left`/`_right`, added
   alongside this. Reported as a real gap: fixing a typo in the middle
   of a typed command (`"go info"` meant to be `"svn info"`) had no way
-  to select and replace just the wrong word.
+  to select and replace just the wrong word. Plain `Ctrl+Left`/`Right`
+  (no `Shift`) came right after — cursor movement by a word with no
+  selection, same underlying `text_field::move_word_left/right`.
+- **`/` and `\` are their own word-movement stop**
+  (`text_field::is_path_sep`), not chained into an adjacent word the
+  way a space or `.` is — reported directly against a real URL/path
+  (`/branches/Features/DataExtractionCDATree`): treating `/` like any
+  other separator meant Ctrl+Right from right before one jumped
+  straight through it *and* the whole next path segment in one press,
+  so landing right after just the `/` needed bouncing Ctrl+Right then
+  Ctrl+Left. Deliberately narrow — only these two characters, not every
+  separator — so the established "skip a punctuation run, then the
+  following word, in one press" behavior for spaces/dots/etc. is
+  unchanged. Applies to both plain `Ctrl+Left`/`Right` and
+  `Ctrl+Shift+Left`/`Right` selection, since both go through the same
+  `move_word_left`/`move_word_right`.
 - **No command history** (no up-arrow recall) — same reason, arrows are
   taken.
 - **Bare `cd`** (no argument) is a no-op, not "go to home directory".

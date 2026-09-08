@@ -87,14 +87,40 @@ fn is_word_char(c: char) -> bool {
 }
 
 
+/// `/` and `\` -- singled out from the generic "non-word character" run
+/// below so each one is its own word-movement stop, not silently
+/// chained together with an adjacent word into one jump. Reported
+/// directly against a real path (`/branches/Features/DataExtraction...`):
+/// with `/` treated the same as any other separator (spaces, dots, ...),
+/// Ctrl+Right from right before a `/` jumped straight through it *and*
+/// the whole next path segment in one press, so landing right after
+/// just the `/` needed bouncing Ctrl+Right then Ctrl+Left. Deliberately
+/// narrow (just these two characters, not every separator) so the
+/// already-established "skip a punctuation run, then the following
+/// word, in one press" behavior for everything else (spaces, dots, ...)
+/// stays exactly as documented/tested below.
+fn is_path_sep(c: char) -> bool {
+    c == '/' || c == '\\'
+}
+
+
 /// Moves the cursor to the start of the previous word (`Ctrl+Left`) —
-/// skips any run of non-word characters (path separators, spaces, ...)
+/// skips any run of non-word characters (spaces, punctuation, ...)
 /// immediately to the left first, then the word itself, same as a
-/// standard text editor's word-left.
+/// standard text editor's word-left. A `/` or `\` right before the
+/// cursor is its own stop instead (`is_path_sep`'s own doc comment) —
+/// checked first, before the general run-skip, so it doesn't get
+/// swallowed into either side of it.
 pub fn move_word_left(text: &str, cursor: &mut usize) {
     let chars: Vec<char> = text.chars().collect();
     let mut i = *cursor;
-    while i > 0 && !is_word_char(chars[i - 1]) {
+
+    if i > 0 && is_path_sep(chars[i - 1]) {
+        *cursor = i - 1;
+        return;
+    }
+
+    while i > 0 && !is_word_char(chars[i - 1]) && !is_path_sep(chars[i - 1]) {
         i -= 1;
     }
     while i > 0 && is_word_char(chars[i - 1]) {
@@ -110,7 +136,13 @@ pub fn move_word_right(text: &str, cursor: &mut usize) {
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len();
     let mut i = *cursor;
-    while i < len && !is_word_char(chars[i]) {
+
+    if i < len && is_path_sep(chars[i]) {
+        *cursor = i + 1;
+        return;
+    }
+
+    while i < len && !is_word_char(chars[i]) && !is_path_sep(chars[i]) {
         i += 1;
     }
     while i < len && is_word_char(chars[i]) {
@@ -320,6 +352,53 @@ mod tests {
         let mut cursor = 0;
         move_word_right(text, &mut cursor);
         assert_eq!(&text[cursor..], "/file");
+    }
+
+    /// Regression test for the real reported path: crossing a `/`
+    /// needs its own Ctrl+Right press, not silently chained into the
+    /// following path segment the way a space or `.` would be.
+    #[test]
+    fn move_word_right_stops_right_after_a_path_separator() {
+        let text = "/branches/features";
+        let mut cursor = 0;
+
+        move_word_right(text, &mut cursor); // over the leading "/"
+        assert_eq!(cursor, 1);
+
+        move_word_right(text, &mut cursor); // over "branches"
+        assert_eq!(&text[cursor..], "/features");
+
+        move_word_right(text, &mut cursor); // over that "/"
+        assert_eq!(&text[cursor..], "features");
+    }
+
+    #[test]
+    fn move_word_left_stops_right_before_a_path_separator() {
+        let text = "/branches/features";
+        let mut cursor = text.chars().count();
+
+        move_word_left(text, &mut cursor); // back over "features"
+        assert_eq!(&text[cursor..], "features");
+
+        move_word_left(text, &mut cursor); // back over that "/"
+        assert_eq!(&text[cursor..], "/features");
+
+        move_word_left(text, &mut cursor); // back over "branches"
+        assert_eq!(&text[cursor..], "branches/features");
+
+        move_word_left(text, &mut cursor); // back over the leading "/"
+        assert_eq!(cursor, 0);
+    }
+
+    /// Backslashes (Windows paths) get the same per-character stop as
+    /// forward slashes.
+    #[test]
+    fn move_word_right_stops_right_after_a_backslash() {
+        let text = r"C:\Users\name";
+        let mut cursor = 2; // right after "C:"
+
+        move_word_right(text, &mut cursor); // over the "\"
+        assert_eq!(cursor, 3);
     }
 
     #[test]
