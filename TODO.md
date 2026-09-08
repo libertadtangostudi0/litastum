@@ -323,24 +323,22 @@ in more detail.
       only) — arrows are needed for panel navigation even while typing,
       so they can't double as text-cursor movement without real
       ambiguity
-- [ ] No text selection in the command line either — real Far has a
-      distinct "Selected text" color group for the console/command
-      line (black text on an olive-green background, not reused from
-      the panel's own selection color), confirming this is meant to be
-      a real, visible feature there, not just in dialogs/panels. Bare
-      arrows are ruled out by the bullet above, but `Shift+Left`/
-      `Shift+Right` are NOT already claimed by panel navigation (only
-      bare arrows are) — `text_field.rs`'s destination-field selection
-      in Copy/Move already proves this exact pattern works
-      (`selection_anchor`, typing replaces the selection,
-      `Backspace`/`Delete` remove it, plain arrows collapse to an
-      edge). The command line itself has no cursor position to anchor
-      from yet (append/backspace-only, per the bullet above) — adding
-      selection likely means adding real cursor-position tracking to
-      `command_line.rs` too, not just the anchor/extend logic. No
-      matching `Theme` color exists yet — would need its own field,
-      distinct from `current_row_bg`, same gap noted for panel
-      multi-select above
+- [x] Text selection in the command line — `Shift+Left`/`Right`
+      (character-wise) and `Ctrl+Shift+Left`/`Right` (word-wise) select,
+      typing or `Backspace` over a selection replaces/deletes it, same
+      shape as `text_field.rs`'s Copy/Move destination-field selection
+      (which it directly reuses: `extend_selection_left/right`,
+      the two new `extend_selection_word_left/right`, `delete_selection`)
+      against a real cursor position the command line never had before
+      (`App::command_line_cursor`/`command_line_selection_anchor`).
+      Bare `Left`/`Right` are still panel-navigation-only, untouched —
+      only the `Shift`/`Ctrl+Shift` combinations, which panel nav never
+      claimed. Rendered with `theme.current_row_bg`, the same color the
+      destination field's own selection already uses (not a distinct
+      "Selected text" color reproducing Far's own olive-green group —
+      judged not worth a dedicated `Theme` field for this one highlight,
+      reusing the one that's already there for the same *kind* of
+      selection elsewhere).
 - [ ] No `Up`-arrow history recall — same reason, arrows are taken; see
       "History" above for the menu-driven way around this instead
 - [ ] Bare `cd` (no argument) is a no-op, not "go to home directory"

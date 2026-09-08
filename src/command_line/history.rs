@@ -158,15 +158,30 @@ pub fn handle_history_key(app: &mut App, key: KeyEvent) -> Result<()> {
                 app.command_line = (*entry).clone();
                 app.command_line_completion = None;
             }
+            app.command_line_cursor = app.command_line.chars().count();
+            app.command_line_selection_anchor = None;
             app.mode = Mode::Browsing;
         }
-        KeyCode::Esc => app.mode = Mode::Browsing,
+        KeyCode::Esc => {
+            // A selection could have been left active from before Alt+F8
+            // opened this popup (`command_line_cursor`/
+            // `_selection_anchor` are `Mode::Browsing`-only state, but
+            // this popup edits the same `app.command_line` underneath
+            // it) -- clear it so `Mode::Browsing` doesn't come back to
+            // a stale mid-line cursor or selection the command line here
+            // never touched.
+            app.command_line_cursor = app.command_line.chars().count();
+            app.command_line_selection_anchor = None;
+            app.mode = Mode::Browsing;
+        }
         KeyCode::Backspace => {
             backspace(&mut app.command_line);
+            app.command_line_cursor = app.command_line.chars().count();
             reset_selection(app);
         }
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             insert_char(&mut app.command_line, c);
+            app.command_line_cursor = app.command_line.chars().count();
             reset_selection(app);
         }
         _ => {}

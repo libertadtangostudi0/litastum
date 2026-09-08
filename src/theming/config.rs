@@ -47,7 +47,7 @@ fn theme_search_dirs() -> Vec<PathBuf> {
 /// first directory with a matching, parseable file wins. Logs a single
 /// `warn!` only if no directory had it at all (each individual miss
 /// while searching is expected, not worth its own warning).
-fn find_scheme(name: &str) -> Option<ColorScheme> {
+pub fn find_scheme(name: &str) -> Option<ColorScheme> {
     for dir in theme_search_dirs() {
         if let Some(scheme) = load_scheme(&dir, name) {
             return Some(scheme);
@@ -116,6 +116,21 @@ pub fn load_active_theme() -> (Theme, Option<SynTheme>) {
         .map(|scheme| scheme.to_syntax_theme());
 
     (theme, syntax_theme)
+}
+
+
+/// The raw `interface_theme`/`editor_theme` names currently configured
+/// (if any) -- unlike `load_active_theme`, which resolves them into an
+/// actual `Theme`/`SynTheme`, this is just the names, for the F9
+/// color-scheme picker to mark whichever entry matches as "current"
+/// (`ui/theme_menu.rs`). Same snapshot-at-open, not live, caveat as
+/// `ThemeMenu::open`'s own doc comment for `themes`.
+pub fn active_theme_names() -> (Option<String>, Option<String>) {
+    let Some(config_dir) = config_dir() else {
+        return (None, None);
+    };
+    let config = read_config(&config_dir);
+    (config.interface_theme, config.editor_theme)
 }
 
 

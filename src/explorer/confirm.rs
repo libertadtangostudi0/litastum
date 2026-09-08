@@ -209,7 +209,7 @@ mod tests {
         let mut app = scratch_app();
         let file = app.panels[0].path.join("victim.txt");
         fs::write(&file, b"bye").unwrap();
-        app.mode = Mode::ConfirmDelete(PendingDelete { path: file.clone(), name: "victim.txt".into(), is_dir: false });
+        app.mode = Mode::ConfirmDelete(PendingDelete { path: file.clone(), name: "victim.txt".into(), is_dir: false, size: 3 });
 
         handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
 
@@ -223,7 +223,7 @@ mod tests {
         let dir = app.panels[0].path.join("victim_dir");
         fs::create_dir_all(dir.join("nested")).unwrap();
         fs::write(dir.join("nested").join("f.txt"), b"x").unwrap();
-        app.mode = Mode::ConfirmDelete(PendingDelete { path: dir.clone(), name: "victim_dir".into(), is_dir: true });
+        app.mode = Mode::ConfirmDelete(PendingDelete { path: dir.clone(), name: "victim_dir".into(), is_dir: true, size: 0 });
 
         handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
 
@@ -235,7 +235,7 @@ mod tests {
         let mut app = scratch_app();
         let file = app.panels[0].path.join("keep.txt");
         fs::write(&file, b"stay").unwrap();
-        app.mode = Mode::ConfirmDelete(PendingDelete { path: file.clone(), name: "keep.txt".into(), is_dir: false });
+        app.mode = Mode::ConfirmDelete(PendingDelete { path: file.clone(), name: "keep.txt".into(), is_dir: false, size: 4 });
 
         handle_confirm_delete_key(&mut app, key(KeyCode::Esc)).unwrap();
 
@@ -248,7 +248,7 @@ mod tests {
         let mut app = scratch_app();
         let file = app.panels[0].path.join("keep2.txt");
         fs::write(&file, b"stay").unwrap();
-        app.mode = Mode::ConfirmDelete(PendingDelete { path: file.clone(), name: "keep2.txt".into(), is_dir: false });
+        app.mode = Mode::ConfirmDelete(PendingDelete { path: file.clone(), name: "keep2.txt".into(), is_dir: false, size: 4 });
 
         handle_confirm_delete_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 

@@ -55,6 +55,13 @@ pub struct PendingDelete {
     pub path: PathBuf,
     pub name: String,
     pub is_dir: bool,
+    /// `Entry::size` at the time F8 was pressed -- shown in the delete
+    /// popup (`ui/confirm.rs`), the first real use of that field (see
+    /// its own doc comment in `explorer/entry.rs`). Meaningless for a
+    /// directory (a filesystem's own reported size for a directory
+    /// entry is some small OS-internal number, not its recursive
+    /// contents' total), so the popup only displays it for a file.
+    pub size: u64,
 }
 
 
@@ -124,6 +131,24 @@ pub struct App {
     /// Manager-style) — see `command_line.rs` for the editing logic
     /// and `.claude/rules/litastum-stack.md` for the design.
     pub command_line: String,
+    /// Cursor position within `command_line`, as a character index (not
+    /// byte offset — see `text_field.rs`'s own module doc). Always
+    /// `command_line.chars().count()` (the end) except while a
+    /// selection is active or has just been resolved — every other
+    /// mutation site (running the command, `Esc`, Tab-completion,
+    /// accepting a history suggestion/entry) resets it back to the end,
+    /// since plain typing has nowhere else sensible to land. Bare
+    /// `Left`/`Right` still can't move this (reserved for panel
+    /// navigation, per `.claude/rules/litastum-command-line.md`) —
+    /// only `Shift+Left`/`Right` and `Ctrl+Shift+Left`/`Right`
+    /// (`command_line/browsing.rs`) touch it, reusing `text_field.rs`'s
+    /// selection functions built for the Copy/Move destination field.
+    pub command_line_cursor: usize,
+    /// `Shift`/`Ctrl+Shift`+`Left`/`Right`'s live selection anchor in
+    /// `command_line` — `None` means no selection. See
+    /// `command_line_cursor`'s own doc for why the command line needed
+    /// a real cursor position at all (it didn't, before this).
+    pub command_line_selection_anchor: Option<usize>,
     /// A live `Tab`-cycling session over `command_line`'s current word,
     /// if one's in progress — `None` whenever nothing's being cycled.
     /// See `command_line::CompletionCycle`.
@@ -188,6 +213,8 @@ impl App {
             theme,
             syntax_theme,
             command_line: String::new(),
+            command_line_cursor: 0,
+            command_line_selection_anchor: None,
             command_line_completion: None,
             command_line_suggestion_selected: 0,
             command_line_suggestion_dismissed: false,

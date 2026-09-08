@@ -163,6 +163,26 @@ pub fn extend_selection_right(text: &str, cursor: &mut usize, anchor: &mut Optio
 }
 
 
+/// `Ctrl+Shift+Left` — word-wise version of `extend_selection_left`,
+/// same anchor-starting behavior, extending by a whole word
+/// (`move_word_left`) instead of one character.
+pub fn extend_selection_word_left(text: &str, cursor: &mut usize, anchor: &mut Option<usize>) {
+    if anchor.is_none() {
+        *anchor = Some(*cursor);
+    }
+    move_word_left(text, cursor);
+}
+
+
+/// `Ctrl+Shift+Right` — mirror of `extend_selection_word_left`.
+pub fn extend_selection_word_right(text: &str, cursor: &mut usize, anchor: &mut Option<usize>) {
+    if anchor.is_none() {
+        *anchor = Some(*cursor);
+    }
+    move_word_right(text, cursor);
+}
+
+
 /// Plain `Left` with a selection active: collapses to the selection's
 /// start instead of moving one more character, matching a standard
 /// text editor. With no selection, just moves left as usual.
@@ -342,6 +362,27 @@ mod tests {
         extend_selection_left(&mut cursor, &mut anchor);
         extend_selection_left(&mut cursor, &mut anchor);
         assert_eq!(selection_range(anchor.unwrap(), cursor), (1, 2));
+    }
+
+    #[test]
+    fn ctrl_shift_right_extends_selection_by_a_whole_word() {
+        let text = "svn info";
+        let mut cursor = 0;
+        let mut anchor = None;
+        extend_selection_word_right(text, &mut cursor, &mut anchor);
+        assert_eq!(anchor, Some(0));
+        assert_eq!(cursor, 3, "should land right after \"svn\", before the space");
+        assert_eq!(selection_range(anchor.unwrap(), cursor), (0, 3));
+    }
+
+    #[test]
+    fn ctrl_shift_left_extends_selection_by_a_whole_word() {
+        let text = "svn info";
+        let mut cursor = 8; // end
+        let mut anchor = None;
+        extend_selection_word_left(text, &mut cursor, &mut anchor);
+        assert_eq!(anchor, Some(8));
+        assert_eq!(cursor, 4, "should land right at the start of \"info\"");
     }
 
     #[test]

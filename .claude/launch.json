@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "concept-preview",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8731",
+        "--directory",
+        "W:/Temp/claude/W--rust-litastum/13c4c3cd-cac0-4a54-b816-17775d3df3e1/scratchpad"
+      ],
+      "port": 8731
+    }
+  ]
+}

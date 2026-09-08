@@ -66,6 +66,7 @@ fn request_delete(app: &mut App) {
         path: panel.path.join(&entry.name),
         name: entry.name.clone(),
         is_dir: entry.is_dir,
+        size: entry.size,
     };
     app.mode = Mode::ConfirmDelete(pending);
 }

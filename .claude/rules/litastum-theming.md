@@ -195,6 +195,25 @@ original design, not a stretch invented here:
   scope list above was code-only. The built-in `dracula` fallback
   theme already had real `markup.*` rules of its own, which is why
   this only showed up once a custom scheme was applied
+- `markup.inserted` → `green`, `markup.deleted` → `red`,
+  `markup.changed` → `yellow`, `meta.diff.header`/`meta.header` (bold)
+  → `cyan`, `meta.diff.range`/`punctuation.definition.range` → `blue`,
+  `meta.separator.diff` → `brightBlack` — same exact gap as the
+  Markdown one above, hit again for `.diff`/`.patch`: `syntect`'s own
+  bundled default set already resolves them to a real "Diff" grammar
+  (no `BUNDLED_GRAMMARS` entry needed — confirmed directly), but this
+  theme had nothing naming its `markup.inserted.diff`/
+  `markup.deleted.diff`/`markup.changed.diff`/`meta.diff.*` scopes
+  either. Reported as "works with an older build that has no
+  `editor_theme` configured, not with one that does" — same underlying
+  cause as the Markdown case (the built-in `dracula` fallback already
+  colors these; this hand-built theme didn't), not a build/cwd issue as
+  the report first suggested. Scope names taken from the real grammar
+  (sublimehq/Packages' `Diff/Diff.sublime-syntax`), not guessed — the
+  no-`.diff`-suffix selectors (`markup.inserted`, not
+  `markup.inserted.diff`) are deliberate prefix matches, so they also
+  cover any other grammar using the same inserted/deleted/changed
+  convention, not just this one
 - everything else (plain text, punctuation/operators) uses `foreground`
   unmodified — deliberately modest, not an exhaustive TextMate grammar
 

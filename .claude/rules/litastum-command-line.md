@@ -30,11 +30,21 @@ already handle the key):
 
 ## Scope cuts (deliberate, not oversights)
 
-- **Append/backspace-only editing** — no left/right cursor movement
-  within the typed text. Arrows are needed for panel navigation even
-  while something's typed, so they can't also mean "move within the
-  command line" without real ambiguity. Fixing a typo means
-  backspacing to it.
+- **Bare arrows never move a cursor within the typed text** — they're
+  needed for panel navigation even while something's typed, so they
+  can't also mean "move within the command line" without real
+  ambiguity. This is still true, but no longer means "append/backspace
+  only": `Shift+Left`/`Right` and `Ctrl+Shift+Left`/`Right` (character-
+  and word-wise) *do* select within the command line now — panel
+  navigation never claimed those modifier combinations, only bare
+  arrows. `App::command_line_cursor`/`command_line_selection_anchor`
+  plus `command_line/browsing.rs`'s handling directly reuse
+  `text_field.rs`'s selection functions (built first for the Copy/Move
+  destination field) rather than duplicating that logic — including two
+  new word-wise ones, `extend_selection_word_left`/`_right`, added
+  alongside this. Reported as a real gap: fixing a typo in the middle
+  of a typed command (`"go info"` meant to be `"svn info"`) had no way
+  to select and replace just the wrong word.
 - **No command history** (no up-arrow recall) — same reason, arrows are
   taken.
 - **Bare `cd`** (no argument) is a no-op, not "go to home directory".

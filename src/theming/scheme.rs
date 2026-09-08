@@ -106,6 +106,17 @@ impl ColorScheme {
     }
 
 
+    /// Four representative colors for the F9 color-scheme picker's
+    /// swatch preview (`ui/theme_menu.rs`) -- `red`/`yellow`/`green`/
+    /// `cyan`, a fixed, arbitrary pick (not curated per scheme) meant
+    /// to give a quick "warm to cool" sense of a scheme's palette at a
+    /// glance, same spirit as the theming doc's own "decided
+    /// unilaterally, easy to revisit" mapping choices.
+    pub fn preview_swatch(&self) -> [Color; 4] {
+        [rgb(&self.red), rgb(&self.yellow), rgb(&self.green), rgb(&self.cyan)]
+    }
+
+
     /// Derives a `syntect` theme for the editor's syntax highlighting
     /// from the same 16 colors, base16-style — Windows Terminal's 8
     /// base colors line up closely with base16's
@@ -127,6 +138,22 @@ impl ColorScheme {
     /// used with no `editor_theme` configured) already had real
     /// `markup.*` rules of its own, which is why this gap only showed
     /// up once a *custom* scheme was applied.
+    ///
+    /// Same exact gap, same fix, hit again for `.diff`/`.patch`: they
+    /// have a real grammar (`syntect`'s own bundled default already
+    /// resolves `.diff`/`.patch` to a "Diff" `SyntaxReference` —
+    /// confirmed directly, no `BUNDLED_GRAMMARS` entry needed), but its
+    /// `markup.inserted.diff`/`markup.deleted.diff`/`markup.changed.diff`/
+    /// `meta.diff.*` scopes (verified against sublimehq/Packages' own
+    /// `Diff/Diff.sublime-syntax`) had nothing here naming them either
+    /// — reported as "works when a prior build without a custom
+    /// `editor_theme` configured is run, not with a fresh build using
+    /// the configured one," which pointed straight at this same
+    /// custom-theme-only gap rather than a build issue. `markup.inserted`/
+    /// `markup.deleted`/`markup.changed` (no `.diff` suffix) are prefix
+    /// selectors -- they also match any *other* grammar using the same
+    /// convention (e.g. a unified-diff-shaped `gitcommit`/`patch`
+    /// grammar), not just this one.
     pub fn to_syntax_theme(&self) -> SynTheme {
         let settings = ThemeSettings {
             background: Some(syn_rgb(&self.background)),
@@ -159,6 +186,15 @@ impl ColorScheme {
                  punctuation.definition.italic, punctuation.definition.link",
                 &self.bright_black,
             ),
+            // Diff/patch scopes (`Diff/Diff.sublime-syntax` in
+            // sublimehq/Packages, `syntect`'s own default bundle) --
+            // added/removed/changed lines, file headers, hunk ranges.
+            scope_item("markup.inserted", &self.green),
+            scope_item("markup.deleted", &self.red),
+            scope_item("markup.changed", &self.yellow),
+            bold_scope_item("meta.diff.header, meta.header", &self.cyan),
+            scope_item("meta.diff.range, punctuation.definition.range", &self.blue),
+            scope_item("meta.separator.diff", &self.bright_black),
         ];
 
         SynTheme {
@@ -406,5 +442,39 @@ mod tests {
 
         let link_style = resolve_style(&syntax_theme, "markup.underline.link");
         assert_eq!(link_style.foreground, syn_rgb(&scheme.blue));
+    }
+
+    /// Regression test for the "diff/patch files have no highlighting
+    /// under a custom theme" report -- same shape as the Markdown gap
+    /// above (a real grammar, `syntect`'s own bundled "Diff", genuinely
+    /// runs, but nothing named its scopes), reported specifically as
+    /// "works with a build that has no `editor_theme` configured, not
+    /// with the one actually using it" -- confirming the built-in
+    /// `dracula` fallback theme happened to already color these scopes
+    /// while this hand-built one didn't, exactly like the Markdown case.
+    /// Scope names taken from the real grammar
+    /// (sublimehq/Packages' `Diff/Diff.sublime-syntax`), not guessed.
+    #[test]
+    fn to_syntax_theme_gives_diff_added_removed_and_changed_lines_a_real_style() {
+        let scheme = ColorScheme::from_json_str(APPLE_SYSTEM_COLORS_JSON).unwrap();
+        let syntax_theme = scheme.to_syntax_theme();
+        let foreground = syn_rgb(&scheme.foreground);
+
+        let inserted_style = resolve_style(&syntax_theme, "markup.inserted.diff");
+        assert_eq!(inserted_style.foreground, syn_rgb(&scheme.green));
+        assert_ne!(inserted_style.foreground, foreground, "should be colored, not plain foreground");
+
+        let deleted_style = resolve_style(&syntax_theme, "markup.deleted.diff");
+        assert_eq!(deleted_style.foreground, syn_rgb(&scheme.red));
+
+        let changed_style = resolve_style(&syntax_theme, "markup.changed.diff");
+        assert_eq!(changed_style.foreground, syn_rgb(&scheme.yellow));
+
+        let header_style = resolve_style(&syntax_theme, "meta.diff.header.from-file meta.header.from-file.diff");
+        assert_eq!(header_style.foreground, syn_rgb(&scheme.cyan));
+        assert!(header_style.font_style.contains(FontStyle::BOLD));
+
+        let range_style = resolve_style(&syntax_theme, "meta.diff.range.unified");
+        assert_eq!(range_style.foreground, syn_rgb(&scheme.blue));
     }
 }

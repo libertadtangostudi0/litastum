@@ -12,6 +12,7 @@ use tracing::debug;
 
 use crate::app::{App, Mode, ShellMenu};
 use crate::explorer::{execute, resolve, Command, DriveMenu, FindFileState};
+use crate::text_field;
 
 use super::completion::complete;
 use super::history::{record_history, save_history, suggest_history, CommandHistoryMenu};
@@ -20,7 +21,12 @@ use super::history::{record_history, save_history, suggest_history, CommandHisto
 /// `Shift+F6` opens the rename prompt, `Alt+F1`/`Alt+F2`/`Alt+F7`/
 /// `Alt+F8` open their own popups (all need the raw modifier, which
 /// `keymap::resolve`'s table can't see since it only keys off
-/// `KeyCode`), `Enter` with something typed runs it
+/// `KeyCode`), `Shift+Left`/`Right` and `Ctrl+Shift+Left`/`Right`
+/// select within the command line (character- and word-wise —
+/// `text_field.rs`'s selection functions, reused against
+/// `App::command_line_cursor`/`command_line_selection_anchor`; bare
+/// `Left`/`Right` are still panel navigation only, never touched
+/// here), `Enter` with something typed runs it
 /// (`run_command_line`). While an auto-popping history-suggestion list
 /// is actually showing (`suggest_history` found at least one match),
 /// `Up`/`Down` move within it and `Tab` accepts the highlighted entry
@@ -79,6 +85,36 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         return Ok(());
     }
 
+    // Shift+Left/Right (character-wise) and Ctrl+Shift+Left/Right
+    // (word-wise) select within the command line -- reported as a real
+    // gap: fixing a typo in the middle of a typed command ("go info"
+    // meant to be "svn info") had no way to select and replace just the
+    // wrong word, only backspacing everything after it. Bare
+    // Left/Right still aren't touched here (`keymap::resolve`'s table
+    // below still owns them, for panel navigation) -- only the
+    // Shift/Ctrl+Shift combinations, which panel navigation never
+    // claimed in the first place. Reuses `text_field.rs`'s selection
+    // functions (built for the Copy/Move destination field) against
+    // the command line's own new `command_line_cursor`/
+    // `command_line_selection_anchor` rather than duplicating that
+    // logic.
+    if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::SHIFT) {
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            text_field::extend_selection_word_left(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
+        } else {
+            text_field::extend_selection_left(&mut app.command_line_cursor, &mut app.command_line_selection_anchor);
+        }
+        return Ok(());
+    }
+    if key.code == KeyCode::Right && key.modifiers.contains(KeyModifiers::SHIFT) {
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            text_field::extend_selection_word_right(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
+        } else {
+            text_field::extend_selection_right(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
+        }
+        return Ok(());
+    }
+
     if key.code == KeyCode::Enter && !app.command_line.is_empty() {
         app.command_line_completion = None;
         return run_command_line(app, terminal);
@@ -114,6 +150,8 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
                 if let Some(&entry) = suggestions.get(app.command_line_suggestion_selected) {
                     app.command_line = entry.to_string();
                     app.command_line_completion = None;
+                    app.command_line_cursor = app.command_line.chars().count();
+                    app.command_line_selection_anchor = None;
                 }
                 app.command_line_suggestion_selected = 0;
                 // The just-accepted command line is always itself a
@@ -137,6 +175,8 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     if key.code == KeyCode::Tab && !app.command_line.is_empty() {
         let cwd = app.active_panel().path.clone();
         complete(&mut app.command_line, &cwd, &mut app.command_line_completion);
+        app.command_line_cursor = app.command_line.chars().count();
+        app.command_line_selection_anchor = None;
         return Ok(());
     }
 
@@ -149,24 +189,44 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         // changes or the panel does, so drop it regardless.
         app.command_line_completion = None;
         app.command_line_suggestion_selected = 0;
+        // Bare Left/Right always mean panel navigation here (the
+        // Shift/Ctrl+Shift combinations above are what select within
+        // the command line) -- clear a selection left active from
+        // before, so it doesn't visually linger once focus has moved
+        // to browsing the panels instead of editing the command line.
+        app.command_line_selection_anchor = None;
         return execute(cmd, app);
     }
 
     match key.code {
         KeyCode::Esc => {
             app.command_line.clear();
+            app.command_line_cursor = 0;
+            app.command_line_selection_anchor = None;
             app.command_line_completion = None;
             app.command_line_suggestion_selected = 0;
             app.command_line_suggestion_dismissed = false;
         }
         KeyCode::Backspace => {
-            backspace(&mut app.command_line);
+            // A selection is what Backspace deletes if one's active
+            // (`text_field::delete_selection`) -- only falls back to
+            // removing one character at the cursor when there isn't
+            // one, same "select, then edit" flow a normal text field
+            // gives.
+            if !text_field::delete_selection(&mut app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor) {
+                text_field::backspace(&mut app.command_line, &mut app.command_line_cursor);
+            }
             app.command_line_completion = None;
             app.command_line_suggestion_selected = 0;
             app.command_line_suggestion_dismissed = false;
         }
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            insert_char(&mut app.command_line, c);
+            // Typing over an active selection replaces it, same as any
+            // normal text field -- delete it first, then insert at the
+            // cursor `delete_selection` left behind (the selection's
+            // own start).
+            text_field::delete_selection(&mut app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
+            text_field::insert_char(&mut app.command_line, &mut app.command_line_cursor, c);
             app.command_line_completion = None;
             app.command_line_suggestion_selected = 0;
             app.command_line_suggestion_dismissed = false;
@@ -223,6 +283,8 @@ fn to_crossterm_color(color: ratatui::style::Color) -> CtColor {
 fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     let input = app.command_line.trim().to_string();
     app.command_line.clear();
+    app.command_line_cursor = 0;
+    app.command_line_selection_anchor = None;
     if input.is_empty() {
         return Ok(());
     }

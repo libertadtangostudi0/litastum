@@ -18,6 +18,7 @@ mod confirm;
 mod drive_menu;
 mod find_file;
 mod menu;
+mod popup;
 mod shell;
 mod theme_menu;
 
@@ -74,7 +75,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
     let left_columns = draw_panel(frame, panels[0], &app.panels[0], app.active == 0, &theme);
     let right_columns = draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme);
     let cwd = app.panels[app.active].path.clone();
-    let prefix_len = draw_command_line(frame, root[1], &cwd, &app.command_line, &theme);
+    let prefix_len = draw_command_line(frame, root[1], &cwd, &app.command_line, app.command_line_selection_anchor, app.command_line_cursor, &theme);
     draw_function_keys(frame, root[2], &theme, app.alt_held);
 
     // Auto-popping history suggestions, Far Manager-style: shown right
@@ -102,7 +103,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
     // still belongs down here, visible under the popup.
     if matches!(app.mode, Mode::Browsing | Mode::CommandHistory(_)) {
         frame.set_cursor_position(Position {
-            x: root[1].x + prefix_len + app.command_line.chars().count() as u16,
+            x: root[1].x + prefix_len + app.command_line_cursor as u16,
             y: root[1].y,
         });
     }
@@ -322,13 +323,31 @@ pub(crate) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 /// version had one, `"Ctrl+P {shell_name}"`) — reported as visual
 /// clutter that doesn't belong on a Far-style command line; `Ctrl+P`'s
 /// own picker already shows which profile is active when opened.
-fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &str, theme: &Theme) -> u16 {
+fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &str, selection_anchor: Option<usize>, cursor: usize, theme: &Theme) -> u16 {
     let prefix = format!("{}> ", cwd.display());
-    let line = Line::from(vec![
-        Span::styled(prefix.clone(), Style::default().fg(theme.command_line_prefix).add_modifier(Modifier::BOLD)),
-        Span::styled(command_line.to_string(), Style::default().fg(theme.text)),
-    ]);
-    frame.render_widget(line, area);
+
+    let mut spans = vec![Span::styled(prefix.clone(), Style::default().fg(theme.command_line_prefix).add_modifier(Modifier::BOLD))];
+
+    // A `Shift`/`Ctrl+Shift`+`Left`/`Right` selection (`command_line/
+    // browsing.rs`) highlights the same way the Copy/Move destination
+    // field's own selection does (`text_field.rs::destination_line`,
+    // `theme.current_row_bg`) -- no selection just renders as one plain
+    // span, same as before this feature existed.
+    match selection_anchor {
+        Some(anchor) => {
+            let (start, end) = crate::text_field::selection_range(anchor, cursor);
+            let chars: Vec<char> = command_line.chars().collect();
+            let before: String = chars[..start].iter().collect();
+            let selected: String = chars[start..end].iter().collect();
+            let after: String = chars[end..].iter().collect();
+            spans.push(Span::styled(before, Style::default().fg(theme.text)));
+            spans.push(Span::styled(selected, Style::default().fg(theme.text).bg(theme.current_row_bg)));
+            spans.push(Span::styled(after, Style::default().fg(theme.text)));
+        }
+        None => spans.push(Span::styled(command_line.to_string(), Style::default().fg(theme.text))),
+    }
+
+    frame.render_widget(Line::from(spans), area);
     prefix.chars().count() as u16
 }
 

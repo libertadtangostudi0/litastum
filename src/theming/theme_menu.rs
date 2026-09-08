@@ -1,9 +1,24 @@
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::style::Color;
 use tracing::debug;
 
 use crate::app::{App, Mode};
 use super::config;
+
+
+/// One row in the F9 color-scheme picker: a theme's name plus a
+/// 4-color preview swatch (`ColorScheme::preview_swatch`) — loaded
+/// eagerly at `ThemeMenu::open()` time so the popup can render the
+/// swatch without re-reading theme files on every frame.
+pub struct ThemeMenuEntry {
+    pub name: String,
+    /// `None` if the theme file couldn't be found/parsed at open time
+    /// (rare -- `list_theme_names` only lists files that exist, but a
+    /// file could still fail to parse) — rendered as a neutral dash
+    /// rather than a swatch (`ui/theme_menu.rs`).
+    pub swatch: Option<[Color; 4]>,
+}
 
 
 /// State for the F9 "pick a color scheme" popup — a minimal analog of
@@ -11,11 +26,17 @@ use super::config;
 /// top-menu bar — Left/Files/Commands/Options/... — is a much bigger
 /// feature; see `TODO.md`).
 pub struct ThemeMenu {
-    /// Filename stems of every `themes/*.json` file found in the
-    /// config dir at the moment F9 was pressed — a snapshot, not
-    /// live-refreshed while the menu stays open.
-    pub themes: Vec<String>,
+    /// Every `themes/*.json` file found in the config dir at the
+    /// moment F9 was pressed — a snapshot, not live-refreshed while
+    /// the menu stays open.
+    pub themes: Vec<ThemeMenuEntry>,
     pub selected: usize,
+    /// The names currently configured for each half
+    /// (`config::active_theme_names`), so the popup can mark whichever
+    /// row(s) match as "current" — same snapshot-at-open caveat as
+    /// `themes`.
+    pub current_interface: Option<String>,
+    pub current_editor: Option<String>,
 }
 
 
@@ -25,7 +46,15 @@ impl ThemeMenu {
     /// — same "nothing configured" case `config.rs` already treats as
     /// normal, not a failure to report.
     pub fn open() -> Self {
-        Self { themes: config::list_theme_names(), selected: 0 }
+        let themes = config::list_theme_names()
+            .into_iter()
+            .map(|name| {
+                let swatch = config::find_scheme(&name).map(|scheme| scheme.preview_swatch());
+                ThemeMenuEntry { name, swatch }
+            })
+            .collect();
+        let (current_interface, current_editor) = config::active_theme_names();
+        Self { themes, selected: 0, current_interface, current_editor }
     }
 
 
@@ -42,7 +71,7 @@ impl ThemeMenu {
 
 
     pub fn selected_theme(&self) -> Option<&str> {
-        self.themes.get(self.selected).map(String::as_str)
+        self.themes.get(self.selected).map(|entry| entry.name.as_str())
     }
 }
 
@@ -129,7 +158,12 @@ mod tests {
     use crate::test_support::key;
 
     fn menu_with(themes: Vec<&str>) -> ThemeMenu {
-        ThemeMenu { themes: themes.into_iter().map(String::from).collect(), selected: 0 }
+        ThemeMenu {
+            themes: themes.into_iter().map(|name| ThemeMenuEntry { name: name.to_string(), swatch: None }).collect(),
+            selected: 0,
+            current_interface: None,
+            current_editor: None,
+        }
     }
 
     mod theme_menu_state_tests {
