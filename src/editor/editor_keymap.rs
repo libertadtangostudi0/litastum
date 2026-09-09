@@ -6,17 +6,27 @@ use crate::app::{App, Mode};
 
 
 /// A user-triggered action while a file is open in the built-in editor,
-/// at the level `main.rs` needs to care about. Everything else —
+/// at the level `main.rs` needs to care about. Almost everything —
 /// typing, movement, selection, copy/cut/paste — is `edtui`'s own
-/// concern once a key reaches `Editor::input`; only `Save` (a concept
-/// `edtui` has no notion of) and `Close` (which `main.rs` must decide
+/// concern once a key reaches `Editor::input`; `Save` (a concept
+/// `edtui` has no notion of), `Close` (which `main.rs` must decide
 /// whether to honor immediately or forward, depending on whether a
-/// selection is active — see `Editor::has_selection`) need resolving
-/// before that.
+/// selection is active — see `Editor::has_selection`), and `WordSelect`
+/// (hand-rolled logic `edtui`'s own declarative keymap can't express —
+/// see its own doc comment) are the only things resolved before that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorCommand {
     Close,
     Save,
+    /// `Ctrl+Shift+Left`/`Right` -- word-wise selection
+    /// (`Editor::extend_word_selection`). Resolved here rather than
+    /// left to `edtui`'s own dispatch (`Forward`, below) because no
+    /// combination of `bindings.rs`'s declarative `Action` table could
+    /// give both "repeated presses keep progressing" and "`Left` undoes
+    /// exactly what `Right` just did" -- see
+    /// `bindings::extend_word_selection`'s own doc comment for the full
+    /// story of why.
+    WordSelect { forward: bool },
     /// Not one of the bindings above — forward the raw key event to
     /// `Editor::input`.
     Forward,
@@ -33,10 +43,13 @@ pub enum EditorCommand {
 /// copy/paste directly, before the `edtui` switch).
 pub fn resolve(key: KeyEvent) -> EditorCommand {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
     match key.code {
         KeyCode::Esc => EditorCommand::Close,
         KeyCode::Char('s' | 'S') if ctrl => EditorCommand::Save,
+        KeyCode::Left if ctrl && shift => EditorCommand::WordSelect { forward: false },
+        KeyCode::Right if ctrl && shift => EditorCommand::WordSelect { forward: true },
         _ => EditorCommand::Forward,
     }
 }
@@ -99,6 +112,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
     match command {
         EditorCommand::Close => unreachable!("handled above"),
         EditorCommand::Save => active_editor.save()?,
+        EditorCommand::WordSelect { forward } => active_editor.extend_word_selection(forward),
         EditorCommand::Forward => active_editor.input(key),
     }
 
@@ -214,6 +228,34 @@ mod tests {
         // Copy/cut/paste are edtui's own concern now (see its custom
         // keymap in editor.rs) -- this module no longer special-cases them.
         assert_eq!(resolve(ctrl_key('c')), EditorCommand::Forward);
+    }
+
+    #[test]
+    fn ctrl_shift_right_resolves_to_word_select_forward() {
+        let key = KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+        assert_eq!(resolve(key), EditorCommand::WordSelect { forward: true });
+    }
+
+    #[test]
+    fn ctrl_shift_left_resolves_to_word_select_backward() {
+        let key = KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+        assert_eq!(resolve(key), EditorCommand::WordSelect { forward: false });
+    }
+
+    #[test]
+    fn plain_ctrl_right_without_shift_is_forwarded_to_edtui() {
+        // Plain Ctrl+Right (no selection) is still `bindings.rs`'s own
+        // declarative-table concern -- only the Shift combination is
+        // special-cased here.
+        let key = KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL);
+        assert_eq!(resolve(key), EditorCommand::Forward);
+    }
+
+    #[test]
+    fn plain_shift_right_without_ctrl_is_forwarded_to_edtui() {
+        // Character-wise Shift+Right stays edtui's own table entry too.
+        let key = KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT);
+        assert_eq!(resolve(key), EditorCommand::Forward);
     }
     }
 

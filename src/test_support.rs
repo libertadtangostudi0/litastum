@@ -37,9 +37,20 @@ pub fn ctrl_key(c: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
 }
 
+/// A `Ctrl`-held key press for a non-character key (e.g. `Ctrl+Left`) —
+/// `ctrl_key` above is for a `Ctrl`-held *character* shortcut instead.
+pub fn ctrl_code_key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::CONTROL)
+}
+
 /// A `Shift`-held key press.
 pub fn shift_key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::SHIFT)
+}
+
+/// A `Ctrl+Shift`-held key press.
+pub fn ctrl_shift_key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
 }
 
 /// A real `App` (no terminal needed — `App::new` just wants a

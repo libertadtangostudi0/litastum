@@ -4,10 +4,14 @@ use crossterm::event::KeyCode;
 use edtui::actions::{
     Action, Chainable, CopySelection, DeleteChar, DeleteCharForward, DeleteSelection, LineBreak,
     MoveBackward, MoveDown, MoveForward, MoveHalfPageDown, MoveHalfPageUp, MoveToEndOfLine,
-    MoveToStartOfLine, MoveUp, PasteBefore, Redo, SwitchMode, Undo,
+    MoveToStartOfLine, MoveUp, MoveWordBackward, MoveWordForward, PasteBefore, Redo, SwitchMode, Undo,
 };
 use edtui::events::{KeyEventHandler, KeyEventRegister, KeyInput};
 use edtui::EditorMode;
+
+mod word_select;
+
+pub(super) use word_select::extend_word_selection;
 
 /// A non-modal (VSCode/Windows-convention) keymap for `edtui`, which
 /// ships only Vim and Emacs presets. `edtui` is explicitly designed for
@@ -42,6 +46,13 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         (i(KeyInput::new(KeyCode::End)), MoveToEndOfLine().into()),
         (i(KeyInput::new(KeyCode::PageUp)), MoveHalfPageUp().into()),
         (i(KeyInput::new(KeyCode::PageDown)), MoveHalfPageDown().into()),
+        // Ctrl+Left/Right -- word-wise, no selection. Reported missing
+        // (the command line already had this, the editor never did --
+        // every other key in this table is explicitly bound, `edtui`
+        // has no built-in fallback once a custom table like this one is
+        // in use, so an unbound key is just a silent no-op).
+        (i(KeyInput::ctrl(KeyCode::Left)), MoveWordBackward(1).into()),
+        (i(KeyInput::ctrl(KeyCode::Right)), MoveWordForward(1).into()),
 
         // Shift+arrow starts (or extends) a selection.
         (i(KeyInput::shift(KeyCode::Left)), SwitchMode(EditorMode::Visual).chain(MoveBackward(1)).into()),
@@ -52,6 +63,17 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         (v(KeyInput::shift(KeyCode::Right)), MoveForward(1).into()),
         (v(KeyInput::shift(KeyCode::Up)), MoveUp(1).into()),
         (v(KeyInput::shift(KeyCode::Down)), MoveDown(1).into()),
+        // Ctrl+Shift+Left/Right (word-wise selection) are deliberately
+        // *not* in this table -- `editor_keymap.rs::handle_editor_key`
+        // intercepts them ahead of `Editor::input`/this whole table and
+        // calls `word_select::extend_word_selection` directly instead.
+        // Forward and backward each need a *different* single `edtui`
+        // action (`MoveWordForwardToEndOfWord` vs. `MoveWordBackward`),
+        // so nothing here actually stops this pair from moving into the
+        // table too -- it stays a direct call mainly because
+        // `extend_word_selection` also logs a debug line per press (see
+        // its own doc comment for the real history of why the *choice*
+        // of action per direction took several attempts to land on).
 
         // Plain movement while a selection is active collapses it.
         (v(KeyInput::new(KeyCode::Left)), exit_selection().chain(MoveBackward(1)).into()),
@@ -60,6 +82,8 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         (v(KeyInput::new(KeyCode::Down)), exit_selection().chain(MoveDown(1)).into()),
         (v(KeyInput::new(KeyCode::Home)), exit_selection().chain(MoveToStartOfLine()).into()),
         (v(KeyInput::new(KeyCode::End)), exit_selection().chain(MoveToEndOfLine()).into()),
+        (v(KeyInput::ctrl(KeyCode::Left)), exit_selection().chain(MoveWordBackward(1)).into()),
+        (v(KeyInput::ctrl(KeyCode::Right)), exit_selection().chain(MoveWordForward(1)).into()),
         (v(KeyInput::new(KeyCode::Esc)), exit_selection().into()),
 
         // Editing.
@@ -100,13 +124,14 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
     KeyEventHandler::new(register, true)
 }
 
+
 #[cfg(test)]
 mod tests {
     use edtui::clipboard::InternalClipboard;
     use edtui::{EditorEventHandler, EditorMode, EditorState, Lines};
 
     use super::*;
-    use crate::test_support::{ctrl_key, key, shift_key};
+    use crate::test_support::{ctrl_code_key, ctrl_key, key, shift_key};
 
     /// Builds an `EditorState` + our custom keymap directly (bypassing
     /// `Editor::open`'s real-file / real-OS-clipboard setup) with
@@ -183,6 +208,48 @@ mod tests {
 
         assert_eq!(state.mode, EditorMode::Insert);
         assert!(state.selection.is_none());
+    }
+
+    /// Reported missing: the command line already had word-wise
+    /// `Ctrl+Left`/`Right` (`text_field.rs`), the built-in editor never
+    /// did -- unlike a real shell, `edtui`'s custom keymap has no
+    /// built-in fallback for an unbound key, so this was a silent
+    /// no-op rather than falling back to single-character movement.
+    #[test]
+    fn ctrl_right_moves_by_a_word_not_one_character() {
+        let (mut state, mut handler) = test_state("hello world");
+        handler.on_key_event(ctrl_code_key(KeyCode::Right), &mut state);
+        assert!(state.cursor.col > 1, "should have moved past just one character: {}", state.cursor.col);
+        assert_eq!(state.mode, EditorMode::Insert, "no selection should start");
+    }
+
+    #[test]
+    fn ctrl_left_moves_back_by_a_word() {
+        let (mut state, mut handler) = test_state("hello world");
+        state.cursor.col = 11; // end of the line
+        handler.on_key_event(ctrl_code_key(KeyCode::Left), &mut state);
+        assert!(state.cursor.col < 10, "should have moved back more than one character: {}", state.cursor.col);
+    }
+
+    /// A selection started character-wise (`Shift+Right`) should still
+    /// extend correctly once switched to word-wise (`Ctrl+Shift+Right`)
+    /// mid-selection -- both share the same `state.selection`, so
+    /// there's no special handoff needed, but worth pinning down
+    /// directly since a user is likely to mix the two in practice (a
+    /// few characters, then "grab the rest of this word"). Lives here
+    /// rather than in `word_select`'s own test module since it's really
+    /// exercising the handoff *between* this table and that function,
+    /// not either one in isolation.
+    #[test]
+    fn switching_from_character_wise_to_word_wise_selection_still_extends() {
+        let (mut state, mut handler) = test_state("hello world");
+        handler.on_key_event(shift_key(KeyCode::Right), &mut state);
+        handler.on_key_event(shift_key(KeyCode::Right), &mut state);
+        let after_char_wise = state.selection.as_ref().expect("should have a selection").end;
+
+        extend_word_selection(&mut state, true);
+        let after_word_wise = state.selection.as_ref().expect("should still have a selection").end;
+        assert!(after_word_wise.col > after_char_wise.col, "word-wise extend should grow past the character-wise selection: {after_char_wise:?} -> {after_word_wise:?}");
     }
 
     #[test]
