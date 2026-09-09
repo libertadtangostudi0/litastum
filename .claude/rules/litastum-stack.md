@@ -229,6 +229,30 @@ module):
   proved it wrong too) and `bindings.rs`'s test module for the coverage
   this landed with, including through a punctuation run with no
   whitespace at all.
+- **Plain `Left`/`Right` never cross a line boundary on their own** --
+  reported directly ("каретка курсора не переводится автоматически на
+  следующую/предыдущую строку"). Confirmed straight from `edtui`'s
+  source: `MoveForward`/`MoveBackward` are deliberately column-only,
+  clamping at `max_col`/`0` and never touching `state.cursor.row` --
+  this was never a misconfigured binding, the behavior simply doesn't
+  exist upstream. Same declarative-table limitation as word-wise
+  selection above (`Chainable` always runs every link unconditionally,
+  so a table entry can't say "only wrap if the plain move was a
+  no-op"). Fixed the same way: `Editor::input`
+  (`editor/bindings/line_wrap.rs::wrap_line_boundary_arrow_movement`)
+  runs the real table first, completely unmodified, then checks
+  whether a plain/shifted `Left`/`Right` press actually moved the
+  cursor -- only if it didn't (already at column 0 or the line's own
+  end) does it call `edtui`'s own `MoveUp`/`MoveDown` +
+  `MoveToStartOfLine`/`MoveToEndOfLine` directly. Confirmed directly
+  from source that all four of those already call
+  `set_selection_with_lines` themselves whenever `state.mode ==
+  Visual`, exactly like every other motion action -- so reusing them
+  (rather than hand-rolling the row/col change) keeps a `Shift+Left`/
+  `Right` selection extending correctly across the boundary for free,
+  with no selection-specific branch needed. Deliberately scoped to
+  exclude `Ctrl` (word-wise movement/selection) -- not part of this
+  report, left alone rather than reached for speculatively.
 
 **OS clipboard integration**: `edtui` has its own optional `arboard`
 feature (on by default) that would give this for free, but its

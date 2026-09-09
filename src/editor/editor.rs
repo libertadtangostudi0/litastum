@@ -11,7 +11,7 @@ use tracing::{debug, warn};
 
 use crate::theming::Theme;
 
-use super::bindings::standard_key_handler;
+use super::bindings::{standard_key_handler, wrap_line_boundary_arrow_movement};
 use super::clipboard::OsClipboardBridge;
 use super::syntax::resolve_syntax_highlighter;
 
@@ -71,8 +71,18 @@ impl Editor {
     /// bindings — see `standard_key_handler` — everything not bound
     /// there that's a plain character still inserts, since the editor
     /// stays in `EditorMode::Insert` outside an active selection.
+    ///
+    /// `wrap_line_boundary_arrow_movement` runs after the table, on the
+    /// real post-move state, and only ever *adds* a row change when the
+    /// table's own handling of a plain/shifted `Left`/`Right` turned out
+    /// to be a no-op at a line boundary -- see its own doc comment for
+    /// why this couldn't be another table entry. Every other key (and
+    /// every already-working `Left`/`Right` press that isn't at a line
+    /// boundary) passes through completely unaffected.
     pub fn input(&mut self, key: KeyEvent) {
+        let cursor_before = self.state.cursor;
         self.event_handler.on_key_event(key, &mut self.state);
+        wrap_line_boundary_arrow_movement(&mut self.state, key.code, key.modifiers, cursor_before);
     }
 
 

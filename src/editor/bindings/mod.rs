@@ -9,8 +9,10 @@ use edtui::actions::{
 use edtui::events::{KeyEventHandler, KeyEventRegister, KeyInput};
 use edtui::EditorMode;
 
+mod line_wrap;
 mod word_select;
 
+pub(super) use line_wrap::wrap_line_boundary_arrow_movement;
 pub(super) use word_select::extend_word_selection;
 
 /// A non-modal (VSCode/Windows-convention) keymap for `edtui`, which
