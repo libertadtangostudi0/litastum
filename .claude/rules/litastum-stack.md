@@ -229,6 +229,85 @@ module):
   proved it wrong too) and `bindings.rs`'s test module for the coverage
   this landed with, including through a punctuation run with no
   whitespace at all.
+
+  **Seventh and eighth, later sessions**: two more real reports on this
+  same mechanism, both fixed the same narrow way (a single
+  `state.lines.get` character peek, never a `CharacterClass`
+  reimplementation) -- full detail in
+  `editor/bindings/word_select.rs::extend_word_selection`'s own doc
+  comment, not repeated here. **Seventh**: a *fresh* backward selection
+  starting exactly at a word's own first character (where a plain
+  `Ctrl+Right` legitimately leaves the cursor) dragged that character
+  into the selection anyway, since `SwitchMode(Visual)` anchors on
+  whatever cell the cursor is already on -- fixed by trimming the anchor
+  one column back into the whitespace gap it's actually resting past the
+  edge of. **Eighth**: *retracting* an already-open selection with
+  `Left` only undid half of what the matching `Right` press had added
+  (landing back inside the same word, at its own start, since
+  `MoveWordBackward` from a word's *last* character lands on that same
+  word's first) -- fixed by one further plain `MoveBackward` onto the
+  separating space whenever that's where the gap actually is. This one's
+  own first attempt overcorrected -- skipped past the space entirely,
+  landing on the *previous* word's own last character instead -- and had
+  to be walked back to landing *on* the space once reported, matching
+  the seventh fix's own already-settled "trim into the gap, not past
+  it" convention more closely than the first attempt did.
+
+  **Ninth and tenth, this same later session**: two more real reports,
+  same file (`editor/bindings/word_select.rs::extend_word_selection`'s
+  own doc comment has the full detail). **Ninth**: the eighth fix's own
+  gap check only recognized *whitespace* as a separator to retract
+  onto -- reported against `"...arrow-key"`, retracting "key" landed on
+  `'k'` (one column short of the wanted `"...arrow-"`) because `'-'`
+  is punctuation, not whitespace. Since `MoveWordBackward` always lands
+  at a class-run boundary, whatever's immediately to its left can never
+  be more of the same word -- so the fix dropped the whitespace check
+  entirely and just steps onto whatever's there, if anything is.
+  **Tenth**: a fresh backward selection starting at the very beginning
+  of the buffer (nowhere to jump to at all) opened a phantom
+  one-character selection instead of nothing -- reported against
+  `"Draft architecture"`, two `Ctrl+Shift+Left` presses from column 0
+  left `"D"` selected. First fix compared the cursor before and after a
+  freshly-opened selection's own first motion and closed it back to
+  `Insert` if that made zero progress -- **reported broken again on
+  retest, verbatim**: the actual real-world flow was `Ctrl+Shift+Right`
+  (select "Draft") then `Ctrl+Shift+Left` (retract it), where
+  `MoveWordBackward` genuinely *does* move, so the zero-progress check
+  never fired, yet the cursor still landed exactly back on the
+  selection's own anchor -- the identical phantom "D" by a different
+  route. Landed on checking `state.cursor == selection.start` directly
+  after either branch, once, instead of inferring it from whether
+  motion happened: this catches both routes to the same coincidence
+  (no progress at all, or real progress that still returns to the
+  anchor) with one check, and closes the selection back to `Insert`
+  either way -- `edtui`'s inclusive-both-ends model has no way to
+  represent an empty selection as `Some`, so a single cell that
+  coincides with the anchor is exactly the case with nothing of
+  substance left to show as selected.
+
+  **Eleventh**: the very next press past that crossing point, on a
+  selection that started *mid-buffer* rather than at column 0 -- real
+  report against `"Draft architecture derived"` (cursor placed right
+  before "architecture", two `Ctrl+Shift+Right` then two
+  `Ctrl+Shift+Left`, retracting both words fully): the tenth fix's own
+  anchor-coincidence check correctly detects the crossing, but
+  `retract_onto_the_separator` still takes its own extra step *after*
+  that detection, landing one column further left onto real, genuinely
+  new territory (the space before "architecture") that the selection
+  never covered -- while `selection.start` stayed pinned at the old
+  anchor the whole time, so the result covered that space *and* the
+  anchor's own old first letter (`" a"`) instead of just the space
+  (`" "`). Landed on making the anchor move together with the cursor
+  exactly once, right when this crossing is detected: if the extra step
+  finds real new territory, `selection.start` resets to match (a fresh
+  single-cell foothold, explaining the `" "` result); if it can't move
+  at all, the selection closes entirely instead, same as the tenth fix.
+  Confirmed this makes the *next* press behave as an entirely ordinary
+  continuing selection too (no longer touching the anchor at all),
+  since by then `cursor_before` no longer coincides with the
+  now-already-moved anchor -- matches the report's own second data
+  point, one more `Ctrl+Shift+Left` walking on into "Draft" for
+  `"Draft "` in full.
 - **Plain `Left`/`Right` never cross a line boundary on their own** --
   reported directly ("каретка курсора не переводится автоматически на
   следующую/предыдущую строку"). Confirmed straight from `edtui`'s

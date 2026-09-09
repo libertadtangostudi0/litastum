@@ -184,6 +184,115 @@ mod tests {
         assert_eq!(String::from(state.lines.clone()), "hello worldhello");
     }
 
+    /// Independent regression test requested directly after a report
+    /// that copying "broke" alongside the word-select retraction work
+    /// (`extend_word_selection`'s "Eighth" doc comment) -- that report
+    /// turned out to be about the *selection itself* landing wrong, not
+    /// about `Copy` mishandling a correct selection (confirmed by
+    /// tracing `CopySelection`, which just reads `state.selection`
+    /// directly). Still worth pinning down on its own, independent of
+    /// any coordinate assertion: builds a selection through the real
+    /// word-select path (`extend_word_selection`, not `Shift+Right`
+    /// character-wise), retracts one word the same way a real
+    /// `Ctrl+Shift+Left` after `Ctrl+Shift+Right` would, then copies and
+    /// pastes back -- so the assertion is on the actual clipboard text
+    /// content, not on `state.selection`/`state.cursor` numbers.
+    #[test]
+    fn word_select_copy_paste_roundtrip() {
+        let (mut state, mut handler) = test_state("hello world wide web");
+
+        extend_word_selection(&mut state, true, false); // Ctrl+Shift+Right, selects "hello"
+        extend_word_selection(&mut state, true, false); // Ctrl+Shift+Right, extends through " world"
+        extend_word_selection(&mut state, false, true); // Ctrl+Shift+Left, retracts back onto "hello"
+
+        handler.on_key_event(ctrl_key('c'), &mut state);
+        assert_eq!(state.mode, EditorMode::Insert, "copy should return to typing mode");
+        assert!(state.selection.is_none());
+
+        handler.on_key_event(key(KeyCode::End), &mut state);
+        handler.on_key_event(ctrl_key('v'), &mut state);
+
+        assert_eq!(
+            String::from(state.lines.clone()),
+            "hello world wide webhello ",
+            "pasted text should be exactly what the word-select landed on -- \"hello \" (the word plus its \
+             own trailing space, per the retraction fix), nothing extra and nothing missing"
+        );
+    }
+
+    /// Regression test for the real, ninth-attempt report against real
+    /// text: a whole line selected some other way than word-select
+    /// (character-wise here, matching `word_select::tests::
+    /// ctrl_shift_left_retracts_fully_even_from_a_never_extended_selection`'s
+    /// own "Untouched" shape), then one `Ctrl+Shift+Left` -- reported
+    /// directly against `"theme, 2-column panels, arrow-key"`: the
+    /// highlight only shrank to `"...arrow-k"` (stopping mid-word,
+    /// one column short of the `'-'`), because the old fix only handled
+    /// a *whitespace* gap, not a punctuation one. Selects the whole line
+    /// one column short of the true end (so the selection's own end sits
+    /// on `'y'`, the last real character, not the append position past
+    /// it -- matching how a real "select whole line" action leaves the
+    /// cursor), then checks the pasted-back text directly, independent
+    /// of any `state.selection`/`state.cursor` coordinate assertion, per
+    /// the same "check copying separately" request as
+    /// `word_select_copy_paste_roundtrip` above.
+    #[test]
+    fn word_select_retraction_across_punctuation_matches_what_gets_copied() {
+        let text = "theme, 2-column panels, arrow-key";
+        let (mut state, mut handler) = test_state(text);
+        for _ in 0..(text.chars().count() - 1) {
+            handler.on_key_event(shift_key(KeyCode::Right), &mut state); // select the whole line, character-wise -- not word-select
+        }
+        assert_eq!(state.selection.as_ref().unwrap().end, state.cursor, "should have selected all the way to the last real character");
+
+        extend_word_selection(&mut state, false, true); // Ctrl+Shift+Left; retracting=true, as `Editor` computes for an untouched selection
+
+        handler.on_key_event(ctrl_key('c'), &mut state);
+        handler.on_key_event(key(KeyCode::End), &mut state);
+        handler.on_key_event(ctrl_key('v'), &mut state);
+
+        assert_eq!(
+            String::from(state.lines.clone()),
+            "theme, 2-column panels, arrow-keytheme, 2-column panels, arrow-",
+            "one Ctrl+Shift+Left on a fully-selected line should retract the whole trailing word AND land \
+             on the separator in front of it, even when that separator is punctuation ('-') rather than \
+             whitespace -- and the copied text must match exactly what was selected"
+        );
+    }
+
+    /// Regression test for the real report that copying
+    /// `"Draft architecture derived"` was "unstable" -- traced to the
+    /// eleventh-attempt bug (`word_select::extend_word_selection`'s own
+    /// doc comment): retracting past a mid-buffer selection's anchor
+    /// left a stale anchor behind, so what got copied depended on
+    /// exactly which combination of forward/backward presses built the
+    /// selection, not just on where it visibly ended up. `Copy` only
+    /// ever reads `state.selection` directly (confirmed repeatedly in
+    /// this file's own history) -- once the anchor itself stops going
+    /// stale, the copied text should match the same `" "` the direct
+    /// `word_select` tests pin down, independent of any coordinate
+    /// assertion.
+    #[test]
+    fn word_select_copy_after_retracting_past_the_anchor_matches_the_selection() {
+        let (mut state, mut handler) = test_state("Draft architecture derived");
+        state.cursor.col = 6; // right before the 'a' of "architecture"
+
+        extend_word_selection(&mut state, true, false); // "architecture"
+        extend_word_selection(&mut state, true, false); // "architecture derived"
+        extend_word_selection(&mut state, false, true); // retract "derived"
+        extend_word_selection(&mut state, false, true); // retract "architecture", crossing the anchor -- " "
+
+        handler.on_key_event(ctrl_key('c'), &mut state);
+        handler.on_key_event(key(KeyCode::End), &mut state);
+        handler.on_key_event(ctrl_key('v'), &mut state);
+
+        assert_eq!(
+            String::from(state.lines.clone()),
+            "Draft architecture derived ",
+            "should have copied exactly \" \" (one space), not \" a\" (the old stale-anchor bug)"
+        );
+    }
+
     #[test]
     fn ctrl_x_cuts_the_selection() {
         let (mut state, mut handler) = test_state("hello world");
@@ -249,7 +358,7 @@ mod tests {
         handler.on_key_event(shift_key(KeyCode::Right), &mut state);
         let after_char_wise = state.selection.as_ref().expect("should have a selection").end;
 
-        extend_word_selection(&mut state, true);
+        extend_word_selection(&mut state, true, false);
         let after_word_wise = state.selection.as_ref().expect("should still have a selection").end;
         assert!(after_word_wise.col > after_char_wise.col, "word-wise extend should grow past the character-wise selection: {after_char_wise:?} -> {after_word_wise:?}");
     }

@@ -38,6 +38,65 @@ pub struct Editor {
     /// file as opened), and avoids re-flattening the jagged `Lines`
     /// buffer into a `String` every frame just to peek at row 0.
     first_line: String,
+    /// What `Ctrl+Shift+Left`/`Right` (word-wise selection) has done to
+    /// the *current* selection so far -- the signal `bindings::
+    /// extend_word_selection` needs to tell "a `Left` press should
+    /// retract fully" apart from "a `Left` press is genuinely walking
+    /// backward through fresh text, nothing to retract," which turned
+    /// out not to be reliably derivable from character classification
+    /// alone (see that function's own doc comment, "Eighth," for two
+    /// real reports a character-based guess got wrong in two different
+    /// ways). See `WordSelectTouch`'s own doc comment for what each
+    /// variant means and `extend_word_selection`'s body for exactly how
+    /// it's read and updated.
+    word_select_touch: WordSelectTouch,
+}
+
+/// See `Editor::word_select_touch`'s own doc comment for why this
+/// exists. Three states, not two (`Option<bool>`/"has it gone forward
+/// yet"), because a plain boolean can't tell "word-wise selection has
+/// never touched this selection at all" (`Untouched` -- e.g. it was
+/// built by character-wise `Shift+Right`, a mouse drag, or anything
+/// else that isn't `extend_word_selection`) apart from "word-wise
+/// selection built this whole thing itself via repeated backward
+/// presses" (`NativeBackward`) -- confirmed the hard way: a selection
+/// built by *anything other than* word-wise `Right` presses (real
+/// report: a whole line selected some other way, then trimmed with
+/// `Ctrl+Shift+Left`) needs the *same* full retraction `Untouched`
+/// wants, but an `Option<bool>` collapsing both of those into one value
+/// can't tell them apart from `NativeBackward`'s own "keep walking
+/// backward through nothing already selected" case, which must *not*
+/// retract (`repeated_left_monotonically_extends_through_punctuation`,
+/// unaffected on purpose).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WordSelectTouch {
+    /// No selection at all, or one exists but word-wise selection
+    /// hasn't acted on it yet. A backward press from here should
+    /// retract fully -- there's real content to shrink away from,
+    /// word-wise selection just hasn't touched it before.
+    Untouched,
+    /// The *current* selection was built by word-wise selection itself,
+    /// starting with a backward (`Left`) press, and every press since
+    /// has also been backward -- a pure walk backward through fresh
+    /// text extending the selection, not retracting anything.
+    NativeBackward,
+    /// Word-wise selection has done at least one forward (`Right`)
+    /// press on the current selection, or at least one retraction --
+    /// a backward press from here is undoing part of that.
+    Touched,
+    // Known, narrow gap, not chased further: `Editor::extend_word_selection`
+    // never resets this back to `Untouched` -- once any word-wise press
+    // happens, it's `Touched`/`NativeBackward` for good, since there's no
+    // hook here for "the selection was closed and a *different* one was
+    // built some other way" (that happens entirely inside `Editor::input`,
+    // outside this type's view). In practice this only matters if an
+    // earlier word-wise session ended in `NativeBackward` *and* a later,
+    // entirely separate selection (built without word-wise selection ever
+    // touching it) is then retracted with `Ctrl+Shift+Left` as its very
+    // first action -- `Touched` left over instead gives the right answer
+    // anyway, since `Touched` and `Untouched` both retract; only a leftover
+    // `NativeBackward` would wrongly skip it. Narrow enough (two unrelated
+    // things have to line up) not to be worth a bigger hook for yet.
 }
 
 
@@ -63,6 +122,7 @@ impl Editor {
             saved_snapshot: lines,
             custom_syntax_theme,
             first_line,
+            word_select_touch: WordSelectTouch::Untouched,
         })
     }
 
@@ -91,8 +151,33 @@ impl Editor {
     /// calls this directly instead) -- see `bindings::extend_word_selection`'s
     /// own doc comment for why this needed real logic of its own rather
     /// than another entry in `standard_key_handler`'s declarative table.
+    ///
+    /// Owns `word_select_touch` -- reads it (as `retracting`, "should
+    /// this `Left` press retract fully") before this press changes
+    /// anything, then updates it for next time. `retracting` is only
+    /// ever `true` while there's an existing selection (`!fresh`) this
+    /// press is going backward against (`!forward`) *and* the selection
+    /// isn't a pure `NativeBackward` walk -- both `Untouched` (word-wise
+    /// selection has never acted on it -- built some other way, or this
+    /// is the very first backward touch of it) and `Touched` (word-wise
+    /// selection has gone forward, or already retracted, at least once)
+    /// count, which is exactly what lets both real reports in
+    /// `extend_word_selection`'s own doc comment ("Eighth") retract
+    /// correctly -- one starting from a word-wise `Right`-built
+    /// selection, the other from one built some other way entirely.
     pub fn extend_word_selection(&mut self, forward: bool) {
-        super::bindings::extend_word_selection(&mut self.state, forward);
+        let fresh = self.state.mode != EditorMode::Visual;
+        let retracting = !fresh && !forward && self.word_select_touch != WordSelectTouch::NativeBackward;
+
+        super::bindings::extend_word_selection(&mut self.state, forward, retracting);
+
+        self.word_select_touch = match (fresh, forward, self.word_select_touch) {
+            (true, true, _) => WordSelectTouch::Touched,
+            (true, false, _) => WordSelectTouch::NativeBackward,
+            (false, true, _) => WordSelectTouch::Touched,
+            (false, false, WordSelectTouch::NativeBackward) => WordSelectTouch::NativeBackward,
+            (false, false, _) => WordSelectTouch::Touched,
+        };
     }
 
 
