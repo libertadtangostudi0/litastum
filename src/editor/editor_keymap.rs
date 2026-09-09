@@ -30,6 +30,12 @@ pub enum EditorCommand {
     /// Not one of the bindings above — forward the raw key event to
     /// `Editor::input`.
     Forward,
+    /// A key `edtui` itself has no conversion for at all (see
+    /// `edtui_supports_key`'s own doc comment) -- swallowed here rather
+    /// than forwarded, so the editor stays isolated from whatever this
+    /// key would otherwise mean outside it (a global shortcut on the
+    /// browsing screen, or nothing at all).
+    Ignore,
 }
 
 
@@ -50,8 +56,61 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
         KeyCode::Char('s' | 'S') if ctrl => EditorCommand::Save,
         KeyCode::Left if ctrl && shift => EditorCommand::WordSelect { forward: false },
         KeyCode::Right if ctrl && shift => EditorCommand::WordSelect { forward: true },
-        _ => EditorCommand::Forward,
+        _ if edtui_supports_key(key.code) => EditorCommand::Forward,
+        _ => EditorCommand::Ignore,
     }
+}
+
+/// Real crash, reported directly: `F10` (the app's own global quit key
+/// on the browsing screen) while a file was open in the editor panicked
+/// the whole process with `unimplemented!()` inside `edtui`'s own
+/// `KeyCode::from(crossterm::event::KeyCode)` conversion
+/// (`edtui-0.11.7/src/events/key/input.rs`, confirmed directly from
+/// source) -- forwarded here as `EditorCommand::Forward` like any other
+/// unrecognized key, then straight into `Editor::input` ->
+/// `EditorEventHandler::on_key_event`, which converts the raw
+/// `crossterm::event::KeyEvent` into `edtui`'s own `KeyInput`
+/// internally. That conversion only explicitly matches fourteen
+/// `crossterm::event::KeyCode` variants (`Char`, `Enter`, `Esc`,
+/// `Backspace`, `Delete`, `Tab`, the four arrow keys, `Home`, `End`,
+/// `PageUp`, `PageDown`) -- everything else, function keys included,
+/// falls through to an unconditional `unimplemented!()` catch-all with
+/// no fallback at all, not even a silent no-op.
+///
+/// The app's own mode-based dispatch (`main.rs::handle_event`) already
+/// means a global key like `F10` never reaches the browsing screen's
+/// own quit binding while `Mode::Editing` is active -- routing here
+/// through `handle_editor_key` is the *only* path a keystroke takes
+/// while editing, so "the editor needs isolated key handling" was
+/// already true structurally. This crash was really the isolation
+/// leaking the *other* way: an unsupported key wasn't being swallowed
+/// by the editor, it was being forwarded into a library that has no
+/// silent-ignore path for it at all. Matching an explicit allowlist of
+/// what `edtui` actually supports (rather than trying to name every
+/// unsupported crossterm variant -- function keys, `Insert`, `Null`,
+/// `CapsLock`, `Menu`, `KeypadBegin`, `Media(_)`, `Modifier(_)`, and
+/// whatever else crossterm might report) means a future `edtui` upgrade
+/// that starts supporting more keys just needs this list extended to
+/// match, rather than a blocklist that has to keep pace with every
+/// crossterm variant that exists.
+fn edtui_supports_key(code: KeyCode) -> bool {
+    matches!(
+        code,
+        KeyCode::Char(_)
+            | KeyCode::Enter
+            | KeyCode::Esc
+            | KeyCode::Backspace
+            | KeyCode::Delete
+            | KeyCode::Tab
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+    )
 }
 
 
@@ -79,8 +138,11 @@ pub fn resolve_confirm_discard(key: KeyEvent) -> ConfirmDiscardCommand {
 
 /// Key handling while a file is open in the built-in editor. `Ctrl+S`
 /// and `Esc` are the only things this module resolves itself (`resolve`
-/// above) — everything else, including copy/cut/paste/selection, is
-/// `edtui`'s own concern once forwarded to `Editor::input`. `Esc` is
+/// above) — everything else `edtui` actually understands, including
+/// copy/cut/paste/selection, is `edtui`'s own concern once forwarded to
+/// `Editor::input`; anything it doesn't (see `edtui_supports_key`'s own
+/// doc comment) is silently ignored instead of forwarded, rather than
+/// crashing. `Esc` is
 /// special-cased further: with an active selection it's forwarded too
 /// (so `edtui`'s own binding cancels the selection), only closing the
 /// editor once there's nothing selected.
@@ -114,6 +176,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         EditorCommand::Save => active_editor.save()?,
         EditorCommand::WordSelect { forward } => active_editor.extend_word_selection(forward),
         EditorCommand::Forward => active_editor.input(key),
+        EditorCommand::Ignore => {}
     }
 
     Ok(())
@@ -257,6 +320,36 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT);
         assert_eq!(resolve(key), EditorCommand::Forward);
     }
+
+    /// Regression test for the real crash: `F10` (the app's own global
+    /// quit key on the browsing screen) has no conversion in `edtui`'s
+    /// own `KeyCode::from` at all -- forwarding it panicked the whole
+    /// process. Must resolve to `Ignore`, not `Forward`.
+    #[test]
+    fn f10_is_ignored_not_forwarded() {
+        let key = KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE);
+        assert_eq!(resolve(key), EditorCommand::Ignore);
+    }
+
+    /// Every function key shares the same gap in `edtui`'s own
+    /// conversion, not just `F10` -- pinned down as a range rather than
+    /// one magic number.
+    #[test]
+    fn every_function_key_is_ignored_not_forwarded() {
+        for n in 1..=12 {
+            let key = KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE);
+            assert_eq!(resolve(key), EditorCommand::Ignore, "F{n} should be ignored, not forwarded to edtui");
+        }
+    }
+
+    /// `Insert` is a real crossterm `KeyCode` variant `edtui`'s own
+    /// conversion also has no arm for -- confirms this isn't
+    /// function-keys-only special-casing.
+    #[test]
+    fn insert_key_is_ignored_not_forwarded() {
+        let key = KeyEvent::new(KeyCode::Insert, KeyModifiers::NONE);
+        assert_eq!(resolve(key), EditorCommand::Ignore);
+    }
     }
 
     mod resolve_confirm_discard_tests {
@@ -324,6 +417,22 @@ mod tests {
         handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
 
         assert!(matches!(app.mode, Mode::ConfirmDiscard(_)));
+    }
+
+    /// Regression test for the real, reported crash: `cargo run` ->
+    /// open a file -> `F4` -> `F10` panicked the whole process
+    /// (`edtui`'s own `KeyCode::from` conversion has no arm for `F10`
+    /// at all). Must stay open, in `Mode::Editing`, completely
+    /// unaffected -- the editor's key handling is isolated from
+    /// whatever `F10` means on the browsing screen (global quit),
+    /// exactly as requested.
+    #[test]
+    fn handle_editor_key_f10_does_not_crash_or_close_the_editor() {
+        let (mut app, _path) = open_editor_app("hi\n");
+
+        handle_editor_key(&mut app, KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE)).unwrap();
+
+        assert!(matches!(app.mode, Mode::Editing(_)), "F10 must not close the editor or crash while editing");
     }
 
     #[test]
