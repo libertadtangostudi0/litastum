@@ -13,7 +13,16 @@ the themes directory. Parsing lives in `scheme.rs::ColorScheme`.
 next to the binary/repo, per the cwd fallback below, or the config
 dir's own `themes/` subdirectory). This is where the schemes bundled in
 this repo (`themes/apple-system-colors.json`, `themes/alien-blood.json`,
-`themes/dracula.json`) came from.
+`themes/dracula.json`) came from. `themes/github-dark.json` — the
+default, see below — came from `mbadolato/iTerm2-Color-Schemes`'
+Windows Terminal mirror instead (same JSON shape, a different but
+equally common distribution point for it), with `background`/
+`foreground`/`selectionBackground`/`cursorColor` hand-adjusted to match
+VS Code's actual GitHub Dark theme exactly (`#0d1117`/`#e6edf3`, the
+same "color 2" values `Theme::dark()` already used;
+`selectionBackground` computed the same way VS Code's own theme source
+does it — `accent.fg` (`#58a6ff`) at 20% alpha over the background)
+rather than left at that mirror's own, slightly different shades.
 
 ## Interface theme and editor theme are independent, like in Far Manager
 
@@ -38,13 +47,22 @@ feature.
   "<name>", "editor_theme": "<name>" }`, where each `<name>` is a
   filename stem (no `.json`) in the `themes/` subdirectory next to it.
   Missing config dir/file, a missing key, or any parse failure at any
-  step falls back to that *half's* built-in default only — a broken
-  `editor_theme` doesn't take the interface theme down with it, and
-  vice versa. Logged (`warn!` for "something was there but broken",
-  `debug!` for "nothing configured" — see `.claude/rules/logging.md`'s
-  level semantics). Never blocks startup or panics —
-  `config.rs::load_active_theme` is the one entry point, called once in
-  `main()`.
+  step falls back to that *half's* built-in default — `config.rs::default_theme`,
+  the bundled `themes/github-dark.json` scheme, applied to **both**
+  halves (interface and editor syntax highlighting) when nothing usable
+  is configured for that half — a broken `editor_theme` doesn't take the
+  interface theme down with it, and vice versa. `default_theme` itself
+  falls back one level further, to the hardcoded `Theme::dark()`/
+  `syntax::SYNTAX_THEME` ("dracula"), only if `github-dark.json` is
+  itself somehow missing or fails to parse — the same "never blocks
+  startup" guarantee, just one level deeper than before this file
+  existed (the built-in default used to *be* the hardcoded value
+  directly; now loading a real file is one more thing that can, in
+  principle, fail). Logged (`warn!` for "something was there but
+  broken", `debug!` for "nothing configured" — see
+  `.claude/rules/logging.md`'s level semantics). Never blocks startup or
+  panics — `config.rs::load_active_theme` is the one entry point, called
+  once in `main()`.
 - Resolved via the `directories` crate (a dependency since the initial
   scaffold specifically for this, per [[litastum-stack]], but this is
   its first actual use): `ProjectDirs::from("", "", "litastum")`. On
@@ -68,6 +86,14 @@ feature.
   known-working example, found automatically via the cwd fallback
   above when run from the repo root — and it's also the fixture the
   tests in `scheme.rs` parse.
+- `themes/github-dark.json` is the actual out-of-the-box **default** —
+  requested directly ("хочу добавить и сделать её дефолтной"), not just
+  another example. `config.rs::default_theme` looks it up by name
+  (`"github-dark"`, the filename stem) through the exact same
+  `find_scheme`/cwd-fallback path as every other theme, so it's found
+  automatically under `cargo run` from the repo root the same way
+  `apple-system-colors.json` is — a real, from-the-repo default, not a
+  separately-embedded/hardcoded copy of its colors.
 - **F9 → Options → Color schemes** opens `theme_menu.rs` (`menu.rs`
   is the F9 top menu itself — not Far Manager's real top-menu bar,
   just enough structure to reach this and `Options`' sibling `Save

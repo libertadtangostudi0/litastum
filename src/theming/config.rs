@@ -97,7 +97,7 @@ struct Config {
 pub fn load_active_theme() -> (Theme, Option<SynTheme>) {
     let Some(config_dir) = config_dir() else {
         debug!("no config directory available on this platform; using built-in theme");
-        return (Theme::dark(), None);
+        return default_theme();
     };
 
     let config = read_config(&config_dir);
@@ -107,15 +107,36 @@ pub fn load_active_theme() -> (Theme, Option<SynTheme>) {
         .as_deref()
         .and_then(find_scheme)
         .map(|scheme| scheme.to_theme())
-        .unwrap_or_else(Theme::dark);
+        .unwrap_or_else(|| default_theme().0);
 
     let syntax_theme = config
         .editor_theme
         .as_deref()
         .and_then(find_scheme)
-        .map(|scheme| scheme.to_syntax_theme());
+        .map(|scheme| scheme.to_syntax_theme())
+        .or_else(|| default_theme().1);
 
     (theme, syntax_theme)
+}
+
+
+/// The out-of-the-box default, when nothing is configured (or whatever
+/// *is* configured fails to load) — the bundled `themes/github-dark.json`
+/// scheme, for both halves. Falls back further to the hardcoded
+/// `Theme::dark()`/`syntax::SYNTAX_THEME` ("dracula") only if that file
+/// is itself somehow missing or fails to parse — same "never blocks
+/// startup, always degrade gracefully" rule as the rest of this module,
+/// just one level deeper than before (the bundled default theme used to
+/// just *be* `Theme::dark()`/`None`; now it's a real theme file, so
+/// loading it can fail the same way a user-configured one can).
+fn default_theme() -> (Theme, Option<SynTheme>) {
+    match find_scheme("github-dark") {
+        Some(scheme) => (scheme.to_theme(), Some(scheme.to_syntax_theme())),
+        None => {
+            warn!("bundled default theme \"github-dark\" not found; falling back to the hardcoded built-in theme");
+            (Theme::dark(), None)
+        }
+    }
 }
 
 
@@ -458,6 +479,23 @@ mod tests {
     fn find_scheme_finds_the_second_bundled_example_too() {
         let scheme = find_scheme("alien-blood").expect("alien-blood.json should parse");
         assert_eq!(scheme.name, "AlienBlood");
+    }
+
+    /// The bundled default theme (`themes/github-dark.json`) must
+    /// actually be found via the same cwd fallback -- `default_theme`
+    /// silently falls back to the hardcoded built-in if this file is
+    /// ever missing or renamed, so a broken bundling wouldn't otherwise
+    /// show up as a loud failure anywhere.
+    #[test]
+    fn find_scheme_finds_the_bundled_default_github_dark_theme() {
+        let scheme = find_scheme("github-dark").expect("github-dark.json should parse");
+        assert_eq!(scheme.name, "GitHub Dark");
+    }
+
+    #[test]
+    fn default_theme_resolves_both_halves_from_the_bundled_github_dark_file() {
+        let (_theme, syntax_theme) = default_theme();
+        assert!(syntax_theme.is_some(), "the bundled github-dark.json should also drive the editor's syntax theme, not just the interface");
     }
     }
 }
