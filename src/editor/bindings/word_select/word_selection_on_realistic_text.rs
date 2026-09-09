@@ -25,7 +25,7 @@ fn repeated_left_monotonically_extends_through_punctuation() {
 
     let mut previous = state.cursor.col;
     for _ in 0..8 {
-        extend_word_selection(&mut state, false, false);
+        extend_word_selection(&mut state, false, false, &mut None);
         let sel = state.selection.as_ref().expect("should have a selection");
         assert!(sel.end.col < previous, "should keep moving left, not stall or reverse: {previous} -> {}", sel.end.col);
         assert_eq!(sel.end, state.cursor, "left of the anchor, the selection end should exactly track the cursor");
@@ -46,8 +46,8 @@ fn colon_is_its_own_word_stop() {
     let text = "App: owns";
     let mut state = state_for(text, text.chars().count());
 
-    extend_word_selection(&mut state, false, false); // "owns"
-    extend_word_selection(&mut state, false, false); // ":"
+    extend_word_selection(&mut state, false, false, &mut None); // "owns"
+    extend_word_selection(&mut state, false, false, &mut None); // ":"
     let sel = state.selection.as_ref().expect("should have a selection");
     assert_eq!(sel.end.col, 3, "should land on the ':' itself, index 3");
     assert_eq!(&text[3..4], ":");
@@ -65,11 +65,11 @@ fn repeated_right_extends_through_punctuation_with_no_extra_character() {
     let text = "App: owns panels";
     let mut state = state_for(text, 0);
 
-    extend_word_selection(&mut state, true, false); // "App"
+    extend_word_selection(&mut state, true, false, &mut None); // "App"
     let after_first = state.selection.as_ref().expect("should have a selection").end.col;
     assert_eq!(after_first, 2, "should land on the second 'p' of \"App\", not swallow the ':'");
 
-    extend_word_selection(&mut state, true, false); // ":"
+    extend_word_selection(&mut state, true, false, &mut None); // ":"
     let after_second = state.selection.as_ref().expect("should still have a selection").end.col;
     assert!(after_second > after_first, "second press should make progress onto the ':' itself: {after_first} -> {after_second}");
 }

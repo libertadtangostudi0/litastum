@@ -256,9 +256,9 @@ fn select_copy_paste_roundtrip() {
 fn word_select_copy_paste_roundtrip() {
     let (mut state, mut handler) = test_state("hello world wide web");
 
-    extend_word_selection(&mut state, true, false); // Ctrl+Shift+Right, selects "hello"
-    extend_word_selection(&mut state, true, false); // Ctrl+Shift+Right, extends through " world"
-    extend_word_selection(&mut state, false, true); // Ctrl+Shift+Left, retracts back onto "hello"
+    extend_word_selection(&mut state, true, false, &mut None); // Ctrl+Shift+Right, selects "hello"
+    extend_word_selection(&mut state, true, false, &mut None); // Ctrl+Shift+Right, extends through " world"
+    extend_word_selection(&mut state, false, true, &mut None); // Ctrl+Shift+Left, retracts back onto "hello"
 
     handler.on_key_event(ctrl_key('c'), &mut state);
     assert_eq!(state.mode, EditorMode::Insert, "copy should return to typing mode");
@@ -302,7 +302,7 @@ fn word_select_retraction_across_punctuation_matches_what_gets_copied() {
     }
     assert_eq!(state.selection.as_ref().unwrap().end, state.cursor, "should have selected all the way to the last real character");
 
-    extend_word_selection(&mut state, false, true); // Ctrl+Shift+Left; retracting=true, as `Editor` computes for an untouched selection
+    extend_word_selection(&mut state, false, true, &mut None); // Ctrl+Shift+Left; retracting=true, as `Editor` computes for an untouched selection
 
     handler.on_key_event(ctrl_key('c'), &mut state);
     handler.on_key_event(key(KeyCode::End), &mut state);
@@ -317,27 +317,24 @@ fn word_select_retraction_across_punctuation_matches_what_gets_copied() {
     );
 }
 
-/// Regression test for the real report that copying
-/// `"Draft architecture derived"` was "unstable" -- traced to the
-/// eleventh-attempt bug (`word_select::extend_word_selection`'s own
-/// doc comment): retracting past a mid-buffer selection's anchor
-/// left a stale anchor behind, so what got copied depended on
-/// exactly which combination of forward/backward presses built the
-/// selection, not just on where it visibly ended up. `Copy` only
-/// ever reads `state.selection` directly (confirmed repeatedly in
-/// this file's own history) -- once the anchor itself stops going
-/// stale, the copied text should match the same `" "` the direct
-/// `word_select` tests pin down, independent of any coordinate
-/// assertion.
+/// Regression test for the real, fifteenth-attempt report (see
+/// `word_select::extend_word_selection`'s own doc comment for the full
+/// story, including the eleventh-attempt fix this one revised):
+/// retracting *past* a mid-buffer selection's own anchor must close the
+/// selection entirely, not leave a stale one-character selection (the
+/// space beyond the anchor) that a `Ctrl+C` could still copy. Confirms
+/// this at the actual clipboard level, not just via `state.selection`
+/// coordinates -- pasting after the closing press should insert nothing
+/// at all, since there's nothing left selected to copy.
 #[test]
-fn word_select_copy_after_retracting_past_the_anchor_matches_the_selection() {
+fn word_select_copy_after_retracting_past_the_anchor_copies_nothing() {
     let (mut state, mut handler) = test_state("Draft architecture derived");
     state.cursor.col = 6; // right before the 'a' of "architecture"
 
-    extend_word_selection(&mut state, true, false); // "architecture"
-    extend_word_selection(&mut state, true, false); // "architecture derived"
-    extend_word_selection(&mut state, false, true); // retract "derived"
-    extend_word_selection(&mut state, false, true); // retract "architecture", crossing the anchor -- " "
+    extend_word_selection(&mut state, true, false, &mut None); // "architecture"
+    extend_word_selection(&mut state, true, false, &mut None); // "architecture derived"
+    extend_word_selection(&mut state, false, true, &mut None); // retract "derived"
+    extend_word_selection(&mut state, false, true, &mut None); // retract "architecture" -- closes entirely
 
     handler.on_key_event(ctrl_key('c'), &mut state);
     handler.on_key_event(key(KeyCode::End), &mut state);
@@ -345,8 +342,36 @@ fn word_select_copy_after_retracting_past_the_anchor_matches_the_selection() {
 
     assert_eq!(
         String::from(state.lines.clone()),
-        "Draft architecture derived ",
-        "should have copied exactly \" \" (one space), not \" a\" (the old stale-anchor bug)"
+        "Draft architecture derived",
+        "nothing was selected at the moment of Ctrl+C -- paste should be a no-op"
+    );
+}
+
+/// One further `Ctrl+Shift+Left` past the closing above starts an
+/// entirely ordinary fresh backward selection from the same anchor
+/// position, landing on `"Draft "` in full -- confirmed here at the
+/// clipboard level too, matching `word_select::tests::
+/// ctrl_shift_left_one_more_press_past_the_closing_selects_the_previous_word`'s
+/// own coordinate-level assertion.
+#[test]
+fn word_select_copy_one_more_press_past_the_closing_selects_the_previous_word() {
+    let (mut state, mut handler) = test_state("Draft architecture derived");
+    state.cursor.col = 6; // right before the 'a' of "architecture"
+
+    extend_word_selection(&mut state, true, false, &mut None); // "architecture"
+    extend_word_selection(&mut state, true, false, &mut None); // "architecture derived"
+    extend_word_selection(&mut state, false, true, &mut None); // retract "derived"
+    extend_word_selection(&mut state, false, true, &mut None); // retract "architecture" -- closes entirely
+    extend_word_selection(&mut state, false, true, &mut None); // one more Left -- a fresh press now, selects "Draft "
+
+    handler.on_key_event(ctrl_key('c'), &mut state);
+    handler.on_key_event(key(KeyCode::End), &mut state);
+    handler.on_key_event(ctrl_key('v'), &mut state);
+
+    assert_eq!(
+        String::from(state.lines.clone()),
+        "Draft architecture derivedDraft ",
+        "should have copied exactly \"Draft \" (the word plus its own trailing space)"
     );
 }
 
@@ -415,7 +440,7 @@ fn switching_from_character_wise_to_word_wise_selection_still_extends() {
     handler.on_key_event(shift_key(KeyCode::Right), &mut state);
     let after_char_wise = state.selection.as_ref().expect("should have a selection").end;
 
-    extend_word_selection(&mut state, true, false);
+    extend_word_selection(&mut state, true, false, &mut None);
     let after_word_wise = state.selection.as_ref().expect("should still have a selection").end;
     assert!(after_word_wise.col > after_char_wise.col, "word-wise extend should grow past the character-wise selection: {after_char_wise:?} -> {after_word_wise:?}");
 }

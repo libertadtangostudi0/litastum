@@ -66,6 +66,78 @@ fn shift_left_selects_exactly_one_character_mid_buffer() {
     assert_eq!(editor.state.cursor, Index2 { row: 0, col: 5 }, "should be on the space right before \"architecture\", not on 'a'");
 }
 
+/// Real, integration-level regression test for the reported bug
+/// (`bindings/word_select.rs::extend_word_selection`'s own doc
+/// comment, "Fourteenth", has the full story): a selection built
+/// purely by walking backward (`Ctrl+Shift+Left` twice) must retrace
+/// correctly when a `Ctrl+Shift+Right` follows -- undoing exactly the
+/// most recent `Left`, not blindly extending forward from wherever the
+/// cursor currently sits. Goes through the real `Editor::extend_word_selection`
+/// (not the raw `bindings::extend_word_selection` directly), since this
+/// is exactly where the bug lived: `WordSelectTouch` tracking never
+/// recognized a forward press against a `NativeBackward`-built
+/// selection as a retraction.
+#[test]
+fn ctrl_shift_right_retraces_a_backward_built_selection() {
+    let (mut editor, _path) = open_test_editor("Draft architecture derived");
+    editor.state.cursor.col = 18; // the space right after "architecture"
+
+    editor.extend_word_selection(false); // Ctrl+Shift+Left, selects "architecture"
+    editor.extend_word_selection(false); // Ctrl+Shift+Left, extends through "Draft" too
+    editor.extend_word_selection(true); // Ctrl+Shift+Right, should undo the second press
+
+    let selection = editor.state.selection.expect("should still have a selection");
+    assert_eq!(selection.start.col, 17, "anchor should be back on 'e', the last letter of \"architecture\"");
+    assert_eq!(selection.end.col, 6, "cursor should be back on 'a', the start of \"architecture\"");
+    assert_eq!(editor.state.cursor.col, 6);
+}
+
+/// Continuing past a full retrace should close the selection entirely,
+/// not leave a stray one-character selection sitting on the anchor --
+/// see `retreat_forward_through_a_backward_walk`'s own doc comment for
+/// why the crossing check has to be `>=`, not `==`, against the anchor.
+#[test]
+fn ctrl_shift_right_closes_the_selection_once_the_backward_walk_is_fully_retraced() {
+    let (mut editor, _path) = open_test_editor("Draft architecture derived");
+    editor.state.cursor.col = 18; // the space right after "architecture"
+
+    editor.extend_word_selection(false); // "architecture"
+    editor.extend_word_selection(false); // "Draft architecture"
+    editor.extend_word_selection(true); // undoes "Draft", back to "architecture"
+    editor.extend_word_selection(true); // undoes "architecture" too -- nothing left
+
+    assert_eq!(editor.state.mode, EditorMode::Insert, "should have closed the selection entirely");
+    assert!(editor.state.selection.is_none());
+}
+
+/// Real, integration-level regression test for the reported bug
+/// (`bindings/word_select.rs::extend_word_selection`'s own doc
+/// comment, "Sixteenth", has the full story): retracing a backward
+/// selection must return the cursor to the exact column it started
+/// at, not the trimmed anchor. Goes through the real `Editor::
+/// extend_word_selection`, confirming `word_select_true_anchor` is
+/// actually threaded through correctly end to end, not just in the
+/// lower-level `bindings::extend_word_selection` unit tests.
+#[test]
+fn ctrl_shift_right_after_left_returns_to_the_true_starting_column() {
+    let (mut editor, _path) = open_test_editor("derived");
+    editor.state.cursor.col = 4; // between 'i' and 'v'
+
+    editor.extend_word_selection(false); // Ctrl+Shift+Left, selects "deri"
+    editor.extend_word_selection(true); // Ctrl+Shift+Right, should retrace back to column 4
+
+    assert_eq!(editor.state.mode, EditorMode::Insert, "should have closed the selection entirely");
+    assert!(editor.state.selection.is_none());
+    assert_eq!(editor.state.cursor.col, 4, "should be back at the exact original column, not the trimmed anchor (3)");
+
+    // One further Right starts a fresh forward selection from there,
+    // matching VS Code's own "reflect" behavior for this same case.
+    editor.extend_word_selection(true);
+    let selection = editor.state.selection.expect("should have started a fresh forward selection");
+    assert_eq!(selection.start.col, 4);
+    assert_eq!(selection.end.col, 6, "should land on the last letter of \"derived\", selecting \"ved\"");
+}
+
 /// The line-boundary-crossing edge case: `Shift+Left` right at the
 /// very start of a (non-first) line has nothing to select on that
 /// line at all -- must still hand off to the wrap check and cross

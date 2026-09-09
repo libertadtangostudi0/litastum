@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use edtui::syntect::highlighting::Theme as SynTheme;
-use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, LineNumbers, Lines};
+use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Index2, LineNumbers, Lines};
 use ratatui::style::Style;
 use ratatui::widgets::Block;
 use tracing::{debug, warn};
@@ -67,6 +67,23 @@ pub struct Editor {
     /// of why this needed its own tracked field rather than being
     /// re-derivable from `EditorState` alone.
     vertical_shift_anchor_col: Option<usize>,
+    /// The cursor position a `Ctrl+Shift+Left`-built word selection
+    /// actually started at, before `trim_anchor_off_a_word_it_never_visited`
+    /// trims `selection.start` back by a column -- `None` whenever no
+    /// such selection is open. Same shape of problem as
+    /// `vertical_shift_anchor_col` above, for the same reason: once the
+    /// trim runs, `selection.start` no longer records the real starting
+    /// point, so a later `Ctrl+Shift+Right` that retraces this walk back
+    /// past its own start (`bindings::word_select::
+    /// retreat_forward_through_a_backward_walk`) has nowhere else to
+    /// recover the true value from. Reported directly: retracing
+    /// "deri" (trimmed from "derived", cursor originally between 'i'
+    /// and 'v') back past its own start landed the cursor one column
+    /// short, between 'r' and 'i', instead of back at the exact
+    /// original position between 'i' and 'v' -- see that function's own
+    /// doc comment for the fix and for the VS Code-matching "reflect
+    /// forward from there" behavior this also unlocks.
+    word_select_true_anchor: Option<Index2>,
 }
 
 /// See `Editor::word_select_touch`'s own doc comment for why this
@@ -141,6 +158,7 @@ impl Editor {
             first_line,
             word_select_touch: WordSelectTouch::Untouched,
             vertical_shift_anchor_col: None,
+            word_select_true_anchor: None,
         })
     }
 
@@ -222,31 +240,61 @@ impl Editor {
     /// own doc comment for why this needed real logic of its own rather
     /// than another entry in `standard_key_handler`'s declarative table.
     ///
-    /// Owns `word_select_touch` -- reads it (as `retracting`, "should
-    /// this `Left` press retract fully") before this press changes
-    /// anything, then updates it for next time. `retracting` is only
-    /// ever `true` while there's an existing selection (`!fresh`) this
-    /// press is going backward against (`!forward`) *and* the selection
-    /// isn't a pure `NativeBackward` walk -- both `Untouched` (word-wise
-    /// selection has never acted on it -- built some other way, or this
-    /// is the very first backward touch of it) and `Touched` (word-wise
-    /// selection has gone forward, or already retracted, at least once)
-    /// count, which is exactly what lets both real reports in
-    /// `extend_word_selection`'s own doc comment ("Eighth") retract
-    /// correctly -- one starting from a word-wise `Right`-built
-    /// selection, the other from one built some other way entirely.
+    /// Owns `word_select_touch` -- reads it (as `retracing`, "should
+    /// this press give back territory toward the anchor rather than
+    /// extend past it") before this press changes anything, then
+    /// updates it for next time. Two symmetric cases, one per
+    /// direction:
+    ///
+    /// - A backward (`!forward`) press against an existing selection
+    ///   (`!fresh`) that isn't a pure `NativeBackward` walk -- both
+    ///   `Untouched` (word-wise selection has never acted on it -- built
+    ///   some other way, or this is the very first backward touch of
+    ///   it) and `Touched` (word-wise selection has gone forward, or
+    ///   already retracted, at least once) count, which is exactly what
+    ///   lets both real reports in `extend_word_selection`'s own doc
+    ///   comment ("Eighth") retract correctly -- one starting from a
+    ///   word-wise `Right`-built selection, the other from one built
+    ///   some other way entirely.
+    /// - A forward (`forward`) press against an existing selection
+    ///   (`!fresh`) that *is* a pure `NativeBackward` walk -- the mirror
+    ///   case added for `extend_word_selection`'s own "Fourteenth"
+    ///   report (`Ctrl+Shift+Right` undoing a selection built purely by
+    ///   `Ctrl+Shift+Left`).
+    ///
+    /// `word_select_touch` stays `NativeBackward` across a *retracing*
+    /// forward press (not just across backward ones) -- deliberately,
+    /// so a second `Right` (or a `Left` right after a `Right`) still
+    /// gets treated as mirroring the same backward walk instead of
+    /// falling through to `Touched`'s own broader rule after only one
+    /// retracing press. Without this, `retracing`'s own forward
+    /// condition above (`touch == NativeBackward`, narrower than the
+    /// backward condition's `touch != NativeBackward`) would stop
+    /// firing after the very first `Right`, and a second one would hit
+    /// the ordinary forward branch instead -- which, depending on
+    /// exactly where the anchor and the current word boundary happen to
+    /// line up, can still land in the right place by coincidence but
+    /// leaves a stray one-character selection sitting on the anchor
+    /// rather than closing cleanly. A *genuine* forward press (i.e. not
+    /// retracing -- extending past the anchor into text the backward
+    /// walk never covered) still becomes `Touched`, same as before.
     pub fn extend_word_selection(&mut self, forward: bool) {
         let fresh = self.state.mode != EditorMode::Visual;
-        let retracting = !fresh && !forward && self.word_select_touch != WordSelectTouch::NativeBackward;
+        let retracing = if forward {
+            !fresh && self.word_select_touch == WordSelectTouch::NativeBackward
+        } else {
+            !fresh && self.word_select_touch != WordSelectTouch::NativeBackward
+        };
 
-        super::bindings::extend_word_selection(&mut self.state, forward, retracting);
+        super::bindings::extend_word_selection(&mut self.state, forward, retracing, &mut self.word_select_true_anchor);
 
-        self.word_select_touch = match (fresh, forward, self.word_select_touch) {
-            (true, true, _) => WordSelectTouch::Touched,
-            (true, false, _) => WordSelectTouch::NativeBackward,
-            (false, true, _) => WordSelectTouch::Touched,
-            (false, false, WordSelectTouch::NativeBackward) => WordSelectTouch::NativeBackward,
-            (false, false, _) => WordSelectTouch::Touched,
+        self.word_select_touch = match (fresh, forward, retracing, self.word_select_touch) {
+            (true, true, _, _) => WordSelectTouch::Touched,
+            (true, false, _, _) => WordSelectTouch::NativeBackward,
+            (false, true, true, _) => WordSelectTouch::NativeBackward,
+            (false, true, false, _) => WordSelectTouch::Touched,
+            (false, false, _, WordSelectTouch::NativeBackward) => WordSelectTouch::NativeBackward,
+            (false, false, _, _) => WordSelectTouch::Touched,
         };
     }
 

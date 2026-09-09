@@ -16,7 +16,7 @@ fn state_for(contents: &str, cursor_col: usize) -> EditorState {
 #[test]
 fn ctrl_shift_right_selects_by_a_word() {
     let mut state = state_for("hello world", 0);
-    extend_word_selection(&mut state, true, false);
+    extend_word_selection(&mut state, true, false, &mut None);
     assert_eq!(state.mode, EditorMode::Visual, "should start a selection, same as plain Shift+Right");
     assert_eq!(state.cursor.col, 4, "cursor should land on the last letter of \"hello\" -- no trailing space, no next word");
     assert!(state.selection.is_some());
@@ -35,7 +35,7 @@ fn ctrl_shift_right_selects_by_a_word() {
 #[test]
 fn ctrl_shift_right_does_not_select_into_the_next_word() {
     let mut state = state_for("hello world", 0);
-    extend_word_selection(&mut state, true, false);
+    extend_word_selection(&mut state, true, false, &mut None);
     let selection = state.selection.expect("should have started a selection");
     assert_eq!(selection.end.col, 4, "should land on the last letter of \"hello\" -- not the space after it, not the 'w' of \"world\"");
     assert_eq!(selection.end, state.cursor, "the selection's own end must always equal the cursor");
@@ -54,14 +54,14 @@ fn ctrl_shift_right_does_not_select_into_the_next_word() {
 fn repeated_ctrl_shift_right_keeps_extending_the_selection() {
     let mut state = state_for("hello world wide web", 0);
 
-    extend_word_selection(&mut state, true, false);
+    extend_word_selection(&mut state, true, false, &mut None);
     let after_first = state.selection.as_ref().expect("should have started a selection").end;
 
-    extend_word_selection(&mut state, true, false);
+    extend_word_selection(&mut state, true, false, &mut None);
     let after_second = state.selection.as_ref().expect("should still have a selection").end;
     assert!(after_second.col > after_first.col, "second press should extend further, not stall: {after_first:?} -> {after_second:?}");
 
-    extend_word_selection(&mut state, true, false);
+    extend_word_selection(&mut state, true, false, &mut None);
     let after_third = state.selection.as_ref().expect("should still have a selection").end;
     assert!(after_third.col > after_second.col, "third press should extend further still: {after_second:?} -> {after_third:?}");
 }
@@ -73,7 +73,7 @@ fn repeated_ctrl_shift_right_keeps_extending_the_selection() {
 #[test]
 fn ctrl_shift_left_selects_the_whole_previous_word_with_no_extra_character() {
     let mut state = state_for("hello world", 11); // end of the line
-    extend_word_selection(&mut state, false, false);
+    extend_word_selection(&mut state, false, false, &mut None);
     let selection = state.selection.expect("should have started a selection");
     assert_eq!(selection.end.col, 6, "should land right at the start of \"world\"");
 }
@@ -87,14 +87,14 @@ fn ctrl_shift_left_selects_the_whole_previous_word_with_no_extra_character() {
 fn repeated_ctrl_shift_left_keeps_extending_the_selection_backward() {
     let mut state = state_for("hello world wide web", 20); // end of the line
 
-    extend_word_selection(&mut state, false, false);
+    extend_word_selection(&mut state, false, false, &mut None);
     let after_first = state.selection.as_ref().expect("should have started a selection").end;
 
-    extend_word_selection(&mut state, false, false);
+    extend_word_selection(&mut state, false, false, &mut None);
     let after_second = state.selection.as_ref().expect("should still have a selection").end;
     assert!(after_second.col < after_first.col, "second press should extend further back, not stall: {after_first:?} -> {after_second:?}");
 
-    extend_word_selection(&mut state, false, false);
+    extend_word_selection(&mut state, false, false, &mut None);
     let after_third = state.selection.as_ref().expect("should still have a selection").end;
     assert!(after_third.col < after_second.col, "third press should extend further back still: {after_second:?} -> {after_third:?}");
 }
@@ -111,27 +111,52 @@ fn repeated_ctrl_shift_left_keeps_extending_the_selection_backward() {
 #[test]
 fn ctrl_shift_left_from_a_word_start_does_not_grab_that_words_first_letter() {
     let mut state = state_for("hello world", 6); // cursor on 'w', the very start of "world"
-    extend_word_selection(&mut state, false, false);
+    extend_word_selection(&mut state, false, false, &mut None);
     let selection = state.selection.expect("should have started a selection");
     assert_eq!(selection.start.col, 5, "anchor should trim back into the space, not ride along on 'w'");
     assert_eq!(selection.end.col, 0, "should land on 'h', the start of \"hello\"");
     assert_eq!(state.cursor.col, 0);
 }
 
-/// The trim above must not fire for the ordinary case: starting a
-/// backward selection from a cursor that's genuinely *inside* a word
-/// (not at its start) should behave exactly as before -- the anchor
-/// legitimately belongs to the word being trimmed into, same as
-/// `ctrl_shift_left_selects_the_whole_previous_word_with_no_extra_character`
-/// above (which starts from an end-of-line boundary, a different but
-/// also-unaffected shape).
+/// Regression test for the real, twelfth-attempt report: starting a
+/// *fresh* backward selection while the cursor rests on the whitespace
+/// right after a word (the ordinary place a cursor sits once it's moved
+/// or typed past one) must not drag that whitespace into the selection
+/// either. Reported directly against
+/// `"Draft architecture derived from the planning chat + the Far
+/// Manager UI"`, cursor placed right after "derived"'s own last letter
+/// (i.e. resting on the space before "from"): selecting backward from
+/// there grabbed `"derived "` (trailing space included), not
+/// `"derived"`.
 #[test]
-fn ctrl_shift_left_from_mid_word_does_not_trim_the_anchor() {
-    let mut state = state_for("hello world", 8); // cursor on 'r', mid-"world"
-    extend_word_selection(&mut state, false, false);
+fn ctrl_shift_left_from_the_space_after_a_word_does_not_grab_that_space() {
+    let mut state = state_for("Draft architecture derived from the planning chat", 26); // the space right after "derived"
+    extend_word_selection(&mut state, false, false, &mut None);
     let selection = state.selection.expect("should have started a selection");
-    assert_eq!(selection.start.col, 8, "anchor legitimately sat inside \"world\" -- must not be trimmed");
-    assert_eq!(selection.end.col, 6, "should land on 'w', the start of \"world\"");
+    assert_eq!(selection.start.col, 25, "anchor should trim back onto the 'd' of \"derived\", not ride along on the space");
+    assert_eq!(selection.end.col, 19, "should land on the 'd' that starts \"derived\"");
+    assert_eq!(state.cursor.col, 19);
+}
+
+/// Regression test for the real, thirteenth-attempt report: a fresh
+/// backward selection starting *mid-word*, with no whitespace or word
+/// boundary anywhere nearby, must trim the anchor too -- same as every
+/// other shape of "the anchor holds a real character" (Seventh,
+/// Twelfth). Reported directly against plain "roadmap", cursor placed
+/// between 'd' and 'm' (i.e. resting on 'm' itself): selecting backward
+/// grabbed `"roadm"` (the anchor's own 'm' included), not `"road"`. An
+/// earlier version of this test (before the general fix landed) had
+/// asserted the *opposite* -- that a mid-word anchor legitimately
+/// belongs to the selection and must not be trimmed; that assumption
+/// was the bug, never verified against a real report until this one.
+#[test]
+fn ctrl_shift_left_from_mid_word_trims_the_anchor_too() {
+    let mut state = state_for("roadmap", 4); // cursor on 'm', between 'd' and 'm'
+    extend_word_selection(&mut state, false, false, &mut None);
+    let selection = state.selection.expect("should have started a selection");
+    assert_eq!(selection.start.col, 3, "anchor should trim back onto 'd', not ride along on 'm'");
+    assert_eq!(selection.end.col, 0, "should land on 'r', the start of \"roadmap\"");
+    assert_eq!(state.cursor.col, 0);
 }
 
 /// Regression test for the real, eighth-attempt report -- including
@@ -150,15 +175,90 @@ fn ctrl_shift_left_from_mid_word_does_not_trim_the_anchor() {
 fn ctrl_shift_left_retracts_a_whole_word_onto_the_separating_space() {
     let mut state = state_for("hello world foo", 0);
 
-    extend_word_selection(&mut state, true, false); // "hello"
-    extend_word_selection(&mut state, true, false); // "hello world"
-    extend_word_selection(&mut state, true, false); // "hello world foo"
+    extend_word_selection(&mut state, true, false, &mut None); // "hello"
+    extend_word_selection(&mut state, true, false, &mut None); // "hello world"
+    extend_word_selection(&mut state, true, false, &mut None); // "hello world foo"
 
-    extend_word_selection(&mut state, false, true); // retract "foo" -- `retracting=true`, simulating what `Editor::extend_word_selection` computes after those three `Right` presses
+    extend_word_selection(&mut state, false, true, &mut None); // retract "foo" -- `retracting=true`, simulating what `Editor::extend_word_selection` computes after those three `Right` presses
 
     assert_eq!(state.cursor.col, 11, "should land on the space right after \"world\" -- \"hello world \", not \"hello world\" or \"hello world f\"");
     let selection = state.selection.expect("should still have a selection");
     assert_eq!(selection.end, state.cursor, "the selection's own end must always equal the cursor, same invariant as everywhere else");
+}
+
+/// Regression test for the real, fifteenth-attempt report: the
+/// simplest possible round trip -- extend one word forward, then
+/// immediately retract that exact same word -- must return to nothing
+/// selected, not leave a stray character behind. `"Draft architecture"`,
+/// cursor right before "architecture" (column 6): `Ctrl+Shift+Right`
+/// selects "architecture"; `Ctrl+Shift+Left` once should undo it
+/// completely, landing back exactly where the `Right` press started,
+/// with no selection at all -- not `" "` (the space before
+/// "architecture"), which an earlier version of the retraction fix
+/// (see `extend_word_selection`'s own doc comment, "Eleventh") produced
+/// instead.
+#[test]
+fn ctrl_shift_right_then_left_returns_to_nothing_selected() {
+    let mut state = state_for("Draft architecture", 6); // right before "architecture"
+
+    extend_word_selection(&mut state, true, false, &mut None); // Ctrl+Shift+Right, selects "architecture"
+    extend_word_selection(&mut state, false, true, &mut None); // Ctrl+Shift+Left, should undo it completely
+
+    assert_eq!(state.mode, EditorMode::Insert, "should have closed the selection entirely, not left \" \" selected");
+    assert!(state.selection.is_none());
+    assert_eq!(state.cursor.col, 6, "should be back exactly where the Right press started");
+}
+
+/// Regression test for the real, sixteenth-attempt report: retracing a
+/// *backward*-built selection must land back on the exact original
+/// starting column, not the trimmed anchor. `"derived"`, cursor between
+/// 'i' and 'v' (column 4): `Ctrl+Shift+Left` selects "deri" (trims the
+/// anchor to column 3, per `trim_anchor_off_a_word_it_never_visited`),
+/// `Ctrl+Shift+Right` should return the cursor to column 4 exactly --
+/// not column 3 (one short), which an earlier version of
+/// `retreat_forward_through_a_backward_walk` produced by snapping to
+/// the trimmed `selection.start` directly instead of the real,
+/// untrimmed starting column (`true_anchor`, threaded through here the
+/// same way `Editor::word_select_true_anchor` is threaded through in
+/// real use).
+#[test]
+fn ctrl_shift_right_after_left_returns_to_the_true_starting_column() {
+    let mut state = state_for("derived", 4); // between 'i' and 'v'
+    let mut true_anchor = None;
+
+    extend_word_selection(&mut state, false, false, &mut true_anchor); // Ctrl+Shift+Left, selects "deri"
+    let selection = state.selection.as_ref().expect("should have started a selection");
+    assert_eq!(selection.start.col, 3, "sanity check -- \"deri\" trims the anchor to column 3");
+
+    extend_word_selection(&mut state, true, true, &mut true_anchor); // Ctrl+Shift+Right, should retrace back to column 4
+
+    assert_eq!(state.mode, EditorMode::Insert, "should have closed the selection entirely");
+    assert!(state.selection.is_none());
+    assert_eq!(state.cursor.col, 4, "should be back at the exact original column, not the trimmed anchor (3)");
+}
+
+/// One further `Ctrl+Shift+Right` past the return above starts a fresh
+/// *forward* selection from the true original column -- matching VS
+/// Code's own "reflect" behavior for this same case (confirmed directly
+/// against it): once back where the backward selection started, a
+/// further `Right` selects "ved", the mirror image of "deri" around the
+/// original cursor position. Takes one extra press to get there
+/// compared to VS Code's own single `Right` -- this codebase's own
+/// retracing step and a fresh extension are two separate presses here,
+/// not one combined action.
+#[test]
+fn ctrl_shift_right_one_more_press_after_the_return_reflects_forward() {
+    let mut state = state_for("derived", 4);
+    let mut true_anchor = None;
+
+    extend_word_selection(&mut state, false, false, &mut true_anchor); // "deri"
+    extend_word_selection(&mut state, true, true, &mut true_anchor); // back to column 4, closed
+    extend_word_selection(&mut state, true, false, &mut true_anchor); // fresh Right -- "ved"
+
+    let selection = state.selection.expect("should have started a fresh forward selection");
+    assert_eq!(selection.start.col, 4, "anchor should be the true original column");
+    assert_eq!(selection.end.col, 6, "should land on the last letter of \"derived\"");
+    assert_eq!(state.cursor.col, 6);
 }
 
 /// The retraction above must keep working word-by-word (plus each
@@ -171,16 +271,16 @@ fn ctrl_shift_left_retracts_a_whole_word_onto_the_separating_space() {
 fn repeated_ctrl_shift_left_after_ctrl_shift_right_keeps_retracting_word_plus_space() {
     let mut state = state_for("hello world foo", 0);
 
-    extend_word_selection(&mut state, true, false); // "hello"
-    extend_word_selection(&mut state, true, false); // "hello world"
-    extend_word_selection(&mut state, true, false); // "hello world foo"
+    extend_word_selection(&mut state, true, false, &mut None); // "hello"
+    extend_word_selection(&mut state, true, false, &mut None); // "hello world"
+    extend_word_selection(&mut state, true, false, &mut None); // "hello world foo"
 
     // `retracting=true` on both -- `Editor::extend_word_selection` never
     // clears the flag on a backward press, only a fresh selection or a
     // `Right` press does, so an entire streak of `Left` presses after
     // one-or-more `Right`s all see it `true`, not just the first.
-    extend_word_selection(&mut state, false, true); // retract "foo" -> "hello world "
-    extend_word_selection(&mut state, false, true); // retract "world " -> "hello "
+    extend_word_selection(&mut state, false, true, &mut None); // retract "foo" -> "hello world "
+    extend_word_selection(&mut state, false, true, &mut None); // retract "world " -> "hello "
 
     assert_eq!(state.cursor.col, 5, "two Left presses after three Right presses should land on the space right after \"hello\" -- \"hello \"");
 }
@@ -202,7 +302,7 @@ fn repeated_ctrl_shift_left_after_ctrl_shift_right_keeps_retracting_word_plus_sp
 #[test]
 fn ctrl_shift_left_retracts_fully_even_from_a_never_extended_selection() {
     let mut state = state_for("hello world, foo", 11); // cursor right on the ','
-    extend_word_selection(&mut state, false, true); // retracting=true -- as if Editor found this selection's touch to be Untouched
+    extend_word_selection(&mut state, false, true, &mut None); // retracting=true -- as if Editor found this selection's touch to be Untouched
     assert_eq!(state.cursor.col, 5, "should land on the space right after \"world\" -- \"hello world \", comma and all removed");
 }
 
@@ -219,7 +319,7 @@ fn ctrl_shift_left_retracts_fully_even_from_a_never_extended_selection() {
 #[test]
 fn ctrl_shift_left_retracts_fully_across_a_punctuation_separator_too() {
     let mut state = state_for("arrow-key", 8); // cursor on 'y', the last char of "key"
-    extend_word_selection(&mut state, false, true);
+    extend_word_selection(&mut state, false, true, &mut None);
     assert_eq!(
         state.cursor.col, 5,
         "should land on '-' itself -- \"arrow-\", not \"arrow-k\" (stopping mid-word, the old bug) \
@@ -237,11 +337,11 @@ fn ctrl_shift_left_retracts_fully_across_a_punctuation_separator_too() {
 fn ctrl_shift_left_at_the_very_start_of_the_buffer_selects_nothing() {
     let mut state = state_for("Draft architecture", 0);
 
-    extend_word_selection(&mut state, false, false);
+    extend_word_selection(&mut state, false, false, &mut None);
     assert_eq!(state.mode, EditorMode::Insert, "should not have opened a selection with nowhere to go");
     assert!(state.selection.is_none(), "should not have selected the first character just by anchoring on it");
 
-    extend_word_selection(&mut state, false, false);
+    extend_word_selection(&mut state, false, false, &mut None);
     assert_eq!(state.mode, EditorMode::Insert, "a second press should hit the same wall, not accumulate a selection");
     assert!(state.selection.is_none());
 }
@@ -253,8 +353,8 @@ fn ctrl_shift_left_at_the_very_start_of_the_buffer_selects_nothing() {
 fn ctrl_shift_left_at_the_very_start_of_the_buffer_selects_nothing_on_other_text_too() {
     let mut state = state_for("current scaffold", 0);
 
-    extend_word_selection(&mut state, false, false);
-    extend_word_selection(&mut state, false, false);
+    extend_word_selection(&mut state, false, false, &mut None);
+    extend_word_selection(&mut state, false, false, &mut None);
 
     assert_eq!(state.mode, EditorMode::Insert);
     assert!(state.selection.is_none(), "\"c\" must not end up selected -- there was nowhere for either press to move to");
@@ -273,10 +373,10 @@ fn ctrl_shift_left_at_the_very_start_of_the_buffer_selects_nothing_on_other_text
 fn ctrl_shift_left_retracting_the_first_word_of_the_buffer_selects_nothing() {
     let mut state = state_for("Draft architecture", 0);
 
-    extend_word_selection(&mut state, true, false); // Ctrl+Shift+Right, selects "Draft"
+    extend_word_selection(&mut state, true, false, &mut None); // Ctrl+Shift+Right, selects "Draft"
     assert!(state.selection.is_some(), "sanity check -- should have a real selection to retract");
 
-    extend_word_selection(&mut state, false, true); // Ctrl+Shift+Left, retracts "Draft" -- retracting=true, as `Editor` computes after a forward press
+    extend_word_selection(&mut state, false, true, &mut None); // Ctrl+Shift+Left, retracts "Draft" -- retracting=true, as `Editor` computes after a forward press
 
     assert_eq!(state.mode, EditorMode::Insert, "retracting the only word back to its own start should close the selection, not leave \"D\" behind");
     assert!(state.selection.is_none());
@@ -288,61 +388,64 @@ fn ctrl_shift_left_retracting_the_first_word_of_the_buffer_selects_nothing() {
 fn ctrl_shift_left_retracting_the_first_word_of_the_buffer_selects_nothing_on_other_text_too() {
     let mut state = state_for("current scaffold", 0);
 
-    extend_word_selection(&mut state, true, false); // "current"
-    extend_word_selection(&mut state, false, true); // retracts it fully
+    extend_word_selection(&mut state, true, false, &mut None); // "current"
+    extend_word_selection(&mut state, false, true, &mut None); // retracts it fully
 
     assert_eq!(state.mode, EditorMode::Insert);
     assert!(state.selection.is_none(), "\"c\" must not end up selected after retracting the whole first word");
 }
 
-/// Regression test for the real, eleventh-attempt report: retracting
-/// *past* a mid-buffer selection's own anchor must claim only the
-/// genuinely new territory beyond it, not drag the anchor's own word
-/// along as stale leftover selection. `"Draft architecture derived"`,
-/// cursor placed right before the `'a'` of "architecture" (column 6):
-/// two `Ctrl+Shift+Right` presses select `"architecture derived"`;
-/// two `Ctrl+Shift+Left` presses should retract both words fully and
-/// land on the one separator beyond them (the space right after
-/// "Draft") -- `" "` alone, not `" a"` (the old bug: the anchor,
-/// still pinned at column 6, dragged "architecture"'s own first
-/// letter back into the selection even though the word itself was
-/// long gone).
+/// Regression test for the real, fifteenth-attempt report -- and its
+/// own predecessor, the eleventh-attempt fix this one revised (see
+/// `extend_word_selection`'s own doc comment for the full story).
+/// Retracting *past* a mid-buffer selection's own anchor must close the
+/// selection entirely -- nothing is left to give back once
+/// `MoveWordBackward` lands exactly on the anchor. `"Draft architecture
+/// derived"`, cursor placed right before the `'a'` of "architecture"
+/// (column 6): two `Ctrl+Shift+Right` presses select `"architecture
+/// derived"`; two `Ctrl+Shift+Left` presses should retract both words
+/// fully back to nothing -- not leave `" "` (the space beyond the
+/// anchor) selected, which is what an earlier version of this fix
+/// deliberately produced, until a simpler report (one word extended
+/// then immediately retracted) showed that broke the most basic
+/// round-trip case there is.
 #[test]
-fn ctrl_shift_left_retracting_past_a_mid_buffer_anchor_claims_only_new_territory() {
+fn ctrl_shift_left_retracting_past_a_mid_buffer_anchor_closes_the_selection() {
     let mut state = state_for("Draft architecture derived", 6);
 
-    extend_word_selection(&mut state, true, false); // "architecture"
-    extend_word_selection(&mut state, true, false); // "architecture derived"
+    extend_word_selection(&mut state, true, false, &mut None); // "architecture"
+    extend_word_selection(&mut state, true, false, &mut None); // "architecture derived"
 
-    extend_word_selection(&mut state, false, true); // retract "derived"
-    extend_word_selection(&mut state, false, true); // retract "architecture", crossing the anchor
+    extend_word_selection(&mut state, false, true, &mut None); // retract "derived"
+    extend_word_selection(&mut state, false, true, &mut None); // retract "architecture", crossing the anchor
 
-    let selection = state.selection.expect("should still have a selection -- the space beyond the anchor");
-    assert_eq!(selection.start, state.cursor, "landing past the anchor should move the anchor to match, not leave it behind");
-    assert_eq!(state.cursor.col, 5, "should land on the space right after \"Draft\" -- \" \", not \" a\"");
+    assert_eq!(state.mode, EditorMode::Insert, "should have closed the selection entirely, not left \" \" behind");
+    assert!(state.selection.is_none());
 }
 
-/// One further `Ctrl+Shift+Left` past the crossing above must behave
-/// as an entirely ordinary continuing selection from the
-/// newly-settled anchor -- walking into "Draft" and landing at
-/// column 0 (nothing left to retract onto there), giving `"Draft "`
-/// in full. Pinned down separately from the test above since this
-/// is the report's *other* data point (one more press than the
-/// first), not just a longer run of the same assertions.
+/// One further `Ctrl+Shift+Left` past the closing above starts an
+/// entirely ordinary *fresh* backward selection from the same anchor
+/// position (the previous press just returned `state.mode` to
+/// `Insert`) -- walking into "Draft" and landing at column 0, with
+/// `trim_anchor_off_a_word_it_never_visited` trimming the fresh anchor
+/// back into the gap, giving `"Draft "` in full. Byte-for-byte the same
+/// result the old "claims new territory" fix produced for this same
+/// third press, confirming nothing was actually lost by simplifying the
+/// second press to a clean close instead.
 #[test]
-fn ctrl_shift_left_one_more_press_past_the_crossing_extends_normally() {
+fn ctrl_shift_left_one_more_press_past_the_closing_selects_the_previous_word() {
     let mut state = state_for("Draft architecture derived", 6);
 
-    extend_word_selection(&mut state, true, false); // "architecture"
-    extend_word_selection(&mut state, true, false); // "architecture derived"
-    extend_word_selection(&mut state, false, true); // retract "derived"
-    extend_word_selection(&mut state, false, true); // retract "architecture", crossing the anchor -- " "
+    extend_word_selection(&mut state, true, false, &mut None); // "architecture"
+    extend_word_selection(&mut state, true, false, &mut None); // "architecture derived"
+    extend_word_selection(&mut state, false, true, &mut None); // retract "derived"
+    extend_word_selection(&mut state, false, true, &mut None); // retract "architecture" -- closes entirely
 
-    extend_word_selection(&mut state, false, true); // one more Left
+    extend_word_selection(&mut state, false, true, &mut None); // one more Left -- a fresh press now
 
-    let selection = state.selection.expect("should still have a selection");
+    let selection = state.selection.expect("should have started a fresh selection");
     assert_eq!(state.cursor.col, 0, "should land at the very start of \"Draft\"");
-    assert_eq!(selection.start.col, 5, "the anchor settled by the crossing above should stay right where it was, not get re-trimmed");
+    assert_eq!(selection.start.col, 5, "fresh anchor should trim back into the gap, giving \"Draft \" in full");
 }
 
 /// The fix must not fire when there was never anything to retract in
@@ -357,9 +460,9 @@ fn ctrl_shift_left_one_more_press_past_the_crossing_extends_normally() {
 fn pure_backward_selection_is_unaffected_by_the_retraction_fix() {
     let mut state = state_for("hello world wide web", 20); // end of the line
 
-    extend_word_selection(&mut state, false, false); // "web"
+    extend_word_selection(&mut state, false, false, &mut None); // "web"
     let after_first = state.selection.as_ref().expect("should have a selection").end.col;
-    extend_word_selection(&mut state, false, false); // "wide web"
+    extend_word_selection(&mut state, false, false, &mut None); // "wide web"
     let after_second = state.selection.as_ref().expect("should have a selection").end.col;
 
     assert_eq!(after_first, 17, "should land on 'w', the start of \"web\" -- unaffected by the retraction fix");

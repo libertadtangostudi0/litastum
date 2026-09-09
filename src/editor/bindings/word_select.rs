@@ -1,4 +1,4 @@
-use edtui::actions::{Execute, MoveBackward, MoveWordBackward, MoveWordForwardToEndOfWord, SwitchMode};
+use edtui::actions::{Execute, MoveBackward, MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord, SwitchMode};
 use edtui::{EditorMode, EditorState, Index2};
 
 /// `Ctrl+Shift+Left`/`Right` -- word-wise selection. Called directly
@@ -339,7 +339,139 @@ use edtui::{EditorMode, EditorState, Index2};
 /// walks into `"Draft"`, and finding nothing further to retract onto at
 /// column 0 just leaves the anchor where the previous press already put
 /// it).
-pub(in crate::editor) fn extend_word_selection(state: &mut EditorState, forward: bool, retracting: bool) {
+/// **Twelfth: a real report on the *other* shape of anchor mis-trim --
+/// the anchor sitting on whitespace itself, not on a word's own first
+/// character.** Cursor placed right after the last letter of "derived"
+/// in `"Draft architecture derived from the planning chat + the Far
+/// Manager UI"` (i.e. resting on the space between "derived" and
+/// "from" -- the ordinary place a cursor sits right after typing or
+/// moving past a word), then `Ctrl+Shift+Left`: `SwitchMode(Visual)`
+/// anchors on that space (`cursor_before`), `MoveWordBackward`
+/// self-skips it and lands on "derived"'s own first letter -- exactly
+/// right on its own -- but the anchor (the space) is still sitting at
+/// the selection's *other* end, and `edtui`'s inclusive-both-ends model
+/// keeps it in the range regardless, producing `"derived "` (with the
+/// trailing space) instead of `"derived"`. This is the Seventh fix's
+/// own blind spot from the opposite side: Seventh trims an anchor that
+/// sits on a word's first character (motion jumps *over* it); this is
+/// an anchor that sits on pure whitespace filler the cursor merely
+/// happened to be resting on -- never real content the selection should
+/// claim either, for the same underlying reason. Fixed by extending the
+/// same trim to also fire when `cursor_before`'s own cell is whitespace
+/// (not just when its left *neighbor* is) -- one more `state.lines.get`
+/// peek, still no `CharacterClass` reimplementation. Confirmed against
+/// the reported text: anchor trims from the space back onto "derived"'s
+/// own last letter, giving exactly `"derived"`, no trailing space.
+///
+/// **Thirteenth: a real report showing Seventh and Twelfth were both
+/// narrower special cases of one general rule, not two unrelated
+/// fixes.** Cursor placed *mid-word*, inside plain "roadmap" (no
+/// whitespace or word boundary anywhere nearby) -- between the `'d'`
+/// and `'m'`, i.e. resting on `'m'` itself, exactly the shape
+/// `ctrl_shift_left_from_mid_word_does_not_trim_the_anchor` (below)
+/// had asserted was *already correct* to leave untrimmed. `Ctrl+Shift+
+/// Left` from there selected `"roadm"` (the anchor's own `'m'` dragged
+/// in), reported as wanting `"road"` instead. Once looked at directly
+/// against the character-wise `Left` fix elsewhere in this same file
+/// (`shift_select.rs::backward_anchor`, which *never* includes
+/// `cursor_before`'s own cell for backward motion -- "the character to
+/// select is always the one the cursor is about to move *onto*, never
+/// the one it's currently sitting on"), it's clear Seventh and Twelfth
+/// were only ever fixing two specific *symptoms* of the anchor keeping
+/// `cursor_before`'s own real character at all, word-start and
+/// whitespace being just the two shapes that happened to get reported
+/// first. The actual rule needed no per-shape classification at all:
+/// **any real character at all sitting under a fresh backward
+/// selection's own anchor was never meant to be included**, because a
+/// purely backward extension should only ever claim cells the motion
+/// actually steps *onto*, mirroring `backward_anchor`'s own established
+/// convention exactly. Simplified `trim_anchor_off_a_word_it_never_visited`
+/// to that one check (`state.lines.get(cursor_before).is_some()`) --
+/// Seventh's and Twelfth's own cases both still trim (a word's first
+/// letter and a whitespace cell are each real characters), and the
+/// previously-untested mid-word case now trims too, both without any
+/// new classification logic. The one case that still legitimately
+/// never trims is the append position past a line's own last character
+/// (`ctrl_shift_left_selects_the_whole_previous_word_with_no_extra_character`
+/// below) -- there's genuinely no character there, so `is_some()` is
+/// already `false` on its own, no special-casing needed for it either.
+///
+/// **Fourteenth: a real report that the mirror-image direction had no
+/// retracing logic of its own at all.** `"Draft architecture derived"`,
+/// cursor placed right after "architecture" (i.e. on the space before
+/// "derived"), then `Ctrl+Shift+Left` twice (selects "architecture",
+/// then extends through "Draft" too, landing on `"Draft architecture"`)
+/// followed by `Ctrl+Shift+Right` once: reported `"t architecture"`
+/// instead of the wanted `"architecture"` (undoing exactly the second
+/// `Left` press, same as `Left` undoing a `Right` already does via
+/// `retract_onto_the_separator`/`retracing` above). Root cause: a
+/// `Right` press on a selection `Editor::extend_word_selection` has
+/// tagged `WordSelectTouch::NativeBackward` (built purely by walking
+/// backward) always ran the *ordinary* forward branch --
+/// `MoveWordForwardToEndOfWord` from wherever the cursor currently sits
+/// -- with no awareness that this selection was built walking the
+/// *other* way and that a `Right` here should retrace that walk, not
+/// extend past it. From `"Draft"`'s own start (where the second `Left`
+/// left the cursor), `MoveWordForwardToEndOfWord` lands on `'t'`,
+/// `"Draft"`'s own *last* character -- nowhere close to undoing
+/// anything.
+///
+/// **Landed on**: `Editor::extend_word_selection` now also recognizes
+/// the mirror condition -- a continuing `forward` press against a
+/// `NativeBackward`-tagged selection -- and passes it through the same
+/// `retracing` parameter used for the opposite direction (the parameter
+/// itself was renamed from `retracting` to reflect that it's no longer
+/// backward-only). A `retracing` forward press calls
+/// `retreat_forward_through_a_backward_walk` (below) instead of the
+/// ordinary forward branch: plain `MoveWordForward` (the mirror of
+/// `MoveWordBackward`, the action that built this walk, landing on
+/// exactly the same word-start stops in reverse), closing the selection
+/// entirely once that reaches or passes the anchor -- see that
+/// function's own doc comment for why *reaches or passes*, not just
+/// *reaches exactly*.
+///
+/// **Fifteenth: a real report exposing the simplest possible round trip
+/// as broken -- one word extended forward, then immediately retracted.**
+/// `"Draft architecture"`, cursor right before "architecture" (column
+/// 6), `Ctrl+Shift+Right` (selects "architecture") then
+/// `Ctrl+Shift+Left` once: reported `" "` (the single space before
+/// "architecture") selected, wanted `""` -- nothing at all, landing
+/// back exactly where the `Right` press started. Root cause: the
+/// Eleventh fix's own "claims only new territory" step ran
+/// unconditionally the moment `MoveWordBackward` landed exactly on the
+/// anchor, without distinguishing "this coincidence is the very *first*
+/// backward press against a freshly-built selection, so the anchor
+/// really is the true start with nothing further to give back" from
+/// "several presses have already retracted other words, and this
+/// coincidence means only the earlier ones are gone, not that the
+/// selection is done" -- mechanically, both look identical at this
+/// point (`state.cursor == selection.start`), so the code always took
+/// the same one further step past the anchor, whether or not there was
+/// truly more to retract.
+///
+/// **Landed on**: stop taking that extra step at all. Once
+/// `MoveWordBackward` lands exactly on the anchor, the entire
+/// originally-forward-built selection has been given back in full --
+/// close it immediately, the same as every other "nothing left
+/// selected" case in this file, rather than treat the anchor's own far
+/// side as unclaimed territory worth grabbing. This directly fixes the
+/// new report (`Right` then `Left` now closes cleanly, matching a basic
+/// round-trip guarantee), and turns out not to lose anything from the
+/// *original* Eleventh report either: re-checked against its own
+/// `"Draft architecture derived"` example (two `Right`s, then three
+/// `Left`s) with this change applied, the second `Left` now closes the
+/// selection outright instead of leaving `" "` selected -- but the
+/// *third* `Left` then starts a perfectly ordinary *fresh* backward
+/// selection from the same anchor position (mode having just returned
+/// to `Insert`), and `trim_anchor_off_a_word_it_never_visited` (this
+/// fresh press lands on a real character, "architecture"'s own first
+/// letter) trims it exactly one column back into the gap -- landing on
+/// `"Draft "` in full, byte-for-byte the same result Eleventh's own fix
+/// produced with three continuing presses through a still-open
+/// selection. The old "move the anchor to claim new territory" step was
+/// never actually necessary to reach that result -- an ordinary fresh
+/// selection re-derives the identical answer on its own.
+pub(in crate::editor) fn extend_word_selection(state: &mut EditorState, forward: bool, retracing: bool, true_anchor: &mut Option<Index2>) {
     let cursor_before = state.cursor;
     let selection_before = state.selection.as_ref().map(|s| (s.start, s.end));
     let starting_fresh_selection = state.mode != EditorMode::Visual;
@@ -349,48 +481,45 @@ pub(in crate::editor) fn extend_word_selection(state: &mut EditorState, forward:
     }
 
     if forward {
-        MoveWordForwardToEndOfWord(1).execute(state);
-        if starting_fresh_selection && state.cursor == cursor_before {
-            // Nowhere further right to go at all (a fresh selection
-            // right at the buffer's own end) -- close it rather than
-            // leave a phantom single-character selection sitting on the
-            // cell it merely anchored on. No `retract`-style extra step
-            // exists on this side to possibly still make progress, so
-            // this is the whole check, unlike the backward branch below.
-            SwitchMode(EditorMode::Normal).execute(state);
-            SwitchMode(EditorMode::Insert).execute(state);
+        if retracing {
+            retreat_forward_through_a_backward_walk(state, true_anchor);
+        } else {
+            MoveWordForwardToEndOfWord(1).execute(state);
+            if starting_fresh_selection && state.cursor == cursor_before {
+                // Nowhere further right to go at all (a fresh selection
+                // right at the buffer's own end) -- close it rather than
+                // leave a phantom single-character selection sitting on the
+                // cell it merely anchored on. No `retract`-style extra step
+                // exists on this side to possibly still make progress, so
+                // this is the whole check, unlike the backward branch below.
+                SwitchMode(EditorMode::Normal).execute(state);
+                SwitchMode(EditorMode::Insert).execute(state);
+            }
         }
     } else {
+        if starting_fresh_selection {
+            *true_anchor = Some(cursor_before);
+        }
         MoveWordBackward(1).execute(state);
         trim_anchor_off_a_word_it_never_visited(state, cursor_before, starting_fresh_selection);
 
         let landed_exactly_on_the_anchor = state.selection.as_ref().is_some_and(|s| s.start == state.cursor);
         if landed_exactly_on_the_anchor {
-            let cursor_before_the_separator_step = state.cursor;
-            if retracting {
-                retract_onto_the_separator(state);
-            }
-            if state.cursor == cursor_before_the_separator_step {
-                // Nothing left to retract onto either -- the selection
-                // has been fully consumed back to (or never moved past)
-                // its own anchor, with no further territory to claim.
-                // `edtui`'s inclusive-both-ends model can't represent an
-                // empty selection as `Some` -- a single-cell `Selection`
-                // always shows as one highlighted (and copyable)
-                // character -- so the only way to show "nothing
-                // selected" is closing it back to `Insert` entirely,
-                // same as `exit_selection()` in `bindings/mod.rs`.
-                SwitchMode(EditorMode::Normal).execute(state);
-                SwitchMode(EditorMode::Insert).execute(state);
-            } else if let Some(selection) = state.selection.as_mut() {
-                // The separator step found genuine new territory beyond
-                // the old anchor -- move the anchor to match, so the
-                // selection reflects only that freshly-claimed cell
-                // rather than stale ground stretching back to the word
-                // that's already been fully retracted away.
-                selection.start = state.cursor;
-            }
-        } else if retracting {
+            // The whole selection has been fully given back -- nothing
+            // of it is left to retract any further. `edtui`'s
+            // inclusive-both-ends model can't represent an empty
+            // selection as `Some` -- a single-cell `Selection` always
+            // shows as one highlighted (and copyable) character -- so
+            // the only way to show "nothing selected" is closing it
+            // back to `Insert` entirely, same as `exit_selection()` in
+            // `bindings/mod.rs`. See "Fifteenth" in this function's own
+            // doc comment for why this used to instead take one more
+            // step *past* the anchor and claim that as new territory --
+            // reverted for breaking the basic "extend one word, then
+            // immediately retract it" round trip.
+            SwitchMode(EditorMode::Normal).execute(state);
+            SwitchMode(EditorMode::Insert).execute(state);
+        } else if retracing {
             retract_onto_the_separator(state);
         }
     }
@@ -406,28 +535,26 @@ pub(in crate::editor) fn extend_word_selection(state: &mut EditorState, forward:
     );
 }
 
-/// See `extend_word_selection`'s own doc comment ("Seventh") for the real
-/// report this fixes. Only meaningful right after a fresh backward
-/// `MoveWordBackward` (`fresh_selection` guards that; a continuing
-/// selection's anchor is never touched) -- if `cursor_before` (the cell
-/// `SwitchMode(Visual)` anchored on) sits at the very start of a word
-/// (its own left neighbor is whitespace, or there's nothing to its left
-/// at all), that anchor never got *visited* by this press -- `edtui`'s
-/// `MoveWordBackward`, already at a word-start, jumps clean over it to
-/// the *previous* word -- so it's trimmed one column left, into the gap
-/// it's actually resting past the edge of, rather than left riding along
-/// into the selection.
+/// See `extend_word_selection`'s own doc comment ("Seventh," "Twelfth,"
+/// and "Thirteenth" -- the general rule this landed on after two
+/// narrower special cases) for the real reports this fixes. Only
+/// meaningful right after a fresh backward `MoveWordBackward`
+/// (`fresh_selection` guards that; a continuing selection's anchor is
+/// never touched): trims the anchor (the cell `SwitchMode(Visual)`
+/// anchored on, `cursor_before`) one column left, into the gap it's
+/// actually resting past the edge of, whenever a real character sits
+/// there at all -- mirroring `shift_select.rs::backward_anchor`'s own
+/// already-established rule for plain character-wise `Left` ("the
+/// character to select is always the one the cursor is about to move
+/// *onto*, never the one it's currently sitting on"). No character
+/// classification needed: a purely backward extension should never
+/// claim the cell it started on, whatever that cell happens to hold.
 fn trim_anchor_off_a_word_it_never_visited(state: &mut EditorState, cursor_before: Index2, fresh_selection: bool) {
     if !fresh_selection || cursor_before.col == 0 {
         return;
     }
 
-    let left_of_anchor = Index2 { row: cursor_before.row, col: cursor_before.col - 1 };
-    let anchor_is_a_words_first_character = match state.lines.get(left_of_anchor) {
-        Some(c) => c.is_whitespace(),
-        None => true,
-    };
-    if !anchor_is_a_words_first_character {
+    if state.lines.get(cursor_before).is_none() {
         return;
     }
 
@@ -443,7 +570,7 @@ fn trim_anchor_off_a_word_it_never_visited(state: &mut EditorState, cursor_befor
 /// "Ninth" for why this no longer checks *what kind* of character the
 /// gap is) for why this only handles the purely mechanical half of the
 /// fix now -- *whether* to apply it is decided entirely by the caller's
-/// own `retracting` flag before this is ever called, not by anything
+/// own `retracing` flag before this is ever called, not by anything
 /// read here. All this does: if there's any cell at all right before
 /// wherever `MoveWordBackward` (already run by the caller) landed, one
 /// more plain `MoveBackward` (not another word motion) lands squarely
@@ -463,6 +590,101 @@ fn retract_onto_the_separator(state: &mut EditorState) {
     if state.lines.get(left_of_landing).is_some() {
         MoveBackward(1).execute(state);
     }
+}
+
+/// See `extend_word_selection`'s own doc comment ("Fourteenth") for the
+/// real report this fixes. Called instead of the normal forward branch
+/// whenever the caller's `retracing` flag says this `Right` press is
+/// giving back territory a purely backward (`Ctrl+Shift+Left`) walk
+/// built, rather than extending forward past the anchor into new text.
+///
+/// Uses plain `MoveWordForward` (lands on the *next* word's own first
+/// character), not `MoveWordForwardToEndOfWord` (the normal forward
+/// branch's own action, which lands on a word's *last* character) --
+/// this is the exact mirror of `MoveWordBackward`, the action that
+/// built this walk in the first place, so retracing with it lands back
+/// on precisely the same stops the backward walk itself created,
+/// undoing one step exactly. No extra separator step is needed here,
+/// unlike `retract_onto_the_separator` above: `MoveWordBackward` always
+/// jumps clean through a separator in one atomic move when building a
+/// backward walk (never stopping *on* it), so the plain mirror already
+/// re-crosses that same gap in one step too -- there's no leftover gap
+/// this side ever needs a second nudge for, unlike a *forward*-built
+/// selection's own trailing gap (`MoveWordForwardToEndOfWord` stops
+/// short of it, which is what made `retract_onto_the_separator`
+/// necessary in the first place).
+///
+/// `>=`, not `==`, against the anchor (`selection.start`): a
+/// backward walk's own fresh press trims the anchor one column *past*
+/// the last real landing spot `MoveWordBackward` used (see
+/// `trim_anchor_off_a_word_it_never_visited`), which is never itself a
+/// stop on `MoveWordForward`'s own landing grid -- so the very last
+/// retracing press does not land exactly on the anchor, it *overshoots*
+/// past it into whatever word comes after. Comparing in reading order
+/// (row, then column) catches that overshoot the same way an exact
+/// match would catch a clean landing, and either way means the same
+/// thing: nothing backward-built is left to give back, so the
+/// selection closes entirely, snapped back to the anchor itself rather
+/// than left sitting past it. Deliberately does not try to keep going
+/// past the anchor into a fresh forward extension the way the backward
+/// side's own "claims only new territory" fix does (`extend_word_selection`'s
+/// "Eleventh") -- not part of the report this fixes; left for a future
+/// report if continuing to extend forward past a fully-retraced
+/// backward walk ever turns out to be wanted.
+///
+/// **Sixteenth: a real report that closing landed one column short of
+/// where the backward walk actually started.** `"derived"`, cursor
+/// between `'i'` and `'v'` (column 4): `Ctrl+Shift+Left` selects
+/// `"deri"` (the fresh press trims the anchor from 4 to 3 -- see
+/// `trim_anchor_off_a_word_it_never_visited`), then `Ctrl+Shift+Right`
+/// retraces it -- reported landing between `'r'` and `'i'` (column 3)
+/// instead of back at column 4, where the whole thing actually started.
+/// Root cause: closing here used to snap `state.cursor` to
+/// `selection.start` directly, which *is* the anchor `MoveWordBackward`
+/// itself used to build the walk, but it's the **trimmed** value, one
+/// column short of the real starting point by design (the whole point
+/// of the trim is excluding that one column from the *visible*
+/// selection while it's open) -- using it again to decide where
+/// *closing* lands reintroduces the exact same one-column error the
+/// trim exists to fix in the other direction. Fixed by reading back
+/// `true_anchor` (`Editor::word_select_true_anchor`) instead --
+/// captured by the caller at the exact moment the fresh backward press
+/// opened this walk, before any trim ever touched anything, so it's
+/// always the real, untrimmed starting column. Falls back to `anchor`
+/// itself only if nothing was tracked (defensive; every backward-built
+/// walk this function ever retraces was necessarily opened by a fresh
+/// press that also sets `true_anchor` in the same breath).
+///
+/// This also happens to be exactly the state VS Code's own
+/// `Ctrl+Shift+Right` reaches after undoing a `Ctrl+Shift+Left`
+/// selection on the same word (confirmed directly against it): once
+/// back at the true original column, a *further* `Ctrl+Shift+Right`
+/// starts a perfectly ordinary fresh *forward* selection from there
+/// (this function doesn't need to do anything more for that --
+/// `extend_word_selection`'s own fresh-forward branch already handles
+/// it once `state.mode` is back to `Insert`) -- landing on `"ved"` for
+/// this same "derived" example, matching VS Code's own "reflects"
+/// behavior once mirrored through one extra `Right` press instead of
+/// VS Code's single one (this codebase's own `retracing` step and a
+/// fresh extension are two separate presses, not one combined action).
+fn retreat_forward_through_a_backward_walk(state: &mut EditorState, true_anchor: &mut Option<Index2>) {
+    MoveWordForward(1).execute(state);
+
+    let Some(anchor) = state.selection.as_ref().map(|s| s.start) else {
+        return;
+    };
+    let reached_or_passed_the_anchor = (state.cursor.row, state.cursor.col) >= (anchor.row, anchor.col);
+    if !reached_or_passed_the_anchor {
+        return;
+    }
+
+    let restore_to = true_anchor.take().unwrap_or(anchor);
+    state.cursor = restore_to;
+    if let Some(selection) = state.selection.as_mut() {
+        selection.end = restore_to;
+    }
+    SwitchMode(EditorMode::Normal).execute(state);
+    SwitchMode(EditorMode::Insert).execute(state);
 }
 
 
