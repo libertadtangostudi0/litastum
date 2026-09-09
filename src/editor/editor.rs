@@ -11,7 +11,7 @@ use tracing::{debug, warn};
 
 use crate::theming::Theme;
 
-use super::bindings::{standard_key_handler, wrap_line_boundary_arrow_movement};
+use super::bindings::{anchor_fresh_shift_selection, standard_key_handler, wrap_line_boundary_arrow_movement};
 use super::clipboard::OsClipboardBridge;
 use super::syntax::resolve_syntax_highlighter;
 
@@ -132,17 +132,42 @@ impl Editor {
     /// there that's a plain character still inserts, since the editor
     /// stays in `EditorMode::Insert` outside an active selection.
     ///
-    /// `wrap_line_boundary_arrow_movement` runs after the table, on the
-    /// real post-move state, and only ever *adds* a row change when the
-    /// table's own handling of a plain/shifted `Left`/`Right` turned out
-    /// to be a no-op at a line boundary -- see its own doc comment for
-    /// why this couldn't be another table entry. Every other key (and
-    /// every already-working `Left`/`Right` press that isn't at a line
-    /// boundary) passes through completely unaffected.
+    /// Two post-table correction passes run in sequence, both only ever
+    /// *adding* behavior the table's own declarative chaining couldn't
+    /// express on its own (see each one's own doc comment for why):
+    ///
+    /// 1. `anchor_fresh_shift_selection` -- only when this key just
+    ///    transitioned a fresh selection into `Visual` mode (a plain,
+    ///    non-word-select `Shift+Left`/`Right` with nothing already
+    ///    selected -- `Shift+Up`/`Down` don't need this, see that
+    ///    function's own doc comment for why). If the cell it anchored
+    ///    on holds a real character, this is already exactly the wanted
+    ///    one-character selection and nothing more happens; otherwise it
+    ///    falls back to performing the actual move.
+    /// 2. `wrap_line_boundary_arrow_movement` -- adds a row change when
+    ///    the table's own handling of a plain/shifted `Left`/`Right`
+    ///    turned out to be a no-op at a line boundary. Skipped entirely
+    ///    when step 1 just deliberately left the cursor unmoved on a
+    ///    real character -- that zero movement is a correct, intentional
+    ///    stop (a fresh selection is exactly one character), not a
+    ///    signal that a plain arrow press hit a wall, and treating it as
+    ///    one would wrongly wrap an ordinary mid-line `Shift+Right` down
+    ///    into the next line.
+    ///
+    /// Every other key (and every already-working press these two don't
+    /// apply to) passes through completely unaffected.
     pub fn input(&mut self, key: KeyEvent) {
         let cursor_before = self.state.cursor;
+        let mode_before = self.state.mode;
         self.event_handler.on_key_event(key, &mut self.state);
-        wrap_line_boundary_arrow_movement(&mut self.state, key.code, key.modifiers, cursor_before);
+
+        let freshly_entered_visual = mode_before != EditorMode::Visual && self.state.mode == EditorMode::Visual;
+        let anchored_on_a_real_character =
+            freshly_entered_visual && anchor_fresh_shift_selection(&mut self.state, key.code, cursor_before);
+
+        if !anchored_on_a_real_character {
+            wrap_line_boundary_arrow_movement(&mut self.state, key.code, key.modifiers, cursor_before);
+        }
     }
 
 
@@ -356,9 +381,10 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyModifiers};
+    use edtui::Index2;
 
     use super::*;
-    use crate::test_support::{key, unique_scratch_dir};
+    use crate::test_support::{key, shift_key, unique_scratch_dir};
 
     /// Writes `contents` to a scratch file and opens it, so tests can
     /// exercise `Editor` without a fixture directory. Returns the path
@@ -381,6 +407,62 @@ mod tests {
         let (mut editor, _path) = open_test_editor("hello\n");
         editor.input(key(KeyCode::Char('!')));
         assert!(editor.is_dirty());
+    }
+
+    /// Real, integration-level regression test for the reported bug
+    /// (`bindings/shift_select.rs`'s own doc comment has the full
+    /// story): one `Shift+Right` right before "Draft" must select
+    /// exactly "D", not "Dr". Goes through the real `Editor::input`
+    /// (not just the raw table in `bindings/mod.rs`'s own tests), since
+    /// this is exactly where the interaction with
+    /// `wrap_line_boundary_arrow_movement` matters -- a multi-line file
+    /// is used specifically so a wrongly-still-firing wrap check would
+    /// have jumped the selection down into the next line instead of
+    /// stopping on "D".
+    #[test]
+    fn shift_right_selects_exactly_one_character_mid_buffer() {
+        let (mut editor, _path) = open_test_editor("Draft architecture\nsecond line");
+
+        editor.input(shift_key(KeyCode::Right));
+
+        let selection = editor.state.selection.expect("should have started a selection");
+        assert_eq!(selection.start, selection.end, "exactly one cell should be selected");
+        assert_eq!(editor.state.cursor, Index2 { row: 0, col: 0 }, "should not have wrapped to the next line or moved past 'D'");
+    }
+
+    /// Real, integration-level regression test for the retest that
+    /// caught `Shift+Left` selecting the character to the *right* of
+    /// the cursor instead of the left. Goes through the real
+    /// `Editor::input` for the same reason as the `Shift+Right` test
+    /// above -- confirms the wrap check is correctly skipped here too
+    /// (the anchor-drag already fully resolves this press).
+    #[test]
+    fn shift_left_selects_exactly_one_character_mid_buffer() {
+        let (mut editor, _path) = open_test_editor("Draft architecture\nsecond line");
+        editor.state.cursor.col = 6; // right before the 'a' of "architecture"
+
+        editor.input(shift_key(KeyCode::Left));
+
+        let selection = editor.state.selection.expect("should have started a selection");
+        assert_eq!(selection.start, selection.end, "exactly one cell should be selected");
+        assert_eq!(editor.state.cursor, Index2 { row: 0, col: 5 }, "should be on the space right before \"architecture\", not on 'a'");
+    }
+
+    /// The line-boundary-crossing edge case: `Shift+Left` right at the
+    /// very start of a (non-first) line has nothing to select on that
+    /// line at all -- must still hand off to the wrap check and cross
+    /// into the previous line, the same way it already does for
+    /// `Shift+Right` at a line's own end
+    /// (`shift_right_selection_extends_across_the_line_boundary` in
+    /// `bindings/line_wrap.rs`), rather than silently doing nothing.
+    #[test]
+    fn shift_left_at_the_start_of_a_line_still_wraps_to_the_previous_line() {
+        let (mut editor, _path) = open_test_editor("hi\nworld");
+        editor.state.cursor = Index2 { row: 1, col: 0 };
+
+        editor.input(shift_key(KeyCode::Left));
+
+        assert_eq!(editor.state.cursor.row, 0, "should have crossed into the previous line");
     }
 
     #[test]

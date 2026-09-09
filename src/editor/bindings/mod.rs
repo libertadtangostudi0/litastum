@@ -10,9 +10,11 @@ use edtui::events::{KeyEventHandler, KeyEventRegister, KeyInput};
 use edtui::EditorMode;
 
 mod line_wrap;
+mod shift_select;
 mod word_select;
 
 pub(super) use line_wrap::wrap_line_boundary_arrow_movement;
+pub(super) use shift_select::anchor_fresh_shift_selection;
 pub(super) use word_select::extend_word_selection;
 
 /// A non-modal (VSCode/Windows-convention) keymap for `edtui`, which
@@ -57,8 +59,31 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         (i(KeyInput::ctrl(KeyCode::Right)), MoveWordForward(1).into()),
 
         // Shift+arrow starts (or extends) a selection.
-        (i(KeyInput::shift(KeyCode::Left)), SwitchMode(EditorMode::Visual).chain(MoveBackward(1)).into()),
-        (i(KeyInput::shift(KeyCode::Right)), SwitchMode(EditorMode::Visual).chain(MoveForward(1)).into()),
+        //
+        // `Left`/`Right`'s fresh entries only switch to Visual mode --
+        // no `Move` chained on top. `SwitchMode(Visual)` alone already
+        // anchors a one-character selection on the current cell (vim's
+        // own `v` semantics), so chaining a `Move` here used to grab a
+        // *second* character on what a user experiences as a single
+        // keypress (reported directly: one `Shift+Right` before "Draft"
+        // selected "Dr", not "D"). See
+        // `shift_select.rs::anchor_fresh_shift_selection` for the real
+        // fix (which also covers why it's `Left`/`Right`-only, not
+        // `Up`/`Down` -- see below) and its own call site in
+        // `editor.rs::Editor::input` for how it's sequenced with the
+        // line-boundary wrap check.
+        //
+        // `Up`/`Down` keep the original chained form, deliberately --
+        // a first attempt applying the same fix to them too was
+        // reported broken immediately (`Shift+Down` selecting one
+        // character to the right instead of moving to the next line).
+        // There's no single-character "N+1, not N" granularity to fix
+        // for a row jump the way there is for `Left`/`Right`: "move to
+        // the same column on the next line, selecting everything in
+        // between" -- exactly what this chain already does -- was
+        // always the wanted behavior.
+        (i(KeyInput::shift(KeyCode::Left)), SwitchMode(EditorMode::Visual).into()),
+        (i(KeyInput::shift(KeyCode::Right)), SwitchMode(EditorMode::Visual).into()),
         (i(KeyInput::shift(KeyCode::Up)), SwitchMode(EditorMode::Visual).chain(MoveUp(1)).into()),
         (i(KeyInput::shift(KeyCode::Down)), SwitchMode(EditorMode::Visual).chain(MoveDown(1)).into()),
         (v(KeyInput::shift(KeyCode::Left)), MoveBackward(1).into()),
@@ -130,7 +155,7 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
 #[cfg(test)]
 mod tests {
     use edtui::clipboard::InternalClipboard;
-    use edtui::{EditorEventHandler, EditorMode, EditorState, Lines};
+    use edtui::{EditorEventHandler, EditorMode, EditorState, Index2, Lines};
 
     use super::*;
     use crate::test_support::{ctrl_code_key, ctrl_key, key, shift_key};
@@ -145,6 +170,31 @@ mod tests {
         state.mode = EditorMode::Insert;
         state.set_clipboard(InternalClipboard::default());
         (state, EditorEventHandler::new(standard_key_handler()))
+    }
+
+    /// Drives one key through the real table, then the same two
+    /// correction passes `Editor::input` runs, in the same order -- see
+    /// that method's own doc comment. Most of this module's tests only
+    /// need the raw table (`handler.on_key_event` alone), but the
+    /// fresh-Shift-arrow-selection tests specifically exercise the
+    /// interaction between the table (which no longer performs any
+    /// `Move` on its own for those keys) and
+    /// `anchor_fresh_shift_selection`/`wrap_line_boundary_arrow_movement`,
+    /// which only ever run as part of `Editor::input` -- calling
+    /// `handler.on_key_event` alone here would only show the table's own
+    /// half of the fix and silently miss the other half, exactly the
+    /// mistake a first version of the `Shift+Left` test below made.
+    fn input(state: &mut EditorState, handler: &mut EditorEventHandler, key_event: crossterm::event::KeyEvent) {
+        let cursor_before = state.cursor;
+        let mode_before = state.mode;
+        handler.on_key_event(key_event, state);
+
+        let freshly_entered_visual = mode_before != EditorMode::Visual && state.mode == EditorMode::Visual;
+        let anchored_on_a_real_character = freshly_entered_visual && anchor_fresh_shift_selection(state, key_event.code, cursor_before);
+
+        if !anchored_on_a_real_character {
+            wrap_line_boundary_arrow_movement(state, key_event.code, key_event.modifiers, cursor_before);
+        }
     }
 
     #[test]
@@ -163,15 +213,167 @@ mod tests {
         assert!(state.selection.is_some());
     }
 
+    /// Regression test for the real report: one `Shift+Right` right
+    /// before "Draft" selected two characters ("Dr"), not one ("D").
+    /// `SwitchMode(Visual)` alone already anchors a one-character
+    /// selection on the current cell (vim's own `v` semantics) -- the
+    /// fresh table entries no longer chain a `Move` on top of that (see
+    /// their own comment in `standard_key_handler`), so a single press
+    /// should select exactly the one character the cursor started on.
+    #[test]
+    fn shift_right_selects_exactly_one_character_not_two() {
+        let (mut state, mut handler) = test_state("Draft architecture");
+        input(&mut state, &mut handler, shift_key(KeyCode::Right));
+
+        {
+            let selection = state.selection.as_ref().expect("should have started a selection");
+            assert_eq!(selection.start, selection.end, "exactly one cell should be selected");
+        }
+        assert_eq!(state.cursor.col, 0, "the anchor cell itself -- 'D' -- not moved past it");
+
+        handler.on_key_event(ctrl_key('c'), &mut state);
+        handler.on_key_event(key(KeyCode::End), &mut state);
+        handler.on_key_event(ctrl_key('v'), &mut state);
+        assert_eq!(String::from(state.lines.clone()), "Draft architectureD");
+    }
+
+    /// Regression test for the real report on a retest of the fix
+    /// above: `Shift+Left` was selecting (and copying) the character to
+    /// the *right* of the cursor, not the left -- the anchor-only
+    /// behavior that's correct for `Shift+Right` was, at first, reused
+    /// unmodified for `Shift+Left` too, which is simply the wrong cell
+    /// for a backward selection. See
+    /// `shift_select.rs::anchor_fresh_shift_selection`'s own doc comment
+    /// for the direction-aware fix.
+    #[test]
+    fn shift_left_selects_the_character_actually_to_the_left() {
+        let (mut state, mut handler) = test_state("Draft architecture");
+        state.cursor.col = 6; // right before the 'a' of "architecture"
+
+        input(&mut state, &mut handler, shift_key(KeyCode::Left));
+
+        {
+            let selection = state.selection.as_ref().expect("should have started a selection");
+            assert_eq!(selection.start, selection.end, "exactly one cell should be selected");
+        }
+        assert_eq!(state.cursor.col, 5, "should have moved onto the space right before \"architecture\" -- the character actually to the left");
+
+        handler.on_key_event(ctrl_key('c'), &mut state);
+        handler.on_key_event(key(KeyCode::End), &mut state);
+        handler.on_key_event(ctrl_key('v'), &mut state);
+        assert_eq!(String::from(state.lines.clone()), "Draft architecture ", "should have copied the space, not 'a'");
+    }
+
+    /// Regression test for the real report that the `Left`/`Right` fix
+    /// above got wrongly applied to `Shift+Down` too: it started
+    /// selecting only one character to the right instead of moving to
+    /// the next line at the same column, with the second press then
+    /// landing one column off. `Shift+Down` never had the "N+1, not N"
+    /// bug in the first place -- the fresh table entry keeps its
+    /// original chained `Move` (see `shift_select.rs`'s own doc comment
+    /// for why `Up`/`Down` are scoped out of *that* fix entirely).
+    ///
+    /// `state.cursor.col` lands one column *short* of the press's own
+    /// starting column (`shift_select.rs`'s own, separate "exclude the
+    /// destination row's own landing column" fix, below) -- this is the
+    /// *data*, kept at the last actually-selected cell same as every
+    /// other selection in this codebase; the real terminal's own bar
+    /// cursor still renders one column further right (`Editor::cursor_screen_position`'s
+    /// existing "+1 while extending forward" shift), so it visually
+    /// looks like it landed on the same column, matching what a user
+    /// actually sees.
+    #[test]
+    fn shift_down_moves_to_the_next_line_at_the_same_column() {
+        let (mut state, mut handler) = test_state("line one\nline two");
+        state.cursor.col = 2; // the 'n' of "line", first line
+
+        input(&mut state, &mut handler, shift_key(KeyCode::Down));
+
+        assert_eq!(state.cursor, Index2 { row: 1, col: 1 }, "data should land one column short of the starting column -- the render layer, not the data, is what makes it look aligned");
+    }
+
+    /// A second `Shift+Down` press must keep descending, one line at a
+    /// time, from the *same* column each time -- not drift further left
+    /// with each additional row (`MoveDown` never touches `.col` on its
+    /// own, so the first press's one-time adjustment should just carry
+    /// forward unchanged).
+    #[test]
+    fn repeated_shift_down_keeps_the_same_column() {
+        let (mut state, mut handler) = test_state("one\ntwo\nthree");
+        state.cursor.col = 1;
+
+        input(&mut state, &mut handler, shift_key(KeyCode::Down));
+        input(&mut state, &mut handler, shift_key(KeyCode::Down));
+
+        assert_eq!(state.cursor, Index2 { row: 2, col: 0 }, "should still be one column short of the original column 1, two rows down -- not drifting any further");
+    }
+
+    /// Regression test for the real report against real text: two lines
+    /// with a word aligned on the identical column
+    /// (`"config.rs    — LATER..."` / `"editor.rs    — LATER..."`),
+    /// cursor right before that word on the first line, one
+    /// `Shift+Down` -- the destination line's own copy of that word must
+    /// not be swept into the selection too. Checks the actual copied
+    /// text directly, independent of any `state.selection`/`state.cursor`
+    /// coordinate assertion, matching this file's own established "check
+    /// copying separately" pattern.
+    #[test]
+    fn shift_down_copies_up_to_but_not_including_the_aligned_word() {
+        let (mut state, mut handler) = test_state("aaa LATER one\nbbb LATER two");
+        state.cursor.col = 4; // right before 'L', both lines aligned
+
+        input(&mut state, &mut handler, shift_key(KeyCode::Down));
+
+        handler.on_key_event(ctrl_key('c'), &mut state);
+        handler.on_key_event(key(KeyCode::End), &mut state);
+        handler.on_key_event(ctrl_key('v'), &mut state);
+
+        assert_eq!(
+            String::from(state.lines.clone()),
+            "aaa LATER one\nbbb LATER twoLATER one\nbbb ",
+            "copied text should be \"LATER one\\nbbb \" -- the second line's own \"LATER\" must not be included"
+        );
+    }
+
+    /// Mirror-image regression test for `Shift+Up`: cursor right before
+    /// the aligned word on the *second* line, one `Shift+Up` -- this
+    /// time it's the *starting* line's own copy of the word (now the
+    /// selection's bottom edge) that must be excluded, not the
+    /// destination's (which lands on the first line and should be kept
+    /// in full).
+    #[test]
+    fn shift_up_copies_up_to_but_not_including_the_aligned_words_own_line() {
+        let (mut state, mut handler) = test_state("aaa LATER one\nbbb LATER two");
+        state.cursor.row = 1;
+        state.cursor.col = 4; // right before 'L' on the second line
+
+        input(&mut state, &mut handler, shift_key(KeyCode::Up));
+
+        handler.on_key_event(ctrl_key('c'), &mut state);
+        handler.on_key_event(key(KeyCode::End), &mut state);
+        handler.on_key_event(ctrl_key('v'), &mut state);
+
+        // Pastes at the end of the *first* line this time (Ctrl+Up left
+        // the cursor there, not on the last line) -- the pasted text's
+        // own embedded newline pushes the untouched second line down to
+        // become a third line, unlike the Down test above where the
+        // paste point was already the buffer's last line.
+        assert_eq!(
+            String::from(state.lines.clone()),
+            "aaa LATER oneLATER one\nbbb \nbbb LATER two",
+            "copied text should be \"LATER one\\nbbb \" -- the second line's own \"LATER\" (where the press started) must not be included"
+        );
+    }
+
     #[test]
     fn select_copy_paste_roundtrip() {
         let (mut state, mut handler) = test_state("hello world");
 
-        // edtui's selection is inclusive on both ends (vim-style), so
-        // N shift-rights from col 0 selects N+1 characters, not N --
-        // found the hard way when this test first failed with a
-        // trailing space included in the copied text.
-        for _ in 0..4 {
+        // Each Shift+Right now selects exactly one more character than
+        // the last (the fresh-selection fix above) -- 5 presses for
+        // "hello"'s own 5 characters, not 4 (the old "N+1, not N"
+        // quirk this fix removed -- see shift_select.rs).
+        for _ in 0..5 {
             handler.on_key_event(shift_key(KeyCode::Right), &mut state); // select "hello"
         }
         handler.on_key_event(ctrl_key('c'), &mut state);
@@ -240,7 +442,9 @@ mod tests {
     fn word_select_retraction_across_punctuation_matches_what_gets_copied() {
         let text = "theme, 2-column panels, arrow-key";
         let (mut state, mut handler) = test_state(text);
-        for _ in 0..(text.chars().count() - 1) {
+        // One Shift+Right per character now (the fresh-selection fix in
+        // shift_select.rs), not `len - 1` -- see select_copy_paste_roundtrip.
+        for _ in 0..text.chars().count() {
             handler.on_key_event(shift_key(KeyCode::Right), &mut state); // select the whole line, character-wise -- not word-select
         }
         assert_eq!(state.selection.as_ref().unwrap().end, state.cursor, "should have selected all the way to the last real character");
@@ -297,8 +501,8 @@ mod tests {
     fn ctrl_x_cuts_the_selection() {
         let (mut state, mut handler) = test_state("hello world");
 
-        for _ in 0..5 {
-            handler.on_key_event(shift_key(KeyCode::Right), &mut state); // select "hello " (inclusive selection, see above)
+        for _ in 0..6 {
+            handler.on_key_event(shift_key(KeyCode::Right), &mut state); // select "hello " -- 6 presses for 6 characters now, see select_copy_paste_roundtrip
         }
         handler.on_key_event(ctrl_key('x'), &mut state);
 

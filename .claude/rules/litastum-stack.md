@@ -49,9 +49,100 @@ versions, no compromise needed this time.
 writing tests for it, not by inspection — see `editor.rs`'s test
 module):
 - Selection in `edtui` is inclusive on both ends (vim-style): N
-  `Shift+Right` presses from the selection start selects N+1
-  characters, not N. A test asserting a 5-character selection after 5
-  presses failed with a trailing extra character included.
+  `Shift+Right` presses from the selection start used to select N+1
+  characters, not N -- `SwitchMode(Visual)` alone already anchors a
+  one-character selection on the current cell (vim's own `v`
+  semantics), and the table used to chain a `Move` on top of that for
+  the very first press too, grabbing a second character for what a
+  user experiences as one keypress. Accepted at first as an unavoidable
+  side effect of reusing `edtui`'s own vim-style actions -- **fixed
+  later**, once reported directly against real use (one `Shift+Right`
+  selecting two characters, not one): the fresh (`i(...)`) Shift+arrow
+  table entries no longer chain a `Move` at all, just `SwitchMode(Visual)`;
+  a small correction pass (`bindings/shift_select.rs::anchor_fresh_shift_selection`,
+  called from `Editor::input` only when this key just opened a fresh
+  selection) falls back to actually performing the move only when the
+  anchor cell has no real character to select at all (e.g. the append
+  position past a line's own last character) -- and is skipped by
+  `wrap_line_boundary_arrow_movement`'s own line-boundary check
+  whenever it *did* stop on a real character, so an ordinary mid-line
+  `Shift+Right` doesn't get mistaken for "hit the end of the line."
+  N presses now selects exactly N characters, for every N, matching
+  the project's own stated VSCode-convention keymap goal instead of
+  vim's.
+
+  **Reported broken again on retest, for the opposite direction**:
+  `Shift+Left` was selecting (and copying) the character to the
+  *right* of the cursor, not the left. The fix above applied the same
+  "stop on the anchor cell" rule to all four directions, but the
+  anchor cell (wherever the cursor already sat) is only the *correct*
+  first character for a *forward* selection (`Right`) -- for a
+  backward one (`Left`), the character that should be selected is
+  always the one the cursor is about to move *onto*, one cell further
+  back, never the one it started on. Landed on splitting `Left` from
+  `Right`: `Right` keeps the anchor-only check; `Left` always performs
+  its move first, then -- only if that move made real progress --
+  drags the anchor (`selection.start`) to match the new cursor
+  position too, collapsing the selection to exactly that one
+  newly-reached cell instead of spanning old-to-new (two cells, the
+  same bug shape again). See
+  `bindings/shift_select.rs::anchor_fresh_shift_selection`'s own doc
+  comment for the full detail, including how this still lets
+  `Shift+Left` at a line's own start correctly wrap into the previous
+  line via `wrap_line_boundary_arrow_movement`, same as `Shift+Right`
+  already does at a line's end.
+
+  **Reported broken a third time, for `Up`/`Down`**: the fix above was
+  applied to `Up`/`Down` too, on the assumption they shared the same
+  "N+1, not N" bug -- they don't. `Shift+Down` started selecting only
+  one character to the right instead of moving to the next line at the
+  same column, with the second press then landing one column off,
+  because the fresh entry no longer performed any real row-jump at
+  all. There's no single-character granularity to get right or wrong
+  for a row jump the way there is for `Left`/`Right` -- "move to the
+  same column on the next line, selecting everything in between" was
+  already exactly what the *original*, unmodified
+  `SwitchMode(Visual).chain(MoveDown(1))` chain produced, and was
+  always the wanted behavior. Landed on scoping the whole fix to
+  `Left`/`Right` only: their fresh table entries drop the chained
+  `Move` (per above), `Up`/`Down`'s keep it, unmodified, and never
+  reach `anchor_fresh_shift_selection`'s own per-direction logic at all
+  (they fall through its harmless `_ => true` catch-all, since
+  `wrap_line_boundary_arrow_movement` -- the only thing that return
+  value gates -- never acts on `Up`/`Down` either). The general lesson,
+  worth remembering before generalizing a fix to "all four directions"
+  again: `Left`/`Right` and `Up`/`Down` aren't actually the same kind
+  of motion just because they're both bound through `Shift+arrow` --
+  one moves by character, the other by row, and a fix scoped to one
+  axis's own granularity doesn't necessarily transfer to the other.
+
+  **`Up`/`Down` turned out to have their own real bug anyway, just a
+  different one.** `MoveDown`/`MoveUp` (confirmed directly from
+  `edtui`'s source) only ever change `state.cursor.row` -- never
+  `.col` -- so a `Shift+Down`/`Up` press genuinely does land on the
+  identical column on the new row, and `edtui`'s inclusive-both-ends
+  model includes whatever's there. Reported against real, aligned
+  text (two lines both reading `"xxx.rs    — LATER..."`, so a word
+  landed on the exact same column on both): one `Shift+Down` right
+  before that word swept the *destination* line's own copy of it into
+  the selection too. Fixed with the same anchor/cursor split as
+  `Left`/`Right`, just applied to whichever *row* is the selection's
+  own far edge instead of a single cell: for `Down`, the destination
+  (`state.cursor`, kept in lock-step with `selection.end`) backs off
+  one column so its own row's selected span stops right before that
+  column; for `Up`, it's `selection.start` (the row the press started
+  on, now the selection's bottom edge, never touched by `MoveUp`
+  itself) that needs the same one-column trim -- confirmed against
+  `edtui`'s own multi-line selection convention (whichever raw
+  `Selection` field sits on the larger row is also an *inclusive*
+  upper bound on that row's own selected span) rather than assumed
+  from the single-row case, after an first attempt nudged
+  `selection.start.col` the wrong direction and made it worse (one
+  extra character instead of one too few). Both adjustments run only
+  once, on the press that opens the selection -- `MoveDown`/`MoveUp`
+  never touch `.col` themselves, so whatever this leaves it at simply
+  carries forward unchanged on every further continuing press, with no
+  compounding drift.
 - `capture_on_insert: false` (the vim-mode default) relies on
   `SwitchMode(Insert)` transitions to create undo checkpoints. Our
   keymap sets `state.mode = Insert` once directly at open and mostly

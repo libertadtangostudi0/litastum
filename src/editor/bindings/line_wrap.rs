@@ -76,7 +76,7 @@ mod tests {
     use edtui::clipboard::InternalClipboard;
     use edtui::{EditorEventHandler, EditorMode, EditorState, Lines};
 
-    use super::{super::standard_key_handler, wrap_line_boundary_arrow_movement};
+    use super::{super::{anchor_fresh_shift_selection, standard_key_handler}, wrap_line_boundary_arrow_movement};
     use crate::test_support::{key, shift_key};
 
     /// Same shape as `bindings::tests::test_state` -- a raw
@@ -89,13 +89,23 @@ mod tests {
         (state, EditorEventHandler::new(standard_key_handler()))
     }
 
-    /// Drives one key through the real table, then the wrap check --
-    /// exactly what `Editor::input` does, without needing a real file
-    /// on disk (`Editor::open` requires one).
+    /// Drives one key through the real table, then the same two
+    /// correction passes in the same order `Editor::input` uses --
+    /// without needing a real file on disk (`Editor::open` requires
+    /// one). See `Editor::input`'s own doc comment for why the wrap
+    /// check is skipped when a fresh shift-selection just anchored on a
+    /// real character.
     fn input(state: &mut EditorState, handler: &mut EditorEventHandler, key_event: crossterm::event::KeyEvent) {
         let cursor_before = state.cursor;
+        let mode_before = state.mode;
         handler.on_key_event(key_event, state);
-        wrap_line_boundary_arrow_movement(state, key_event.code, key_event.modifiers, cursor_before);
+
+        let freshly_entered_visual = mode_before != EditorMode::Visual && state.mode == EditorMode::Visual;
+        let anchored_on_a_real_character = freshly_entered_visual && anchor_fresh_shift_selection(state, key_event.code, cursor_before);
+
+        if !anchored_on_a_real_character {
+            wrap_line_boundary_arrow_movement(state, key_event.code, key_event.modifiers, cursor_before);
+        }
     }
 
     #[test]
