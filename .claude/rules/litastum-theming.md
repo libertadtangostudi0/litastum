@@ -13,16 +13,35 @@ the themes directory. Parsing lives in `scheme.rs::ColorScheme`.
 next to the binary/repo, per the cwd fallback below, or the config
 dir's own `themes/` subdirectory). This is where the schemes bundled in
 this repo (`themes/apple-system-colors.json`, `themes/alien-blood.json`,
-`themes/dracula.json`) came from. `themes/github-dark.json` — the
-default, see below — came from `mbadolato/iTerm2-Color-Schemes`'
+`themes/dracula.json`) came from.
+
+`themes/github-dark.json` came from `mbadolato/iTerm2-Color-Schemes`'
 Windows Terminal mirror instead (same JSON shape, a different but
 equally common distribution point for it), with `background`/
-`foreground`/`selectionBackground`/`cursorColor` hand-adjusted to match
-VS Code's actual GitHub Dark theme exactly (`#0d1117`/`#e6edf3`, the
-same "color 2" values `Theme::dark()` already used;
-`selectionBackground` computed the same way VS Code's own theme source
-does it — `accent.fg` (`#58a6ff`) at 20% alpha over the background)
-rather than left at that mirror's own, slightly different shades.
+`foreground`/`selectionBackground`/`cursorColor` hand-adjusted toward
+`#0d1117`/`#e6edf3` (the same "color 2" values `Theme::dark()` already
+used) — **this turned out not to actually match the user's own real VS
+Code theme**, reported directly once compared side by side: VS Code's
+GitHub theme extension ships several genuinely different dark palettes
+(`GitHub Dark`, `GitHub Dark Default`, `GitHub Dark Dimmed`, `GitHub
+Dark High Contrast`, ...), and the one most people actually have
+selected — the extension's own default — is `GitHub Dark Default`, not
+the older `GitHub Dark` this file approximates.
+
+`themes/github-dark-default.json` — the actual **default**, see below —
+fixes this by going straight to the source of truth instead of a
+third-party mirror: every value (`background`, `foreground`, all 16
+ANSI colors) pulled directly from `@primer/primitives`' own published
+color tokens (`dist/docs/functional/themes/dark.json` — GitHub's design
+system package, which the VS Code theme itself is generated from),
+confirmed to genuinely differ from `github-dark.json`'s values (e.g.
+`foreground` is `#c9d1d9` here, not `#e6edf3`; every ANSI color is
+shifted). `selectionBackground` still computed the same way VS Code's
+own theme source does it — `fgColor-accent` (`#58a6ff`) at 20% alpha
+over `background`. `github-dark.json` is kept around, unchanged, as a
+separate, still-selectable theme for the classic variant — see
+`config.rs::default_theme`'s own doc comment for why it's no longer
+treated as *the* default.
 
 ## Interface theme and editor theme are independent, like in Far Manager
 
@@ -48,13 +67,14 @@ feature.
   filename stem (no `.json`) in the `themes/` subdirectory next to it.
   Missing config dir/file, a missing key, or any parse failure at any
   step falls back to that *half's* built-in default — `config.rs::default_theme`,
-  the bundled `themes/github-dark.json` scheme, applied to **both**
-  halves (interface and editor syntax highlighting) when nothing usable
-  is configured for that half — a broken `editor_theme` doesn't take the
-  interface theme down with it, and vice versa. `default_theme` itself
-  falls back one level further, to the hardcoded `Theme::dark()`/
-  `syntax::SYNTAX_THEME` ("dracula"), only if `github-dark.json` is
-  itself somehow missing or fails to parse — the same "never blocks
+  the bundled `themes/github-dark-default.json` scheme, applied to
+  **both** halves (interface and editor syntax highlighting) when
+  nothing usable is configured for that half — a broken `editor_theme`
+  doesn't take the interface theme down with it, and vice versa.
+  `default_theme` itself falls back one level further, to the hardcoded
+  `Theme::dark()`/`syntax::SYNTAX_THEME` ("dracula"), only if
+  `github-dark-default.json` is itself somehow missing or fails to parse
+  — the same "never blocks
   startup" guarantee, just one level deeper than before this file
   existed (the built-in default used to *be* the hardcoded value
   directly; now loading a real file is one more thing that can, in
@@ -86,10 +106,13 @@ feature.
   known-working example, found automatically via the cwd fallback
   above when run from the repo root — and it's also the fixture the
   tests in `scheme.rs` parse.
-- `themes/github-dark.json` is the actual out-of-the-box **default** —
-  requested directly ("хочу добавить и сделать её дефолтной"), not just
-  another example. `config.rs::default_theme` looks it up by name
-  (`"github-dark"`, the filename stem) through the exact same
+- `themes/github-dark-default.json` is the actual out-of-the-box
+  **default** — requested directly ("хочу добавить и сделать её
+  дефолтной"), not just another example; retargeted from
+  `github-dark.json` once that turned out not to match the user's own
+  real VS Code theme (see the source-for-ready-made-schemes section
+  above). `config.rs::default_theme` looks it up by name
+  (`"github-dark-default"`, the filename stem) through the exact same
   `find_scheme`/cwd-fallback path as every other theme, so it's found
   automatically under `cargo run` from the repo root the same way
   `apple-system-colors.json` is — a real, from-the-repo default, not a
@@ -318,6 +341,15 @@ resolver, tried on every file open:
     by `Editor::view` trying the name/extension again with one trailing
     `.sdk` stripped, rather than teaching the grammar itself about a
     project-specific suffix it has no reason to know about.
+  - A custom Rust grammar (github.com/rust-lang/rust-enhanced) was
+    tried here too, to get closer to VS Code's own highlighting —
+    reverted after two rounds of local patches (widening its type
+    coverage, then unifying primitive vs. named types onto one scope)
+    still didn't hold up against real-world comparison. `.rs` is back
+    to `syntect`'s own bundled grammar, unmodified — see the
+    syntax-highlighting architecture note near the top of this file for
+    why a static TextMate grammar was never going to fully match VS
+    Code's real-analyzer-powered output anyway.
 - **Why not github.com/PowerShell/EditorSyntax** for PowerShell (the
   obvious first choice, Microsoft's own repo): it only ships a
   `.tmLanguage` (plist XML) grammar, and `syntect` doesn't load that

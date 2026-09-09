@@ -39,6 +39,13 @@ pub(super) const SYNTAX_THEME: &str = "dracula";
 /// `extra_set`, where the real CMake grammar lives — so CMake files
 /// silently rendered as plain text.
 ///
+/// (A custom Rust grammar briefly needed `extra_set` to win outright
+/// over `SYNTAX_SET` for the same extension, and this function's
+/// per-candidate order was flipped for that — reverted along with that
+/// grammar; every entry in `BUNDLED_GRAMMARS` again exists only for
+/// extensions `syntect`'s own set has no grammar for at all, so which
+/// set is checked first never actually matters.)
+///
 /// If no candidate matched a real grammar by name, tries
 /// `EXTENSION_ALIASES` next (an extension with no grammar of its own
 /// borrowing an existing one close enough to be useful, e.g. `.rc`/

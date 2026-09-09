@@ -137,6 +137,36 @@ Near-term, actionable items. Full staged plan:
       suffix itself is handled in `Editor::view`, not the grammar: it
       retries the same name/extension lookup with one trailing `.sdk`
       stripped, a general mechanism rather than a CMake-specific hack
+- [ ] Rust (`.rs`) highlighting still uses `syntect`'s own bundled
+      default grammar — tried swapping in github.com/rust-lang/
+      rust-enhanced (a more detailed community `.sublime-syntax`) to get
+      closer to what VS Code + rust-analyzer shows, including two local
+      patches (an ordinary type name like `PathBuf` used as a plain
+      field/parameter type got no color at all; primitive types like
+      `bool` shared a literal scope with the `let`/`const`/`static`
+      keywords, so no theme could color them differently) — reverted
+      anyway, didn't hold up well enough against real-world comparison
+      to be worth keeping. Note: rust-analyzer's own VS Code extension
+      ships *no* grammar of its own (confirmed directly, its
+      `package.json` has no `contributes.grammars`) — it's a pure LSP
+      client layering real *semantic* tokens over VS Code's own built-in
+      Rust grammar, which is itself a `.tmLanguage.json` (plist) file
+      `syntect` can't load at all (same "`.tmLanguage`, not
+      `.sublime-syntax`" wall PowerShell hit — see above). So "just get
+      VS Code's real grammar" isn't actually on the table either way.
+- [ ] **Evaluate**: is writing our *own* `.sublime-syntax` Rust grammar
+      from scratch (rather than adopting/patching an existing one, per
+      the above) worth doing at all — scope it out before committing to
+      it:
+      how much of `syntect`'s existing bundled Rust grammar is actually
+      already fine vs. genuinely under-highlighting; how far a
+      hand-written grammar could realistically get without drifting
+      into reimplementing a real parser; whether the two local-patch
+      lessons above (type-position CamelCase heuristic, primitive types
+      needing their own scope distinct from keywords) are cheap wins
+      worth folding into a fresh grammar or symptomatic of a much bigger
+      gap. Purely a sizing/scoping task — no grammar work until this is
+      done and reviewed.
 
 ## RESOLVED: Ctrl+S / Ctrl+C / Ctrl+V / Ctrl+X (2026-09-04)
 

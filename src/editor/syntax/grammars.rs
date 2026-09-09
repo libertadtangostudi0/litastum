@@ -74,6 +74,16 @@ use tracing::warn;
 ///   attribute. Deliberately modest (comments, strings, numbers,
 ///   punctuation, tile-type labels, attribute names), not an
 ///   exhaustive enumeration of DCL's full tile/attribute vocabulary.
+///
+/// A custom Rust grammar (github.com/rust-lang/rust-enhanced) was tried
+/// here too, to get closer to VS Code's own highlighting -- reverted:
+/// even after two rounds of local patches (widening its type coverage,
+/// then unifying primitive vs. named types onto one scope), it still
+/// didn't hold up against real-world comparison and was pulled rather
+/// than chase it further. `.rs` is back to `syntect`'s own bundled
+/// grammar, same as before that attempt -- see
+/// `syntect_bundles_rust_but_not_powershell` below for confirmation
+/// it's genuinely there.
 const BUNDLED_GRAMMARS: &[&str] = &[
     include_str!("../../../assets/syntax/PowerShell.sublime-syntax"),
     include_str!("../../../assets/syntax/INI.sublime-syntax"),

@@ -121,19 +121,35 @@ pub fn load_active_theme() -> (Theme, Option<SynTheme>) {
 
 
 /// The out-of-the-box default, when nothing is configured (or whatever
-/// *is* configured fails to load) — the bundled `themes/github-dark.json`
-/// scheme, for both halves. Falls back further to the hardcoded
-/// `Theme::dark()`/`syntax::SYNTAX_THEME` ("dracula") only if that file
-/// is itself somehow missing or fails to parse — same "never blocks
-/// startup, always degrade gracefully" rule as the rest of this module,
-/// just one level deeper than before (the bundled default theme used to
-/// just *be* `Theme::dark()`/`None`; now it's a real theme file, so
-/// loading it can fail the same way a user-configured one can).
+/// *is* configured fails to load) — the bundled
+/// `themes/github-dark-default.json` scheme, for both halves. Falls
+/// back further to the hardcoded `Theme::dark()`/`syntax::SYNTAX_THEME`
+/// ("dracula") only if that file is itself somehow missing or fails to
+/// parse — same "never blocks startup, always degrade gracefully" rule
+/// as the rest of this module, just one level deeper than before (the
+/// bundled default theme used to just *be* `Theme::dark()`/`None`; now
+/// it's a real theme file, so loading it can fail the same way a
+/// user-configured one can).
+///
+/// **"github-dark-default", not "github-dark"**: VS Code's own GitHub
+/// theme extension ships several dark variants (`GitHub Dark`, `GitHub
+/// Dark Default`, `GitHub Dark Dimmed`, `GitHub Dark High Contrast`,
+/// ...) that are genuinely different palettes, not just naming — a
+/// first pass at this bundled `github-dark.json` from a third-party
+/// terminal-scheme mirror (`mbadolato/iTerm2-Color-Schemes`) turned out
+/// to notably mismatch the user's own real VS Code theme, "GitHub Dark
+/// Default" specifically (confirmed directly against `@primer/primitives`'
+/// own published color tokens, the actual source of truth VS Code's
+/// theme is generated from — e.g. `foreground` is `#c9d1d9` there, not
+/// `#e6edf3`, and every ANSI color is shifted). `github-dark.json`
+/// itself is kept around, unchanged, as a separate, still-selectable
+/// theme (F9 → Options → Color schemes) for the classic variant — this
+/// function just no longer treats it as *the* default.
 fn default_theme() -> (Theme, Option<SynTheme>) {
-    match find_scheme("github-dark") {
+    match find_scheme("github-dark-default") {
         Some(scheme) => (scheme.to_theme(), Some(scheme.to_syntax_theme())),
         None => {
-            warn!("bundled default theme \"github-dark\" not found; falling back to the hardcoded built-in theme");
+            warn!("bundled default theme \"github-dark-default\" not found; falling back to the hardcoded built-in theme");
             (Theme::dark(), None)
         }
     }
@@ -481,21 +497,30 @@ mod tests {
         assert_eq!(scheme.name, "AlienBlood");
     }
 
-    /// The bundled default theme (`themes/github-dark.json`) must
-    /// actually be found via the same cwd fallback -- `default_theme`
-    /// silently falls back to the hardcoded built-in if this file is
-    /// ever missing or renamed, so a broken bundling wouldn't otherwise
-    /// show up as a loud failure anywhere.
+    /// The classic (non-default) "GitHub Dark" variant is still bundled
+    /// and selectable, just not the code-level default -- see
+    /// `default_theme`'s own doc comment.
     #[test]
-    fn find_scheme_finds_the_bundled_default_github_dark_theme() {
+    fn find_scheme_finds_the_bundled_classic_github_dark_theme() {
         let scheme = find_scheme("github-dark").expect("github-dark.json should parse");
         assert_eq!(scheme.name, "GitHub Dark");
     }
 
+    /// The bundled default theme (`themes/github-dark-default.json`)
+    /// must actually be found via the same cwd fallback --
+    /// `default_theme` silently falls back to the hardcoded built-in if
+    /// this file is ever missing or renamed, so a broken bundling
+    /// wouldn't otherwise show up as a loud failure anywhere.
     #[test]
-    fn default_theme_resolves_both_halves_from_the_bundled_github_dark_file() {
+    fn find_scheme_finds_the_bundled_default_github_dark_default_theme() {
+        let scheme = find_scheme("github-dark-default").expect("github-dark-default.json should parse");
+        assert_eq!(scheme.name, "GitHub Dark Default");
+    }
+
+    #[test]
+    fn default_theme_resolves_both_halves_from_the_bundled_github_dark_default_file() {
         let (_theme, syntax_theme) = default_theme();
-        assert!(syntax_theme.is_some(), "the bundled github-dark.json should also drive the editor's syntax theme, not just the interface");
+        assert!(syntax_theme.is_some(), "the bundled github-dark-default.json should also drive the editor's syntax theme, not just the interface");
     }
     }
 }
