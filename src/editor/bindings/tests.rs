@@ -16,19 +16,33 @@ fn test_state(contents: &str) -> (EditorState, EditorEventHandler) {
     (state, EditorEventHandler::new(standard_key_handler()))
 }
 
-/// Drives one key through the real table, then the same two
-/// correction passes `Editor::input` runs, in the same order -- see
-/// that method's own doc comment. Most of this module's tests only
-/// need the raw table (`handler.on_key_event` alone), but the
-/// fresh-Shift-arrow-selection tests specifically exercise the
-/// interaction between the table (which no longer performs any
-/// `Move` on its own for those keys) and
-/// `anchor_fresh_shift_selection`/`wrap_line_boundary_arrow_movement`,
-/// which only ever run as part of `Editor::input` -- calling
-/// `handler.on_key_event` alone here would only show the table's own
-/// half of the fix and silently miss the other half, exactly the
-/// mistake a first version of the `Shift+Left` test below made.
-fn input(state: &mut EditorState, handler: &mut EditorEventHandler, key_event: crossterm::event::KeyEvent) {
+/// Drives one key through the real table, then the same correction
+/// passes `Editor::input` runs, in the same order -- see that method's
+/// own doc comment. Most of this module's tests only need the raw
+/// table (`handler.on_key_event` alone), but the fresh-Shift-arrow-
+/// selection tests specifically exercise the interaction between the
+/// table (which no longer performs any `Move` on its own for those
+/// keys) and `anchor_fresh_shift_selection`/
+/// `wrap_line_boundary_arrow_movement`/
+/// `exclude_landing_column_on_fresh_vertical_selection`/
+/// `close_selection_if_back_on_the_anchors_row`, which only ever run
+/// as part of `Editor::input` -- calling `handler.on_key_event` alone
+/// here would only show the table's own half of the fix and silently
+/// miss the other half, exactly the mistake a first version of the
+/// `Shift+Left` test below made.
+///
+/// `vertical_shift_anchor_col` stands in for `Editor`'s own field of
+/// the same name -- a real `Editor` carries it across presses on
+/// `self`; a test has no `Editor` to hang it off, so callers declare
+/// one `let mut vertical_shift_anchor_col = None;` per test and thread
+/// it through every `input(...)` call in that test, same lifetime as
+/// the real field has across a real editing session.
+fn input(
+    state: &mut EditorState,
+    handler: &mut EditorEventHandler,
+    key_event: crossterm::event::KeyEvent,
+    vertical_shift_anchor_col: &mut Option<usize>,
+) {
     let cursor_before = state.cursor;
     let mode_before = state.mode;
     handler.on_key_event(key_event, state);
@@ -39,6 +53,13 @@ fn input(state: &mut EditorState, handler: &mut EditorEventHandler, key_event: c
     if !anchored_on_a_real_character {
         wrap_line_boundary_arrow_movement(state, key_event.code, key_event.modifiers, cursor_before);
     }
+
+    if freshly_entered_visual && matches!(key_event.code, KeyCode::Up | KeyCode::Down) {
+        *vertical_shift_anchor_col = Some(cursor_before.col);
+        exclude_landing_column_on_fresh_vertical_selection(state, key_event.code);
+    }
+
+    close_selection_if_back_on_the_anchors_row(state, key_event.code, vertical_shift_anchor_col);
 }
 
 #[test]
@@ -67,7 +88,8 @@ fn shift_right_starts_a_selection() {
 #[test]
 fn shift_right_selects_exactly_one_character_not_two() {
     let (mut state, mut handler) = test_state("Draft architecture");
-    input(&mut state, &mut handler, shift_key(KeyCode::Right));
+    let mut vertical_shift_anchor_col = None;
+    input(&mut state, &mut handler, shift_key(KeyCode::Right), &mut vertical_shift_anchor_col);
 
     {
         let selection = state.selection.as_ref().expect("should have started a selection");
@@ -93,8 +115,9 @@ fn shift_right_selects_exactly_one_character_not_two() {
 fn shift_left_selects_the_character_actually_to_the_left() {
     let (mut state, mut handler) = test_state("Draft architecture");
     state.cursor.col = 6; // right before the 'a' of "architecture"
+    let mut vertical_shift_anchor_col = None;
 
-    input(&mut state, &mut handler, shift_key(KeyCode::Left));
+    input(&mut state, &mut handler, shift_key(KeyCode::Left), &mut vertical_shift_anchor_col);
 
     {
         let selection = state.selection.as_ref().expect("should have started a selection");
@@ -108,105 +131,91 @@ fn shift_left_selects_the_character_actually_to_the_left() {
     assert_eq!(String::from(state.lines.clone()), "Draft architecture ", "should have copied the space, not 'a'");
 }
 
-/// Regression test for the real report that the `Left`/`Right` fix
-/// above got wrongly applied to `Shift+Down` too: it started
-/// selecting only one character to the right instead of moving to
-/// the next line at the same column, with the second press then
-/// landing one column off. `Shift+Down` never had the "N+1, not N"
-/// bug in the first place -- the fresh table entry keeps its
-/// original chained `Move` (see `shift_select.rs`'s own doc comment
-/// for why `Up`/`Down` are scoped out of *that* fix entirely).
-///
-/// `state.cursor.col` lands one column *short* of the press's own
-/// starting column (`shift_select.rs`'s own, separate "exclude the
-/// destination row's own landing column" fix, below) -- this is the
-/// *data*, kept at the last actually-selected cell same as every
-/// other selection in this codebase; the real terminal's own bar
-/// cursor still renders one column further right (`Editor::cursor_screen_position`'s
-/// existing "+1 while extending forward" shift), so it visually
-/// looks like it landed on the same column, matching what a user
-/// actually sees.
+/// A fresh `Shift+Down` lands one column *short* of the aligned
+/// destination column, not on it -- reported against real, aligned
+/// text (a word landing on the identical column on both lines): the
+/// destination row's own copy of that word must not get swept into the
+/// selection too, since `MoveDown` never touches `.col` and would
+/// otherwise land squarely on top of it. See
+/// `shift_select.rs::anchor_fresh_shift_selection`'s own doc comment
+/// for the full history (this trim was tried, reverted for breaking
+/// round-trip symmetry, then re-added once there was somewhere --
+/// `Editor::vertical_shift_anchor_col` -- to track the pre-trim column
+/// for `shift_down_then_shift_up_returns_to_an_empty_selection_at_the_start`
+/// below to restore).
 #[test]
-fn shift_down_moves_to_the_next_line_at_the_same_column() {
+fn shift_down_lands_one_column_short_of_the_aligned_destination() {
     let (mut state, mut handler) = test_state("line one\nline two");
     state.cursor.col = 2; // the 'n' of "line", first line
+    let mut vertical_shift_anchor_col = None;
 
-    input(&mut state, &mut handler, shift_key(KeyCode::Down));
+    input(&mut state, &mut handler, shift_key(KeyCode::Down), &mut vertical_shift_anchor_col);
 
-    assert_eq!(state.cursor, Index2 { row: 1, col: 1 }, "data should land one column short of the starting column -- the render layer, not the data, is what makes it look aligned");
+    assert_eq!(state.cursor, Index2 { row: 1, col: 1 }, "should have trimmed the aligned landing column by one");
 }
 
-/// A second `Shift+Down` press must keep descending, one line at a
-/// time, from the *same* column each time -- not drift further left
-/// with each additional row (`MoveDown` never touches `.col` on its
-/// own, so the first press's one-time adjustment should just carry
-/// forward unchanged).
+/// A second `Shift+Down` press keeps descending one line at a time from
+/// wherever the first press's trim left the column -- the trim only
+/// ever applies once, on the fresh press (`MoveDown` never touches
+/// `.col` on its own, so there's nothing further to trim on a
+/// continuing press).
 #[test]
-fn repeated_shift_down_keeps_the_same_column() {
+fn repeated_shift_down_keeps_the_trimmed_column() {
     let (mut state, mut handler) = test_state("one\ntwo\nthree");
     state.cursor.col = 1;
+    let mut vertical_shift_anchor_col = None;
 
-    input(&mut state, &mut handler, shift_key(KeyCode::Down));
-    input(&mut state, &mut handler, shift_key(KeyCode::Down));
+    input(&mut state, &mut handler, shift_key(KeyCode::Down), &mut vertical_shift_anchor_col);
+    input(&mut state, &mut handler, shift_key(KeyCode::Down), &mut vertical_shift_anchor_col);
 
-    assert_eq!(state.cursor, Index2 { row: 2, col: 0 }, "should still be one column short of the original column 1, two rows down -- not drifting any further");
+    assert_eq!(state.cursor, Index2 { row: 2, col: 0 }, "column 1 trimmed to 0 on the first press, unchanged on the second");
 }
 
-/// Regression test for the real report against real text: two lines
-/// with a word aligned on the identical column
-/// (`"config.rs    — LATER..."` / `"editor.rs    — LATER..."`),
-/// cursor right before that word on the first line, one
-/// `Shift+Down` -- the destination line's own copy of that word must
-/// not be swept into the selection too. Checks the actual copied
-/// text directly, independent of any `state.selection`/`state.cursor`
-/// coordinate assertion, matching this file's own established "check
-/// copying separately" pattern.
+/// Regression test for the real report that broke an earlier version
+/// of the landing-column trim above (see `shift_select.rs`'s own doc
+/// comment for the full story): pressing `Shift+Down` then `Shift+Up`
+/// (or the reverse) must return to *exactly* the starting point with
+/// nothing selected -- `edtui`'s inclusive-both-ends model can't
+/// represent an empty selection as `Some` at all, so landing back on
+/// the anchor's own cell must close the selection entirely, same as
+/// the word-select "Tenth"/"Eleventh" fixes elsewhere in this codebase.
+/// `MoveDown`/`MoveUp` never re-derive `.col`, they just carry forward
+/// whatever's already in `state.cursor` -- so without
+/// `vertical_shift_anchor_col` tracking the true, pre-trim column
+/// separately, the one-time trim on the way down never got undone on
+/// the way back up, leaving a stray one-character selection (`"te"` in
+/// the real report, cursor between "t" and "e" of a word) instead of
+/// nothing.
 #[test]
-fn shift_down_copies_up_to_but_not_including_the_aligned_word() {
-    let (mut state, mut handler) = test_state("aaa LATER one\nbbb LATER two");
-    state.cursor.col = 4; // right before 'L', both lines aligned
+fn shift_down_then_shift_up_returns_to_an_empty_selection_at_the_start() {
+    let (mut state, mut handler) = test_state("terminal one\nterminal two");
+    state.cursor.col = 4; // between the 't' and 'e' of "terminal"
+    let start = state.cursor;
+    let mut vertical_shift_anchor_col = None;
 
-    input(&mut state, &mut handler, shift_key(KeyCode::Down));
+    input(&mut state, &mut handler, shift_key(KeyCode::Down), &mut vertical_shift_anchor_col);
+    input(&mut state, &mut handler, shift_key(KeyCode::Up), &mut vertical_shift_anchor_col);
 
-    handler.on_key_event(ctrl_key('c'), &mut state);
-    handler.on_key_event(key(KeyCode::End), &mut state);
-    handler.on_key_event(ctrl_key('v'), &mut state);
-
-    assert_eq!(
-        String::from(state.lines.clone()),
-        "aaa LATER one\nbbb LATER twoLATER one\nbbb ",
-        "copied text should be \"LATER one\\nbbb \" -- the second line's own \"LATER\" must not be included"
-    );
+    assert_eq!(state.cursor, start, "should be back exactly where it started");
+    assert_eq!(state.mode, EditorMode::Insert, "should have closed the selection entirely, not left one character selected");
+    assert!(state.selection.is_none());
 }
 
-/// Mirror-image regression test for `Shift+Up`: cursor right before
-/// the aligned word on the *second* line, one `Shift+Up` -- this
-/// time it's the *starting* line's own copy of the word (now the
-/// selection's bottom edge) that must be excluded, not the
-/// destination's (which lands on the first line and should be kept
-/// in full).
+/// Same round trip, the other order: `Shift+Up` then `Shift+Down`.
 #[test]
-fn shift_up_copies_up_to_but_not_including_the_aligned_words_own_line() {
-    let (mut state, mut handler) = test_state("aaa LATER one\nbbb LATER two");
+fn shift_up_then_shift_down_returns_to_an_empty_selection_at_the_start() {
+    let (mut state, mut handler) = test_state("terminal one\nterminal two");
     state.cursor.row = 1;
-    state.cursor.col = 4; // right before 'L' on the second line
+    state.cursor.col = 4;
+    let start = state.cursor;
+    let mut vertical_shift_anchor_col = None;
 
-    input(&mut state, &mut handler, shift_key(KeyCode::Up));
+    input(&mut state, &mut handler, shift_key(KeyCode::Up), &mut vertical_shift_anchor_col);
+    input(&mut state, &mut handler, shift_key(KeyCode::Down), &mut vertical_shift_anchor_col);
 
-    handler.on_key_event(ctrl_key('c'), &mut state);
-    handler.on_key_event(key(KeyCode::End), &mut state);
-    handler.on_key_event(ctrl_key('v'), &mut state);
-
-    // Pastes at the end of the *first* line this time (Ctrl+Up left
-    // the cursor there, not on the last line) -- the pasted text's
-    // own embedded newline pushes the untouched second line down to
-    // become a third line, unlike the Down test above where the
-    // paste point was already the buffer's last line.
-    assert_eq!(
-        String::from(state.lines.clone()),
-        "aaa LATER oneLATER one\nbbb \nbbb LATER two",
-        "copied text should be \"LATER one\\nbbb \" -- the second line's own \"LATER\" (where the press started) must not be included"
-    );
+    assert_eq!(state.cursor, start, "should be back exactly where it started");
+    assert_eq!(state.mode, EditorMode::Insert, "should have closed the selection entirely, not left one character selected");
+    assert!(state.selection.is_none());
 }
 
 #[test]

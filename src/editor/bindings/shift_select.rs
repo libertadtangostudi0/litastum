@@ -1,6 +1,6 @@
 use crossterm::event::KeyCode;
-use edtui::actions::{Execute, MoveBackward, MoveForward};
-use edtui::{EditorState, Index2};
+use edtui::actions::{Execute, MoveBackward, MoveForward, SwitchMode};
+use edtui::{EditorMode, EditorState, Index2};
 
 /// Reported directly: pressing `Shift+Right` once right before "Draft"
 /// selected two characters, `"Dr"`, not one, `"D"`. Traced to
@@ -89,106 +89,133 @@ use edtui::{EditorState, Index2};
 /// return `true` (see their own doc comment below) -- harmless either
 /// way, since `wrap_line_boundary_arrow_movement` never acts on them.
 ///
-/// **`Up`/`Down`, a separate report against the same fresh-selection
-/// mechanism.** Unlike `Left`/`Right`, `Up`/`Down`'s table entries were
-/// never touched by any of the fixes above -- they still chain
-/// `SwitchMode(Visual)` with their own `Move` (`bindings/mod.rs`'s own
-/// comment explains why: there's no single-character granularity to
-/// get right or wrong for a row jump). Reported anyway, against real
-/// text with two lines aligned so a word landed on the identical column
-/// on both: one `Shift+Down` from right before that word on the first
-/// line selected one row too much -- the *destination* row's own copy
-/// of that word came along too (`"editor.rs    — L"` instead of the
-/// wanted `"editor.rs    — "`). `MoveDown`/`MoveUp` (confirmed directly
-/// from `edtui`'s source) only ever change `state.cursor.row` -- they
-/// never touch `.col` at all, so the destination cell really does land
-/// on the exact same column as the anchor, and `edtui`'s own
-/// inclusive-both-ends model includes whatever's there, same as every
-/// other cell in the range.
+/// **`Up`/`Down` needed the same "exclude one column" treatment too,
+/// after a real report against aligned text** (two lines with a word
+/// landing on the identical column on both): one `Shift+Down` from
+/// right before that word swept the destination row's own copy of it
+/// into the selection too, since `MoveDown`/`MoveUp` (confirmed
+/// directly from `edtui`'s source) only ever change `state.cursor.row`,
+/// never `.col` -- the destination genuinely lands on the exact same
+/// column as the anchor. A first fix (trimming the destination's/
+/// anchor's own edge column by one, mirroring `Right`'s own
+/// single-character logic, mutating `state.cursor.col`/
+/// `selection.start.col` directly) shipped -- **then broke round-trip
+/// symmetry, reported immediately**: `Shift+Down` then `Shift+Up` (or
+/// the reverse) no longer returned to an empty selection at the exact
+/// starting point. Root cause: `MoveDown`/`MoveUp` never re-derive
+/// `.col` from anything, they just carry whatever's already in
+/// `state.cursor` forward -- so the one-time column adjustment from the
+/// first press permanently "poisoned" the column for every future
+/// vertical move in *either* direction, including the reversing one
+/// that's supposed to land exactly back on the anchor.
 ///
-/// For `Down`, the anchor (the cell the press started on) is correctly
-/// included -- same as `Right`'s own "the current cell is the first one
-/// a forward selection should grab" answer -- but the *landing* cell on
-/// the new row shouldn't be, mirroring `Right`'s own single-character
-/// convention applied to the *far* end of a multi-row span instead of a
-/// single cell: back the cursor (and `selection.end`, kept in lock-step
-/// per the `cursor == selection.end` invariant everywhere else in this
-/// codebase) off by one column, so the destination row's own selected
-/// span stops right before that column instead of on it.
-///
-/// For `Up`, it's the mirror image: the press's own *starting* cell (now
-/// the far/bottom end of the selection, sitting in `selection.start`,
-/// untouched by `MoveUp`) is the one that shouldn't be included --
-/// exactly `Left`'s own "the cell the cursor departs from is never the
-/// right answer for a backward selection" logic, just applied to the
-/// anchor instead of the cursor. `selection.start`/`.end` aren't sorted
-/// by row -- whichever field sits on the *larger* row is the selection's
-/// own bottom edge, and (confirmed against `edtui`'s own already-tested
-/// multi-line behavior, not just reasoned from the single-row case)
-/// that edge's own column is *also* an inclusive upper bound on that
-/// row, same direction as `Down`'s `state.cursor` -- so excluding column
-/// `cursor_before.col` there means nudging `selection.start.col`
-/// *back* by one too, not forward (an earlier version of this got the
-/// direction backwards and made things worse, including one character
-/// too many instead of one too few). Doesn't touch `state.cursor` at
-/// all -- the destination (now `selection.end`, at the top) already
-/// landed exactly right, matching `Down`'s own anchor-side answer,
-/// nothing to adjust there.
-///
-/// Both adjustments only ever run once, on the fresh press that opens
-/// the selection (guarded the same way as the rest of this function,
-/// via `Editor::input`'s own `freshly_entered_visual` check) --
-/// `MoveDown`/`MoveUp` never touch `.col` on their own, so whatever this
-/// leaves `state.cursor.col` (for `Down`) or `selection.start.col` (for
-/// `Up`) at simply carries forward unchanged on every further
-/// *continuing* press, without needing to be re-applied or drifting
-/// further with each additional row.
+/// **Reverted first, then re-added with the missing piece**: the
+/// column adjustment alone has nowhere to record what the column was
+/// *before* it got trimmed -- `Up`'s own half of it already mutates
+/// `selection.start` itself, so by the time a reversing press needs to
+/// snap back to the real anchor, `selection.start` no longer reliably
+/// records where the selection actually began. The fix landed once
+/// there was somewhere else to keep that value: `Editor` now owns
+/// `vertical_shift_anchor_col: Option<usize>`, set once (to
+/// `cursor_before.col`, always identical on both ends the instant
+/// `SwitchMode(Visual)` opens a selection -- before either edge has
+/// been trimmed) whenever a fresh `Shift+Up`/`Down` press opens a
+/// selection, alongside the actual column trim
+/// (`exclude_landing_column_on_fresh_vertical_selection`, below).
+/// `close_selection_if_back_on_the_anchors_row` reads that tracked
+/// value back once the excursion is over and restores it to
+/// `state.cursor.col`, so the trimmed, "poisoned" column never survives
+/// past the press that closes the selection -- letting the aligned-word
+/// exclusion and perfect round-trip symmetry coexist, instead of having
+/// to pick one.
 pub(in crate::editor) fn anchor_fresh_shift_selection(state: &mut EditorState, key_code: KeyCode, cursor_before: Index2) -> bool {
     match key_code {
         KeyCode::Right => forward_anchor(state, cursor_before, MoveForward(1)),
         KeyCode::Left => backward_anchor(state, cursor_before, MoveBackward(1)),
-        KeyCode::Down => exclude_the_destination_rows_own_landing_column(state, cursor_before),
-        KeyCode::Up => exclude_the_anchor_rows_own_starting_column(state, cursor_before),
         _ => true,
     }
 }
 
-/// See `anchor_fresh_shift_selection`'s own "Up/Down" doc section. The
-/// table already performed the real row change (`SwitchMode(Visual)
-/// .chain(MoveDown(1))`) before this runs -- this only trims the
-/// landing column back by one, and only when a row change actually
-/// happened (a `Shift+Down` on the very last line makes no progress at
-/// all, nothing to trim).
-fn exclude_the_destination_rows_own_landing_column(state: &mut EditorState, cursor_before: Index2) -> bool {
-    if state.cursor.row == cursor_before.row || state.cursor.col == 0 {
-        return true;
+/// Trims the aligned landing column out of a freshly-opened `Shift+Up`/
+/// `Down` selection -- see `anchor_fresh_shift_selection`'s own doc
+/// comment for the real report this fixes and why it only runs once,
+/// on the press that opens the selection (`Editor::input` calls this
+/// only when `freshly_entered_visual` and the key is `Up`/`Down`;
+/// `MoveUp`/`MoveDown` never touch `.col` themselves, so whatever this
+/// leaves it at simply carries forward unchanged on every later
+/// continuing press).
+///
+/// `Down`: the destination row (`state.cursor`, kept in lock-step with
+/// `selection.end` per this codebase's own cursor-equals-selection-end
+/// invariant) backs off one column so its own row's selected span stops
+/// right before that column. `Up`: it's `selection.start` (the row the
+/// press started on, now the selection's *bottom* edge, never touched
+/// by `MoveUp` itself) that needs the trim instead -- confirmed against
+/// `edtui`'s own multi-line selection convention that whichever raw
+/// `Selection` field sits on the larger row is also an inclusive upper
+/// bound on that row's own selected span, rather than assumed from the
+/// single-row case. Column 0 has nothing to trim into (no adjustment,
+/// same as the destination/anchor genuinely starting at the very
+/// beginning of its own line) -- left untouched rather than
+/// underflowing.
+pub(in crate::editor) fn exclude_landing_column_on_fresh_vertical_selection(state: &mut EditorState, key_code: KeyCode) {
+    match key_code {
+        KeyCode::Down => {
+            if state.cursor.col == 0 {
+                return;
+            }
+            state.cursor.col -= 1;
+            if let Some(selection) = state.selection.as_mut() {
+                selection.end = state.cursor;
+            }
+        }
+        KeyCode::Up => {
+            if let Some(selection) = state.selection.as_mut() {
+                if selection.start.col > 0 {
+                    selection.start.col -= 1;
+                }
+            }
+        }
+        _ => {}
     }
-    state.cursor.col -= 1;
-    if let Some(selection) = state.selection.as_mut() {
-        selection.end = state.cursor;
-    }
-    true
 }
 
-/// See `anchor_fresh_shift_selection`'s own "Up/Down" doc section.
-/// Nudges `selection.start` back by one column, the same direction
-/// `exclude_the_destination_rows_own_landing_column` nudges `state.cursor`
-/// -- both are shrinking their own row's contribution to the selection
-/// by excluding its trailing/leading edge column, just on opposite
-/// fields since `Up`'s anchor sits on the *bottom* row this time
-/// instead of the top. `state.cursor` already landed on the correct
-/// destination cell (`MoveUp` already ran as part of the table's own
-/// chain) and is left untouched.
-fn exclude_the_anchor_rows_own_starting_column(state: &mut EditorState, cursor_before: Index2) -> bool {
-    if state.cursor.row == cursor_before.row || cursor_before.col == 0 {
-        return true;
+/// Called unconditionally from `Editor::input` for every `Shift+Up`/
+/// `Down` press (fresh *and* continuing -- unlike the two functions
+/// above, which only ever run once, on the press that opens a
+/// selection). If the cursor has landed back on the exact row the
+/// selection's own anchor (`selection.start`) sits on, there's nothing
+/// left of this vertical excursion to show as selected -- closes it
+/// entirely, the same "can't represent empty, so close it instead" move
+/// `word_select.rs`'s "Tenth"/"Eleventh" fixes already use for
+/// word-wise selection. Also restores `state.cursor.col` from
+/// `true_anchor_col` first (`Editor::vertical_shift_anchor_col`,
+/// cleared here once used) -- without this, the fresh-press column trim
+/// `exclude_landing_column_on_fresh_vertical_selection` applies would
+/// permanently leave the cursor one column short of where it actually
+/// started, since `MoveUp`/`MoveDown` never re-derive `.col` on their
+/// own to correct it back. A no-op for every other key, and for
+/// `Up`/`Down` themselves whenever nothing is selected yet or the
+/// cursor is still on a genuinely different row.
+pub(in crate::editor) fn close_selection_if_back_on_the_anchors_row(
+    state: &mut EditorState,
+    key_code: KeyCode,
+    true_anchor_col: &mut Option<usize>,
+) {
+    if !matches!(key_code, KeyCode::Up | KeyCode::Down) {
+        return;
     }
-    if let Some(selection) = state.selection.as_mut() {
-        if selection.start == cursor_before {
-            selection.start.col -= 1;
-        }
+    let Some(selection) = state.selection.as_ref() else {
+        return;
+    };
+    if state.cursor.row != selection.start.row {
+        return;
     }
-    true
+    if let Some(col) = true_anchor_col.take() {
+        state.cursor.col = col;
+    }
+    SwitchMode(EditorMode::Normal).execute(state);
+    SwitchMode(EditorMode::Insert).execute(state);
 }
 
 /// `Right`: the anchor cell (where the cursor already sits) is exactly
@@ -230,7 +257,9 @@ mod tests {
     use edtui::actions::{Execute, SwitchMode};
     use edtui::{EditorMode, EditorState, Lines};
 
-    use super::anchor_fresh_shift_selection;
+    use super::{
+        anchor_fresh_shift_selection, close_selection_if_back_on_the_anchors_row, exclude_landing_column_on_fresh_vertical_selection,
+    };
 
     /// Uses the real `SwitchMode(Visual)` action (not a raw
     /// `state.mode = ...` field assignment) specifically so `edtui`
@@ -306,79 +335,119 @@ mod tests {
         assert_eq!(state.cursor.col, 0, "should not have moved");
     }
 
-    /// Builds multi-line state and replicates the table's own chain for
-    /// `Up`/`Down` (`SwitchMode(Visual).chain(MoveDown(1))` or
-    /// `MoveUp(1)`) before `anchor_fresh_shift_selection` ever runs --
-    /// unlike `Left`/`Right`'s fresh table entries, which no longer
-    /// chain any `Move` at all, `Up`/`Down` still do, so this function
-    /// always receives an already-moved state to correct, never a
-    /// freshly-anchored, unmoved one.
-    fn state_after_row_move(contents: &str, cursor_row: usize, cursor_col: usize, key_code: crossterm::event::KeyCode) -> (EditorState, edtui::Index2) {
-        let mut state = EditorState::new(Lines::from(contents));
-        state.mode = EditorMode::Insert;
-        state.cursor.row = cursor_row;
-        state.cursor.col = cursor_col;
-        let cursor_before = state.cursor;
-        SwitchMode(EditorMode::Visual).execute(&mut state);
-        match key_code {
-            crossterm::event::KeyCode::Down => edtui::actions::MoveDown(1).execute(&mut state),
-            crossterm::event::KeyCode::Up => edtui::actions::MoveUp(1).execute(&mut state),
-            _ => unreachable!("only Up/Down are used with this helper"),
+    /// Direct unit coverage for the actual fix, isolated from the
+    /// `MoveUp`/`MoveDown` actions and the rest of `Editor::input`'s
+    /// pipeline (see `bindings/tests.rs` for the full round-trip
+    /// integration tests through real key presses). Simulates "cursor
+    /// landed back on the anchor's own row" by hand -- exactly the
+    /// state a pure vertical excursion leaves behind, since
+    /// `MoveUp`/`MoveDown` never touch `.col`. No `true_anchor_col`
+    /// tracked here (`None`) -- covers the "nothing to restore" case;
+    /// see `restores_the_true_anchor_column_once_closed` below for the
+    /// tracked-column case this exists alongside `Editor`'s own field
+    /// for.
+    #[test]
+    fn closes_the_selection_once_the_cursor_is_back_on_the_anchors_row() {
+        let mut state = state_for("Draft", 1);
+        let anchor_row = state.selection.as_ref().expect("SwitchMode(Visual) should anchor a selection").start.row;
+        state.cursor.row = anchor_row;
+
+        close_selection_if_back_on_the_anchors_row(&mut state, crossterm::event::KeyCode::Down, &mut None);
+
+        assert!(state.selection.is_none(), "should have collapsed the selection entirely");
+        assert_eq!(state.mode, EditorMode::Insert);
+    }
+
+    #[test]
+    fn leaves_the_selection_alone_while_still_on_a_different_row() {
+        let mut state = state_for("Draft", 1);
+        state.cursor.row = 5; // nowhere near the anchor's own row
+
+        close_selection_if_back_on_the_anchors_row(&mut state, crossterm::event::KeyCode::Down, &mut None);
+
+        assert!(state.selection.is_some(), "should still be selecting -- the excursion isn't over yet");
+    }
+
+    #[test]
+    fn is_a_no_op_for_keys_other_than_up_or_down() {
+        let mut state = state_for("Draft", 1);
+        let anchor_row = state.selection.as_ref().expect("SwitchMode(Visual) should anchor a selection").start.row;
+        state.cursor.row = anchor_row;
+
+        close_selection_if_back_on_the_anchors_row(&mut state, crossterm::event::KeyCode::Right, &mut None);
+
+        assert!(state.selection.is_some(), "Right/Left have their own handling -- this function must not touch them");
+    }
+
+    /// Regression coverage for the round-trip fix's own missing piece:
+    /// a fresh vertical selection trims `state.cursor.col` by one (see
+    /// `exclude_landing_column_on_fresh_vertical_selection`), and
+    /// without restoring it here, the cursor would permanently end up
+    /// one column short of where it actually started once the
+    /// selection closes.
+    #[test]
+    fn restores_the_true_anchor_column_once_closed() {
+        let mut state = state_for("terminal one\nterminal two", 4); // between 't' and 'e'
+        let mut true_anchor_col = Some(state.cursor.col);
+        exclude_landing_column_on_fresh_vertical_selection(&mut state, crossterm::event::KeyCode::Down);
+        assert_eq!(state.cursor.col, 3, "should have trimmed the landing column by one");
+
+        let anchor_row = state.selection.as_ref().unwrap().start.row;
+        state.cursor.row = anchor_row; // simulate the reversing Up press landing back here
+
+        close_selection_if_back_on_the_anchors_row(&mut state, crossterm::event::KeyCode::Up, &mut true_anchor_col);
+
+        assert_eq!(state.cursor.col, 4, "should be back on the exact column the excursion started from");
+        assert!(true_anchor_col.is_none(), "should have consumed the tracked value");
+    }
+
+    /// `Down`: the destination row's own copy of whatever sits on the
+    /// aligned column should be excluded -- see
+    /// `anchor_fresh_shift_selection`'s doc comment for the real report.
+    #[test]
+    fn down_trims_the_destination_rows_landing_column() {
+        let mut state = state_for("terminal one\nterminal two", 4);
+        state.cursor.row = 1; // as if MoveDown(1) already ran
+        if let Some(selection) = state.selection.as_mut() {
+            selection.end.row = 1;
         }
-        (state, cursor_before)
+
+        exclude_landing_column_on_fresh_vertical_selection(&mut state, crossterm::event::KeyCode::Down);
+
+        assert_eq!(state.cursor.col, 3);
+        assert_eq!(state.selection.unwrap().end.col, 3, "selection.end must stay in lock-step with the cursor");
     }
 
-    /// Regression test for the real report against real, aligned text:
-    /// one `Shift+Down` right before a word that lands on the identical
-    /// column on the next line too must not sweep that next line's own
-    /// copy of the word into the selection.
+    /// `Up`: the trim applies to `selection.start` instead (the row the
+    /// press started on, now the selection's own bottom edge) --
+    /// `state.cursor` itself is untouched, since `MoveUp` lands it on a
+    /// different row than the one being trimmed.
     #[test]
-    fn down_excludes_the_destination_rows_own_landing_column() {
-        let (mut state, cursor_before) = state_after_row_move("aaa LATER one\nbbb LATER two", 0, 4, crossterm::event::KeyCode::Down);
-        let handled = anchor_fresh_shift_selection(&mut state, crossterm::event::KeyCode::Down, cursor_before);
+    fn up_trims_the_anchors_own_starting_column() {
+        let mut state = state_for("terminal one\nterminal two", 4);
+        state.cursor.row = 1; // press started on row 1
+        if let Some(selection) = state.selection.as_mut() {
+            selection.start.row = 1;
+        }
+        state.cursor.row = 0; // as if MoveUp(1) already ran
 
-        assert!(handled);
-        assert_eq!(state.cursor, edtui::Index2 { row: 1, col: 3 }, "should land one column short of the aligned word");
-        let selection = state.selection.expect("should still have a selection");
-        assert_eq!(selection.start, cursor_before, "the anchor (top row) should stay exactly where the press started");
-        assert_eq!(selection.end, state.cursor);
+        exclude_landing_column_on_fresh_vertical_selection(&mut state, crossterm::event::KeyCode::Up);
+
+        assert_eq!(state.selection.unwrap().start.col, 3);
+        assert_eq!(state.cursor.col, 4, "MoveUp never touches .col -- this function must not either, for Up");
     }
 
-    /// Mirror-image regression test for `Shift+Up`: the press's own
-    /// starting row (now the selection's bottom edge) must exclude its
-    /// own copy of the word, while the destination (top) row keeps it
-    /// in full.
+    /// Column 0 has nothing to trim into -- must not underflow.
     #[test]
-    fn up_excludes_the_anchor_rows_own_starting_column() {
-        let (mut state, cursor_before) = state_after_row_move("aaa LATER one\nbbb LATER two", 1, 4, crossterm::event::KeyCode::Up);
-        let handled = anchor_fresh_shift_selection(&mut state, crossterm::event::KeyCode::Up, cursor_before);
+    fn makes_no_adjustment_at_column_zero() {
+        let mut state = state_for("terminal one\nterminal two", 0);
+        state.cursor.row = 1;
+        if let Some(selection) = state.selection.as_mut() {
+            selection.end.row = 1;
+        }
 
-        assert!(handled);
-        assert_eq!(state.cursor, edtui::Index2 { row: 0, col: 4 }, "the destination (top row) should land exactly on the aligned word, unmodified");
-        let selection = state.selection.expect("should still have a selection");
-        assert_eq!(selection.start, edtui::Index2 { row: 1, col: 3 }, "the anchor (bottom row, where the press started) should be trimmed back by one");
-    }
+        exclude_landing_column_on_fresh_vertical_selection(&mut state, crossterm::event::KeyCode::Down);
 
-    /// `Shift+Down` on the very last line makes no row progress at all
-    /// -- must not panic (column-0 underflow) or otherwise touch
-    /// anything.
-    #[test]
-    fn down_on_the_last_line_makes_no_adjustment() {
-        let (mut state, cursor_before) = state_after_row_move("one\ntwo", 1, 1, crossterm::event::KeyCode::Down);
-        let handled = anchor_fresh_shift_selection(&mut state, crossterm::event::KeyCode::Down, cursor_before);
-        assert!(handled);
-        assert_eq!(state.cursor, edtui::Index2 { row: 1, col: 1 }, "no row change was possible -- must not touch the column");
-    }
-
-    /// `Shift+Up` on the very first line makes no row progress at all --
-    /// same guard, opposite direction.
-    #[test]
-    fn up_on_the_first_line_makes_no_adjustment() {
-        let (mut state, cursor_before) = state_after_row_move("one\ntwo", 0, 1, crossterm::event::KeyCode::Up);
-        let handled = anchor_fresh_shift_selection(&mut state, crossterm::event::KeyCode::Up, cursor_before);
-        assert!(handled);
-        assert_eq!(state.cursor, edtui::Index2 { row: 0, col: 1 });
-        let selection = state.selection.expect("should still have a selection");
-        assert_eq!(selection.start, cursor_before, "no row change was possible -- the anchor must not be trimmed");
+        assert_eq!(state.cursor.col, 0);
     }
 }

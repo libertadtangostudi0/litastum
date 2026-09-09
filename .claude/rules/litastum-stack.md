@@ -143,6 +143,33 @@ module):
   never touch `.col` themselves, so whatever this leaves it at simply
   carries forward unchanged on every further continuing press, with no
   compounding drift.
+
+  **This broke round-trip symmetry, reported later, in a separate
+  session**: `Shift+Down` then `Shift+Up` (or the reverse) no longer
+  returned to an empty selection at the exact starting point -- root
+  cause is the same "no compounding drift" property just described,
+  looked at from the other side: the one-time column adjustment from
+  the first press permanently "poisons" the column for every future
+  vertical move in *either* direction, including a reversing one that's
+  supposed to land exactly back on the anchor. First response was a
+  full revert (`Up`/`Down` back to plain, unmodified `MoveUp`/`MoveDown`,
+  losing the aligned-column exclusion above entirely) -- **and that
+  itself got reported broken on the very next real-world test**: an
+  aligned word got swept into the selection again, the original bug
+  this whole section exists to fix. Landed on keeping *both* properties
+  at once instead of picking one: `Editor` now owns a
+  `vertical_shift_anchor_col: Option<usize>` field, set once (to the
+  pre-trim column) alongside the adjustment above, on every fresh
+  `Shift+Up`/`Down` press -- `close_selection_if_back_on_the_anchors_row`
+  (`bindings/shift_select.rs`) restores `state.cursor.col` from it and
+  collapses the selection the moment the cursor returns to the anchor's
+  own row (unconditionally, on *every* `Up`/`Down` press, not just the
+  fresh one -- `edtui`'s inclusive-both-ends model still can't represent
+  an empty selection any other way). The column adjustment itself had
+  nowhere to keep the pre-trim value on its own (`Up`'s own half already
+  mutates `selection.start`, the only other candidate), which is why
+  this needed a field on `Editor` rather than something derivable from
+  `EditorState` alone.
 - `capture_on_insert: false` (the vim-mode default) relies on
   `SwitchMode(Insert)` transitions to create undo checkpoints. Our
   keymap sets `state.mode = Insert` once directly at open and mostly

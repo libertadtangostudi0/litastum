@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent};
 use edtui::syntect::highlighting::Theme as SynTheme;
 use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, LineNumbers, Lines};
 use ratatui::style::Style;
@@ -11,7 +11,10 @@ use tracing::{debug, warn};
 
 use crate::theming::Theme;
 
-use super::bindings::{anchor_fresh_shift_selection, standard_key_handler, wrap_line_boundary_arrow_movement};
+use super::bindings::{
+    anchor_fresh_shift_selection, close_selection_if_back_on_the_anchors_row, exclude_landing_column_on_fresh_vertical_selection,
+    standard_key_handler, wrap_line_boundary_arrow_movement,
+};
 use super::clipboard::OsClipboardBridge;
 use super::syntax::resolve_syntax_highlighter;
 
@@ -50,6 +53,20 @@ pub struct Editor {
     /// variant means and `extend_word_selection`'s body for exactly how
     /// it's read and updated.
     word_select_touch: WordSelectTouch,
+    /// The column a `Shift+Up`/`Down` selection actually started at,
+    /// before `exclude_landing_column_on_fresh_vertical_selection`
+    /// trims one edge of it by a column -- `None` whenever no such
+    /// selection is open. Has to live here, not inside `EditorState`
+    /// itself: the trim mutates `state.cursor.col`/`selection.start.col`
+    /// directly (there's no other way to exclude the aligned landing
+    /// column from an inclusive-both-ends selection), so once that
+    /// happens neither field reliably remembers the pre-trim value any
+    /// more -- `close_selection_if_back_on_the_anchors_row` reads this
+    /// back to restore it once the excursion closes. See
+    /// `bindings::shift_select`'s own doc comment for the full history
+    /// of why this needed its own tracked field rather than being
+    /// re-derivable from `EditorState` alone.
+    vertical_shift_anchor_col: Option<usize>,
 }
 
 /// See `Editor::word_select_touch`'s own doc comment for why this
@@ -123,6 +140,7 @@ impl Editor {
             custom_syntax_theme,
             first_line,
             word_select_touch: WordSelectTouch::Untouched,
+            vertical_shift_anchor_col: None,
         })
     }
 
@@ -132,7 +150,7 @@ impl Editor {
     /// there that's a plain character still inserts, since the editor
     /// stays in `EditorMode::Insert` outside an active selection.
     ///
-    /// Two post-table correction passes run in sequence, both only ever
+    /// Post-table correction passes run in sequence, all only ever
     /// *adding* behavior the table's own declarative chaining couldn't
     /// express on its own (see each one's own doc comment for why):
     ///
@@ -153,8 +171,28 @@ impl Editor {
     ///    signal that a plain arrow press hit a wall, and treating it as
     ///    one would wrongly wrap an ordinary mid-line `Shift+Right` down
     ///    into the next line.
+    /// 3. `exclude_landing_column_on_fresh_vertical_selection` -- only
+    ///    when this key just opened a fresh `Shift+Up`/`Down` selection.
+    ///    Trims the aligned landing column out of it (see that
+    ///    function's own doc comment for the real report), and records
+    ///    the pre-trim column into `vertical_shift_anchor_col` first, so
+    ///    step 4 below can restore it later.
+    /// 4. `close_selection_if_back_on_the_anchors_row` -- runs
+    ///    unconditionally for every `Shift+Up`/`Down` press, fresh or
+    ///    continuing. Closes the selection entirely once the cursor
+    ///    lands back on the exact row it started a vertical excursion
+    ///    from, since `MoveUp`/`MoveDown` never touch the column, so
+    ///    that always means landing back on the anchor exactly --
+    ///    without this, a `Shift+Down`+`Shift+Up` round trip (or the
+    ///    reverse) would leave a phantom one-character selection instead
+    ///    of returning to nothing, since `edtui`'s inclusive model can't
+    ///    represent a zero-width selection on its own. Also restores
+    ///    `state.cursor.col` from `vertical_shift_anchor_col` (step 3's
+    ///    tracked value) at the same time -- without that, step 3's own
+    ///    trim would leave the cursor permanently one column short of
+    ///    where the excursion actually started.
     ///
-    /// Every other key (and every already-working press these two don't
+    /// Every other key (and every already-working press these don't
     /// apply to) passes through completely unaffected.
     pub fn input(&mut self, key: KeyEvent) {
         let cursor_before = self.state.cursor;
@@ -168,6 +206,13 @@ impl Editor {
         if !anchored_on_a_real_character {
             wrap_line_boundary_arrow_movement(&mut self.state, key.code, key.modifiers, cursor_before);
         }
+
+        if freshly_entered_visual && matches!(key.code, KeyCode::Up | KeyCode::Down) {
+            self.vertical_shift_anchor_col = Some(cursor_before.col);
+            exclude_landing_column_on_fresh_vertical_selection(&mut self.state, key.code);
+        }
+
+        close_selection_if_back_on_the_anchors_row(&mut self.state, key.code, &mut self.vertical_shift_anchor_col);
     }
 
 

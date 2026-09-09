@@ -14,7 +14,9 @@ mod shift_select;
 mod word_select;
 
 pub(super) use line_wrap::wrap_line_boundary_arrow_movement;
-pub(super) use shift_select::anchor_fresh_shift_selection;
+pub(super) use shift_select::{
+    anchor_fresh_shift_selection, close_selection_if_back_on_the_anchors_row, exclude_landing_column_on_fresh_vertical_selection,
+};
 pub(super) use word_select::extend_word_selection;
 
 /// A non-modal (VSCode/Windows-convention) keymap for `edtui`, which
