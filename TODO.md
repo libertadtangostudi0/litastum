@@ -364,6 +364,17 @@ panel there with the file selected. Far Manager's own Alt+F7 — reached
 through the menu *and* bound directly (`command_line.rs`), matching
 real Far.
 
+- [x] `F4` on a result opens it in the built-in editor, same as `F4`
+      from the browser — does nothing for a directory result (search
+      results can match directory names too) or a non-UTF-8 file, same
+      as the browser's own `F4`.
+- [x] `Tab` on a result performs the same directory navigation `Enter`
+      does (moves the active panel there, selects the file), but leaves
+      the popup open in `FindFilePhase::Results` instead of closing it
+      — requested directly so further results can still be browsed
+      (`Up`/`Down`, or `Tab` again on a different one) with the panel
+      updating in the background each time, without reopening Find file.
+
 - [x] Recursive substring search (`find_file::search`, case-insensitive,
       matches directory names too, not just files), capped at 200
       results / 50,000 visited entries so a huge tree (a repo's own

@@ -138,6 +138,10 @@ fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Th
     let hint = Line::from(vec![
         Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
         Span::styled(" go to  ", Style::default().fg(theme.text_dim)),
+        Span::styled("Tab", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" peek  ", Style::default().fg(theme.text_dim)),
+        Span::styled("F4", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" edit  ", Style::default().fg(theme.text_dim)),
         Span::styled("Ctrl+S", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
         Span::styled(" export  ", Style::default().fg(theme.text_dim)),
         Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
