@@ -48,11 +48,6 @@ pub fn shift_key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::SHIFT)
 }
 
-/// A `Ctrl+Shift`-held key press.
-pub fn ctrl_shift_key(code: KeyCode) -> KeyEvent {
-    KeyEvent::new(code, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
-}
-
 /// A real `App` (no terminal needed — `App::new` just wants a
 /// directory) rooted at `dir`, with the dark built-in theme and no
 /// custom syntax theme — the common case across every test that needs
