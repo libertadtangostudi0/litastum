@@ -36,6 +36,25 @@ pub enum Command {
     /// (`Mode::ConfirmDelete`), never deletes directly. Matches Far
     /// Manager's own F8 binding.
     DeleteSelected,
+    /// `Shift+A` (only on an empty command line — see
+    /// `command_line::handle_browsing_key`'s own doc comment on this)
+    /// — marks every entry in the active panel except `..`
+    /// (`panel/marks.rs::select_all`). Modifier-specific, resolved
+    /// directly in `command_line::handle_browsing_key` rather than
+    /// through this module's `resolve` table, same reason as
+    /// `RenameSelected` above.
+    SelectAll,
+    /// `Shift+Up` — toggles the mark on the entry under the cursor,
+    /// then moves up one row (`panel/marks.rs::toggle_mark_move_up`).
+    MarkMoveUp,
+    /// `Shift+Down` — mirror of `MarkMoveUp`.
+    MarkMoveDown,
+    /// `Shift+Left` — toggles the mark on every entry the existing
+    /// paginated column jump (`Panel::move_left`) crosses
+    /// (`panel/marks.rs::toggle_mark_move_left`).
+    MarkMoveLeft,
+    /// `Shift+Right` — mirror of `MarkMoveLeft`.
+    MarkMoveRight,
     Quit,
 }
 

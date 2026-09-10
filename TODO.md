@@ -604,11 +604,15 @@ matching Far Manager's own F8), `N`/`Esc` cancels with nothing touched.
 - [x] Confirmation prompt + actual delete, single entry under the
       cursor (`keymap.rs::ConfirmDeleteCommand`,
       `main.rs::handle_confirm_delete_key`)
-- [ ] No multi-select — Far Manager lets you mark several entries and
-      delete them together; this only ever acts on the entry currently
-      under the cursor. Marking itself now exists (`panel/marks.rs`,
-      `Shift+A`/`Shift+Up`/`Down`/`Left`/`Right`, wired into F5/F6 — see
-      "Copy / Move" above); F8 just doesn't read it yet
+- [x] Multi-select — `F8` deletes every entry currently marked in the
+      active panel (`Panel::marked_or_current`, shared with F5/F6's own
+      `transfer_sources`) if any are, falling back to the cursor entry
+      otherwise. `PendingDelete` now holds `entries: Vec<DeleteEntry>`
+      rather than a single path/name/is_dir/size; a failure on one entry
+      is only logged and doesn't stop the rest. The popup shows the
+      name for a single entry or `"N items"` + the shared parent
+      directory for several, mirroring the transfer popup's own
+      single-vs-multiple wording
 - [ ] A failed delete (permissions, file in use, ...) is only logged
       (`debug!`), not shown to the user — no status-bar message surface
       exists yet (same gap as the non-UTF-8-file case above)

@@ -1,10 +1,12 @@
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
 
 use super::entry::Entry;
 
+mod marks;
 mod natural_sort;
 
 use natural_sort::natural_compare;
@@ -56,6 +58,20 @@ pub struct Panel {
     /// disables scroll adjustment entirely rather than dividing by
     /// zero or scrolling based on a stale guess.
     visible_rows: usize,
+    /// Names of the entries currently marked (Far Manager-style
+    /// multi-select) in this panel -- `Ctrl+A` (`select_all`) and
+    /// `Ctrl+Up`/`Down`/`Left`/`Right` (`marks.rs`), rendered via
+    /// `ui::build_list_item`. Keyed by name rather than index into
+    /// `entries` so a mark survives an in-place `reload()` (a file
+    /// changing on disk, or the panel being refreshed after an
+    /// operation elsewhere) as long as the entry is still listed --
+    /// an index-based set would silently point at the wrong entry the
+    /// moment sorting or the entry count shifted. Cleared explicitly on
+    /// an actual directory change (`enter_selected`/`change_dir`)
+    /// instead, where carrying marks over would be meaningless (they'd
+    /// almost certainly land on unrelated entries in the new
+    /// directory).
+    marked: HashSet<String>,
 }
 
 
@@ -69,6 +85,7 @@ impl Panel {
             columns: 1,
             scroll_offset: 0,
             visible_rows: 0,
+            marked: HashSet::new(),
         };
         panel.reload()?;
         Ok(panel)
@@ -378,6 +395,7 @@ impl Panel {
 
         self.path = new_path;
         self.selected = 0;
+        self.marked.clear();
         self.reload()
     }
 
@@ -405,6 +423,7 @@ impl Panel {
         }
         self.path = new_path;
         self.selected = 0;
+        self.marked.clear();
         self.reload()
     }
 }

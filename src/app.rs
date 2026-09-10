@@ -46,22 +46,38 @@ pub enum Mode {
 }
 
 
-/// The entry F8 was pressed on, held while `Mode::ConfirmDelete` asks
-/// for confirmation — captured up front (rather than re-reading
-/// `panel.current()` at confirm time) so the prompt still names and
-/// deletes the right entry even if the cursor moves or the panel
-/// reloads for some other reason while the prompt is up.
-pub struct PendingDelete {
+/// One entry F8 is deleting, held (along with the rest of
+/// `PendingDelete::entries`) while `Mode::ConfirmDelete` asks for
+/// confirmation — captured up front (rather than re-reading the panel
+/// at confirm time) so the prompt still names and deletes exactly the
+/// entries it was opened for even if the cursor or the panel's marks
+/// change while it's up.
+pub struct DeleteEntry {
     pub path: PathBuf,
     pub name: String,
     pub is_dir: bool,
     /// `Entry::size` at the time F8 was pressed -- shown in the delete
-    /// popup (`ui/confirm.rs`), the first real use of that field (see
-    /// its own doc comment in `explorer/entry.rs`). Meaningless for a
-    /// directory (a filesystem's own reported size for a directory
-    /// entry is some small OS-internal number, not its recursive
-    /// contents' total), so the popup only displays it for a file.
+    /// popup (`ui/confirm.rs`) for a single entry, the first real use
+    /// of that field (see its own doc comment in `explorer/entry.rs`).
+    /// Meaningless for a directory (a filesystem's own reported size
+    /// for a directory entry is some small OS-internal number, not its
+    /// recursive contents' total), so the popup only displays it for a
+    /// file.
     pub size: u64,
+}
+
+
+/// F8 was pressed: shown as a "delete this?" prompt over the browser
+/// rather than deleting immediately.
+pub struct PendingDelete {
+    /// Every entry being deleted. Almost always one entry -- F8 pressed
+    /// with nothing marked in the active panel, the entry under the
+    /// cursor -- but every entry currently marked there when at least
+    /// one is (`explorer::command::request_delete`), same "marked set
+    /// wins over the cursor" rule `PendingTransfer::sources` uses for
+    /// F5/F6. Never empty -- `request_delete` doesn't open this prompt
+    /// at all if there'd be nothing in it.
+    pub entries: Vec<DeleteEntry>,
 }
 
 
@@ -73,21 +89,53 @@ pub enum TransferOp {
 }
 
 
-/// The entry F5/F6 was pressed on, held while `Mode::ConfirmTransfer`
-/// asks for (and lets the user edit) a destination — captured up front
-/// for the same reason as `PendingDelete`: the prompt should still act
-/// on the entry it was opened for even if something else changed the
-/// active panel's cursor in the meantime (not currently possible while
-/// the prompt is up, but cheap to make robust to regardless).
-pub struct PendingTransfer {
-    pub operation: TransferOp,
-    pub source: PathBuf,
+/// One entry F5/F6/`Shift+F6` is transferring, held (along with the
+/// rest of `PendingTransfer::sources`) while `Mode::ConfirmTransfer`
+/// asks for a destination — captured up front for the same reason as
+/// `PendingDelete`: the prompt should still act on exactly the entries
+/// it was opened for even if something else changed the active panel's
+/// cursor or marks in the meantime (not currently possible while the
+/// prompt is up, but cheap to make robust to regardless).
+pub struct TransferSource {
+    pub path: PathBuf,
     pub name: String,
     pub is_dir: bool,
-    /// Editable text — defaults to the *other* panel's directory
-    /// joined with `name` (or, for `Shift+F6` rename, the entry's own
-    /// directory), but can be freely edited before confirming. Full
-    /// cursor movement (`text_field.rs`), not the command line's own
+}
+
+
+/// F5/F6/`Shift+F6` was pressed: shown as a "copy/move to?" prompt with
+/// an editable destination, defaulting to the *other* panel's
+/// directory. See `PendingTransfer::sources`'s own doc comment for the
+/// single-entry-vs-marked-set distinction.
+pub struct PendingTransfer {
+    pub operation: TransferOp,
+    /// Every entry being transferred. Almost always one entry --
+    /// F5/F6/`Shift+F6` pressed with nothing marked in the active
+    /// panel, the entry under the cursor -- but every entry currently
+    /// marked there when at least one is (`explorer::command`'s own
+    /// `transfer_sources`), Far Manager-style: once anything's marked,
+    /// F5/F6 acts on the marked set instead of just the cursor,
+    /// regardless of where the cursor itself happens to sit. Never
+    /// empty -- `request_transfer` doesn't open this prompt at all if
+    /// there'd be nothing in it.
+    ///
+    /// `Shift+F6` (rename) never reads the panel's marks at all and
+    /// always builds exactly one -- a free-text destination field has
+    /// no sensible way to rename several entries at once, so renaming
+    /// stays scoped to the cursor entry regardless of what else is
+    /// marked.
+    pub sources: Vec<TransferSource>,
+    /// Editable text — a single entry defaults to the *other* panel's
+    /// directory joined with its name (or, for `Shift+F6` rename, the
+    /// entry's own directory), the same full target *path* it's always
+    /// been; several entries (`sources.len() > 1`) default to just the
+    /// other panel's directory instead, a target *directory* each
+    /// source's own name gets joined onto individually at transfer
+    /// time (`confirm::run_confirmed_transfer`) -- there's no single
+    /// path that could rename several entries at once, so a multi-entry
+    /// transfer doesn't offer that the way a single-entry one does.
+    /// Can be freely edited before confirming either way. Full cursor
+    /// movement (`text_field.rs`), not the command line's own
     /// append/backspace-only editing — see `text_field.rs`'s module
     /// doc for why this field gets a real cursor and the command line
     /// doesn't.

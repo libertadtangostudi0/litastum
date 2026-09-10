@@ -220,7 +220,7 @@ fn draw_entry_grid(
             .enumerate()
             .map(|(row_offset, entry)| {
                 let global_index = col_start + row_offset;
-                build_list_item(entry, global_index == panel.selected, is_active, theme)
+                build_list_item(entry, global_index == panel.selected, panel.is_marked(global_index), is_active, theme)
             })
             .collect();
 
@@ -237,21 +237,37 @@ fn draw_entry_grid(
 }
 
 
-fn build_list_item(entry: &Entry, is_selected: bool, panel_active: bool, theme: &Theme) -> ListItem<'static> {
+/// `is_marked` (Far Manager-style multi-select, `panel/marks.rs`)
+/// overrides the entry's own type-based color entirely, matching real
+/// Far Manager's own convention: a marked file/directory always renders
+/// in the mark color, regardless of whether it's an archive, an
+/// executable, or anything else `highlight_role` would otherwise pick.
+/// Uses `theme.warning` -- the same "attention/marked" color the
+/// original UI-theme plan already named for this
+/// (`.claude/rules/litastum-ui-theme.md`) but never actually wired up
+/// until marking itself existed.
+fn build_list_item(entry: &Entry, is_selected: bool, is_marked: bool, panel_active: bool, theme: &Theme) -> ListItem<'static> {
     let label = if entry.is_dir {
         format!("{}/", entry.name)
     } else {
         entry.name.clone()
     };
 
-    let base_color = match entry.highlight_role() {
-        HighlightRole::Parent => theme.text_dim,
-        HighlightRole::Directory | HighlightRole::Other => theme.text,
-        HighlightRole::VcsDirectory => theme.accent,
-        HighlightRole::Archive => theme.warning,
-        HighlightRole::Executable => theme.success,
+    let base_color = if is_marked {
+        theme.warning
+    } else {
+        match entry.highlight_role() {
+            HighlightRole::Parent => theme.text_dim,
+            HighlightRole::Directory | HighlightRole::Other => theme.text,
+            HighlightRole::VcsDirectory => theme.accent,
+            HighlightRole::Archive => theme.warning,
+            HighlightRole::Executable => theme.success,
+        }
     };
     let mut style = Style::default().fg(base_color);
+    if is_marked {
+        style = style.add_modifier(Modifier::BOLD);
+    }
     if is_selected {
         style = if panel_active {
             style.bg(theme.current_row_bg).add_modifier(Modifier::BOLD)

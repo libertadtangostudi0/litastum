@@ -21,13 +21,15 @@ use super::{fs_ops, keymap};
 
 
 /// Key handling on the F8 "delete this?" prompt: `Y` actually deletes
-/// (a file via `fs::remove_file`, a directory recursively via
-/// `fs::remove_dir_all` — no separate "is it empty" case, matching Far
-/// Manager's own F8 which recurses without asking twice) and reloads
-/// the panel; `N`/`Esc` cancels with nothing touched. A failed delete
-/// (permissions, a file in use, ...) is logged rather than crashing —
-/// there's no status-bar message surface yet to show it to the user
-/// (see `TODO.md`'s non-UTF-8-file gap, same underlying limitation).
+/// every entry in `pending.entries` (a file via `fs::remove_file`, a
+/// directory recursively via `fs::remove_dir_all` — no separate "is it
+/// empty" case, matching Far Manager's own F8 which recurses without
+/// asking twice) and reloads the panel; `N`/`Esc` cancels with nothing
+/// touched. A failed delete (permissions, a file in use, ...) is only
+/// logged, same as `confirm::run_confirmed_transfer` — doesn't stop the
+/// rest of `entries` from being attempted, and there's no status-bar
+/// message surface yet to show it to the user (see `TODO.md`'s
+/// non-UTF-8-file gap, same underlying limitation).
 pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
     use keymap::ConfirmDeleteCommand;
 
@@ -36,20 +38,22 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
     };
 
     let command = keymap::resolve_confirm_delete(key);
-    debug!(?key, ?command, path = %pending.path.display(), "confirm-delete key");
+    debug!(?key, ?command, count = pending.entries.len(), "confirm-delete key");
 
     match command {
         ConfirmDeleteCommand::Confirm => {
             let Mode::ConfirmDelete(pending) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
                 unreachable!("just matched Mode::ConfirmDelete above");
             };
-            let result = if pending.is_dir {
-                fs::remove_dir_all(&pending.path)
-            } else {
-                fs::remove_file(&pending.path)
-            };
-            if let Err(err) = result {
-                debug!(path = %pending.path.display(), %err, "delete failed");
+            for entry in &pending.entries {
+                let result = if entry.is_dir {
+                    fs::remove_dir_all(&entry.path)
+                } else {
+                    fs::remove_file(&entry.path)
+                };
+                if let Err(err) = result {
+                    debug!(path = %entry.path.display(), %err, "delete failed");
+                }
             }
             app.active_panel().reload()?;
         }
@@ -160,29 +164,49 @@ pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
 
 /// `Enter` on the transfer prompt: runs the copy/move
-/// (`fs_ops::copy_entry`/`move_entry`) and reloads both panels. Split
-/// out of `handle_confirm_transfer_key` since it needs to consume
-/// `app.mode` via `mem::replace` (to take ownership of `PendingTransfer`
-/// without cloning it) rather than just borrow it like every other key
-/// on that prompt does.
+/// (`fs_ops::copy_entry`/`move_entry`) for every entry in
+/// `pending.sources` and reloads both panels. Split out of
+/// `handle_confirm_transfer_key` since it needs to consume `app.mode`
+/// via `mem::replace` (to take ownership of `PendingTransfer` without
+/// cloning it) rather than just borrow it like every other key on that
+/// prompt does.
+///
+/// A single source treats `destination` as the *full* target path,
+/// exactly as before multi-select existed (this is what lets a
+/// single-entry transfer double as a rename, editing the trailing
+/// filename). Several sources have no one path that could do that for
+/// all of them, so `destination` is instead the target *directory*,
+/// with each source's own name joined onto it individually — a failure
+/// on one entry (permissions, a name collision, ...) is only logged,
+/// same as the single-entry case, and doesn't stop the rest from being
+/// attempted.
 fn run_confirmed_transfer(app: &mut App) -> Result<()> {
     let Mode::ConfirmTransfer(pending) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
         return Ok(());
     };
-    let destination = PathBuf::from(pending.destination.trim());
-    debug!(
-        source = %pending.source.display(),
-        destination = %destination.display(),
-        op = ?pending.operation,
-        "confirm-transfer: running"
-    );
-    let result = match pending.operation {
-        TransferOp::Copy => fs_ops::copy_entry(&pending.source, &destination, pending.is_dir),
-        TransferOp::Move => fs_ops::move_entry(&pending.source, &destination, pending.is_dir),
-    };
-    if let Err(err) = result {
-        debug!(source = %pending.source.display(), destination = %destination.display(), %err, "transfer failed");
+    let destination_input = PathBuf::from(pending.destination.trim());
+
+    for source in &pending.sources {
+        let destination = if pending.sources.len() == 1 {
+            destination_input.clone()
+        } else {
+            destination_input.join(&source.name)
+        };
+        debug!(
+            source = %source.path.display(),
+            destination = %destination.display(),
+            op = ?pending.operation,
+            "confirm-transfer: running"
+        );
+        let result = match pending.operation {
+            TransferOp::Copy => fs_ops::copy_entry(&source.path, &destination, source.is_dir),
+            TransferOp::Move => fs_ops::move_entry(&source.path, &destination, source.is_dir),
+        };
+        if let Err(err) = result {
+            debug!(source = %source.path.display(), destination = %destination.display(), %err, "transfer failed");
+        }
     }
+
     for panel in &mut app.panels {
         panel.reload()?;
     }
@@ -193,7 +217,7 @@ fn run_confirmed_transfer(app: &mut App) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{App, PendingDelete, PendingTransfer};
+    use crate::app::{App, DeleteEntry, PendingDelete, PendingTransfer, TransferSource};
     use crate::test_support::{key, test_app, unique_scratch_dir};
 
     fn scratch_dir() -> PathBuf {
@@ -204,12 +228,16 @@ mod tests {
         test_app(scratch_dir())
     }
 
+    fn pending_delete(path: PathBuf, name: &str, is_dir: bool, size: u64) -> PendingDelete {
+        PendingDelete { entries: vec![DeleteEntry { path, name: name.into(), is_dir, size }] }
+    }
+
     #[test]
     fn confirm_delete_removes_a_file_and_returns_to_browsing() {
         let mut app = scratch_app();
         let file = app.panels[0].path.join("victim.txt");
         fs::write(&file, b"bye").unwrap();
-        app.mode = Mode::ConfirmDelete(PendingDelete { path: file.clone(), name: "victim.txt".into(), is_dir: false, size: 3 });
+        app.mode = Mode::ConfirmDelete(pending_delete(file.clone(), "victim.txt", false, 3));
 
         handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
 
@@ -223,7 +251,7 @@ mod tests {
         let dir = app.panels[0].path.join("victim_dir");
         fs::create_dir_all(dir.join("nested")).unwrap();
         fs::write(dir.join("nested").join("f.txt"), b"x").unwrap();
-        app.mode = Mode::ConfirmDelete(PendingDelete { path: dir.clone(), name: "victim_dir".into(), is_dir: true, size: 0 });
+        app.mode = Mode::ConfirmDelete(pending_delete(dir.clone(), "victim_dir", true, 0));
 
         handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
 
@@ -235,11 +263,34 @@ mod tests {
         let mut app = scratch_app();
         let file = app.panels[0].path.join("keep.txt");
         fs::write(&file, b"stay").unwrap();
-        app.mode = Mode::ConfirmDelete(PendingDelete { path: file.clone(), name: "keep.txt".into(), is_dir: false, size: 4 });
+        app.mode = Mode::ConfirmDelete(pending_delete(file.clone(), "keep.txt", false, 4));
 
         handle_confirm_delete_key(&mut app, key(KeyCode::Esc)).unwrap();
 
         assert!(file.exists());
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    /// Regression coverage for the real request: F8 should delete every
+    /// marked entry, not just the one under the cursor.
+    #[test]
+    fn confirm_delete_removes_every_entry_in_a_multi_entry_prompt() {
+        let mut app = scratch_app();
+        let a = app.panels[0].path.join("a.txt");
+        let b = app.panels[0].path.join("b.txt");
+        fs::write(&a, b"a").unwrap();
+        fs::write(&b, b"b").unwrap();
+        app.mode = Mode::ConfirmDelete(PendingDelete {
+            entries: vec![
+                DeleteEntry { path: a.clone(), name: "a.txt".into(), is_dir: false, size: 1 },
+                DeleteEntry { path: b.clone(), name: "b.txt".into(), is_dir: false, size: 1 },
+            ],
+        });
+
+        handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+
+        assert!(!a.exists());
+        assert!(!b.exists());
         assert!(matches!(app.mode, Mode::Browsing));
     }
 
@@ -248,7 +299,7 @@ mod tests {
         let mut app = scratch_app();
         let file = app.panels[0].path.join("keep2.txt");
         fs::write(&file, b"stay").unwrap();
-        app.mode = Mode::ConfirmDelete(PendingDelete { path: file.clone(), name: "keep2.txt".into(), is_dir: false, size: 4 });
+        app.mode = Mode::ConfirmDelete(pending_delete(file.clone(), "keep2.txt", false, 4));
 
         handle_confirm_delete_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 
@@ -260,9 +311,7 @@ mod tests {
         let cursor = destination.chars().count();
         PendingTransfer {
             operation,
-            source,
-            name: "irrelevant".into(),
-            is_dir: false,
+            sources: vec![TransferSource { path: source, name: "irrelevant".into(), is_dir: false }],
             destination,
             cursor,
             selection_anchor: None,
@@ -338,5 +387,36 @@ mod tests {
 
         assert!(matches!(app.mode, Mode::Browsing));
         assert!(!dst.exists());
+    }
+
+    /// Regression coverage for the real request: F5 should copy every
+    /// marked entry, not just the one under the cursor -- several
+    /// `sources` join `destination` (a target *directory* here, not a
+    /// full file path) with each source's own name individually.
+    #[test]
+    fn confirm_transfer_enter_copies_every_marked_source_into_the_destination_directory() {
+        let mut app = scratch_app();
+        let src_dir = app.panels[0].path.clone();
+        fs::write(src_dir.join("a.txt"), b"aaa").unwrap();
+        fs::write(src_dir.join("b.txt"), b"bbb").unwrap();
+        let dst_dir = app.panels[0].path.join("dest");
+        fs::create_dir_all(&dst_dir).unwrap();
+        app.mode = Mode::ConfirmTransfer(PendingTransfer {
+            operation: TransferOp::Copy,
+            sources: vec![
+                TransferSource { path: src_dir.join("a.txt"), name: "a.txt".into(), is_dir: false },
+                TransferSource { path: src_dir.join("b.txt"), name: "b.txt".into(), is_dir: false },
+            ],
+            destination: dst_dir.to_string_lossy().into_owned(),
+            cursor: 0,
+            selection_anchor: None,
+        });
+
+        handle_confirm_transfer_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert_eq!(fs::read(dst_dir.join("a.txt")).unwrap(), b"aaa");
+        assert_eq!(fs::read(dst_dir.join("b.txt")).unwrap(), b"bbb");
+        assert!(src_dir.join("a.txt").exists(), "copy should leave the sources alone");
+        assert!(src_dir.join("b.txt").exists());
     }
 }

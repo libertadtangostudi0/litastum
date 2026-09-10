@@ -86,38 +86,46 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         return Ok(());
     }
 
-    // Shift+Left/Right (character-wise) and Ctrl+Shift+Left/Right
-    // (word-wise) select within the command line -- reported as a real
-    // gap: fixing a typo in the middle of a typed command ("go info"
-    // meant to be "svn info") had no way to select and replace just the
-    // wrong word, only backspacing everything after it. Bare
-    // Left/Right still aren't touched here (`keymap::resolve`'s table
-    // below still owns them, for panel navigation) -- only the
-    // Shift/Ctrl+Shift combinations, which panel navigation never
-    // claimed in the first place. Reuses `text_field.rs`'s selection
-    // functions (built for the Copy/Move destination field) against
-    // the command line's own new `command_line_cursor`/
-    // `command_line_selection_anchor` rather than duplicating that
-    // logic.
-    if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::SHIFT) {
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
-            text_field::extend_selection_word_left(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
-        } else {
-            text_field::extend_selection_left(&mut app.command_line_cursor, &mut app.command_line_selection_anchor);
-        }
+    // Ctrl+Shift+Left/Right (word-wise) select within the command line
+    // -- reported as a real gap: fixing a typo in the middle of a typed
+    // command ("go info" meant to be "svn info") had no way to select
+    // and replace just the wrong word, only backspacing everything
+    // after it. Bare Left/Right still aren't touched here
+    // (`keymap::resolve`'s table below still owns them, for panel
+    // navigation) -- panel navigation never claimed this combination in
+    // the first place. Reuses `text_field.rs`'s selection functions
+    // (built for the Copy/Move destination field) against the command
+    // line's own `command_line_cursor`/`command_line_selection_anchor`
+    // rather than duplicating that logic.
+    if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::SHIFT) && key.modifiers.contains(KeyModifiers::CONTROL) {
+        text_field::extend_selection_word_left(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
         return Ok(());
     }
-    if key.code == KeyCode::Right && key.modifiers.contains(KeyModifiers::SHIFT) {
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
-            text_field::extend_selection_word_right(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
-        } else {
-            text_field::extend_selection_right(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
-        }
+    if key.code == KeyCode::Right && key.modifiers.contains(KeyModifiers::SHIFT) && key.modifiers.contains(KeyModifiers::CONTROL) {
+        text_field::extend_selection_word_right(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
         return Ok(());
     }
 
-    // Ctrl+Left/Right (no Shift) -- plain word-wise cursor movement,
-    // no selection. `resolve(key.code)` below only sees `KeyCode`, not
+    // Bare Shift+Left/Right (character-wise, no Ctrl) select within the
+    // command line -- same reasoning as the Ctrl+Shift case above, but
+    // only while there's actually a typed command to select within.
+    // Once the line is empty, bare Shift+Left/Right falls through
+    // instead to the panel's own column-marking
+    // (`Command::MarkMoveLeft`/`MarkMoveRight`, below) -- these two
+    // combinations don't collide with each other since selecting
+    // nothing in an empty command line was never a meaningful action to
+    // give up.
+    if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::SHIFT) && !key.modifiers.contains(KeyModifiers::CONTROL) && !app.command_line.is_empty() {
+        text_field::extend_selection_left(&mut app.command_line_cursor, &mut app.command_line_selection_anchor);
+        return Ok(());
+    }
+    if key.code == KeyCode::Right && key.modifiers.contains(KeyModifiers::SHIFT) && !key.modifiers.contains(KeyModifiers::CONTROL) && !app.command_line.is_empty() {
+        text_field::extend_selection_right(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
+        return Ok(());
+    }
+
+    // Ctrl+Left/Right (no Shift) -- plain word-wise cursor movement, no
+    // selection. `resolve(key.code)` below only sees `KeyCode`, not
     // modifiers, so without this check Ctrl+Left/Right would silently
     // fall through to the exact same panel-navigation move as a bare
     // arrow -- not a loss of any existing behavior (bare Left/Right
@@ -125,8 +133,8 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     // own until now. Clears a selection rather than collapsing to its
     // edge (`text_field::collapse_selection_left/right`'s own
     // behavior): a real editor's Ctrl+arrow moves *from* the cursor by
-    // a word and drops the selection, it doesn't jump to whichever
-    // edge is already closer.
+    // a word and drops the selection, it doesn't jump to whichever edge
+    // is already closer.
     if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) {
         app.command_line_selection_anchor = None;
         text_field::move_word_left(&app.command_line, &mut app.command_line_cursor);
@@ -136,6 +144,37 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         app.command_line_selection_anchor = None;
         text_field::move_word_right(&app.command_line, &mut app.command_line_cursor);
         return Ok(());
+    }
+
+    // Shift+A / Shift+Up/Down/Left/Right -- marks files/directories in
+    // the active panel (Far Manager-style multi-select,
+    // `panel/marks.rs`). Shift+Up/Down have no command-line meaning to
+    // yield to (this project's command line never moves its own cursor
+    // via arrows at all, only Backspace/typed characters edit it), so
+    // they're always available. Shift+Left/Right only reach here once
+    // the command line is empty -- the check above already claims them,
+    // unconditionally, for extending a text selection whenever there's
+    // something to select. Shift+A is gated on an empty line
+    // explicitly, unlike the arrows: unlike Ctrl+A (which types
+    // nothing), Shift+A types a literal uppercase 'A' -- reported
+    // directly as a real conflict, since swallowing it unconditionally
+    // would make it impossible to start a command with a capital
+    // letter. Deliberately accepted as a narrower binding than the
+    // arrows: "select all" only fires on the very first keystroke of an
+    // otherwise-empty line, exactly the one place it can never compete
+    // with typing text.
+    if key.modifiers.contains(KeyModifiers::SHIFT) && !key.modifiers.contains(KeyModifiers::CONTROL) {
+        let mark_command = match key.code {
+            KeyCode::Char('a' | 'A') if app.command_line.is_empty() => Some(Command::SelectAll),
+            KeyCode::Up => Some(Command::MarkMoveUp),
+            KeyCode::Down => Some(Command::MarkMoveDown),
+            KeyCode::Left => Some(Command::MarkMoveLeft),
+            KeyCode::Right => Some(Command::MarkMoveRight),
+            _ => None,
+        };
+        if let Some(cmd) = mark_command {
+            return execute(cmd, app);
+        }
     }
 
     if key.code == KeyCode::Enter && !app.command_line.is_empty() {

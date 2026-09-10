@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{PendingDelete, PendingTransfer, TransferOp};
+use crate::app::{DeleteEntry, PendingDelete, PendingTransfer, TransferOp};
 use crate::text_field;
 use crate::theming::Theme;
 use crate::ui::{centered_rect, popup};
@@ -14,11 +14,17 @@ use crate::ui::{centered_rect, popup};
 /// Renders the F8 "delete this?" prompt over the browser -- a small
 /// card (`popup::draw_frame`) rather than the plain bordered box this
 /// used before: a danger-dot + "Delete" title with an "F8" badge at
-/// the right edge, the entry's name and (for a file only -- see
-/// `PendingDelete::size`'s own doc comment) its size and path, then a
+/// the right edge, the entry's name and (for a single file -- see
+/// `DeleteEntry::size`'s own doc comment) its size and path, then a
 /// separator and pill-style `y delete` / `esc keep` hints. Redesigned
 /// from a reference mockup reviewed alongside the F9 menu and
 /// color-scheme-picker redesigns (`ui/menu.rs`, `ui/theme_menu.rs`).
+///
+/// Several entries (Far Manager-style multi-select, see
+/// `PendingDelete::entries`'s own doc comment) are summarized by count
+/// instead of named individually -- there's no room to list every name
+/// on one line, matching how the F5/F6 transfer prompt handles the same
+/// situation (`draw_confirm_transfer_popup`).
 pub fn draw_confirm_delete_popup(frame: &mut Frame, area: Rect, pending: &PendingDelete, theme: &Theme) {
     let inner = popup::draw_frame(frame, area, theme, 50, 11);
 
@@ -35,12 +41,20 @@ pub fn draw_confirm_delete_popup(frame: &mut Frame, area: Rect, pending: &Pendin
     ]);
     frame.render_widget(title_line, rows[0]);
 
-    frame.render_widget(Line::from(Span::styled(pending.name.clone(), Style::default().fg(theme.text))), rows[1]);
+    let subject = match pending.entries.as_slice() {
+        [only] => only.name.clone(),
+        several => format!("{} items", several.len()),
+    };
+    frame.render_widget(Line::from(Span::styled(subject, Style::default().fg(theme.text))), rows[1]);
 
-    let info = if pending.is_dir {
-        format!("directory · {}", pending.path.display())
-    } else {
-        format!("{} · {}", format_size(pending.size), pending.path.display())
+    let info = match pending.entries.as_slice() {
+        [only] if only.is_dir => format!("directory · {}", only.path.display()),
+        [only] => format!("{} · {}", format_size(only.size), only.path.display()),
+        several => several
+            .first()
+            .and_then(|entry: &DeleteEntry| entry.path.parent())
+            .map(|parent| parent.display().to_string())
+            .unwrap_or_default(),
     };
     frame.render_widget(Line::from(Span::styled(info, Style::default().fg(theme.text_dim))), rows[2]);
 
@@ -98,8 +112,17 @@ pub fn draw_confirm_transfer_popup(frame: &mut Frame, area: Rect, pending: &Pend
         .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
         .split(inner);
 
+    // A single source names it directly, matching the prompt's
+    // original wording; several (Far Manager-style multi-select, see
+    // `PendingTransfer::sources`'s own doc comment) are summarized by
+    // count instead -- there's no room to list every name on one line,
+    // and Far's own equivalent prompt does the same.
+    let subject = match pending.sources.as_slice() {
+        [only] => format!("'{}'", only.name),
+        several => format!("{} items", several.len()),
+    };
     let source_line = Line::from(Span::styled(
-        format!("{verb} '{}' to:", pending.name),
+        format!("{verb} {subject} to:"),
         Style::default().fg(theme.text),
     ));
     frame.render_widget(source_line, rows[0]);
@@ -162,7 +185,9 @@ mod tests {
 
     #[test]
     fn draw_confirm_delete_popup_does_not_panic_and_shows_the_size() {
-        let pending = PendingDelete { path: PathBuf::from("C:/dev/litastum/TODO.md"), name: "TODO.md".into(), is_dir: false, size: 23_300 };
+        let pending = PendingDelete {
+            entries: vec![DeleteEntry { path: PathBuf::from("C:/dev/litastum/TODO.md"), name: "TODO.md".into(), is_dir: false, size: 23_300 }],
+        };
         let theme = Theme::dark();
 
         let backend = TestBackend::new(80, 24);

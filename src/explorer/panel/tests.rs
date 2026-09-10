@@ -20,6 +20,7 @@ fn panel_with(count: usize, columns: usize) -> Panel {
         columns,
         scroll_offset: 0,
         visible_rows: 0,
+        marked: HashSet::new(),
     }
 }
 
@@ -375,5 +376,122 @@ mod scrolling_tests {
             panel.move_down();
         }
         assert_eq!(panel.scroll_offset(), 0, "shouldn't have adjusted anything before the renderer ever reports a real height");
+    }
+}
+
+mod marks_tests {
+    use super::*;
+
+    /// A single-column panel with a real `..` entry first, followed by
+    /// `count` dummy files -- for the `..`-exclusion tests below, since
+    /// `panel_with` (used everywhere else in this file) only ever
+    /// builds plain numbered files, no synthetic parent entry.
+    fn panel_with_dotdot_and(count: usize) -> Panel {
+        let mut entries = vec![Entry {
+            name: "..".to_string(),
+            is_dir: true,
+            size: 0,
+            modified: None,
+        }];
+        entries.extend((0..count).map(|i| Entry {
+            name: i.to_string(),
+            is_dir: false,
+            size: 0,
+            modified: None,
+        }));
+        Panel {
+            path: PathBuf::new(),
+            entries,
+            selected: 0,
+            columns: 1,
+            scroll_offset: 0,
+            visible_rows: 0,
+            marked: HashSet::new(),
+        }
+    }
+
+    #[test]
+    fn toggle_mark_move_down_marks_the_current_row_then_moves() {
+        let mut panel = panel_with(5, 1);
+        panel.toggle_mark_move_down();
+        assert!(panel.is_marked(0));
+        assert_eq!(panel.selected, 1);
+        assert!(!panel.is_marked(1), "the row moved onto shouldn't get marked too -- only the row that was current");
+    }
+
+    #[test]
+    fn toggling_the_same_row_twice_unmarks_it() {
+        let mut panel = panel_with(5, 1);
+        panel.toggle_mark_move_down();
+        panel.move_up();
+        panel.toggle_mark_move_down();
+        assert!(!panel.is_marked(0));
+    }
+
+    #[test]
+    fn toggle_mark_move_up_marks_the_current_row_then_moves_up() {
+        let mut panel = panel_with(5, 1);
+        panel.selected = 2;
+        panel.toggle_mark_move_up();
+        assert!(panel.is_marked(2));
+        assert_eq!(panel.selected, 1);
+    }
+
+    #[test]
+    fn select_all_marks_every_entry_except_dotdot() {
+        let mut panel = panel_with_dotdot_and(3);
+        panel.select_all();
+        assert!(!panel.is_marked(0), "\"..\" should never be marked");
+        assert!(panel.is_marked(1));
+        assert!(panel.is_marked(2));
+        assert!(panel.is_marked(3));
+    }
+
+    /// Regression coverage for the real request: `Ctrl+Right` should
+    /// mark the *whole column* the paginated jump crosses, not just the
+    /// two endpoints. 6 entries, 2 columns -- `rows()` = 3, so with no
+    /// `visible_rows` set (`column_height` falls back to `rows()`) a
+    /// single `move_right` from entry 0 jumps straight to entry 3.
+    #[test]
+    fn toggle_mark_move_right_marks_every_row_the_column_jump_crosses() {
+        let mut panel = panel_with(6, 2);
+        panel.toggle_mark_move_right();
+        assert_eq!(panel.selected, 3, "sanity: jumped a whole column (3 rows)");
+        for i in 0..=3 {
+            assert!(panel.is_marked(i), "entry {i} sits between the start and end of the jump");
+        }
+        assert!(!panel.is_marked(4));
+        assert!(!panel.is_marked(5));
+    }
+
+    /// Mirror of the test above, for `Ctrl+Left`.
+    #[test]
+    fn toggle_mark_move_left_marks_every_row_the_column_jump_crosses() {
+        let mut panel = panel_with(6, 2);
+        panel.selected = 3;
+        panel.toggle_mark_move_left();
+        assert_eq!(panel.selected, 0, "sanity: jumped a whole column back");
+        for i in 0..=3 {
+            assert!(panel.is_marked(i), "entry {i} sits between the start and end of the jump");
+        }
+    }
+
+    /// Marks are keyed by entry name (see `Panel::marked`'s own doc
+    /// comment) specifically so they survive an in-place `reload`, but
+    /// they should still be dropped on an actual directory change --
+    /// otherwise they'd land on whatever unrelated entries happen to
+    /// share a name/index in the new directory.
+    #[test]
+    fn changing_directory_clears_marks() {
+        let dir = unique_scratch_dir("panel-marks");
+        fs::write(dir.join("a.txt"), b"data").expect("write scratch file");
+        fs::create_dir_all(dir.join("sub")).expect("create scratch subdir");
+        let mut panel = Panel::new(dir).expect("open scratch panel");
+        panel.select_all();
+        assert!(!panel.marked.is_empty(), "sanity");
+
+        panel.change_dir("sub").unwrap();
+
+        assert!(panel.marked.is_empty(), "marks shouldn't carry over into an unrelated directory");
     }
 }

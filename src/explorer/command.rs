@@ -1,9 +1,10 @@
 use color_eyre::eyre::Result;
 
-use crate::app::{App, Mode, PendingDelete, PendingTransfer, TransferOp};
+use crate::app::{App, DeleteEntry, Mode, PendingDelete, PendingTransfer, TransferOp, TransferSource};
 use crate::editor::Editor;
 use crate::theming::MainMenu;
 use super::keymap::Command;
+use super::Panel;
 
 
 /// Executes a resolved `Command` against the app state. This is the one
@@ -24,6 +25,11 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
         Command::MoveSelected => request_transfer(app, TransferOp::Move),
         Command::RenameSelected => request_rename(app),
         Command::DeleteSelected => request_delete(app),
+        Command::SelectAll => app.active_panel().select_all(),
+        Command::MarkMoveUp => app.active_panel().toggle_mark_move_up(),
+        Command::MarkMoveDown => app.active_panel().toggle_mark_move_down(),
+        Command::MarkMoveLeft => app.active_panel().toggle_mark_move_left(),
+        Command::MarkMoveRight => app.active_panel().toggle_mark_move_right(),
         Command::Quit => app.should_quit = true,
     }
     Ok(())
@@ -49,56 +55,73 @@ fn open_editor(app: &mut App) {
 }
 
 
-/// F8: opens the "delete this?" prompt (`Mode::ConfirmDelete`) for the
-/// entry under the cursor. Does nothing for `..` (there's nothing
-/// sensible to delete) or an empty panel — never deletes directly, see
-/// `confirm::handle_confirm_delete_key` for the actual filesystem call.
+/// F8: opens the "delete this?" prompt (`Mode::ConfirmDelete`) for
+/// every entry marked in the active panel if any are, otherwise the
+/// entry under the cursor (`Panel::marked_or_current`), same "marked
+/// set wins" rule F5/F6 use. Does nothing if there's nothing to act on
+/// (the cursor on `..` and nothing marked, or an empty panel) — never
+/// deletes directly, see `confirm::handle_confirm_delete_key` for the
+/// actual filesystem call.
 fn request_delete(app: &mut App) {
     let panel = app.active_panel();
-    let Some(entry) = panel.current() else {
-        return;
-    };
-    if entry.name == ".." {
+    let entries: Vec<DeleteEntry> = panel
+        .marked_or_current()
+        .into_iter()
+        .map(|entry| DeleteEntry { path: panel.path.join(&entry.name), name: entry.name.clone(), is_dir: entry.is_dir, size: entry.size })
+        .collect();
+    if entries.is_empty() {
         return;
     }
 
-    let pending = PendingDelete {
-        path: panel.path.join(&entry.name),
-        name: entry.name.clone(),
-        is_dir: entry.is_dir,
-        size: entry.size,
-    };
-    app.mode = Mode::ConfirmDelete(pending);
+    app.mode = Mode::ConfirmDelete(PendingDelete { entries });
 }
 
 
 /// F5/F6: opens the "copy/move to?" prompt (`Mode::ConfirmTransfer`)
-/// for the entry under the cursor, pre-filled with the *other* panel's
-/// directory as the destination — Far Manager's own F5/F6 default.
-/// Does nothing for `..` or an empty panel, same as `request_delete`.
+/// for every entry `transfer_sources` picks (the marked set if
+/// anything's marked, the cursor entry otherwise), pre-filled with the
+/// *other* panel's directory as the destination — Far Manager's own
+/// F5/F6 default. Does nothing if there's nothing to act on (an empty
+/// panel with the cursor on `..` and nothing marked), same as
+/// `request_delete`.
 fn request_transfer(app: &mut App, operation: TransferOp) {
     let destination_dir = app.panels[1 - app.active].path.clone();
 
-    let panel = app.active_panel();
-    let Some(entry) = panel.current() else {
-        return;
-    };
-    if entry.name == ".." {
+    let sources = transfer_sources(app.active_panel());
+    if sources.is_empty() {
         return;
     }
 
-    let destination = destination_dir.join(&entry.name).to_string_lossy().into_owned();
+    // A single entry keeps the existing behavior exactly: the
+    // destination is the *full* target path (other panel's directory +
+    // this entry's own name), editable in place -- including renaming
+    // it during the transfer. Several entries have no single path that
+    // could do that for all of them at once, so the destination
+    // defaults to just the target *directory* instead -- each source's
+    // own name gets joined onto it individually at transfer time
+    // (`confirm::run_confirmed_transfer`).
+    let destination = if let [only] = sources.as_slice() {
+        destination_dir.join(&only.name).to_string_lossy().into_owned()
+    } else {
+        destination_dir.to_string_lossy().into_owned()
+    };
     let cursor = destination.chars().count();
     let pending = PendingTransfer {
         operation,
-        source: panel.path.join(&entry.name),
-        name: entry.name.clone(),
-        is_dir: entry.is_dir,
+        sources,
         destination,
         cursor,
         selection_anchor: None,
     };
     app.mode = Mode::ConfirmTransfer(pending);
+}
+
+
+/// The entries F5/F6 should act on — see `Panel::marked_or_current`'s
+/// own doc comment for the "marked set wins over the cursor" rule this
+/// (and `request_delete`, for F8) shares.
+fn transfer_sources(panel: &Panel) -> Vec<TransferSource> {
+    panel.marked_or_current().into_iter().map(|entry| TransferSource { path: panel.path.join(&entry.name), name: entry.name.clone(), is_dir: entry.is_dir }).collect()
 }
 
 
@@ -126,9 +149,7 @@ fn request_rename(app: &mut App) {
     let cursor = destination.chars().count() - entry.name.chars().count();
     let pending = PendingTransfer {
         operation: TransferOp::Move,
-        source: path,
-        name: entry.name.clone(),
-        is_dir: entry.is_dir,
+        sources: vec![TransferSource { path, name: entry.name.clone(), is_dir: entry.is_dir }],
         destination,
         cursor,
         selection_anchor: None,
@@ -170,9 +191,37 @@ mod tests {
         let Mode::ConfirmDelete(pending) = &app.mode else {
             panic!("expected Mode::ConfirmDelete");
         };
-        assert_eq!(pending.path, expected_path);
-        assert_eq!(pending.name, "victim.txt");
-        assert!(!pending.is_dir);
+        assert_eq!(pending.entries.len(), 1);
+        assert_eq!(pending.entries[0].path, expected_path);
+        assert_eq!(pending.entries[0].name, "victim.txt");
+        assert!(!pending.entries[0].is_dir);
+    }
+
+    /// Regression coverage for the real request: F8 should act on every
+    /// marked entry, not just the one under the cursor.
+    #[test]
+    fn request_delete_uses_the_marked_set_instead_of_the_cursor_once_anything_is_marked() {
+        let dir = scratch_dir();
+        fs::write(dir.join("a.txt"), b"a").unwrap();
+        fs::write(dir.join("b.txt"), b"b").unwrap();
+        fs::write(dir.join("c.txt"), b"c").unwrap();
+        let mut app = test_app(dir);
+        let panel = &mut app.panels[0];
+        let c_index = panel.entries.iter().position(|e| e.name == "c.txt").unwrap();
+        panel.selected = panel.entries.iter().position(|e| e.name == "a.txt").unwrap();
+        panel.toggle_mark_move_down();
+        panel.selected = panel.entries.iter().position(|e| e.name == "b.txt").unwrap();
+        panel.toggle_mark_move_down();
+        panel.selected = c_index; // cursor ends up on the unmarked entry
+
+        request_delete(&mut app);
+
+        let Mode::ConfirmDelete(pending) = &app.mode else {
+            panic!("expected Mode::ConfirmDelete");
+        };
+        let mut names: Vec<&str> = pending.entries.iter().map(|e| e.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["a.txt", "b.txt"], "the marked entries, not the cursor entry (c.txt)");
     }
 
     #[test]
@@ -208,6 +257,39 @@ mod tests {
         assert_eq!(pending.destination, other_dir.join("source.txt").to_string_lossy());
         assert_eq!(pending.cursor, pending.destination.chars().count(), "cursor starts at the end");
         assert_eq!(pending.selection_anchor, None);
+        assert_eq!(pending.sources.len(), 1);
+        assert_eq!(pending.sources[0].name, "source.txt");
+    }
+
+    /// Regression coverage for the real request: F5/F6 should act on
+    /// every marked entry, not just the one under the cursor -- and the
+    /// marked set wins even when the cursor sits on a third, unmarked
+    /// entry.
+    #[test]
+    fn request_transfer_uses_the_marked_set_instead_of_the_cursor_once_anything_is_marked() {
+        let dir = scratch_dir();
+        fs::write(dir.join("a.txt"), b"a").unwrap();
+        fs::write(dir.join("b.txt"), b"b").unwrap();
+        fs::write(dir.join("c.txt"), b"c").unwrap();
+        let mut app = test_app(dir);
+        let other_dir = app.panels[1].path.clone();
+        let panel = &mut app.panels[0];
+        let c_index = panel.entries.iter().position(|e| e.name == "c.txt").unwrap();
+        panel.selected = panel.entries.iter().position(|e| e.name == "a.txt").unwrap();
+        panel.toggle_mark_move_down(); // marks a.txt and moves off it
+        panel.selected = panel.entries.iter().position(|e| e.name == "b.txt").unwrap();
+        panel.toggle_mark_move_down(); // marks b.txt too
+        panel.selected = c_index; // cursor ends up on the unmarked entry
+
+        request_transfer(&mut app, TransferOp::Copy);
+
+        let Mode::ConfirmTransfer(pending) = &app.mode else {
+            panic!("expected Mode::ConfirmTransfer");
+        };
+        let mut names: Vec<&str> = pending.sources.iter().map(|s| s.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["a.txt", "b.txt"], "the marked entries, not the cursor entry (c.txt)");
+        assert_eq!(pending.destination, other_dir.to_string_lossy(), "several sources default to just the target directory");
     }
 
     #[test]
