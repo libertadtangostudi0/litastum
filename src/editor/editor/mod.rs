@@ -22,6 +22,7 @@ use super::bindings::{
 };
 use super::clipboard::OsClipboardBridge;
 use super::syntax::resolve_syntax_highlighter;
+use super::word_highlight::word_occurrence_highlights;
 
 /// A single open-file editing session, backed by `edtui`. Owns the path
 /// it was loaded from (for `save`) and a snapshot of the content as of
@@ -630,6 +631,27 @@ impl Editor {
         debug!(?candidates, found = syntax_highlighter.is_some(), "syntax highlighter lookup");
 
         let selection_style = Style::default().fg(theme.text).bg(theme.current_row_bg);
+
+        // VS Code-style "highlight every other occurrence of the word
+        // under the cursor" -- see `word_highlight`'s own doc comment
+        // for how this rides `edtui`'s own `state.highlights` field
+        // rather than a hand-rolled render pass. Recomputed fresh every
+        // frame directly from the cursor's current position -- cheap
+        // enough at the file sizes this editor targets (see
+        // `word_highlight::word_occurrences`'s own scope note), and
+        // avoids tracking a separate "did the cursor move" dirty flag.
+        // Skipped entirely while a selection is active, matching VS
+        // Code's own behavior -- "the word under the cursor" isn't a
+        // coherent concept mid-selection, and the highlights would just
+        // get overridden by the selection's own styling wherever they
+        // overlapped anyway (`edtui`'s own priority order: selection,
+        // then highlights, then base).
+        self.state.highlights = if self.state.selection.is_none() {
+            let word_highlight_style = Style::default().fg(theme.text).bg(theme.border);
+            word_occurrence_highlights(&self.state.lines, self.state.cursor, word_highlight_style)
+        } else {
+            Vec::new()
+        };
 
         let mut editor_theme = EditorTheme::default()
             .base(Style::default().fg(theme.text).bg(theme.bg))

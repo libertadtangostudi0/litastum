@@ -182,20 +182,28 @@ Near-term, actionable items. Full staged plan:
       worth folding into a fresh grammar or symptomatic of a much bigger
       gap. Purely a sizing/scoping task — no grammar work until this is
       done and reviewed.
-- [ ] Highlight every other occurrence of the identifier currently under
-      the cursor, VS Code-style (screenshot reference: `entry` dimly
-      boxed at each of its own occurrences in `app.rs` while the cursor
-      sits on one of them) — no selection needed, purely a read-only
-      visual aid. Needs: extracting the word under the cursor (reuse
-      `bindings::word_select`'s own word-boundary logic, or a fresh
-      `state.lines`-based scan — `edtui`'s own `CharacterClass` is
-      `pub(crate)`, unreachable, same limitation noted throughout
-      [[litastum-stack]]'s word-selection history), finding every other
-      occurrence in the buffer, and a rendering hook to paint them
-      distinctly from the ordinary syntax-highlighted text (`EditorView`
-      doesn't have a built-in concept for this — would likely need a
-      second highlight pass layered on top of, or instead of,
-      `syntax_highlighter`).
+- [x] Highlight every other occurrence of the identifier currently under
+      the cursor, VS Code-style (`editor/word_highlight.rs`). Turned out
+      not to need a hand-rolled render pass at all -- `edtui`'s own
+      `EditorState::highlights` field (`Highlight::new(start, end,
+      style)`) is already rendered every frame, layered exactly where
+      this needs it ("selection takes priority, then highlights, then
+      base", confirmed directly from `edtui`'s `view/internal.rs`), so
+      `Editor::view` just recomputes it fresh each frame from the
+      cursor's current position. A `Highlight`'s style fully *replaces*
+      whatever span it lands on (no fg/bg merging), so highlighted
+      occurrences lose their own syntax color and render in one flat
+      color — the same tradeoff this codebase's own text-selection
+      highlighting already makes. Colored via `theme.text` on
+      `theme.border` (reused, not a new `Theme` field, so it's
+      automatically theme-dependent as requested), and skipped entirely
+      while a selection is active (matching VS Code — "the word under
+      the cursor" isn't coherent mid-selection). Word-boundary detection
+      is a small local `is_word_char` (ASCII alphanumeric or underscore,
+      matching `edtui`'s own internal `CharacterClass::Alphanumeric`) —
+      no need to reach into the crate's `pub(crate)` `CharacterClass`
+      for something this simple, unlike `bindings::word_select`'s own
+      history.
 - [ ] In-editor find (`Ctrl+F`/`F7`, Far Manager's own editor
       convention — not to be confused with the file-panel's own F7/
       Alt+F7 "find file[s]"/"find file *content*" above, an entirely
