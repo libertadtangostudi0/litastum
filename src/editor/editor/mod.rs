@@ -3,11 +3,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent};
-use edtui::actions::search::StartSearch;
 use edtui::actions::motion::{MoveToFirstRow, MoveToLastRow};
-use edtui::actions::{
-    AppendCharToSearch, Chainable, Execute, FindNext, FindPrevious, MoveToEndOfLine, MoveToStartOfLine, RemoveCharFromSearch, StopSearch, SwitchMode,
-};
+use edtui::actions::{Chainable, Execute, MoveToEndOfLine, MoveToStartOfLine, SwitchMode};
 use edtui::syntect::highlighting::Theme as SynTheme;
 use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Index2, LineNumbers, Lines};
 use ratatui::style::Style;
@@ -23,6 +20,11 @@ use super::bindings::{
 use super::clipboard::OsClipboardBridge;
 use super::syntax::resolve_syntax_highlighter;
 use super::word_highlight::word_occurrence_highlights;
+
+mod search;
+mod word_select_touch;
+
+use word_select_touch::WordSelectTouch;
 
 /// A single open-file editing session, backed by `edtui`. Owns the path
 /// it was loaded from (for `save`) and a snapshot of the content as of
@@ -48,14 +50,8 @@ pub struct Editor {
     /// buffer into a `String` every frame just to peek at row 0.
     first_line: String,
     /// What `Ctrl+Shift+Left`/`Right` (word-wise selection) has done to
-    /// the *current* selection so far -- the signal `bindings::
-    /// extend_word_selection` needs to tell "a `Left` press should
-    /// retract fully" apart from "a `Left` press is genuinely walking
-    /// backward through fresh text, nothing to retract," which turned
-    /// out not to be reliably derivable from character classification
-    /// alone (see that function's own doc comment, "Eighth," for two
-    /// real reports a character-based guess got wrong in two different
-    /// ways). See `WordSelectTouch`'s own doc comment for what each
+    /// the *current* selection so far -- see `word_select_touch`
+    /// module's own doc comment on `WordSelectTouch` for what each
     /// variant means and `extend_word_selection`'s body for exactly how
     /// it's read and updated.
     word_select_touch: WordSelectTouch,
@@ -93,59 +89,12 @@ pub struct Editor {
     /// Which entry of the search history (`App::search_history`,
     /// threaded in by the caller -- `Editor` itself doesn't own the
     /// list) `Up`/`Down` last recalled into the search box, `None`
-    /// while not currently browsing it at all. See
-    /// `search_history_up`/`_down`'s own doc comments for the shell-
+    /// while not currently browsing it at all. See `search` module's
+    /// own `search_history_up`/`_down` doc comments for the shell-
     /// `Up`-arrow convention this follows, and `search_push_char`/
     /// `_pop_char`/`accept_search_suggestion` for why editing the query
     /// any other way resets this back to `None`.
     search_history_index: Option<usize>,
-}
-
-/// See `Editor::word_select_touch`'s own doc comment for why this
-/// exists. Three states, not two (`Option<bool>`/"has it gone forward
-/// yet"), because a plain boolean can't tell "word-wise selection has
-/// never touched this selection at all" (`Untouched` -- e.g. it was
-/// built by character-wise `Shift+Right`, a mouse drag, or anything
-/// else that isn't `extend_word_selection`) apart from "word-wise
-/// selection built this whole thing itself via repeated backward
-/// presses" (`NativeBackward`) -- confirmed the hard way: a selection
-/// built by *anything other than* word-wise `Right` presses (real
-/// report: a whole line selected some other way, then trimmed with
-/// `Ctrl+Shift+Left`) needs the *same* full retraction `Untouched`
-/// wants, but an `Option<bool>` collapsing both of those into one value
-/// can't tell them apart from `NativeBackward`'s own "keep walking
-/// backward through nothing already selected" case, which must *not*
-/// retract (`repeated_left_monotonically_extends_through_punctuation`,
-/// unaffected on purpose).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WordSelectTouch {
-    /// No selection at all, or one exists but word-wise selection
-    /// hasn't acted on it yet. A backward press from here should
-    /// retract fully -- there's real content to shrink away from,
-    /// word-wise selection just hasn't touched it before.
-    Untouched,
-    /// The *current* selection was built by word-wise selection itself,
-    /// starting with a backward (`Left`) press, and every press since
-    /// has also been backward -- a pure walk backward through fresh
-    /// text extending the selection, not retracting anything.
-    NativeBackward,
-    /// Word-wise selection has done at least one forward (`Right`)
-    /// press on the current selection, or at least one retraction --
-    /// a backward press from here is undoing part of that.
-    Touched,
-    // Known, narrow gap, not chased further: `Editor::extend_word_selection`
-    // never resets this back to `Untouched` -- once any word-wise press
-    // happens, it's `Touched`/`NativeBackward` for good, since there's no
-    // hook here for "the selection was closed and a *different* one was
-    // built some other way" (that happens entirely inside `Editor::input`,
-    // outside this type's view). In practice this only matters if an
-    // earlier word-wise session ended in `NativeBackward` *and* a later,
-    // entirely separate selection (built without word-wise selection ever
-    // touching it) is then retracted with `Ctrl+Shift+Left` as its very
-    // first action -- `Touched` left over instead gives the right answer
-    // anyway, since `Touched` and `Untouched` both retract; only a leftover
-    // `NativeBackward` would wrongly skip it. Narrow enough (two unrelated
-    // things have to line up) not to be worth a bigger hook for yet.
 }
 
 
@@ -262,71 +211,6 @@ impl Editor {
     }
 
 
-    /// `Ctrl+Shift+Left`/`Right` -- word-wise selection. Not part of
-    /// `input`'s own dispatch (`editor_keymap.rs::handle_editor_key`
-    /// calls this directly instead) -- see `bindings::extend_word_selection`'s
-    /// own doc comment for why this needed real logic of its own rather
-    /// than another entry in `standard_key_handler`'s declarative table.
-    ///
-    /// Owns `word_select_touch` -- reads it (as `retracing`, "should
-    /// this press give back territory toward the anchor rather than
-    /// extend past it") before this press changes anything, then
-    /// updates it for next time. Two symmetric cases, one per
-    /// direction:
-    ///
-    /// - A backward (`!forward`) press against an existing selection
-    ///   (`!fresh`) that isn't a pure `NativeBackward` walk -- both
-    ///   `Untouched` (word-wise selection has never acted on it -- built
-    ///   some other way, or this is the very first backward touch of
-    ///   it) and `Touched` (word-wise selection has gone forward, or
-    ///   already retracted, at least once) count, which is exactly what
-    ///   lets both real reports in `extend_word_selection`'s own doc
-    ///   comment ("Eighth") retract correctly -- one starting from a
-    ///   word-wise `Right`-built selection, the other from one built
-    ///   some other way entirely.
-    /// - A forward (`forward`) press against an existing selection
-    ///   (`!fresh`) that *is* a pure `NativeBackward` walk -- the mirror
-    ///   case added for `extend_word_selection`'s own "Fourteenth"
-    ///   report (`Ctrl+Shift+Right` undoing a selection built purely by
-    ///   `Ctrl+Shift+Left`).
-    ///
-    /// `word_select_touch` stays `NativeBackward` across a *retracing*
-    /// forward press (not just across backward ones) -- deliberately,
-    /// so a second `Right` (or a `Left` right after a `Right`) still
-    /// gets treated as mirroring the same backward walk instead of
-    /// falling through to `Touched`'s own broader rule after only one
-    /// retracing press. Without this, `retracing`'s own forward
-    /// condition above (`touch == NativeBackward`, narrower than the
-    /// backward condition's `touch != NativeBackward`) would stop
-    /// firing after the very first `Right`, and a second one would hit
-    /// the ordinary forward branch instead -- which, depending on
-    /// exactly where the anchor and the current word boundary happen to
-    /// line up, can still land in the right place by coincidence but
-    /// leaves a stray one-character selection sitting on the anchor
-    /// rather than closing cleanly. A *genuine* forward press (i.e. not
-    /// retracing -- extending past the anchor into text the backward
-    /// walk never covered) still becomes `Touched`, same as before.
-    pub fn extend_word_selection(&mut self, forward: bool) {
-        let fresh = self.state.mode != EditorMode::Visual;
-        let retracing = if forward {
-            !fresh && self.word_select_touch == WordSelectTouch::NativeBackward
-        } else {
-            !fresh && self.word_select_touch != WordSelectTouch::NativeBackward
-        };
-
-        super::bindings::extend_word_selection(&mut self.state, forward, retracing, &mut self.word_select_true_anchor);
-
-        self.word_select_touch = match (fresh, forward, retracing, self.word_select_touch) {
-            (true, true, _, _) => WordSelectTouch::Touched,
-            (true, false, _, _) => WordSelectTouch::NativeBackward,
-            (false, true, true, _) => WordSelectTouch::NativeBackward,
-            (false, true, false, _) => WordSelectTouch::Touched,
-            (false, false, _, WordSelectTouch::NativeBackward) => WordSelectTouch::NativeBackward,
-            (false, false, _, _) => WordSelectTouch::Touched,
-        };
-    }
-
-
     /// `Ctrl+A` -- selects the entire buffer. Built from the same
     /// primitive `edtui` motions everything else in this file already
     /// uses rather than constructing a `Selection` by hand (its fields
@@ -372,197 +256,6 @@ impl Editor {
     #[cfg(test)]
     pub fn cursor(&self) -> Index2 {
         self.state.cursor
-    }
-
-
-    /// `Ctrl+F` -- whether the built-in search box is currently open.
-    /// `edtui` already ships a complete search mechanism of its own
-    /// (`EditorMode::Search`, `actions::search::*`) -- rather than
-    /// hand-rolling match-finding and a second selection-like highlight
-    /// (which would duplicate what `EditorView::render` already does for
-    /// `state.search` for free, see `edtui-0.11.7/src/view.rs`), this
-    /// and the methods below just drive that mechanism directly, the
-    /// same way `standard_key_handler`'s own table drives ordinary
-    /// motion/editing actions. `editor_keymap.rs::handle_search_key`
-    /// intercepts every key ahead of the normal table while this is
-    /// `true`, exactly like an active word-select drag never reaches
-    /// `Editor::input` either.
-    pub fn is_searching(&self) -> bool {
-        self.state.mode == EditorMode::Search
-    }
-
-    /// The search box's current query text, for rendering the popup.
-    pub fn search_query(&self) -> String {
-        self.state.search_pattern()
-    }
-
-    /// Opens the search box, anchored at the cursor's current position
-    /// (`StartSearch` records it as `search.start_cursor`, the position
-    /// `stop_search` below restores if the box is cancelled with nothing
-    /// found).
-    pub fn start_search(&mut self) {
-        StartSearch.execute(&mut self.state);
-        SwitchMode(EditorMode::Search).execute(&mut self.state);
-        self.search_history_index = None;
-    }
-
-    /// One typed character into the search box -- re-runs the search
-    /// immediately (`AppendCharToSearch`'s own `execute`), same
-    /// find-as-you-type feel as the command line's own always-live
-    /// autosuggestion. Also leaves history-browsing (`Up`/`Down`, below)
-    /// -- typing means the query is being edited fresh again, not still
-    /// showing whatever history entry `Up`/`Down` last recalled.
-    pub fn search_push_char(&mut self, c: char) {
-        AppendCharToSearch(c).execute(&mut self.state);
-        self.search_history_index = None;
-    }
-
-    /// `Backspace` in the search box -- `edtui`'s own action only ever
-    /// pops the *last* character (no mid-string cursor to delete from,
-    /// matching the box's own "just an input field" scope for now).
-    /// Also leaves history-browsing, same reasoning as `search_push_char`.
-    pub fn search_pop_char(&mut self) {
-        RemoveCharFromSearch.execute(&mut self.state);
-        self.search_history_index = None;
-    }
-
-    /// `Enter` -- jumps to the next match, VS Code's own `Ctrl+F`
-    /// convention (reported directly: `Up`/`Down` was tried for this
-    /// first and reported wrong -- those are for browsing *history*
-    /// instead, below, the same way a shell's own `Up`/`Down` work on
-    /// the command being typed, not on some other piece of state).
-    pub fn search_next(&mut self) {
-        FindNext.execute(&mut self.state);
-    }
-
-    /// `Shift+Enter` -- jumps to the previous match, the other half of
-    /// the VS Code convention `search_next` follows.
-    pub fn search_previous(&mut self) {
-        FindPrevious.execute(&mut self.state);
-    }
-
-    /// `Esc` -- closes the search box. Requested directly: if the
-    /// cursor is currently sitting on a real match, leave it right
-    /// *after* the match's own last character (the ordinary "next
-    /// character you'd type" position, same as where a plain typing
-    /// cursor always sits) -- rather than `StopSearch`'s own default of
-    /// reverting to wherever the cursor was before the box opened. Only
-    /// reverts (still via `StopSearch`) when there's genuinely nothing
-    /// to land on: an empty query, or `edtui`'s own
-    /// `AppendCharToSearch`/`RemoveCharFromSearch` actions leaving the
-    /// cursor on a *stale* position that no longer matches the current
-    /// query at all (they only ever re-jump the cursor on
-    /// `AppendCharToSearch`, never on a backspace -- see
-    /// `cursor_sits_on_a_real_match`'s own doc comment).
-    ///
-    /// **One past the match's last character, not directly on it** --
-    /// reported directly against a real search ("lso" landed the cursor
-    /// visually *between* 's' and the final 'o', not after it). This
-    /// codebase's own "cursor sits on the last *selected* character"
-    /// convention (`bindings::word_select`'s forward-selection landing,
-    /// the vertical-shift-select fix earlier this session, ...) only
-    /// reads right because `Editor::cursor_screen_position` shifts the
-    /// rendered bar one column past whatever cell `state.cursor` names
-    /// *while a selection is active* -- closing the search box also
-    /// leaves `state.selection` untouched (`None`), so that shift never
-    /// fires here, and landing on the match's own last character would
-    /// visually read as stopping one short of it, same trap that
-    /// convention exists to avoid in the first place.
-    pub fn stop_search(&mut self) {
-        let query = self.state.search_pattern();
-        if !query.is_empty() && self.cursor_sits_on_a_real_match(&query) {
-            self.state.cursor.col += query.chars().count();
-            SwitchMode(EditorMode::Insert).execute(&mut self.state);
-        } else {
-            StopSearch.execute(&mut self.state);
-            SwitchMode(EditorMode::Insert).execute(&mut self.state);
-        }
-    }
-
-    /// Whether the cursor is currently sitting exactly on the *start* of
-    /// a real occurrence of `query` in the buffer -- the only way
-    /// `stop_search` above has to tell "there's a live match here" from
-    /// "the cursor is stale, left over from before the query last
-    /// changed," since `edtui`'s own `SearchState` (pattern/matches/
-    /// selected index) is `pub(crate)`, entirely unreachable from here;
-    /// `search_pattern()` is the *only* public window into it. Checked
-    /// directly against the buffer instead, the same single-character
-    /// peek (`state.lines.get(Index2)`) `bindings::word_select`'s own
-    /// anchor-trim fixes already use, rather than trying to reconstruct
-    /// `edtui`'s internal match bookkeeping some other way.
-    fn cursor_sits_on_a_real_match(&self, query: &str) -> bool {
-        query.chars().enumerate().all(|(offset, expected)| {
-            let position = Index2 { row: self.state.cursor.row, col: self.state.cursor.col + offset };
-            self.state.lines.get(position) == Some(&expected)
-        })
-    }
-
-    /// `Up` -- recalls the *previous* entry in `history` (a shell's own
-    /// `Up`-arrow convention: first press shows the most recent past
-    /// query, each further press steps one entry further back), rather
-    /// than moving between matches of the *current* query -- see
-    /// `search_next`/`search_previous` above for why those, not
-    /// `Up`/`Down`, are what the report actually asked for that. A
-    /// no-op with nothing to recall (`history` empty, or already at the
-    /// oldest entry).
-    pub fn search_history_up(&mut self, history: &[String]) {
-        if history.is_empty() {
-            return;
-        }
-        let next_index = match self.search_history_index {
-            None => history.len() - 1,
-            Some(index) => index.saturating_sub(1),
-        };
-        self.search_history_index = Some(next_index);
-        self.replace_search_query(&history[next_index].clone());
-    }
-
-    /// `Down` -- the other half of `search_history_up`: steps back
-    /// *toward* the most recent entry, and past it clears the query
-    /// entirely (the shell convention's own "back to your own
-    /// not-yet-recalled line," simplified here to just "empty," since
-    /// this box has no separate "what was I typing before I started
-    /// browsing" state to restore -- matches its own "just an input
-    /// field for now" scope). A no-op while not currently browsing
-    /// history at all (`Up` was never pressed, or a keystroke since
-    /// already cleared it -- see `search_push_char`/`search_pop_char`).
-    pub fn search_history_down(&mut self, history: &[String]) {
-        let Some(index) = self.search_history_index else {
-            return;
-        };
-        if index + 1 < history.len() {
-            self.search_history_index = Some(index + 1);
-            self.replace_search_query(&history[index + 1].clone());
-        } else {
-            self.search_history_index = None;
-            self.replace_search_query("");
-        }
-    }
-
-    /// Replaces the search box's current query with `suggestion` in
-    /// full (accepting the ghost-text history suggestion, `End`) --
-    /// leaves history-browsing, same reasoning as `search_push_char`
-    /// (this is a fresh, explicit choice of query, not a step through
-    /// `Up`/`Down`'s own separate history walk).
-    pub fn accept_search_suggestion(&mut self, suggestion: &str) {
-        self.replace_search_query(suggestion);
-        self.search_history_index = None;
-    }
-
-    /// Shared mechanics for `accept_search_suggestion` and
-    /// `search_history_up`/`_down` above -- there's no `edtui` action to
-    /// set the whole search pattern at once, only append/pop one
-    /// character, so this pops the existing query back to nothing and
-    /// re-appends `new_query` one character at a time through those same
-    /// public actions, exactly as if it had been typed.
-    fn replace_search_query(&mut self, new_query: &str) {
-        let current_len = self.state.search_pattern().chars().count();
-        for _ in 0..current_len {
-            RemoveCharFromSearch.execute(&mut self.state);
-        }
-        for c in new_query.chars() {
-            AppendCharToSearch(c).execute(&mut self.state);
-        }
     }
 
 
