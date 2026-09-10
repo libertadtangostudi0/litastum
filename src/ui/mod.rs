@@ -30,12 +30,13 @@ const MIN_COLUMN_WIDTH: u16 = 24;
 /// Draws the whole application: two file panels side by side, a
 /// command-line row, and the F-key hint bar.
 ///
-/// Returns the column count each panel was actually rendered with, so
-/// the caller can feed it back into `Panel::set_columns` before the next
-/// keyboard event is handled — column count depends on terminal size,
-/// which only `ui::draw` computes, but `Panel` (not `ui`) owns the
-/// cursor state that navigation needs it for.
-pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
+/// Returns the `(columns, visible_rows)` each panel was actually
+/// rendered with, so the caller can feed it back into
+/// `Panel::set_columns`/`set_visible_rows` before the next keyboard
+/// event is handled — both depend on terminal size, which only
+/// `ui::draw` computes, but `Panel` (not `ui`) owns the cursor/scroll
+/// state that navigation needs them for.
+pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
     let theme = app.theme; // Theme is Copy -- see theme.rs for why
     let area = frame.area();
     match &mut app.mode {
@@ -50,12 +51,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
                 let cursor = editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme);
                 frame.set_cursor_position(cursor);
             }
-            return [1, 1];
+            return [(1, 1), (1, 1)];
         }
         Mode::ConfirmDiscard(editor) => {
             draw_editor(frame, area, editor, &theme);
             draw_confirm_discard_popup(frame, area, &theme);
-            return [1, 1];
+            return [(1, 1), (1, 1)];
         }
         Mode::Browsing
         | Mode::MainMenu(_)
@@ -147,8 +148,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
 
 
 /// Renders one panel (border, path title, footer) and its column-major
-/// file grid. Returns the column count used.
-fn draw_panel(frame: &mut Frame, area: Rect, panel: &Panel, is_active: bool, theme: &Theme) -> usize {
+/// file grid. Returns the `(columns, visible_rows)` actually used, so
+/// the caller can feed both back into `Panel::set_columns`/
+/// `set_visible_rows` — `visible_rows` is just `inner.height`, the same
+/// number of text rows `draw_entry_grid` itself renders into for every
+/// column (they're vertical slices of one shared height).
+fn draw_panel(frame: &mut Frame, area: Rect, panel: &Panel, is_active: bool, theme: &Theme) -> (usize, usize) {
     let border_style = if is_active {
         Style::default().fg(theme.accent)
     } else {
@@ -165,13 +170,23 @@ fn draw_panel(frame: &mut Frame, area: Rect, panel: &Panel, is_active: bool, the
 
     let columns = (inner.width / MIN_COLUMN_WIDTH).max(1) as usize;
     draw_entry_grid(frame, inner, panel, columns, is_active, theme);
-    columns
+    (columns, inner.height as usize)
 }
 
 
-/// Splits `area` into `columns` vertical slices and fills each with the
-/// entries belonging to that column (column-major: column 0 holds
-/// entries `0..rows`, column 1 holds `rows..2*rows`, etc).
+/// Splits `area` into `columns` vertical slices and fills each with a
+/// `panel.column_height()`-tall slice of the *currently visible page*
+/// (`panel.scroll_offset()..` in the flat `entries` array) -- column 0
+/// gets the page's own first `column_height` entries, column 1 the
+/// next `column_height`, and so on, exactly the same math `Panel`'s own
+/// navigation (`move_left`/`move_right`) uses, so the cursor and the
+/// rendered grid always agree on which entry sits in which cell. See
+/// `Panel::column_height`'s own doc comment for why this has to be
+/// `min(area.height, the list's own even-split row count)`, not
+/// `area.height` outright -- and `Panel`'s own struct doc for why
+/// scrolling needs a real, tracked offset at all rather than handing
+/// every row straight to a plain `List` (it doesn't scroll to follow
+/// the cursor on its own, the original reported bug).
 fn draw_entry_grid(
     frame: &mut Frame,
     area: Rect,
@@ -184,24 +199,27 @@ fn draw_entry_grid(
         return;
     }
 
-    let rows = panel.entries.len().div_ceil(columns);
+    let column_height = panel.column_height();
+    if column_height == 0 {
+        return;
+    }
     let column_areas = Layout::default()
         .direction(Direction::Horizontal)
         .constraints(vec![Constraint::Ratio(1, columns as u32); columns])
         .split(area);
 
     for (col_index, &column_area) in column_areas.iter().enumerate() {
-        let start = col_index * rows;
-        if start >= panel.entries.len() {
+        let col_start = panel.scroll_offset() + col_index * column_height;
+        if col_start >= panel.entries.len() {
             continue;
         }
-        let end = (start + rows).min(panel.entries.len());
+        let col_end = (col_start + column_height).min(panel.entries.len());
 
-        let items: Vec<ListItem> = panel.entries[start..end]
+        let items: Vec<ListItem> = panel.entries[col_start..col_end]
             .iter()
             .enumerate()
-            .map(|(row_index, entry)| {
-                let global_index = start + row_index;
+            .map(|(row_offset, entry)| {
+                let global_index = col_start + row_offset;
                 build_list_item(entry, global_index == panel.selected, is_active, theme)
             })
             .collect();

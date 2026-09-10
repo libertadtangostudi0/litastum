@@ -93,10 +93,11 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
 
 fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
     while !app.should_quit {
-        let mut columns = [1usize; 2];
-        terminal.draw(|frame| columns = ui::draw(frame, app))?;
-        for (panel, cols) in app.panels.iter_mut().zip(columns) {
+        let mut layout = [(1usize, 0usize); 2];
+        terminal.draw(|frame| layout = ui::draw(frame, app))?;
+        for (panel, (cols, rows)) in app.panels.iter_mut().zip(layout) {
             panel.set_columns(cols);
+            panel.set_visible_rows(rows);
         }
         wait_for_event(app, terminal)?;
     }

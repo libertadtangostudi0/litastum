@@ -323,8 +323,14 @@ impl Editor {
     /// `editor_keymap.rs`'s own tests are a sibling module of
     /// `editor::editor`, not a descendant, so they can't reach the
     /// private `state` field directly the way `editor::tests` can --
-    /// this is the accessor those tests (and any future one needing the
-    /// same) use instead.
+    /// this is the accessor those tests use instead. `#[cfg(test)]`
+    /// rather than a plain `pub fn`: this binary has no external
+    /// consumers, so with no non-test call site, a normal `cargo build`
+    /// (which doesn't see `#[cfg(test)]` code at all, tests included)
+    /// flagged it `dead_code` -- gating it the same way removes the
+    /// warning honestly instead of silencing it with `#[allow(dead_code)]`
+    /// on a method that's genuinely only ever called from tests.
+    #[cfg(test)]
     pub fn cursor(&self) -> Index2 {
         self.state.cursor
     }
