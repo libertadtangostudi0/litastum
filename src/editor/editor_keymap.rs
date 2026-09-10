@@ -4,6 +4,8 @@ use tracing::debug;
 
 use crate::app::{App, Mode};
 
+use super::find_history;
+
 
 /// A user-triggered action while a file is open in the built-in editor,
 /// at the level `main.rs` needs to care about. Almost everything —
@@ -27,6 +29,13 @@ pub enum EditorCommand {
     /// `bindings::extend_word_selection`'s own doc comment for the full
     /// story of why.
     WordSelect { forward: bool },
+    /// `Ctrl+F` -- opens the built-in search box (`Editor::start_search`).
+    /// Only ever resolved while the box *isn't* already open --
+    /// `handle_editor_key` intercepts every key ahead of `resolve`
+    /// entirely once `Editor::is_searching()` is true, routing to
+    /// `handle_search_key` below instead, so this variant is never
+    /// reached a second time to mean "close" or "next match".
+    Find,
     /// Not one of the bindings above — forward the raw key event to
     /// `Editor::input`.
     Forward,
@@ -54,6 +63,7 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
     match key.code {
         KeyCode::Esc => EditorCommand::Close,
         KeyCode::Char('s' | 'S') if ctrl => EditorCommand::Save,
+        KeyCode::Char('f' | 'F') if ctrl => EditorCommand::Find,
         KeyCode::Left if ctrl && shift => EditorCommand::WordSelect { forward: false },
         KeyCode::Right if ctrl && shift => EditorCommand::WordSelect { forward: true },
         _ if edtui_supports_key(key.code) => EditorCommand::Forward,
@@ -152,6 +162,10 @@ pub fn resolve_confirm_discard(key: KeyEvent) -> ConfirmDiscardCommand {
 /// `theme_menu.rs`/`menu.rs` each own their own state and handling —
 /// `main.rs` stays a thin dispatcher over `Mode`.
 pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    if matches!(&app.mode, Mode::Editing(editor) if editor.is_searching()) {
+        return handle_search_key(app, key);
+    }
+
     let command = resolve(key);
     debug!(?key, ?command, "editor key");
 
@@ -174,9 +188,70 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
     match command {
         EditorCommand::Close => unreachable!("handled above"),
         EditorCommand::Save => active_editor.save()?,
+        EditorCommand::Find => active_editor.start_search(),
         EditorCommand::WordSelect { forward } => active_editor.extend_word_selection(forward),
         EditorCommand::Forward => active_editor.input(key),
         EditorCommand::Ignore => {}
+    }
+
+    Ok(())
+}
+
+
+/// Key handling while the `Ctrl+F` search box is open -- intercepted
+/// ahead of `resolve`/the normal table entirely (see `handle_editor_key`
+/// above), the same way an in-progress word-select drag or the discard
+/// prompt each own their own key handling rather than sharing the
+/// ordinary editor dispatch. Typing filters live (`Editor::search_push_char`
+/// re-runs `edtui`'s own search on every keystroke); `Enter`/`Shift+Enter`
+/// jump to the next/previous match, VS Code's own `Ctrl+F` convention --
+/// `Up`/`Down` were tried for this first and reported wrong: those are
+/// for browsing *history* instead (`Editor::search_history_up`/`_down`),
+/// the same way a shell's own `Up`/`Down` recall past commands rather
+/// than doing anything to the command currently being typed. `End`
+/// accepts the ghost-text history suggestion shown after the query, if
+/// any (`find_history::suggest`); `Esc` closes the box and records the
+/// query into the persisted search history
+/// (`find_history::record_history`/`save_history`) if it isn't empty.
+fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    let Mode::Editing(active_editor) = &mut app.mode else {
+        return Ok(());
+    };
+
+    match key.code {
+        KeyCode::Esc => {
+            let query = active_editor.search_query();
+            active_editor.stop_search();
+            if !query.is_empty() {
+                find_history::record_history(&mut app.search_history, &query);
+            }
+            // Deliberately doesn't save to disk here -- this function is
+            // heavily unit-tested (see `handle_search_key_tests` below),
+            // and saving here would mean every one of those tests writes
+            // a real `editor_search_history.txt` into the cwd, exactly
+            // the trap `command_line::history` avoids by keeping
+            // `record_history` (memory) and `save_history` (disk)
+            // separate, with only the latter's *own* caller
+            // (`browsing::run_command_line`) touching disk -- see that
+            // function's own doc comment. `main.rs::main` persists
+            // `app.search_history` once at clean exit instead, the same
+            // in-memory-during-the-session shape without any unit-tested
+            // code path ever touching the real filesystem.
+        }
+        KeyCode::Up => active_editor.search_history_up(&app.search_history),
+        KeyCode::Down => active_editor.search_history_down(&app.search_history),
+        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => active_editor.search_previous(),
+        KeyCode::Enter => active_editor.search_next(),
+        KeyCode::Backspace => active_editor.search_pop_char(),
+        KeyCode::End => {
+            let query = active_editor.search_query();
+            if let Some(suggestion) = find_history::suggest(&app.search_history, &query) {
+                let suggestion = suggestion.to_string();
+                active_editor.accept_search_suggestion(&suggestion);
+            }
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => active_editor.search_push_char(c),
+        _ => {}
     }
 
     Ok(())
@@ -283,6 +358,18 @@ mod tests {
     #[test]
     fn unmodified_letter_is_forwarded() {
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(resolve(key), EditorCommand::Forward);
+    }
+
+    #[test]
+    fn ctrl_f_resolves_to_find() {
+        assert_eq!(resolve(ctrl_key('f')), EditorCommand::Find);
+        assert_eq!(resolve(ctrl_key('F')), EditorCommand::Find, "should match uppercase too, same reasoning as Ctrl+S");
+    }
+
+    #[test]
+    fn plain_f_without_ctrl_is_forwarded_not_find() {
+        let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE);
         assert_eq!(resolve(key), EditorCommand::Forward);
     }
 
@@ -449,6 +536,238 @@ mod tests {
         };
         assert!(!editor.has_selection());
     }
+    }
+
+    mod handle_search_key_tests {
+        use super::*;
+
+        #[test]
+        fn ctrl_f_opens_the_search_box() {
+            let (mut app, _path) = open_editor_app("hello world\n");
+
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert!(editor.is_searching());
+        }
+
+        #[test]
+        fn typing_filters_the_query_live_and_jumps_to_the_first_match() {
+            let (mut app, _path) = open_editor_app("hello world\n");
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+
+            for c in "world".chars() {
+                handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();
+            }
+
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.search_query(), "world");
+            assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 6 }, "cursor should jump to \"world\"'s own start");
+        }
+
+        #[test]
+        fn backspace_removes_the_last_query_character() {
+            let (mut app, _path) = open_editor_app("hello world\n");
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+            handle_editor_key(&mut app, key(KeyCode::Char('w'))).unwrap();
+            handle_editor_key(&mut app, key(KeyCode::Char('o'))).unwrap();
+
+            handle_editor_key(&mut app, key(KeyCode::Backspace)).unwrap();
+
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.search_query(), "w");
+        }
+
+        /// Real requirement, stated directly: navigation is plain `Up`/
+        /// `Down`, not `F3`/`Shift+F3` -- there's no bare-arrow conflict
+        /// to work around here the way the always-live command line has,
+        /// since this is its own popup.
+        #[test]
+        fn enter_and_shift_enter_navigate_between_matches() {
+            let (mut app, _path) = open_editor_app("cat dog cat\n");
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+            for c in "cat".chars() {
+                handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();
+            }
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 0 }, "sanity: should start on the first \"cat\"");
+
+            handle_editor_key(&mut app, key(KeyCode::Enter)).unwrap();
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 8 }, "Enter should jump to the second \"cat\"");
+
+            handle_editor_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)).unwrap();
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 0 }, "Shift+Enter should jump back to the first \"cat\"");
+        }
+
+        /// Real requirement, stated directly after `Up`/`Down` was
+        /// first tried for match navigation and reported wrong: those
+        /// keys browse the *search history* instead, a shell-`Up`-arrow
+        /// convention -- first press recalls the most recent past
+        /// query, further presses step further back, `Down` steps back
+        /// toward the present and clears the box once past the newest
+        /// entry.
+        #[test]
+        fn up_and_down_browse_search_history_not_matches() {
+            let (mut app, _path) = open_editor_app("cat dog cat\n");
+            app.search_history = vec!["dog".to_string(), "cat".to_string()];
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+
+            handle_editor_key(&mut app, key(KeyCode::Up)).unwrap();
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.search_query(), "cat", "first Up should recall the most recent past query");
+
+            handle_editor_key(&mut app, key(KeyCode::Up)).unwrap();
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.search_query(), "dog", "second Up should step further back");
+
+            handle_editor_key(&mut app, key(KeyCode::Down)).unwrap();
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.search_query(), "cat", "Down should step back toward the most recent entry");
+
+            handle_editor_key(&mut app, key(KeyCode::Down)).unwrap();
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.search_query(), "", "Down past the newest entry should clear the box");
+        }
+
+        #[test]
+        fn typing_after_browsing_history_resets_it() {
+            let (mut app, _path) = open_editor_app("hello world\n");
+            app.search_history = vec!["hello".to_string()];
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+            handle_editor_key(&mut app, key(KeyCode::Up)).unwrap();
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.search_query(), "hello", "sanity: history recalled");
+
+            handle_editor_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.search_query(), "hello!");
+
+            // A further Up should start fresh from the most recent
+            // entry again, not continue on from wherever browsing left
+            // off before the edit.
+            handle_editor_key(&mut app, key(KeyCode::Up)).unwrap();
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.search_query(), "hello");
+        }
+
+        #[test]
+        fn esc_leaves_the_cursor_right_after_the_found_match() {
+            let (mut app, _path) = open_editor_app("hello world\n");
+            let Mode::Editing(editor) = &mut app.mode else { unreachable!() };
+            editor.input(key(KeyCode::Right));
+            editor.input(key(KeyCode::Right)); // cursor now at column 2, before opening search
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+            for c in "world".chars() {
+                handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();
+            }
+
+            handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert!(!editor.is_searching(), "should have closed the box");
+            assert_eq!(
+                editor.cursor().col,
+                11,
+                "should land right after \"world\"'s own last letter ('d', column 10) -- not on it, and not revert to where search started"
+            );
+        }
+
+        /// Regression test for the real report: searching "lso" inside
+        /// "also" left the cursor visually *between* 's' and the final
+        /// 'o' instead of after it -- `stop_search` was landing directly
+        /// *on* the match's own last character, which only reads
+        /// correctly while a selection is active (`cursor_screen_position`'s
+        /// own +1 rendering shift, which doesn't fire here since closing
+        /// the search box never sets `state.selection`).
+        #[test]
+        fn esc_lands_after_the_match_not_visually_one_short_of_it() {
+            let (mut app, _path) = open_editor_app("also\n");
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+            for c in "lso".chars() {
+                handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();
+            }
+
+            handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.cursor().col, 4, "should be right after the final 'o' (column 3), not on it");
+        }
+
+        /// The revert-to-where-search-started behavior still applies
+        /// when nothing was actually found -- there's no match to leave
+        /// the cursor on.
+        #[test]
+        fn esc_with_no_match_found_reverts_to_where_search_started() {
+            let (mut app, _path) = open_editor_app("hello world\n");
+            let Mode::Editing(editor) = &mut app.mode else { unreachable!() };
+            editor.input(key(KeyCode::Right));
+            editor.input(key(KeyCode::Right)); // cursor now at column 2
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+            for c in "xyz".chars() {
+                handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();
+            }
+
+            handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.cursor().col, 2, "nothing was found -- should revert to where search started");
+        }
+
+        /// Real requirement, stated directly: a separate search-history
+        /// file, recorded the same way `command_line::history` is.
+        #[test]
+        fn esc_records_a_non_empty_query_into_search_history() {
+            let (mut app, _path) = open_editor_app("hello world\n");
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+            for c in "world".chars() {
+                handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();
+            }
+
+            handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+            assert_eq!(app.search_history, vec!["world"]);
+        }
+
+        #[test]
+        fn esc_with_an_empty_query_records_nothing() {
+            let (mut app, _path) = open_editor_app("hello world\n");
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+
+            handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+            assert!(app.search_history.is_empty());
+        }
+
+        /// Real requirement, stated directly: the query field should
+        /// offer history-based suggestions "similar to the command
+        /// line" -- `End` accepts the ghost-text suggestion shown after
+        /// the typed query (`find_history::suggest`, rendered by
+        /// `ui::editor_find::draw_find_popup`).
+        #[test]
+        fn end_accepts_the_history_suggestion() {
+            let (mut app, _path) = open_editor_app("hello world\n");
+            app.search_history = vec!["world".to_string()];
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+            handle_editor_key(&mut app, key(KeyCode::Char('w'))).unwrap();
+
+            handle_editor_key(&mut app, key(KeyCode::End)).unwrap();
+
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.search_query(), "world");
+        }
+
+        #[test]
+        fn plain_keys_are_swallowed_by_the_search_box_not_forwarded_to_the_buffer() {
+            let (mut app, _path) = open_editor_app("hello world\n");
+            handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+
+            handle_editor_key(&mut app, key(KeyCode::Char('x'))).unwrap();
+
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert!(!editor.is_dirty(), "typing into the search box must not edit the buffer");
+        }
     }
 
     mod handle_confirm_discard_key_tests {

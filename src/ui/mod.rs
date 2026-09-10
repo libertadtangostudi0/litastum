@@ -16,6 +16,7 @@ use crate::theming::Theme;
 mod command_line;
 mod confirm;
 mod drive_menu;
+mod editor_find;
 mod find_file;
 mod menu;
 mod popup;
@@ -40,6 +41,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [usize; 2] {
     match &mut app.mode {
         Mode::Editing(editor) => {
             draw_editor(frame, area, editor, &theme);
+            if editor.is_searching() {
+                // Drawn on top, same "popup over a full-screen mode"
+                // shape as ConfirmDiscard below -- and takes over the
+                // real terminal cursor from draw_editor's own buffer-
+                // cursor placement, same reasoning as the command line's
+                // own cursor yielding to whichever popup is showing.
+                let cursor = editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme);
+                frame.set_cursor_position(cursor);
+            }
             return [1, 1];
         }
         Mode::ConfirmDiscard(editor) => {
@@ -255,6 +265,8 @@ fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme
     let hint = Line::from(vec![
         Span::styled("Ctrl+S ", Style::default().fg(theme.accent)),
         Span::styled("Save   ", Style::default().fg(theme.text_dim)),
+        Span::styled("Ctrl+F ", Style::default().fg(theme.accent)),
+        Span::styled("Find   ", Style::default().fg(theme.text_dim)),
         Span::styled("Ctrl+C/X/V ", Style::default().fg(theme.accent)),
         Span::styled("Copy/Cut/Paste   ", Style::default().fg(theme.text_dim)),
         Span::styled("Esc ", Style::default().fg(theme.accent)),

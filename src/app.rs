@@ -177,6 +177,13 @@ pub struct App {
     /// — see `command_line::record_history`/`MAX_HISTORY` and the F9 →
     /// Commands → History popup. Session-only, not persisted.
     pub command_history: Vec<String>,
+    /// Every query typed into the built-in editor's `Ctrl+F` search box
+    /// and closed with `Esc`, oldest first — see
+    /// `editor::find_history::record_history` and the box's own ghost-
+    /// text suggestion (`editor::find_history::suggest`). Persisted to
+    /// its own file, separate from `command_history` above (see
+    /// `editor::find_history::HISTORY_FILE`'s own doc comment).
+    pub search_history: Vec<String>,
     /// Whether `Alt` is currently held down — drives which row
     /// `ui::draw_function_keys` shows, Far Manager-style.
     ///
@@ -221,6 +228,7 @@ impl App {
             shell_profiles: builtin_profiles(),
             active_shell: 0,
             command_history: Vec::new(),
+            search_history: Vec::new(),
             alt_held: false,
         })
     }

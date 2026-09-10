@@ -103,3 +103,7 @@ assets/debug/
 # dir), so it lands here during `cargo run`/`cargo test` from the repo
 # root and shouldn't be committed.
 /command_history.txt
+
+# Editor search history (editor/find_history.rs) -- same cwd-relative
+# shortcut as command_history.txt above, separate file.
+/editor_search_history.txt

@@ -2,6 +2,7 @@ mod bindings;
 mod clipboard;
 mod editor;
 mod editor_keymap;
+pub mod find_history;
 mod syntax;
 
 pub use editor::Editor;

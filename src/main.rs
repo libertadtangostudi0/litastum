@@ -49,8 +49,22 @@ fn main() -> Result<()> {
     // to sit in the test-running directory -- same reasoning as the
     // shell profile above not living inside `App::new` either.
     app.command_history = command_line::load_history();
+    // Same isolation reasoning as command_history above -- loaded here,
+    // not in App::new, so tests building an App via test_support::test_app
+    // never touch a real editor_search_history.txt on disk.
+    app.search_history = editor::find_history::load_history();
     let result = run(&mut terminal, &mut app);
     restore_terminal(&mut terminal)?;
+    // Unlike command_history.txt (saved incrementally, per command run,
+    // from inside browsing::run_command_line), the search box has no
+    // equivalent "needs a real Terminal" choke point to hang a disk
+    // write off without also making handle_search_key's own extensive
+    // unit tests touch the filesystem -- see editor_keymap.rs's own
+    // comment on this. Saved once here instead, at clean exit; a crash
+    // mid-session loses that session's own search history, same
+    // tradeoff `command_history.txt` doesn't have to make, accepted for
+    // keeping the key-handling tests filesystem-free.
+    editor::find_history::save_history(&app.search_history);
     result
 }
 
