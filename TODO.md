@@ -167,6 +167,35 @@ Near-term, actionable items. Full staged plan:
       worth folding into a fresh grammar or symptomatic of a much bigger
       gap. Purely a sizing/scoping task — no grammar work until this is
       done and reviewed.
+- [ ] Highlight every other occurrence of the identifier currently under
+      the cursor, VS Code-style (screenshot reference: `entry` dimly
+      boxed at each of its own occurrences in `app.rs` while the cursor
+      sits on one of them) — no selection needed, purely a read-only
+      visual aid. Needs: extracting the word under the cursor (reuse
+      `bindings::word_select`'s own word-boundary logic, or a fresh
+      `state.lines`-based scan — `edtui`'s own `CharacterClass` is
+      `pub(crate)`, unreachable, same limitation noted throughout
+      [[litastum-stack]]'s word-selection history), finding every other
+      occurrence in the buffer, and a rendering hook to paint them
+      distinctly from the ordinary syntax-highlighted text (`EditorView`
+      doesn't have a built-in concept for this — would likely need a
+      second highlight pass layered on top of, or instead of,
+      `syntax_highlighter`).
+- [ ] In-editor find (`Ctrl+F`/`F7`, Far Manager's own editor
+      convention — not to be confused with the file-panel's own F7/
+      Alt+F7 "find file[s]"/"find file *content*" above, an entirely
+      different, already-landed feature that searches *across files* in
+      the panel, not *within* the currently open one). Needs: a search
+      popup/prompt for the query (reuse `ui/popup.rs`'s shared chrome,
+      per [[litastum-popup-design]]), a plain substring or (stretch)
+      regex scan over `state.lines`, highlighting each match (possibly
+      sharing groundwork with the "highlight every occurrence of the
+      word under the cursor" item above, if that lands first), jump-to-
+      next/previous-match navigation (`F3`/`Shift+F3`, or Far's own
+      repeat-last-search convention), and scrolling the match into view.
+      `edtui` has no built-in search of its own to lean on — this would
+      be hand-rolled, same as the word-selection logic elsewhere in this
+      file.
 
 ## RESOLVED: Ctrl+S / Ctrl+C / Ctrl+V / Ctrl+X (2026-09-04)
 
@@ -562,6 +591,11 @@ matching Far Manager's own F8), `N`/`Esc` cancels with nothing touched.
       enumeration; the Unix build gets a single `"/"` entry rather than
       real mount-point enumeration — same scope cut as `shell.rs`'s
       Unix shell-profile fallback, not attempted here either
+- [ ] **Diff view mode + conflict resolver** — placeholder, rules/scope
+      to be filled in later (not yet specified: whether this is a
+      standalone F-key-triggered mode, an editor overlay, how it hooks
+      into VCS state if at all, two-way vs. three-way, resolution UI).
+      Don't start implementation from this bullet alone.
 
 ## Housekeeping
 
