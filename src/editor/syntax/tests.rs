@@ -202,6 +202,128 @@ fn cmake_commands_include_is_actually_resolved_not_just_present() {
     );
 }
 
+/// Reported missing directly: `.groovy`/`.gradle` and plain
+/// `Jenkinsfile` (no extension of its own) had no highlighting at all.
+/// `Groovy.sublime-syntax`'s own `hidden_file_extensions` already lists
+/// `Jenkinsfile` by full file name, same pattern as `Cargo.lock`/
+/// `.editorconfig` elsewhere in this file.
+#[test]
+fn resolve_syntax_highlighter_covers_groovy_and_jenkinsfile() {
+    assert!(resolve_syntax_highlighter(&["groovy"], "", &None).is_some());
+    assert!(resolve_syntax_highlighter(&["GROOVY"], "", &None).is_some(), "should match case-insensitively");
+    assert!(resolve_syntax_highlighter(&["gvy"], "", &None).is_some());
+    assert!(resolve_syntax_highlighter(&["gradle"], "", &None).is_some());
+    assert!(
+        resolve_syntax_highlighter(&["Jenkinsfile"], "", &None).is_some(),
+        "Groovy.sublime-syntax's own hidden_file_extensions covers this by full file name, not extension"
+    );
+}
+
+/// Basic sanity check that a single-line block comment colors at all --
+/// same "actually run highlighting and check it colors something, not
+/// just that it resolves" shape as `.gitignore`/CMake above. See
+/// `groovy_multiline_doc_comment_colors_every_line_as_comment` below for
+/// the real report this file's own `comments` context patch was for --
+/// this single-line case never exercised that bug, since opening and
+/// closing on the same call never risks losing track of state between
+/// lines.
+#[test]
+fn groovy_comments_are_actually_colored_not_just_resolvable() {
+    use edtui::syntect::easy::HighlightLines;
+
+    let syntax_set = bundled_extra_syntax_set();
+    let syntax_ref = syntax_set.find_syntax_by_extension("groovy").expect("groovy syntax should resolve");
+    let theme = THEME_SET.themes.get(SYNTAX_THEME).expect("dracula theme should be bundled").clone();
+
+    let mut highlighter = HighlightLines::new(syntax_ref, &theme);
+    let spans = highlighter.highlight_line("/* a comment */\n", syntax_set).expect("highlighting should succeed");
+
+    let base_foreground = theme.settings.foreground.expect("theme should define a foreground");
+    assert!(
+        spans.iter().any(|(style, _)| style.foreground != base_foreground),
+        "a comment line should get at least one span colored differently from plain foreground"
+    );
+}
+
+/// Regression test for a real report: a genuine multi-line `/** ... */`
+/// doc comment (opening `/**` on its own line, several plain text lines
+/// in between, closing `*/` on its own line -- the single-line case
+/// above never exercises this, since it opens and closes on the same
+/// `highlight_line` call) rendered its *middle* lines as ordinary code
+/// (`*` colored as an operator, the following word colored as a plain
+/// identifier) instead of comment text throughout. Uses one shared
+/// `HighlightLines` instance across all five lines, exactly like real
+/// multi-line highlighting does (each call's internal `ParseState`
+/// carries into the next) -- the single-line test above can't catch a
+/// state-persistence problem at all, since there's only ever one call.
+#[test]
+fn groovy_multiline_doc_comment_colors_every_line_as_comment() {
+    use edtui::syntect::easy::HighlightLines;
+
+    let syntax_set = bundled_extra_syntax_set();
+    let syntax_ref = syntax_set.find_syntax_by_extension("groovy").expect("groovy syntax should resolve");
+    let theme = THEME_SET.themes.get(SYNTAX_THEME).expect("dracula theme should be bundled").clone();
+    let base_foreground = theme.settings.foreground.expect("theme should define a foreground");
+
+    let mut highlighter = HighlightLines::new(syntax_ref, &theme);
+    let lines = ["/**\n", " * example\n", " * Something\n", " * else\n", " */\n"];
+
+    for line in lines {
+        let spans = highlighter.highlight_line(line, syntax_set).expect("highlighting should succeed");
+        assert!(
+            spans.iter().all(|(style, text)| text.trim().is_empty() || style.foreground != base_foreground),
+            "every non-whitespace span on {line:?} should be colored as comment text, not left at \
+             plain foreground -- if this fails, the parser is losing track of being inside the \
+             comment block partway through, not just failing to color the opening/closing line"
+        );
+    }
+}
+
+/// Regression test for a real, second report on the same underlying
+/// fix as the doc-comment test above, using real project content: a
+/// pure decorative "banner" comment (every line just `***`, no leading
+/// space or trailing text on most of them) reported as still broken
+/// even after the `scope:text.html.javadoc` removal. Confirms this
+/// exact shape colors correctly too -- if this test passes but a real
+/// build still shows it broken, the running binary predates this fix
+/// (needs a rebuild), since this pins down the grammar/`syntect` layer
+/// in isolation, the same way the doc-comment test above does.
+#[test]
+fn groovy_banner_comment_colors_every_line_as_comment() {
+    use edtui::syntect::easy::HighlightLines;
+
+    let syntax_set = bundled_extra_syntax_set();
+    let syntax_ref = syntax_set.find_syntax_by_extension("groovy").expect("groovy syntax should resolve");
+    let theme = THEME_SET.themes.get(SYNTAX_THEME).expect("dracula theme should be bundled").clone();
+    let base_foreground = theme.settings.foreground.expect("theme should define a foreground");
+
+    let mut highlighter = HighlightLines::new(syntax_ref, &theme);
+    let lines = [
+        "/***************************************************************************\n",
+        "***\n",
+        "***\n",
+        "***    some text here\n",
+        "***\n",
+        "*****************************************************************************/\n",
+    ];
+
+    for line in lines {
+        let spans = highlighter.highlight_line(line, syntax_set).expect("highlighting should succeed");
+        assert!(
+            spans.iter().all(|(style, text)| text.trim().is_empty() || style.foreground != base_foreground),
+            "every non-whitespace span on {line:?} should be colored as comment text"
+        );
+    }
+
+    // The comment must actually close too -- code right after it should
+    // be colored as ordinary code again, not still swallowed as comment.
+    let spans = highlighter.highlight_line("class Foo {}\n", syntax_set).expect("highlighting should succeed");
+    assert!(
+        spans.iter().any(|(style, text)| text.trim() == "class" && style.foreground != base_foreground),
+        "\"class\" right after the closing */ should be colored as a keyword, not still comment text"
+    );
+}
+
 /// A real report: `base.dcl` (AutoCAD Dialog Control Language)
 /// rendered with zero highlighting -- confirmed no `.dcl` grammar
 /// exists anywhere (neither `syntect`'s default set nor
@@ -258,6 +380,10 @@ fn opening_a_bundled_grammar_file_gets_a_working_syntax_highlighter() {
         ("CMakeLists.txt.sdk", "cmake_minimum_required(VERSION 3.9)\n"),
         ("base.dcl", "row : cluster {\n    horizontal_margin = none;\n}\n"),
         ("TBVersionInfo.rc2", "#ifndef _MAC\n#include \"./Include/Common/TBVersion.h\"\n#endif\n"),
+        ("build.gradle", "apply plugin: 'java'\n"),
+        // No extension of its own -- only resolvable by full file name,
+        // same shape as "config" above.
+        ("Jenkinsfile", "pipeline {\n    agent any\n}\n"),
     ];
     for (filename, contents) in fixtures {
         let dir = unique_scratch_dir("editor-bundled");

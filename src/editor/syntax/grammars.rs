@@ -75,6 +75,33 @@ use tracing::warn;
 ///   punctuation, tile-type labels, attribute names), not an
 ///   exhaustive enumeration of DCL's full tile/attribute vocabulary.
 ///
+/// - Groovy (`.groovy`/`.gvy`/`.gradle`, and — via its own
+///   `hidden_file_extensions` list — plain `Jenkinsfile`, which has no
+///   extension of its own at all) — reported missing directly. Genuinely
+///   present in sublimehq/Packages (confirmed directly, browsing the
+///   repo) but, like TOML/the Git formats above, apparently not
+///   included in `syntect`'s own default bundle for some unknown
+///   reason — same license situation too
+///   (`assets/syntax/sublimehq-Packages.LICENSE.txt`), no separate
+///   `LICENSE.txt` needed. **One local patch**: the upstream grammar's
+///   own `comments` context tried `include: scope:text.html.javadoc`
+///   first (for `/** ... */` doc-comment blocks), falling back to a
+///   plain `/* ... */` comment-block match — a *cross-scope* reference
+///   to an entirely different grammar (Java's own Javadoc) that this
+///   project doesn't bundle, unlike the *local*, same-file/`hidden:
+///   true`-target includes Git Ignore/CMake depend on above. Reported
+///   directly against a real multi-line `/** ... */` block: the opening
+///   and closing lines colored fine, but every line in between rendered
+///   as ordinary code (`*` as an operator, the following word as a
+///   plain identifier) instead of comment text — removed the
+///   `scope:text.html.javadoc` line entirely from this project's own
+///   copy of the grammar rather than chase the exact interaction
+///   further, since it can only ever be a liability here (there's no
+///   Javadoc grammar in this `SyntaxSet` for it to ever successfully
+///   resolve against) and the plain `comment-block` fallback is
+///   correct and sufficient on its own — see
+///   `groovy_multiline_doc_comment_colors_every_line_as_comment`.
+///
 /// A custom Rust grammar (github.com/rust-lang/rust-enhanced) was tried
 /// here too, to get closer to VS Code's own highlighting -- reverted:
 /// even after two rounds of local patches (widening its type coverage,
@@ -95,6 +122,7 @@ const BUNDLED_GRAMMARS: &[&str] = &[
     include_str!("../../../assets/syntax/CMakeCommands.sublime-syntax"),
     include_str!("../../../assets/syntax/CMake.sublime-syntax"),
     include_str!("../../../assets/syntax/DCL.sublime-syntax"),
+    include_str!("../../../assets/syntax/Groovy.sublime-syntax"),
 ];
 
 /// Extensions with no dedicated grammar anywhere (bundled here or in

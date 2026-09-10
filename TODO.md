@@ -196,6 +196,48 @@ Near-term, actionable items. Full staged plan:
       `edtui` has no built-in search of its own to lean on — this would
       be hand-rolled, same as the word-selection logic elsewhere in this
       file.
+- [ ] **Multi-line syntax constructs (block comments, multi-line
+      strings, ...) don't highlight correctly past their own opening
+      line — a real, confirmed `edtui` 0.11.7 architecture limitation,
+      not a bug in any one bundled grammar.** Reported directly against
+      a Groovy/Jenkinsfile banner comment (`/******...` opening a block,
+      several `***`-only lines, `...******/` closing): only the opening
+      line rendered as a comment; every line after it rendered as
+      ordinary code. Traced to the actual dependency source
+      (`edtui-0.11.7/src/view/syntax_higlighting.rs::SyntaxHighlighter::highlight_line`
+      and `src/view/internal.rs::line_into_highlighted_spans_with_selections`,
+      confirmed by reading both directly, not guessed): `highlight_line`
+      takes `&self` (no mutable state) and constructs a **brand new**
+      `syntect::easy::HighlightLines` from scratch on *every single
+      call*, and `EditorView`'s own rendering calls it once per visible
+      *row*, independently, with no `ParseState`/`HighlightState` ever
+      threaded between rows. Confirmed this is genuinely `edtui`'s own
+      limitation, not a grammar issue: a standalone test driving the
+      *same* bundled Groovy grammar through one shared, persistent
+      `HighlightLines` instance across multiple `highlight_line` calls
+      (`editor::syntax::tests::groovy_banner_comment_colors_every_line_as_comment`)
+      colors every line correctly — the grammar and `syntect` are fine
+      on their own; `edtui`'s own per-row call pattern is what throws
+      the state away. Affects **every** language with any multi-line
+      construct, not just Groovy — C/Rust/C++ block comments, Python/
+      JS-style multi-line strings, etc. are presumably equally affected,
+      just less commonly written in a way that's visually obvious as
+      "broken" (most everyday `/* ... */` comments people actually write
+      are short and often single-line in practice, so this may simply
+      not have been noticed yet for other languages). Already on
+      `edtui`'s latest published version (0.11.7, confirmed via
+      crates.io) — no version bump fixes this. No workaround available
+      from litastum's side without either patching a vendored/forked
+      copy of `edtui` (`SyntaxHighlighter::highlight_line` would need a
+      `&mut self` + persisted `HighlightState`/`ParseState`, and
+      `EditorView`'s own render loop would need to call it top-to-bottom
+      in row order, never out of order or for only a scrolled subset,
+      for the state to stay meaningful) or replacing `edtui`'s syntax-
+      highlighting feature with a hand-rolled rendering pass entirely —
+      both large undertakings, not scoped further here. **Reported
+      upstream**: github.com/preiter93/edtui/issues/74 — waiting on a
+      response before deciding whether to fork/patch `edtui` ourselves
+      or wait for an upstream fix.
 
 ## RESOLVED: Ctrl+S / Ctrl+C / Ctrl+V / Ctrl+X (2026-09-04)
 
