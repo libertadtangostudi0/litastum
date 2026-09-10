@@ -482,3 +482,62 @@ fn pure_backward_selection_is_unaffected_by_the_retraction_fix() {
 // not exactly the cell a matching `Right` press had left the cursor
 // on (that was the first, overcorrected attempt at this fix), one
 // column further back, onto the separator itself.
+
+/// Regression test for the real, reported bug ("Seventeenth" in
+/// `extend_word_selection`'s own doc comment): forward extension used
+/// to get permanently stuck the instant the very next real character
+/// was non-ASCII (an em dash here) -- every further `Ctrl+Shift+Right`
+/// press did nothing at all once the selection reached it. Reported
+/// against real prose almost identical to this.
+#[test]
+fn ctrl_shift_right_selects_over_an_em_dash_instead_of_getting_stuck() {
+    let mut state = state_for("in Russian by default — commit messages", 0);
+
+    for _ in 0..4 {
+        extend_word_selection(&mut state, true, false, &mut None); // "in", "Russian", "by", "default"
+    }
+    let after_default = state.cursor.col;
+
+    extend_word_selection(&mut state, true, false, &mut None); // the em dash itself
+
+    assert!(state.cursor.col > after_default, "should have moved past \"default\" onto the em dash, not stayed stuck");
+    assert_eq!(state.selection.as_ref().unwrap().end, state.cursor);
+
+    // And a further press should keep going into "commit" -- the stall
+    // used to persist forever once hit, not just for the one press
+    // that landed on the non-ASCII character.
+    extend_word_selection(&mut state, true, false, &mut None);
+    assert!(state.cursor.col > after_default + 1, "should keep extending into \"commit\" after the em dash, not stay stuck there either");
+}
+
+/// Same root cause, a different non-ASCII character -- a Cyrillic run
+/// this time, to confirm the fix isn't specific to punctuation-shaped
+/// non-ASCII characters like an em dash.
+#[test]
+fn ctrl_shift_right_selects_over_a_cyrillic_word_instead_of_getting_stuck() {
+    let mut state = state_for("hello мир world", 0);
+
+    extend_word_selection(&mut state, true, false, &mut None); // "hello"
+    let after_hello = state.cursor.col;
+
+    extend_word_selection(&mut state, true, false, &mut None); // "мир"
+
+    assert!(state.cursor.col > after_hello, "should have advanced onto/through \"мир\", not stayed stuck on \"hello\"");
+}
+
+/// A selection that reaches a non-ASCII run and then retracts with
+/// `Ctrl+Shift+Left` should give it back cleanly, same as any other
+/// character run -- confirms the forward-only fix above doesn't leave
+/// the selection in a state the existing retraction logic can't handle.
+#[test]
+fn ctrl_shift_left_retracts_back_off_an_em_dash_normally() {
+    let mut state = state_for("default — commit", 0);
+    for _ in 0..2 {
+        extend_word_selection(&mut state, true, false, &mut None); // "default", then the em dash
+    }
+    let reached = state.cursor.col;
+
+    extend_word_selection(&mut state, false, true, &mut None);
+
+    assert!(state.cursor.col < reached, "should have retracted back off the em dash");
+}

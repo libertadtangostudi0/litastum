@@ -1,5 +1,5 @@
 use edtui::actions::{Execute, MoveBackward, MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord, SwitchMode};
-use edtui::{EditorMode, EditorState, Index2};
+use edtui::{EditorMode, EditorState, Index2, Lines};
 
 /// `Ctrl+Shift+Left`/`Right` -- word-wise selection. Called directly
 /// from `editor_keymap.rs::handle_editor_key`, ahead of `Editor::input`
@@ -471,6 +471,52 @@ use edtui::{EditorMode, EditorState, Index2};
 /// selection. The old "move the anchor to claim new territory" step was
 /// never actually necessary to reach that result -- an ordinary fresh
 /// selection re-derives the identical answer on its own.
+/// **Seventeenth: a real report that forward extension gets completely
+/// stuck the moment a non-ASCII character (an em dash, a curly quote, a
+/// Cyrillic letter, ...) is the very next thing to select.** Reported
+/// against real prose: `"...in Russian by default — commit messages..."`,
+/// `Ctrl+Shift+Right` presses correctly walked up through `"default"`,
+/// then every further press did *nothing at all* -- the selection never
+/// grew past `"default"` no matter how many more times it was pressed.
+/// `Ctrl+Shift+Left` was unaffected.
+///
+/// Root cause, confirmed directly from `edtui`'s own source
+/// (`actions/motion.rs::CharacterClass`, `PartialEq for CharacterClass`):
+/// a character outside ASCII alphanumeric/punctuation/whitespace
+/// classifies as `CharacterClass::Unknown`, and `Unknown` is defined to
+/// never equal *anything*, including itself (`(Unknown, _) | (_, Unknown)
+/// => false`). `MoveWordForwardToEndOfWord`'s own scan loop advances only
+/// while the next character's class still equals the run's own starting
+/// class -- so the instant that starting class is `Unknown` (the very
+/// first real character is non-ASCII), the loop's first comparison
+/// already reads `Unknown != Unknown` (`true`) and breaks immediately,
+/// before ever assigning `state.cursor` even once. The action becomes a
+/// true no-op in that case -- not "selects the em dash," just nothing --
+/// which is why every further press stayed stuck at the exact same
+/// place. `MoveWordBackward` (the `Left` direction) hits the identical
+/// `Unknown`-vs-`Unknown` comparison on its own first iteration, but its
+/// own loop already runs `start_index = i` *before* checking laziness on
+/// the next iteration in the reverse case -- it happens to still land
+/// exactly on the `Unknown` character itself before its own break, which
+/// reads as "it works" even though it's the same underlying gap; not
+/// investigated further since it wasn't the reported symptom and isn't
+/// broken in any way that's actually visible.
+///
+/// **Landed on**: `advance_over_a_non_ascii_run` below, called first,
+/// with `MoveWordForwardToEndOfWord` only used as a fallback when it
+/// declines (returns `false`) -- exactly the case where `edtui`'s own
+/// action already works fine (the next real character classifies
+/// normally). No `CharacterClass` reimplementation for the *general*
+/// case, matching this file's own established discipline throughout --
+/// just enough of a mirror of `edtui`'s own lead-in (skip fully empty
+/// rows, then skip ASCII whitespace within the resulting row -- see
+/// `skip_to_word_scan_start`'s own doc comment) to find where a
+/// non-ASCII run would start, then a plain walk over `state.lines`'s own
+/// public iterator for as long as the run stays non-ASCII, updating
+/// `state.cursor`/`state.selection.end` directly (both public fields --
+/// no `set_selection_with_lines` needed, which is `pub(crate)` and
+/// unreachable anyway, same constraint every other fix in this file
+/// works around the same way).
 pub(in crate::editor) fn extend_word_selection(state: &mut EditorState, forward: bool, retracing: bool, true_anchor: &mut Option<Index2>) {
     let cursor_before = state.cursor;
     let selection_before = state.selection.as_ref().map(|s| (s.start, s.end));
@@ -484,7 +530,9 @@ pub(in crate::editor) fn extend_word_selection(state: &mut EditorState, forward:
         if retracing {
             retreat_forward_through_a_backward_walk(state, true_anchor);
         } else {
-            MoveWordForwardToEndOfWord(1).execute(state);
+            if !advance_over_a_non_ascii_run(state, cursor_before) {
+                MoveWordForwardToEndOfWord(1).execute(state);
+            }
             if starting_fresh_selection && state.cursor == cursor_before {
                 // Nowhere further right to go at all (a fresh selection
                 // right at the buffer's own end) -- close it rather than
@@ -685,6 +733,91 @@ fn retreat_forward_through_a_backward_walk(state: &mut EditorState, true_anchor:
     }
     SwitchMode(EditorMode::Normal).execute(state);
     SwitchMode(EditorMode::Insert).execute(state);
+}
+
+
+/// See `extend_word_selection`'s own doc comment ("Seventeenth") for the
+/// real report this fixes. Only ever does anything when the very next
+/// real character (after `cursor_before`) is outside `edtui`'s own
+/// `CharacterClass::Alphanumeric`/`Punctuation`/`Whitespace` -- i.e.
+/// non-ASCII, the one case its own `MoveWordForwardToEndOfWord` gets
+/// permanently stuck on (`Unknown` never equals itself). Returns `false`
+/// without touching anything otherwise, so the caller falls back to the
+/// ordinary action, which already works correctly for every ASCII case
+/// this deliberately leaves alone.
+fn advance_over_a_non_ascii_run(state: &mut EditorState, cursor_before: Index2) -> bool {
+    // Same lead-in `MoveWordForwardToEndOfWord` performs before it
+    // starts scanning: step onto the next cell (or the next line, at
+    // the end of this one -- `false` here, same as declining, since
+    // there's nothing left to advance over at all).
+    let lead_in = if state.lines.is_last_col(cursor_before) {
+        if state.lines.is_last_row(cursor_before) {
+            return false;
+        }
+        Index2::new(cursor_before.row + 1, 0)
+    } else {
+        Index2::new(cursor_before.row, cursor_before.col + 1)
+    };
+    let start = skip_to_word_scan_start(&state.lines, lead_in);
+
+    let Some(&first_char) = state.lines.get(start) else {
+        return false; // nothing left in the buffer at all
+    };
+    if is_known_character_class(first_char) {
+        return false; // an ordinary ASCII run -- edtui's own action already handles this
+    }
+
+    // Walk forward while this run stays non-ASCII, the same "advance
+    // while still the same class" shape `MoveWordForwardToEndOfWord`
+    // itself uses -- including its own same "stop at a row's last
+    // column" boundary, so this never silently crosses a line the real
+    // action wouldn't have either.
+    let mut landing = start;
+    for (next_char, index) in state.lines.iter().from(start) {
+        let Some(&c) = next_char else { break };
+        if is_known_character_class(c) {
+            break;
+        }
+        landing = index;
+        if state.lines.is_last_col(index) {
+            break;
+        }
+    }
+
+    state.cursor = landing;
+    if let Some(selection) = state.selection.as_mut() {
+        selection.end = landing;
+    }
+    true
+}
+
+/// Mirrors `edtui`'s own (`pub(crate)`, unreachable) lead-in for
+/// `MoveWordForwardToEndOfWord`/`MoveWordForward`: skip any fully empty
+/// rows entirely (a run of blank lines counts as one gap to cross, same
+/// as a run of blank characters on one line does), then skip ASCII
+/// whitespace within whatever row that lands on -- deliberately *not*
+/// crossing into a further row if the rest of this one turns out to be
+/// nothing but trailing whitespace, matching `edtui`'s own real
+/// `skip_whitespace` (its own doc comment: "stop at the end of the
+/// line"), quirky as that is.
+fn skip_to_word_scan_start(lines: &Lines, mut index: Index2) -> Index2 {
+    while lines.is_empty_row(index.row) == Some(true) {
+        index = Index2::new(index.row + 1, 0);
+    }
+    while lines.get(index).is_some_and(char::is_ascii_whitespace) {
+        index.col += 1;
+    }
+    index
+}
+
+/// Every character class `edtui`'s own `CharacterClass` actually
+/// defines, unioned into one check -- anything outside this is what it
+/// classifies `Unknown` (and, per `extend_word_selection`'s own doc
+/// comment, gets `MoveWordForwardToEndOfWord` stuck). No enum
+/// reimplementation needed since this only ever needs the one bit
+/// `advance_over_a_non_ascii_run` actually asks: "known class, or not."
+fn is_known_character_class(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c.is_ascii_punctuation() || c.is_ascii_whitespace()
 }
 
 
