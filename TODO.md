@@ -367,7 +367,14 @@ real Far.
 - [x] `F4` on a result opens it in the built-in editor, same as `F4`
       from the browser — does nothing for a directory result (search
       results can match directory names too) or a non-UTF-8 file, same
-      as the browser's own `F4`.
+      as the browser's own `F4`. Closing that editor returns to the
+      results popup with its results intact (`app.editor_return_to`,
+      `editor_keymap::return_from_editor`) rather than dropping back to
+      plain browsing — requested directly as a real follow-up gap:
+      opening one result to check it shouldn't lose the rest of the
+      search. Moved (not cloned) into `editor_return_to` and back, so a
+      large result set isn't deep-copied just to park it there while
+      editing.
 - [x] `Tab` on a result performs the same directory navigation `Enter`
       does (moves the active panel there, selects the file), but leaves
       the popup open in `FindFilePhase::Results` instead of closing it

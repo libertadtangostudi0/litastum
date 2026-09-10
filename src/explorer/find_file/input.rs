@@ -184,9 +184,18 @@ fn navigate_active_panel_to_result(app: &mut App, path: &Path) -> Result<()> {
 /// the browser (`explorer::command::open_editor`) -- does nothing for a
 /// directory result (search results can include directory name matches
 /// too, not just files) or a file that fails to load as UTF-8 text,
-/// same as that function. Closes the popup on success, same as `Enter`
-/// -- there's nothing left to do with the results list once the editor
-/// is open over it.
+/// same as that function.
+///
+/// The results list itself isn't dropped, just set aside
+/// (`app.editor_return_to`) -- reported directly as a real gap:
+/// finishing the edit used to always land back in plain browsing,
+/// losing the search results even though nothing about them was
+/// actually done with yet. `editor_keymap::return_from_editor` restores
+/// `Mode::FindFile` from it once the editor genuinely closes (`Esc`
+/// with no unsaved changes, or discarding them) -- moved via
+/// `mem::replace` rather than cloned, so a large result set (the very
+/// case the popup's own scrolling exists for) doesn't get deep-copied
+/// just to park it here.
 fn edit_selected_result(app: &mut App) -> Result<()> {
     let Mode::FindFile(state) = &app.mode else {
         return Ok(());
@@ -199,9 +208,14 @@ fn edit_selected_result(app: &mut App) -> Result<()> {
     }
 
     let syntax_theme = app.syntax_theme.clone();
-    if let Ok(editor) = Editor::open(path, syntax_theme) {
-        app.mode = Mode::Editing(editor);
-    }
+    let Ok(editor) = Editor::open(path, syntax_theme) else {
+        return Ok(());
+    };
+
+    let Mode::FindFile(state) = std::mem::replace(&mut app.mode, Mode::Editing(editor)) else {
+        unreachable!("just matched Mode::FindFile above");
+    };
+    app.editor_return_to = Some(state);
     Ok(())
 }
 
@@ -345,6 +359,34 @@ mod tests {
         handle_find_file_key(&mut app, KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE)).unwrap();
 
         assert!(matches!(app.mode, Mode::Editing(_)));
+    }
+
+    /// Regression coverage for the real follow-up request: closing the
+    /// editor after `F4`-from-Find-file should return to the results
+    /// popup with its results intact, not drop back to plain
+    /// browsing -- the search itself isn't "done with" just because one
+    /// result got opened.
+    #[test]
+    fn closing_the_editor_after_f4_from_find_file_returns_to_the_results_popup() {
+        let mut app = app_with_find_file(FindFileState::new());
+        let target = app.panels[0].path.join("target.txt");
+        fs::write(&target, b"hello").unwrap();
+
+        let mut results_state = FindFileState::new();
+        results_state.phase = FindFilePhase::Results;
+        results_state.results = vec![target];
+        app.mode = Mode::FindFile(results_state);
+
+        handle_find_file_key(&mut app, KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE)).unwrap();
+        assert!(matches!(app.mode, Mode::Editing(_)), "sanity");
+
+        crate::editor::handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        let Mode::FindFile(state) = &app.mode else {
+            panic!("closing the editor should return to Mode::FindFile, not Mode::Browsing");
+        };
+        assert_eq!(state.phase, FindFilePhase::Results);
+        assert_eq!(state.results.len(), 1);
     }
 
     /// `F4` on a directory result (search results can include directory

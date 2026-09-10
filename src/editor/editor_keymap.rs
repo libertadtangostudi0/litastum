@@ -278,9 +278,7 @@ fn close_editor_or_confirm(app: &mut App) -> Result<()> {
     };
 
     if !editor.is_dirty() {
-        app.mode = Mode::Browsing;
-        app.active_panel().reload()?;
-        return Ok(());
+        return return_from_editor(app);
     }
 
     debug!("editor close: unsaved changes, asking to confirm discard");
@@ -288,6 +286,25 @@ fn close_editor_or_confirm(app: &mut App) -> Result<()> {
         unreachable!("just matched Mode::Editing above");
     };
     app.mode = Mode::ConfirmDiscard(editor);
+    Ok(())
+}
+
+
+/// The editor is actually closing for good (no unsaved changes, or they
+/// were just discarded) -- reloads the active panel (in case anything
+/// changed on disk while editing) and hands control back to wherever
+/// `F4` was originally pressed from: `Mode::Browsing` normally, or
+/// `Mode::FindFile` if it was pressed from the Find file results popup
+/// (`app.editor_return_to`, set by `find_file/input.rs::edit_selected_result`
+/// and taken here exactly once). `Mode::ConfirmDiscard`'s own `Cancel`
+/// path (back into the editor, nothing lost) deliberately does *not*
+/// call this -- the editor hasn't actually closed there.
+fn return_from_editor(app: &mut App) -> Result<()> {
+    app.active_panel().reload()?;
+    app.mode = match app.editor_return_to.take() {
+        Some(state) => Mode::FindFile(state),
+        None => Mode::Browsing,
+    };
     Ok(())
 }
 
@@ -300,10 +317,7 @@ pub fn handle_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<()> {
     debug!(?key, ?command, "confirm-discard key");
 
     match command {
-        ConfirmDiscardCommand::Discard => {
-            app.mode = Mode::Browsing;
-            app.active_panel().reload()?;
-        }
+        ConfirmDiscardCommand::Discard => return return_from_editor(app),
         ConfirmDiscardCommand::Cancel => {
             let Mode::ConfirmDiscard(editor) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
                 unreachable!("only called while in Mode::ConfirmDiscard");

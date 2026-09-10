@@ -252,6 +252,21 @@ pub struct App {
     /// reverts on the *next* key press without `Alt`, not the instant
     /// `Alt` itself is released.
     pub alt_held: bool,
+    /// Where the built-in editor (F4) should hand control back once it
+    /// closes, if that's somewhere other than the ordinary browser --
+    /// `None` (the common case: F4 pressed from `Mode::Browsing`)
+    /// returns to `Mode::Browsing`, same as always. Requested directly
+    /// for the Find file results popup: pressing `F4` there opens the
+    /// selected result for editing (`find_file/input.rs::edit_selected_result`),
+    /// but closing the editor used to always drop back to plain
+    /// browsing, losing the results list even though nothing about the
+    /// search itself was done with. `Some(state)` restores
+    /// `Mode::FindFile(state)` instead, taken (`Option::take`) exactly
+    /// once by whichever path actually closes the editor for good
+    /// (`editor_keymap::return_from_editor`) -- `Esc`-cancelling out of
+    /// `Mode::ConfirmDiscard` back into the editor doesn't consume it,
+    /// since the editor hasn't actually closed yet.
+    pub editor_return_to: Option<FindFileState>,
 }
 
 
@@ -278,6 +293,7 @@ impl App {
             command_history: Vec::new(),
             search_history: Vec::new(),
             alt_held: false,
+            editor_return_to: None,
         })
     }
 
