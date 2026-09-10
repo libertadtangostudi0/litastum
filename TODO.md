@@ -410,7 +410,15 @@ in more detail.
       fell through to the exact same panel-navigation move as a bare
       arrow (not a behavior loss — bare arrows already did that).
 - [ ] No `Up`-arrow history recall — same reason, arrows are taken; see
-      "History" above for the menu-driven way around this instead
+      "History" above for the menu-driven way around this instead. Requested
+      directly: `Alt+Up`/`Alt+Down` to cycle through `app.command_history`
+      while typing (bare arrows stay panel-navigation-only, unaffected) —
+      `Alt` isn't otherwise claimed on these two keys, so this doesn't
+      need the same workaround `Shift+F6`/`Ctrl+P` use to jump ahead of
+      `keymap::resolve`'s table. Needs deciding how this interacts with
+      the existing `Tab`-completion cycle (`App::command_line_completion`),
+      which also reads `command_history` for its own separate cycling
+      session.
 - [ ] Bare `cd` (no argument) is a no-op, not "go to home directory"
 - [x] `Tab` completes the last typed word as a filesystem path
       (`command_line::complete`) instead of always switching panels —
@@ -535,6 +543,19 @@ matching Far Manager's own F8), `N`/`Esc` cancels with nothing touched.
 
 ## Next up
 
+- [ ] Scrolling/pagination for the file panel's entry list — requested
+      directly. Currently the 2-column column-major grid
+      (`.claude/rules/litastum-ui-theme.md`) has no scroll offset at
+      all, so a directory with more entries than fit the panel's own
+      height is presumably just clamped/cut off rather than scrolling
+      to follow the cursor — needs checking exactly what `ui.rs`'s
+      current rendering does today before designing the fix. Likely
+      needs a per-`Panel` scroll-offset field, kept in sync with cursor
+      movement (`PageUp`/`PageDown` already exist as bindings elsewhere
+      in this codebase — worth checking whether the panel honors them
+      at all right now), and has to interact correctly with the
+      column-major (fill column 1 top-to-bottom, then column 2) layout,
+      not just a naive single-column scroll.
 - [ ] Multi-select in the file panel — `Ins` toggles the entry under the
       cursor and moves down one (Far Manager's own convention);
       `Shift+Up`/`Shift+Down` extends/shrinks a marked range from the
@@ -595,7 +616,49 @@ matching Far Manager's own F8), `N`/`Esc` cancels with nothing touched.
       to be filled in later (not yet specified: whether this is a
       standalone F-key-triggered mode, an editor overlay, how it hooks
       into VCS state if at all, two-way vs. three-way, resolution UI).
-      Don't start implementation from this bullet alone.
+      Don't start implementation from this bullet alone. See "Git
+      integration" below — likely related (a conflict resolver needs to
+      know a file's conflicted-hunk structure from somewhere, which is
+      git-specific).
+
+## Git integration
+
+Requested directly, three related but separable pieces — none scoped
+in detail yet, don't start implementation from these bullets alone:
+
+- [ ] **Core git mechanism** — how litastum actually talks to a git
+      repo at all; needs deciding before either bullet below can be
+      built on top of it. Options: shell out to the user's own `git`
+      binary (simplest, matches this project's existing command-line
+      shell-out pattern in `command_line.rs::run_command_line`, no new
+      dependency, but output-parsing is inherently fragile against
+      different git versions/locales), or a Rust library
+      (`git2`/`libgit2` bindings — a C dependency, the same tradeoff
+      `onig`/`syntect` already introduced, see
+      `.claude/rules/litastum-stack.md`'s "Known risk" note — vs. pure-
+      Rust `gix`, worth checking how complete its plumbing/porcelain
+      coverage is for what's actually needed here before committing to
+      it). Whichever is chosen, this is also the natural place to detect
+      "is the current panel directory even inside a git repo" for
+      showing/hiding any git-aware UI at all.
+- [ ] **Dependency search by file path** — find what depends on (or is
+      depended on by) a given file, scoped to the current repo. Scope
+      still unclear: language-aware import/`use`-graph analysis (a much
+      bigger undertaking, would need a parser per language) vs. a
+      simpler text-based search for the file's own path/module name
+      appearing elsewhere in tracked files (closer to what
+      `find_file.rs`'s existing content-search machinery could be
+      extended to do, see "Find file" above). Needs a decision on which
+      of these is actually wanted before scoping further.
+- [ ] **Commit search** — find commits by message/author/date/path,
+      presumably via `git log` (or the equivalent plumbing call once the
+      core mechanism above is chosen) with a filtering popup similar in
+      shape to `find_file.rs`'s own search UI. Needs deciding: search
+      scope (current file's history vs. whole repo), how results are
+      presented/navigated (jump to a diff view — see the conflict-
+      resolver placeholder above), and whether this needs its own
+      history/persistence the way `command_line.rs`'s "History" feature
+      does.
 
 ## Housekeeping
 
