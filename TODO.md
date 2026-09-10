@@ -1,5 +1,5 @@
 # TODO
-sjflsdfk
+
 Near-term, actionable items. Full staged plan:
 `.claude/rules/litastum-roadmap.md`. Design for the items below:
 `ARCHITECTURE.md`.
@@ -28,6 +28,21 @@ Near-term, actionable items. Full staged plan:
       motion counts
 - [ ] Handle non-UTF-8 / binary files without just silently doing
       nothing on F4 — at least a status-bar message once one exists
+- [ ] **On the horizon, not scoped yet**: an F9 menu inside the editor
+      itself (`Mode::Editing`'s own F9, distinct from the browser's
+      `theming::MainMenu` — Far Manager keeps a separate per-context F9
+      too). Raised as a home for a few possible settings, floated but
+      not committed to: re-interpreting the already-open buffer's bytes
+      under a different codepage (lighter-weight than a full save-in-
+      arbitrary-encoding pipeline — decode again from the bytes already
+      read, via `encoding_rs`, rather than a round-trip converter);
+      toggling visibility of line-ending/whitespace markers (exact scope
+      still undecided — CRLF/LF glyphs at end of line vs. VS Code-style
+      "render whitespace" for trailing spaces/tabs, or both); "possibly
+      something else," not yet named. Don't start implementation from
+      this bullet alone — needs its own scoping pass (new `Mode`, key
+      dispatch, menu rendering, and the actual encoding/whitespace logic
+      each item implies) before any of it is built.
 - [ ] Ctrl+V over an active selection doesn't replace it (clears the
       selection, then pastes at the cursor instead) — `edtui`'s real
       "paste over selection" action isn't publicly exported; see
@@ -552,8 +567,22 @@ always errors rather than transparently copying).
       plain `Left`/`Right` collapse to the selection's near edge
       instead of moving one further character, all standard text-field
       behavior
-- [ ] No multi-select — same gap as delete (F8), only ever acts on the
-      entry currently under the cursor
+- [x] Multi-select — `F5`/`F6` act on every entry currently marked in
+      the active panel (`panel/marks.rs`) if any are, falling back to
+      the cursor entry otherwise, Far Manager-style. Marking itself:
+      `Shift+A` selects every entry except `..`, `Shift+Up`/`Down`
+      toggles the cursor row and moves, `Shift+Left`/`Right` does the
+      same for the whole column(s) the existing paginated jump crosses.
+      A single source still defaults the destination to a full target
+      path (rename-during-transfer still works); several default to
+      just the target directory, each source's own name joined onto it
+      individually. `Shift+F6` rename stays single-entry only — no
+      sensible way to rename several files through one free-text field.
+      Originally bound to `Ctrl` instead of `Shift` throughout, switched
+      after a direct correction — see `panel/marks.rs`'s own doc comment
+      for the full binding history, including why `Shift+A` alone stays
+      gated to an empty command line (it types a literal capital `A`
+      otherwise)
 - [ ] No overwrite confirmation — an existing file/directory at the
       destination is silently replaced (`fs::copy`/`fs::rename`'s own
       behavior), unlike Far Manager's own "already exists, overwrite?"
@@ -575,9 +604,11 @@ matching Far Manager's own F8), `N`/`Esc` cancels with nothing touched.
 - [x] Confirmation prompt + actual delete, single entry under the
       cursor (`keymap.rs::ConfirmDeleteCommand`,
       `main.rs::handle_confirm_delete_key`)
-- [ ] No multi-select — Far Manager lets you mark several entries
-      (`Ins`) and delete them together; this only ever acts on the
-      entry currently under the cursor
+- [ ] No multi-select — Far Manager lets you mark several entries and
+      delete them together; this only ever acts on the entry currently
+      under the cursor. Marking itself now exists (`panel/marks.rs`,
+      `Shift+A`/`Shift+Up`/`Down`/`Left`/`Right`, wired into F5/F6 — see
+      "Copy / Move" above); F8 just doesn't read it yet
 - [ ] A failed delete (permissions, file in use, ...) is only logged
       (`debug!`), not shown to the user — no status-bar message surface
       exists yet (same gap as the non-UTF-8-file case above)
@@ -598,22 +629,15 @@ matching Far Manager's own F8), `N`/`Esc` cancels with nothing touched.
       at all right now), and has to interact correctly with the
       column-major (fill column 1 top-to-bottom, then column 2) layout,
       not just a naive single-column scroll.
-- [ ] Multi-select in the file panel — `Ins` toggles the entry under the
-      cursor and moves down one (Far Manager's own convention);
-      `Shift+Up`/`Shift+Down` extends/shrinks a marked range from the
-      cursor as it moves, `Shift+Left`/`Shift+Right` doing the same
-      across the column-major 2-column layout (see
-      `.claude/rules/litastum-ui-theme.md`'s "2 columns, column-major
-      fill" layout — `Shift+Left`/`Right` need to move to the matching
-      row in the other column, not just adjacent index). Needed by
-      Copy/Move and Delete's own "No multi-select" gaps below, which
-      currently only ever act on the entry under the cursor. No
-      dedicated `Theme` color exists yet for a marked entry, distinct
-      from `current_row_bg` (today's single "current line" highlight,
-      matching Far's own "Normal/Selected cursor" color group) — Far
-      itself uses a separate "Selected text" group (marked files'
-      *text* colored distinctly, not a background bar) for this, which
-      would need its own `Theme` field to reproduce.
+- [x] Multi-select in the file panel — landed as `Shift+A` (select all)
+      and `Shift+Up`/`Down`/`Left`/`Right` (toggle-and-move, whole-
+      column for Left/Right) rather than the `Ins`+`Shift+arrow`
+      combination originally sketched here — see "Copy / Move" above
+      for the full binding story and `panel/marks.rs`. Marked entries
+      render in `theme.warning` (the "attention/marked" color the
+      original UI-theme plan had already named but never wired up),
+      overriding type-based coloring, rather than a distinct new
+      `Theme` field.
 - [ ] Show item count / free space in each panel's footer (mockup has
       this; not yet in `Panel`/`ui.rs`)
 - [ ] Use `Entry::size`/`Entry::modified` for something, or drop them —
