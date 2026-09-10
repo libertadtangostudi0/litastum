@@ -120,7 +120,7 @@ feature.
 - **F9 → Options → Color schemes** opens `theme_menu.rs` (`menu.rs`
   is the F9 top menu itself — not Far Manager's real top-menu bar,
   just enough structure to reach this and `Options`' sibling `Save
-  setup`/`Commands`' `Find file`/`History` — see `TODO.md`): lists
+  setup`/`Commands`' `Find file`/`History` — see `TODO/f9-menu.md`): lists
   whatever
   `list_theme_names()` finds in `themes/` at that moment, `Enter`
   applies the highlighted one as *both*

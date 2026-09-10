@@ -15,7 +15,7 @@ use ratatui::style::Style;
 /// already rendered every frame, layered between the base/syntax
 /// styling and an active selection ("selection takes priority, then
 /// highlights, then base") -- exactly the layering this needs, with no
-/// `EditorView` changes required at all. `TODO.md` had speculated this
+/// `EditorView` changes required at all. `TODO/editor.md` had speculated this
 /// would need a second hand-rolled render pass; it doesn't.
 ///
 /// `Highlight`'s own style *replaces* whatever span it lands on outright

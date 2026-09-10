@@ -152,7 +152,7 @@ enum WordSelectTouch {
 impl Editor {
     /// Loads `path`'s contents into a new editing session. Fails if the
     /// file can't be read as UTF-8 text (binary files aren't supported
-    /// yet — see `TODO.md`). `custom_syntax_theme` is `None` for the
+    /// yet — see `TODO/editor.md`). `custom_syntax_theme` is `None` for the
     /// built-in named syntax theme, or a scheme-derived theme when the
     /// user has a custom color scheme configured.
     pub fn open(path: PathBuf, custom_syntax_theme: Option<SynTheme>) -> io::Result<Self> {

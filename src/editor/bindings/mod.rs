@@ -138,7 +138,7 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         // works from plain typing mode, and also exits a selection
         // first if one was active (simplification: this does not
         // replace the selection with the pasted text, just clears it
-        // and pastes at the cursor — see TODO.md). `PasteBefore` (vim's
+        // and pastes at the cursor — see TODO/editor.md). `PasteBefore` (vim's
         // `P`) inserts exactly at the cursor; the plain `Paste` action
         // (vim's `p`) inserts *after* it instead, which felt wrong for
         // a "standard" editor — found while writing tests for this.

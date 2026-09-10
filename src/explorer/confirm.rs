@@ -28,7 +28,7 @@ use super::{fs_ops, keymap};
 /// touched. A failed delete (permissions, a file in use, ...) is only
 /// logged, same as `confirm::run_confirmed_transfer` — doesn't stop the
 /// rest of `entries` from being attempted, and there's no status-bar
-/// message surface yet to show it to the user (see `TODO.md`'s
+/// message surface yet to show it to the user (see `TODO/editor.md`'s
 /// non-UTF-8-file gap, same underlying limitation).
 pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
     use keymap::ConfirmDeleteCommand;

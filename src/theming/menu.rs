@@ -11,7 +11,7 @@ use super::theme_menu::ThemeMenu;
 /// F9's top menu. Enough structure to reach what's actually been asked
 /// for so far (Commands → Find file/History, Options → Color schemes/
 /// Save setup) — not Far Manager's full Left/Files/Commands/Options/
-/// View/Right top-menu bar; see `TODO.md` for what a real one would
+/// View/Right top-menu bar; see `TODO/f9-menu.md` for what a real one would
 /// still need.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuLevel {

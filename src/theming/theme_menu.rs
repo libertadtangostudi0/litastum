@@ -24,7 +24,7 @@ pub struct ThemeMenuEntry {
 /// State for the F9 "pick a color scheme" popup — a minimal analog of
 /// Far Manager's F9 menu, scoped to just color schemes for now (a real
 /// top-menu bar — Left/Files/Commands/Options/... — is a much bigger
-/// feature; see `TODO.md`).
+/// feature; see `TODO/f9-menu.md`).
 pub struct ThemeMenu {
     /// Every `themes/*.json` file found in the config dir at the
     /// moment F9 was pressed — a snapshot, not live-refreshed while

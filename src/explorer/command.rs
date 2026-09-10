@@ -39,7 +39,7 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
 /// Opens the file under the cursor in the built-in editor (`editor.rs`,
 /// backed by `edtui`). Does nothing for directories, and for files that
 /// fail to load as UTF-8 text (binary files aren't supported yet — see
-/// `TODO.md`) rather than crashing the app.
+/// `TODO/editor.md`) rather than crashing the app.
 fn open_editor(app: &mut App) {
     let Some(path) = app.active_panel().selected_path() else {
         return;

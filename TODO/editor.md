@@ -1,0 +1,264 @@
+# Built-in editor (F4, `editor.rs`, `edtui`) — MVP + syntax highlighting landed, gaps left
+
+- [x] Confirm-before-discard prompt when closing (`Esc`) with unsaved
+      changes — `Mode::ConfirmDiscard`, `editor_keymap::resolve_confirm_discard`
+- [x] Syntax highlighting (`edtui`'s `syntax-highlighting` feature,
+      `syntect`-backed) — switched engines from `tui-textarea` to
+      `edtui` with our own non-modal keymap to get this; see
+      [[litastum-stack]] for the full story and lessons learned
+- [x] Line numbers, on by default — `EditorView::line_numbers(LineNumbers::Absolute)`,
+      gutter themed via `EditorTheme::line_numbers_style` (`theme.text_dim`
+      on `theme.bg`) instead of `edtui`'s own hardcoded black/gray
+      default. Absolute, not relative — this is a standard (non-modal)
+      editor, not a vim-style one where relative numbers help with
+      motion counts
+- [ ] Handle non-UTF-8 / binary files without just silently doing
+      nothing on F4 — at least a status-bar message once one exists
+- [ ] **On the horizon, not scoped yet**: an F9 menu inside the editor
+      itself (`Mode::Editing`'s own F9, distinct from the browser's
+      `theming::MainMenu` — Far Manager keeps a separate per-context F9
+      too). Raised as a home for a few possible settings, floated but
+      not committed to: re-interpreting the already-open buffer's bytes
+      under a different codepage (lighter-weight than a full save-in-
+      arbitrary-encoding pipeline — decode again from the bytes already
+      read, via `encoding_rs`, rather than a round-trip converter);
+      toggling visibility of line-ending/whitespace markers (exact scope
+      still undecided — CRLF/LF glyphs at end of line vs. VS Code-style
+      "render whitespace" for trailing spaces/tabs, or both); "possibly
+      something else," not yet named. Don't start implementation from
+      this bullet alone — needs its own scoping pass (new `Mode`, key
+      dispatch, menu rendering, and the actual encoding/whitespace logic
+      each item implies) before any of it is built.
+- [ ] Ctrl+V over an active selection doesn't replace it (clears the
+      selection, then pastes at the cursor instead) — `edtui`'s real
+      "paste over selection" action isn't publicly exported; see
+      [[litastum-stack]]
+- [ ] Undo is per-character (`capture_on_insert: true`), not grouped by
+      typing burst like most editors — `EditorState::capture` being
+      crate-private forecloses implementing our own grouping; see
+      [[litastum-stack]]
+- [ ] `onig` (a C library, via `syntect`'s default features) is now a
+      transitive dependency — built fine locally, but is this project's
+      first non-pure-Rust dependency; watch for build issues on
+      environments without a C toolchain — see [[litastum-stack]]
+- [x] Syntax highlighting for `.ps1`/`.psm1`/`.psd1` (PowerShell) —
+      `syntect`'s bundled default set doesn't include PowerShell at all
+      (confirmed by `editor::tests::syntect_bundles_rust_but_not_powershell`;
+      `.rs`/Rust *is* bundled, so this wasn't our extension-lookup logic
+      being wrong). Fixed by bundling our own grammar at compile time
+      (`assets/syntax/PowerShell.sublime-syntax` — from
+      github.com/SublimeText/PowerShell, MIT license, see
+      `assets/syntax/PowerShell.LICENSE.txt`) and loading it into a
+      second, minimal `SyntaxSet` via `SyntaxSetBuilder`
+      (`editor.rs::bundled_extra_syntax_set`), since `syntect` only
+      loads the YAML `.sublime-syntax` format itself — its `plist-load`
+      feature covers `.tmTheme` *color themes*, not `.tmLanguage`
+      *grammars*, which is why the obvious first choice
+      (github.com/PowerShell/EditorSyntax, `.tmLanguage`-only) turned
+      out to be a dead end and had to be swapped out
+- [x] Syntax highlighting for `.ini`/`.cfg`/`.conf` — same underlying
+      gap, but this time confirmed missing from sublimehq/Packages
+      itself (not just `syntect`'s build of it — the upstream source
+      genuinely has no INI syntax). Same fix, same mechanism
+      (`bundled_extra_syntax_set` now holds all the bundled grammars):
+      `assets/syntax/INI.sublime-syntax`, from
+      github.com/jwortmann/ini-syntax (Apache-2.0 license, see
+      `assets/syntax/INI.LICENSE.txt`). Its own `hidden_file_extensions`
+      also covers `.editorconfig` and a handful of other INI-shaped
+      dotfiles for free
+- [x] Syntax highlighting for `.toml`/`Cargo.lock`, `.gitignore`,
+      `.gitattributes` — genuinely present in sublimehq/Packages
+      (confirmed by browsing the repo directly) but, unlike almost
+      everything else there, not included in `syntect`'s own default
+      bundle for some unknown reason. Pulled `TOML.sublime-syntax`/
+      `Git Ignore.sublime-syntax`/`Git Attributes.sublime-syntax`
+      straight from that same repo (permissive license, see
+      `assets/syntax/sublimehq-Packages.LICENSE.txt` — the exact source
+      `syntect`'s own default set is already built from, so no new
+      licensing question). Also fixed a real bug found along the way:
+      `Editor::view` only ever looked up a highlighter by
+      `Path::extension()`, which returns `None` for dotfiles like
+      `.gitignore` (Rust treats a leading dot with no further dot as
+      "no extension") — so those never even reached a highlighter
+      lookup at all, regardless of what grammars were bundled. Now
+      tries the full file name first, then the extension, matching
+      `syntect`'s own `SyntaxSet::find_syntax_for_file` convenience
+      lookup. Second bug found by hand right after, testing the fix
+      above in the real app: `.gitignore` opened and a highlighter
+      *resolved* (name-based lookup returned `Some`), but rendered with
+      zero color — Git Ignore's/Git Attributes' grammars both
+      `include:` rules from a separate, shared `Git Common.sublime-syntax`
+      (`hidden: true`) that hadn't been bundled alongside them, so every
+      `include:` silently resolved to nothing (`syntect` doesn't treat
+      an unresolved include as a load error, so nothing failed loudly).
+      Fixed by bundling `Git Common.sublime-syntax` too; caught for
+      real this time by a test that actually runs highlighting and
+      checks a comment line gets colored, not just that a
+      `SyntaxHighlighter` was constructible
+      (`editor::tests::gitignore_comments_are_actually_colored_not_just_resolvable`)
+- [x] Syntax highlighting for `.git/config` (and, generally, any
+      bundled grammar that identifies itself by *content* rather than
+      name) — reported after `.gitignore`/`.gitattributes` above, and
+      explicitly asked to be solved generally rather than one file at a
+      time. `.git/config` has no usable name (`file_name` is just
+      `"config"`) or extension, but `GitConfig.sublime-syntax` (also
+      pulled from sublimehq/Packages) declares
+      `first_line_match: ^\[core\]` for exactly this reason — so
+      `editor.rs::resolve_syntax_highlighter` grew a third lookup tier,
+      tried only when nothing matched by name: `.first_line`
+      (captured once at `Editor::open`) against `syntect`'s own bundled
+      set, then ours, mirroring `syntect`'s own
+      `SyntaxSet::find_syntax_for_file` convenience method. This is the
+      "universal" half of the fix — any future grammar (bundled or
+      `syntect`'s own) that leans on first-line detection now works
+      without a one-off special case, not just Git Config
+- [x] Syntax highlighting for `.md` under a *custom* `editor_theme` —
+      `syntect`'s bundled Markdown grammar was always found fine (the
+      highlighter really was running), but `scheme.rs::to_syntax_theme`
+      only ever defined code-oriented scopes (keyword/string/comment/
+      ...), so every `markup.*` scope Markdown actually emits
+      (headings, bold, italic, lists, links, quotes, code spans) fell
+      through to plain foreground — indistinguishable from "no
+      highlighting" even though it technically wasn't that. The
+      built-in `dracula` fallback theme (used with no `editor_theme`
+      configured) already had real `markup.*` rules of its own, which
+      is why this only showed up once a custom scheme was applied.
+      Fixed by adding `markup.*` scope rules to `to_syntax_theme`,
+      verified with a test that resolves the actual style via
+      `syntect::highlighting::Highlighter` rather than just checking
+      the scope list contains an entry
+- [x] Syntax highlighting for `CMakeLists.txt`/`.cmake`, and for this
+      project's own `CMakeLists.txt.sdk` build-template convention —
+      Sublime Text has never shipped CMake support by default (a
+      third-party package there), so `syntect`'s own bundle lacks it
+      too; fixed the same way as PowerShell/INI, bundling
+      github.com/zyxar/Sublime-CMakeLists's grammar (plus its hidden
+      `CMakeCommands.sublime-syntax` include dependency — see
+      [[litastum-theming]]'s "Syntax highlighting" section). The `.sdk`
+      suffix itself is handled in `Editor::view`, not the grammar: it
+      retries the same name/extension lookup with one trailing `.sdk`
+      stripped, a general mechanism rather than a CMake-specific hack
+- [ ] Rust (`.rs`) highlighting still uses `syntect`'s own bundled
+      default grammar — tried swapping in github.com/rust-lang/
+      rust-enhanced (a more detailed community `.sublime-syntax`) to get
+      closer to what VS Code + rust-analyzer shows, including two local
+      patches (an ordinary type name like `PathBuf` used as a plain
+      field/parameter type got no color at all; primitive types like
+      `bool` shared a literal scope with the `let`/`const`/`static`
+      keywords, so no theme could color them differently) — reverted
+      anyway, didn't hold up well enough against real-world comparison
+      to be worth keeping. Note: rust-analyzer's own VS Code extension
+      ships *no* grammar of its own (confirmed directly, its
+      `package.json` has no `contributes.grammars`) — it's a pure LSP
+      client layering real *semantic* tokens over VS Code's own built-in
+      Rust grammar, which is itself a `.tmLanguage.json` (plist) file
+      `syntect` can't load at all (same "`.tmLanguage`, not
+      `.sublime-syntax`" wall PowerShell hit — see above). So "just get
+      VS Code's real grammar" isn't actually on the table either way.
+- [ ] **Evaluate**: is writing our *own* `.sublime-syntax` Rust grammar
+      from scratch (rather than adopting/patching an existing one, per
+      the above) worth doing at all — scope it out before committing to
+      it:
+      how much of `syntect`'s existing bundled Rust grammar is actually
+      already fine vs. genuinely under-highlighting; how far a
+      hand-written grammar could realistically get without drifting
+      into reimplementing a real parser; whether the two local-patch
+      lessons above (type-position CamelCase heuristic, primitive types
+      needing their own scope distinct from keywords) are cheap wins
+      worth folding into a fresh grammar or symptomatic of a much bigger
+      gap. Purely a sizing/scoping task — no grammar work until this is
+      done and reviewed.
+- [x] Highlight every other occurrence of the identifier currently under
+      the cursor, VS Code-style (`editor/word_highlight.rs`). Turned out
+      not to need a hand-rolled render pass at all -- `edtui`'s own
+      `EditorState::highlights` field (`Highlight::new(start, end,
+      style)`) is already rendered every frame, layered exactly where
+      this needs it ("selection takes priority, then highlights, then
+      base", confirmed directly from `edtui`'s `view/internal.rs`), so
+      `Editor::view` just recomputes it fresh each frame from the
+      cursor's current position. A `Highlight`'s style fully *replaces*
+      whatever span it lands on (no fg/bg merging), so highlighted
+      occurrences lose their own syntax color and render in one flat
+      color — the same tradeoff this codebase's own text-selection
+      highlighting already makes. Colored via `theme.text` on
+      `theme.border` (reused, not a new `Theme` field, so it's
+      automatically theme-dependent as requested), and skipped entirely
+      while a selection is active (matching VS Code — "the word under
+      the cursor" isn't coherent mid-selection). Word-boundary detection
+      is a small local `is_word_char` (ASCII alphanumeric or underscore,
+      matching `edtui`'s own internal `CharacterClass::Alphanumeric`) —
+      no need to reach into the crate's `pub(crate)` `CharacterClass`
+      for something this simple, unlike `bindings::word_select`'s own
+      history.
+- [ ] In-editor find (`Ctrl+F`/`F7`, Far Manager's own editor
+      convention — not to be confused with the file-panel's own F7/
+      Alt+F7 "find file[s]"/"find file *content*" above, an entirely
+      different, already-landed feature that searches *across files* in
+      the panel, not *within* the currently open one). Needs: a search
+      popup/prompt for the query (reuse `ui/popup.rs`'s shared chrome,
+      per [[litastum-popup-design]]), a plain substring or (stretch)
+      regex scan over `state.lines`, highlighting each match (possibly
+      sharing groundwork with the "highlight every occurrence of the
+      word under the cursor" item above, if that lands first), jump-to-
+      next/previous-match navigation (`F3`/`Shift+F3`, or Far's own
+      repeat-last-search convention), and scrolling the match into view.
+      `edtui` has no built-in search of its own to lean on — this would
+      be hand-rolled, same as the word-selection logic elsewhere in this
+      file.
+- [ ] **Multi-line syntax constructs (block comments, multi-line
+      strings, ...) don't highlight correctly past their own opening
+      line — a real, confirmed `edtui` 0.11.7 architecture limitation,
+      not a bug in any one bundled grammar.** Reported directly against
+      a Groovy/Jenkinsfile banner comment (`/******...` opening a block,
+      several `***`-only lines, `...******/` closing): only the opening
+      line rendered as a comment; every line after it rendered as
+      ordinary code. Traced to the actual dependency source
+      (`edtui-0.11.7/src/view/syntax_higlighting.rs::SyntaxHighlighter::highlight_line`
+      and `src/view/internal.rs::line_into_highlighted_spans_with_selections`,
+      confirmed by reading both directly, not guessed): `highlight_line`
+      takes `&self` (no mutable state) and constructs a **brand new**
+      `syntect::easy::HighlightLines` from scratch on *every single
+      call*, and `EditorView`'s own rendering calls it once per visible
+      *row*, independently, with no `ParseState`/`HighlightState` ever
+      threaded between rows. Confirmed this is genuinely `edtui`'s own
+      limitation, not a grammar issue: a standalone test driving the
+      *same* bundled Groovy grammar through one shared, persistent
+      `HighlightLines` instance across multiple `highlight_line` calls
+      (`editor::syntax::tests::groovy_banner_comment_colors_every_line_as_comment`)
+      colors every line correctly — the grammar and `syntect` are fine
+      on their own; `edtui`'s own per-row call pattern is what throws
+      the state away. Affects **every** language with any multi-line
+      construct, not just Groovy — C/Rust/C++ block comments, Python/
+      JS-style multi-line strings, etc. are presumably equally affected,
+      just less commonly written in a way that's visually obvious as
+      "broken" (most everyday `/* ... */` comments people actually write
+      are short and often single-line in practice, so this may simply
+      not have been noticed yet for other languages). Already on
+      `edtui`'s latest published version (0.11.7, confirmed via
+      crates.io) — no version bump fixes this. No workaround available
+      from litastum's side without either patching a vendored/forked
+      copy of `edtui` (`SyntaxHighlighter::highlight_line` would need a
+      `&mut self` + persisted `HighlightState`/`ParseState`, and
+      `EditorView`'s own render loop would need to call it top-to-bottom
+      in row order, never out of order or for only a scrolled subset,
+      for the state to stay meaningful) or replacing `edtui`'s syntax-
+      highlighting feature with a hand-rolled rendering pass entirely —
+      both large undertakings, not scoped further here. **Reported
+      upstream**: github.com/preiter93/edtui/issues/74 — waiting on a
+      response before deciding whether to fork/patch `edtui` ourselves
+      or wait for an upstream fix.
+
+## RESOLVED: Ctrl+S / Ctrl+C / Ctrl+V / Ctrl+X (2026-09-04)
+
+Confirmed working after splitting editor key resolution into
+`editor_keymap.rs` (mirroring `keymap.rs`/`command.rs`) and adding
+`logging.rs`. Root cause was never pinned down with certainty (the fix
+landed together with the uppercase-letter match and the mode-borrow
+restructuring in `main.rs::handle_editor_key`) — if a similar "key does
+nothing" report comes up again, `logs/litastum.log` now has `debug!` on
+every key event and resolved command in both modes, and `warn!`
+specifically when `arboard::Clipboard::new()` fails, to make it
+diagnosable without guessing.
+
+The logging infrastructure stays (`logging.rs`, size-capped at 30 MB —
+see `SizeCappedFile`) for the next time something like this happens.

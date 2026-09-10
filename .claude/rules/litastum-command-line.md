@@ -166,7 +166,7 @@ pwsh may not be installed), and properly detecting them (`PATH`
 scanning, common install dirs) is real, separate work, not done here.
 If a user picks a profile that isn't actually installed, spawning it
 just fails and the OS error shows in the pause message — honest
-feedback, no pre-flight probing needed either. See `TODO.md`.
+feedback, no pre-flight probing needed either. See `TODO/command-line.md`.
 
 **Not persisted** to `config.json` — resets to the platform default
 each run. `config.rs` already has the pattern for persisting a choice

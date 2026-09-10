@@ -188,7 +188,7 @@ module):
   publicly exported from the crate — our Ctrl+V-over-selection binding
   is a simplification (clears the selection, then pastes at the cursor,
   rather than replacing the selected text) rather than the real thing.
-  See `TODO.md`.
+  See `TODO/editor.md`.
 - **`Ctrl+Shift+Left`/`Right` (word-wise selection) hit a real limit of
   the declarative `Action`-table approach itself**, not just another
   one-off gotcha — worth its own note since every other binding here is
