@@ -393,7 +393,23 @@ real Far.
       with cancel, or parallelizing the walk)
 - [ ] No content search (Far's own Alt+F7 can also search *inside*
       files) — file names only
-- [ ] Results aren't scrolled, just clamped to the terminal height
+- [x] Results now scroll, and the popup has a fixed height — reported
+      directly against a query that returned thousands of matches: the
+      list used to render every item into the popup's own (still
+      result-count-dependent) height with no scroll offset at all, so a
+      selection deep into a long list was simply invisible. Same "`List`
+      with no `ListState` doesn't auto-scroll" gap already hit (and
+      fixed) twice before in this codebase — `Panel`'s own entry grid,
+      and `ui/theme_menu.rs`'s color-scheme picker — fixed here the same
+      way as the picker: a real `ListState` tracking the selected index,
+      which `List` then scrolls to keep in view on its own. Follow-up,
+      requested directly with a side-by-side comparison: once the list
+      itself scrolls, there's no reason for the *popup* to keep growing
+      with the result count either — `RESULTS_HEIGHT` is now a fixed
+      `21`, matching `ui/theme_menu.rs`'s own popup height for its 8
+      bundled themes exactly, rather than shrinking to a cramped box for
+      a handful of results or ballooning to the full terminal height for
+      thousands (`ui/find_file.rs::draw_results`).
 - [x] `Ctrl+S` on the results popup exports the full list (one full
       path per line) to a new file in the user's Downloads directory
       (`directories::UserDirs::download_dir()`, already a dependency)

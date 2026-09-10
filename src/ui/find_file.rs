@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -57,8 +57,18 @@ fn draw_typing(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &The
     Position { x: rows[1].x + state.cursor as u16, y: rows[1].y }
 }
 
+/// Fixed popup height, independent of `state.results.len()` -- now that
+/// the list actually scrolls (see the `ListState` below), there's no
+/// reason for the popup itself to keep growing with the result count
+/// the way it used to. Picked to match `ui/theme_menu.rs`'s own
+/// color-scheme popup height directly, per an explicit side-by-side
+/// comparison request -- that popup's own formula (`themes.len() + 13`)
+/// comes out to `21` for the 8 themes bundled with this repo, so this
+/// reuses that same number rather than inventing an unrelated one.
+const RESULTS_HEIGHT: u16 = 21;
+
 fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Theme) {
-    let height = (state.results.len().max(1) as u16 + 6).clamp(8, area.height);
+    let height = RESULTS_HEIGHT.min(area.height);
     let popup = centered_rect(70, height, area);
     frame.render_widget(Clear, popup);
 
@@ -96,7 +106,18 @@ fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Th
                 ListItem::new(Line::from(Span::styled(path.to_string_lossy().into_owned(), style)))
             })
             .collect();
-        frame.render_widget(List::new(items), rows[0]);
+        // A result count in the thousands (a big tree, a broad query)
+        // used to render every item straight into this fixed-height
+        // area with no scroll offset at all -- reported directly, the
+        // same "List with no ListState doesn't auto-scroll" gap
+        // `Panel`'s own entry grid hit earlier (see its own doc comment
+        // in `explorer/panel/mod.rs`), and already fixed once in this
+        // codebase for `ui/theme_menu.rs`'s picker the same way: a real
+        // `ListState` tracking the selected index, which `List` then
+        // scrolls to keep in view on its own.
+        let list = List::new(items);
+        let mut list_state = ListState::default().with_selected(Some(state.selected));
+        frame.render_stateful_widget(list, rows[0], &mut list_state);
     }
 
     if let Some((label, detail)) = &state.export_message {
@@ -123,4 +144,66 @@ fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Th
         Span::styled(" cancel", Style::default().fg(theme.text_dim)),
     ]);
     frame.render_widget(hint, rows[3]);
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use ratatui::{backend::TestBackend, Terminal};
+
+    use super::*;
+
+    fn state_with(count: usize, selected: usize) -> FindFileState {
+        FindFileState {
+            phase: FindFilePhase::Results,
+            query: "x".to_string(),
+            cursor: 0,
+            results: (0..count).map(|i| PathBuf::from(format!("C:/dev/file_{i:04}.txt"))).collect(),
+            selected,
+            export_message: None,
+        }
+    }
+
+    fn rendered(state: &FindFileState) -> String {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::dark();
+        terminal.draw(|frame| {
+            draw_find_file(frame, frame.area(), state, &theme);
+        }).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Regression test for the real report: a result count far past
+    /// what the (terminal-height-clamped) popup can show at once used
+    /// to render every item into a fixed-height list with no scroll
+    /// offset at all -- the selected row, deep into a list of
+    /// thousands, was simply invisible, scrolled off past the bottom of
+    /// the rendered area with nothing to bring it into view. A real
+    /// `ListState` (see the call site's own doc comment) should keep
+    /// whichever row is selected actually on screen no matter how far
+    /// into a long list it is.
+    #[test]
+    fn selecting_a_result_far_down_a_long_list_scrolls_it_into_view() {
+        let state = state_with(2000, 1500);
+
+        let text = rendered(&state);
+
+        assert!(text.contains("file_1500"), "the selected result should be scrolled into view:\n{text}");
+    }
+
+    #[test]
+    fn a_short_result_list_needs_no_scrolling_to_show_the_selection() {
+        let state = state_with(3, 2);
+
+        let text = rendered(&state);
+
+        assert!(text.contains("file_0002"));
+    }
 }
