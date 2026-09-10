@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use edtui::actions::{
     Action, Chainable, CopySelection, DeleteChar, DeleteCharForward, DeleteSelection, LineBreak,
     MoveBackward, MoveDown, MoveForward, MoveHalfPageDown, MoveHalfPageUp, MoveToEndOfLine,
@@ -119,8 +119,16 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         (i(KeyInput::new(KeyCode::Backspace)), DeleteChar(1).into()),
         (i(KeyInput::new(KeyCode::Delete)), DeleteCharForward(1).into()),
         (i(KeyInput::new(KeyCode::Enter)), LineBreak(1).into()),
-        (v(KeyInput::new(KeyCode::Backspace)), DeleteSelection.chain(exit_selection()).into()),
-        (v(KeyInput::new(KeyCode::Delete)), DeleteSelection.chain(exit_selection()).into()),
+        // Deliberately *not* `.chain(exit_selection())` here, unlike
+        // every other visual-mode entry above -- see
+        // `is_selection_consuming_key`'s own doc comment below for why:
+        // `DeleteSelection` already takes its own undo checkpoint, and
+        // chaining `exit_selection()` (which always takes a *second*
+        // one on its way back to Insert) left a redundant, do-nothing
+        // checkpoint on top of the real one. `Editor::input` resets the
+        // mode/selection afterward instead, without capturing again.
+        (v(KeyInput::new(KeyCode::Backspace)), DeleteSelection.into()),
+        (v(KeyInput::new(KeyCode::Delete)), DeleteSelection.into()),
 
         // Undo/redo (Windows/VSCode convention).
         (i(KeyInput::ctrl('z')), Undo.into()),
@@ -134,10 +142,17 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         // `P`) inserts exactly at the cursor; the plain `Paste` action
         // (vim's `p`) inserts *after* it instead, which felt wrong for
         // a "standard" editor — found while writing tests for this.
-        (v(KeyInput::ctrl('c')), CopySelection.chain(exit_selection()).into()),
-        (v(KeyInput::ctrl('x')), DeleteSelection.chain(exit_selection()).into()),
+        //
+        // None of these three chain `exit_selection()` either, same
+        // reason as `Backspace`/`Delete` above -- `PasteBefore` also
+        // takes its own checkpoint (`DeleteSelection` doesn't apply to
+        // `Ctrl+C`, which doesn't mutate the buffer at all, but still
+        // needs the same post-hoc mode reset since it doesn't switch
+        // modes on its own either).
+        (v(KeyInput::ctrl('c')), CopySelection.into()),
+        (v(KeyInput::ctrl('x')), DeleteSelection.into()),
         (i(KeyInput::ctrl('v')), PasteBefore.into()),
-        (v(KeyInput::ctrl('v')), exit_selection().chain(PasteBefore).into()),
+        (v(KeyInput::ctrl('v')), PasteBefore.into()),
     ]);
 
     // `capture_on_insert: true` -- take an undo checkpoint before every
@@ -151,6 +166,41 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
     // `EditorState::capture` is crate-private, so there's no hook to
     // implement that grouping ourselves.
     KeyEventHandler::new(register, true)
+}
+
+
+/// Whether `key` is one of the five visual-mode bindings above
+/// (`Backspace`/`Delete`/`Ctrl+C`/`Ctrl+X`/`Ctrl+V`) that consume the
+/// active selection without chaining `exit_selection()` in the table
+/// itself. `Editor::input` calls this after running the table's own
+/// action, to reset `state.mode`/`state.selection` back to plain typing
+/// -- by direct field assignment, deliberately *not* going through
+/// `edtui`'s own `SwitchMode(Insert)`, which unconditionally takes an
+/// extra undo checkpoint on every transition into Insert mode
+/// regardless of whether anything actually changed.
+///
+/// Real bug this fixes, reported directly: `Ctrl+A` (select all) then
+/// `Backspace` then `Ctrl+Z` did nothing on the first press, only
+/// restoring the deleted text on the *second*. Root cause: the old
+/// `DeleteSelection.chain(exit_selection())` table entry captured
+/// *twice* -- once correctly, inside `DeleteSelection::execute` itself
+/// (the real pre-delete checkpoint), and once more, spuriously, when
+/// `exit_selection()`'s own `SwitchMode(Normal).chain(SwitchMode(Insert))`
+/// transitioned back into Insert mode a moment later (`edtui`'s
+/// `SwitchMode(Insert)` calls `state.capture()` unconditionally whenever
+/// leaving any mode other than `Insert`/`Search`, with no way to opt out
+/// from outside the crate). That second checkpoint captured the
+/// *already-deleted* state, indistinguishable from what `Ctrl+Z`'s first
+/// press would restore to -- so the first press looked like a no-op, and
+/// the real, wanted checkpoint only surfaced on the second press.
+/// `PasteBefore`/`CopySelection` share the same underlying mechanism
+/// (a capturing action, or none at all for `Copy`, immediately followed
+/// by the same spurious `exit_selection()` checkpoint), so all five keys
+/// are fixed the same way here rather than special-casing `Backspace`/
+/// `Delete` alone.
+pub(super) fn is_selection_consuming_key(key: &KeyEvent) -> bool {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    matches!(key.code, KeyCode::Backspace | KeyCode::Delete) || (ctrl && matches!(key.code, KeyCode::Char('c' | 'x' | 'v')))
 }
 
 

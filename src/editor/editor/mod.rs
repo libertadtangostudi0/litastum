@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use edtui::actions::search::StartSearch;
-use edtui::actions::{AppendCharToSearch, Execute, FindNext, FindPrevious, RemoveCharFromSearch, StopSearch, SwitchMode};
+use edtui::actions::motion::{MoveToFirstRow, MoveToLastRow};
+use edtui::actions::{
+    AppendCharToSearch, Chainable, Execute, FindNext, FindPrevious, MoveToEndOfLine, MoveToStartOfLine, RemoveCharFromSearch, StopSearch, SwitchMode,
+};
 use edtui::syntect::highlighting::Theme as SynTheme;
 use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Index2, LineNumbers, Lines};
 use ratatui::style::Style;
@@ -15,7 +18,7 @@ use crate::theming::Theme;
 
 use super::bindings::{
     anchor_fresh_shift_selection, close_selection_if_back_on_the_anchors_row, exclude_landing_column_on_fresh_vertical_selection,
-    standard_key_handler, wrap_line_boundary_arrow_movement,
+    is_selection_consuming_key, standard_key_handler, wrap_line_boundary_arrow_movement,
 };
 use super::clipboard::OsClipboardBridge;
 use super::syntax::resolve_syntax_highlighter;
@@ -184,6 +187,13 @@ impl Editor {
     /// *adding* behavior the table's own declarative chaining couldn't
     /// express on its own (see each one's own doc comment for why):
     ///
+    /// 0. `is_selection_consuming_key` -- only for the five visual-mode
+    ///    bindings (`Backspace`/`Delete`/`Ctrl+C`/`Ctrl+X`/`Ctrl+V`) that
+    ///    consume an active selection. Resets `state.selection`/`state.mode`
+    ///    back to plain typing by direct field assignment rather than
+    ///    `edtui`'s own `SwitchMode(Insert)` -- see `is_selection_consuming_key`'s
+    ///    own doc comment for the real bug this avoids (a redundant undo
+    ///    checkpoint that made `Ctrl+Z` need two presses instead of one).
     /// 1. `anchor_fresh_shift_selection` -- only when this key just
     ///    transitioned a fresh selection into `Visual` mode (a plain,
     ///    non-word-select `Shift+Left`/`Right` with nothing already
@@ -228,6 +238,11 @@ impl Editor {
         let cursor_before = self.state.cursor;
         let mode_before = self.state.mode;
         self.event_handler.on_key_event(key, &mut self.state);
+
+        if mode_before == EditorMode::Visual && is_selection_consuming_key(&key) {
+            self.state.selection = None;
+            self.state.mode = EditorMode::Insert;
+        }
 
         let freshly_entered_visual = mode_before != EditorMode::Visual && self.state.mode == EditorMode::Visual;
         let anchored_on_a_real_character =
@@ -308,6 +323,29 @@ impl Editor {
             (false, false, _, WordSelectTouch::NativeBackward) => WordSelectTouch::NativeBackward,
             (false, false, _, _) => WordSelectTouch::Touched,
         };
+    }
+
+
+    /// `Ctrl+A` -- selects the entire buffer. Built from the same
+    /// primitive `edtui` motions everything else in this file already
+    /// uses rather than constructing a `Selection` by hand (its fields
+    /// are `pub(crate)`, unreachable from here anyway -- see
+    /// [[litastum-stack]]'s word-selection history for the general
+    /// pattern this follows): jump to the very first cell, open a
+    /// selection there (`SwitchMode(Visual)` anchors on the *current*
+    /// cursor, so the jump has to happen first), then jump to the very
+    /// last cell -- `MoveToLastRow`/`MoveToEndOfLine` each call
+    /// `edtui`'s own `set_selection_with_lines` while in `Visual` mode,
+    /// exactly like every other selection-extending motion here, so the
+    /// selection ends up spanning the whole buffer with no bespoke
+    /// selection-building logic at all.
+    pub fn select_all(&mut self) {
+        MoveToFirstRow()
+            .chain(MoveToStartOfLine())
+            .chain(SwitchMode(EditorMode::Visual))
+            .chain(MoveToLastRow())
+            .chain(MoveToEndOfLine())
+            .execute(&mut self.state);
     }
 
 

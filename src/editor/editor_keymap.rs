@@ -29,6 +29,15 @@ pub enum EditorCommand {
     /// `bindings::extend_word_selection`'s own doc comment for the full
     /// story of why.
     WordSelect { forward: bool },
+    /// `Ctrl+A` -- selects the entire buffer (`Editor::select_all`).
+    /// Resolved here rather than left to `edtui`'s own dispatch: there's
+    /// no entry for it in `bindings.rs`'s declarative table at all (it
+    /// was simply never bound), and `edtui`'s own action set has no
+    /// single "select everything" primitive to bind to one key input
+    /// even if there were -- `Editor::select_all` chains several plain
+    /// motions instead, the same shape `WordSelect` above already uses
+    /// for logic too involved for one table entry.
+    SelectAll,
     /// `Ctrl+F` -- opens the built-in search box (`Editor::start_search`).
     /// Only ever resolved while the box *isn't* already open --
     /// `handle_editor_key` intercepts every key ahead of `resolve`
@@ -64,6 +73,7 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
         KeyCode::Esc => EditorCommand::Close,
         KeyCode::Char('s' | 'S') if ctrl => EditorCommand::Save,
         KeyCode::Char('f' | 'F') if ctrl => EditorCommand::Find,
+        KeyCode::Char('a' | 'A') if ctrl => EditorCommand::SelectAll,
         KeyCode::Left if ctrl && shift => EditorCommand::WordSelect { forward: false },
         KeyCode::Right if ctrl && shift => EditorCommand::WordSelect { forward: true },
         _ if edtui_supports_key(key.code) => EditorCommand::Forward,
@@ -189,6 +199,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         EditorCommand::Close => unreachable!("handled above"),
         EditorCommand::Save => active_editor.save()?,
         EditorCommand::Find => active_editor.start_search(),
+        EditorCommand::SelectAll => active_editor.select_all(),
         EditorCommand::WordSelect { forward } => active_editor.extend_word_selection(forward),
         EditorCommand::Forward => active_editor.input(key),
         EditorCommand::Ignore => {}
@@ -374,6 +385,18 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_a_resolves_to_select_all() {
+        assert_eq!(resolve(ctrl_key('a')), EditorCommand::SelectAll);
+        assert_eq!(resolve(ctrl_key('A')), EditorCommand::SelectAll, "should match uppercase too, same reasoning as Ctrl+S");
+    }
+
+    #[test]
+    fn plain_a_without_ctrl_is_forwarded_not_select_all() {
+        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+        assert_eq!(resolve(key), EditorCommand::Forward);
+    }
+
+    #[test]
     fn ctrl_c_is_forwarded_to_edtui_not_handled_here() {
         // Copy/cut/paste are edtui's own concern now (see its custom
         // keymap in editor.rs) -- this module no longer special-cases them.
@@ -520,6 +543,47 @@ mod tests {
         handle_editor_key(&mut app, KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE)).unwrap();
 
         assert!(matches!(app.mode, Mode::Editing(_)), "F10 must not close the editor or crash while editing");
+    }
+
+    /// Regression coverage for the real request: `Ctrl+A` should select
+    /// the whole buffer -- verified functionally (deleting the
+    /// selection clears everything) rather than asserting on exact
+    /// cursor coordinates, which would be tied to `edtui`'s own
+    /// row/column indexing details.
+    #[test]
+    fn handle_editor_key_ctrl_a_selects_the_entire_buffer() {
+        let (mut app, path) = open_editor_app("hello\nworld\n");
+
+        handle_editor_key(&mut app, ctrl_key('a')).unwrap();
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert!(editor.has_selection(), "Ctrl+A should open a selection");
+
+        handle_editor_key(&mut app, key(KeyCode::Backspace)).unwrap();
+        let Mode::Editing(active_editor) = &mut app.mode else { unreachable!() };
+        active_editor.save().unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "", "deleting a Ctrl+A selection should clear the whole buffer");
+    }
+
+    /// Regression test for the real, reported bug: `Ctrl+A` then
+    /// `Backspace` then a single `Ctrl+Z` did nothing at all -- only a
+    /// *second* `Ctrl+Z` actually restored the deleted text. Root cause:
+    /// the old table entry captured an undo checkpoint twice for one
+    /// keypress (once correctly, inside `DeleteSelection`, and once more
+    /// spuriously when returning to `Insert` mode afterward) -- see
+    /// `bindings::is_selection_consuming_key`'s own doc comment for the
+    /// full mechanism. One `Ctrl+Z` must restore everything now.
+    #[test]
+    fn handle_editor_key_ctrl_z_undoes_a_select_all_delete_in_one_press() {
+        let (mut app, path) = open_editor_app("hello\nworld\n");
+        handle_editor_key(&mut app, ctrl_key('a')).unwrap();
+        handle_editor_key(&mut app, key(KeyCode::Backspace)).unwrap();
+
+        handle_editor_key(&mut app, ctrl_key('z')).unwrap();
+
+        let Mode::Editing(active_editor) = &mut app.mode else { unreachable!() };
+        active_editor.save().unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "hello\nworld\n", "a single Ctrl+Z should restore everything the Ctrl+A/Backspace deleted");
     }
 
     #[test]

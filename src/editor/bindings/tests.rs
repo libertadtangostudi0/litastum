@@ -47,6 +47,11 @@ fn input(
     let mode_before = state.mode;
     handler.on_key_event(key_event, state);
 
+    if mode_before == EditorMode::Visual && is_selection_consuming_key(&key_event) {
+        state.selection = None;
+        state.mode = EditorMode::Insert;
+    }
+
     let freshly_entered_visual = mode_before != EditorMode::Visual && state.mode == EditorMode::Visual;
     let anchored_on_a_real_character = freshly_entered_visual && anchor_fresh_shift_selection(state, key_event.code, cursor_before);
 
@@ -226,10 +231,11 @@ fn select_copy_paste_roundtrip() {
     // the last (the fresh-selection fix above) -- 5 presses for
     // "hello"'s own 5 characters, not 4 (the old "N+1, not N"
     // quirk this fix removed -- see shift_select.rs).
+    let mut vertical_shift_anchor_col = None;
     for _ in 0..5 {
         handler.on_key_event(shift_key(KeyCode::Right), &mut state); // select "hello"
     }
-    handler.on_key_event(ctrl_key('c'), &mut state);
+    input(&mut state, &mut handler, ctrl_key('c'), &mut vertical_shift_anchor_col);
     assert_eq!(state.mode, EditorMode::Insert, "copy should return to typing mode");
     assert!(state.selection.is_none());
 
@@ -260,7 +266,8 @@ fn word_select_copy_paste_roundtrip() {
     extend_word_selection(&mut state, true, false, &mut None); // Ctrl+Shift+Right, extends through " world"
     extend_word_selection(&mut state, false, true, &mut None); // Ctrl+Shift+Left, retracts back onto "hello"
 
-    handler.on_key_event(ctrl_key('c'), &mut state);
+    let mut vertical_shift_anchor_col = None;
+    input(&mut state, &mut handler, ctrl_key('c'), &mut vertical_shift_anchor_col);
     assert_eq!(state.mode, EditorMode::Insert, "copy should return to typing mode");
     assert!(state.selection.is_none());
 
@@ -379,10 +386,11 @@ fn word_select_copy_one_more_press_past_the_closing_selects_the_previous_word() 
 fn ctrl_x_cuts_the_selection() {
     let (mut state, mut handler) = test_state("hello world");
 
+    let mut vertical_shift_anchor_col = None;
     for _ in 0..6 {
         handler.on_key_event(shift_key(KeyCode::Right), &mut state); // select "hello " -- 6 presses for 6 characters now, see select_copy_paste_roundtrip
     }
-    handler.on_key_event(ctrl_key('x'), &mut state);
+    input(&mut state, &mut handler, ctrl_key('x'), &mut vertical_shift_anchor_col);
 
     assert_eq!(String::from(state.lines.clone()), "world");
     assert_eq!(state.mode, EditorMode::Insert);
