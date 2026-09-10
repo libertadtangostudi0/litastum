@@ -108,8 +108,8 @@ assets/debug/
 # shortcut as command_history.txt above, separate file.
 /editor_search_history.txt
 
-# Debug scratch folder for manual explorer/panel testing --
-# temp/generate_test_files.bat (tracked) creates 100 numbered files
-# (1.txt-100.txt, content matching the filename) here; the generated
-# files themselves shouldn't be committed.
-/temp/*.txt
+# Debug scratch folder for manual explorer/panel testing -- purely
+# local, never committed (including generate_test_files.bat itself,
+# which creates 100 numbered files, 1.txt-100.txt, content matching
+# the filename, for manually testing panel scrolling/navigation).
+/temp
