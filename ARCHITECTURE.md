@@ -1,31 +1,91 @@
-# litastum — architecture sketch
+# litastum — architecture
 
-Draft architecture derived from the planning chat + the Far Manager UI
-mockup (`far_manager_reference_color2_columns.html`, dark GitHub-inspired
-theme, 2-column panels, arrow-key nav across columns). This extends the
-current scaffold (stage 0-2 of `CLAUDE.md`'s roadmap) toward stage 3+
-without a rewrite — same crates, same module split, new modules added
-where the mockup needs behavior the scaffold doesn't have yet.
+Originally a pre-implementation sketch derived from the planning chat +
+a Far Manager UI mockup; rewritten here to describe the actual current
+module structure instead of the plan, now that most of the sketch has
+long since landed (and, in a few places, differently than first drawn).
+See `.claude/rules/*.md` for the design decisions and conventions
+behind each area in more depth — this file stays at the module-map /
+data-flow level.
 
 ## Module map
 
 ```
-main.rs      — terminal setup/teardown, event loop, wires keymap -> command
-app.rs       — App: owns panels, active index, mode, should_quit
-panel.rs     — Panel: cwd, entries, cursor, column-aware navigation
-ui.rs        — pure rendering: App -> ratatui widgets (no state mutation)
-theme.rs     — color/style constants, one place matching the mockup's CSS
-keymap.rs    — KeyCode -> Command mapping
-command.rs   — Command enum + execution (owns the F4 editor-shellout etc.)
-config.rs    — LATER (stage 5): on-disk config via `directories`, live reload via `notify`
-editor.rs    — LATER (stage 3): built-in editor widget (ratatui-textarea/edtui)
-vfs.rs       — LATER (stage 6): trait over {std::fs, zip/tar, sftp} so Panel doesn't care
-script.rs    — LATER (stage 4): rhai host, Message/Command in — no direct fs/process access
+main.rs              — terminal setup/teardown, event loop, dispatches
+                        by Mode to each area's own handle_*_key
+app.rs                — App: panels, active index, Mode, theme,
+                        popup_style, command/search history, ...
+test_support.rs       — shared test fixtures (test_app, key(), scratch dirs)
+alt_key.rs            — Windows-only: polls GetAsyncKeyState for real
+                        Alt hold/release tracking (ui::draw_function_keys)
+logging.rs            — tracing setup
+
+explorer.rs            — dual-pane browser: Panel, F-key commands,
+  explorer/keymap.rs    —   KeyCode -> Command
+  explorer/command.rs   —   Command enum + execute(); the one chokepoint
+                            keyboard (and, later, scripts) funnels
+                            filesystem actions through
+  explorer/panel/       —   Panel: cwd, entries, cursor, column-major
+                            nav, scrolling, marks (marks.rs), natural
+                            sort (natural_sort.rs)
+  explorer/entry.rs     —   Entry, HighlightRole (file-type coloring)
+  explorer/fs_ops.rs    —   actual copy/move/delete filesystem calls
+  explorer/confirm.rs   —   Mode::ConfirmDelete/ConfirmTransfer key handling
+  explorer/drive_menu.rs—   Alt+F1/F2 "change drive" popup state
+  explorer/find_file/   —   F9 -> Commands -> Find file (search, state,
+                            input handling, .txt export)
+  explorer/system_open.rs — Shift+Enter: hands a path to the OS's own
+                            file manager (explorer.exe/open/xdg-open)
+
+editor.rs               — F4 built-in editor, backed by `edtui`
+  editor/editor/         —   Editor: open/save/view, search (search.rs),
+                              word-select-touch (word_select_touch.rs)
+  editor/editor_keymap/  —   KeyEvent -> edtui action table + our own
+                              intercepts (search box, word-select)
+  editor/bindings/       —   hand-rolled motions edtui's own action
+                              table can't express (word-wise selection,
+                              line-wrap arrow movement, shift-select)
+  editor/syntax/         —   bundled .sublime-syntax grammars syntect's
+                              default set is missing (PowerShell, INI, ...)
+  editor/clipboard.rs    —   OsClipboardBridge (arboard <-> edtui)
+  editor/word_highlight.rs — same-word occurrence highlighting
+  editor/find_history.rs —   Ctrl+F search-box ghost-text suggestion history
+
+theming.rs              — Theme, color-scheme loading/persistence,
+  theming/theme.rs       —   the resolved Theme struct itself
+  theming/scheme.rs      —   ColorScheme: parses Windows Terminal JSON
+                              scheme files, derives Theme + syntect Theme
+  theming/config/        —   config.json read/write (interface_theme,
+                              editor_theme, active_shell, popup_style),
+                              theme file search (config dir + ./themes/)
+  theming/menu.rs        —   F9 top menu (MainMenu, MenuLevel, dispatch)
+  theming/theme_menu.rs  —   F9 -> Options -> Color schemes picker
+  theming/popup_style.rs —   PopupStyle (Classic/Rounded)
+  theming/popup_style_menu.rs — F9 -> Options -> UI picker
+
+command_line.rs         — the always-live Far-style command line
+  command_line/browsing/ —   Mode::Browsing key dispatch (the other big
+                              chokepoint alongside explorer::command::execute)
+  command_line/completion.rs — Tab path completion, cycling
+  command_line/history.rs —  command history, Alt+F8 popup, ghost-text
+                              autosuggestion
+  command_line/shell.rs  —   Ctrl+P shell-profile picker
+
+text_field.rs           — shared cursor/selection editing (transfer
+                           destination field, command line's selection)
+
+ui/mod.rs               — pure(ish) rendering: App -> ratatui widgets
+  ui/popup.rs            —   shared popup chrome (draw_frame, key_pill,
+                              separator), style-aware (Classic/Rounded)
+  ui/{menu,shell,drive_menu,find_file,confirm,theme_menu,
+      popup_style_menu,editor_find,command_line}.rs
+                         —   one rendering module per popup/overlay
 ```
 
-`panel.rs` and `ui.rs` already being separate from `app.rs`/`main.rs` is
-the right split — the additions below slot into it rather than replacing
-it.
+`vfs.rs` (archives/SFTP, roadmap stage 6) and `script.rs` (`rhai`
+scripting, roadmap stage 4) don't exist yet — still several stages out,
+not designed further here than `.claude/rules/litastum-roadmap.md`
+already does.
 
 ## Data flow
 
@@ -33,169 +93,101 @@ it.
 crossterm::event::read()
         |
         v
-   main.rs: handle_event()  -- keymap.rs resolves KeyCode -> Command
+   main.rs::handle_event()  -- dispatches on app.mode to one of:
+        explorer::{handle_confirm_delete_key, handle_confirm_transfer_key,
+                   handle_find_file_key, handle_drive_menu_key}
+        theming::{handle_main_menu_key, handle_theme_menu_key,
+                  handle_popup_style_menu_key}
+        command_line::{handle_shell_menu_key, handle_history_key,
+                       handle_browsing_key}
+        editor::{handle_editor_key, handle_confirm_discard_key}
         |
         v
-   command.rs: execute(Command, &mut App)  -- mutates App/Panel/editor state
+   explorer::command::execute(Command, &mut App)  -- the shared
+   chokepoint every *browsing*-mode key (and later, scripts) funnels
+   filesystem/mode changes through; other modes own their own
+   mutation directly in their handle_*_key (rename/delete/theme-apply/
+   etc. don't need a shared Command enum the way panel navigation does)
         |
         v
-   ui.rs: draw(&App)  -- theme.rs supplies styles, pure read of App state
+   ui::draw(frame, &mut App)  -- theme.rs supplies styles, app.popup_style
+   picks Classic vs Rounded chrome for every popup
 ```
 
-`ui.rs` stays a pure function of `&App` for the browsing panels (no
-`io::Result`, no mutation). **Exception**: `draw` takes `app: &mut App`
-overall, because the built-in editor's `edtui::EditorView` tracks scroll
-position as part of rendering and needs `&mut EditorState` even just to
-draw — not a design choice on our side, `edtui`'s own render step
-mutates view state. Everything outside the `Mode::Editing`/
-`Mode::ConfirmDiscard` branches still only reads `app`.
+Each non-`Browsing` `Mode` (there are a dozen — see `app.rs::Mode`) is
+a self-contained `{State struct, Command enum, resolve(), handle_*_key,
+draw_*}` group, split across its owning module (`theming::theme_menu`,
+`explorer::find_file`, ...) and a matching `ui::*` rendering module —
+the same shape `explorer::keymap`/`explorer::command` established for
+panel navigation, just scoped to one popup's own key handling instead
+of a codebase-wide chokepoint. `ui::draw` itself stays close to a pure
+function of `&App` for the browsing panels; the built-in editor is the
+one real exception (`edtui::EditorView`'s own render step needs
+`&mut EditorState` even just to draw, not a choice on this project's
+side), which is why `ui::draw` takes `app: &mut App` overall rather
+than `&App`.
 
-## Panel: column-major layout (the mockup's core UI change)
+## Panel: column-major layout
 
-The mockup's grid (`grid-auto-flow:column`) fills column 1 top-to-bottom
-before column 2. Up/Down flow through the whole grid in that same
-column-major order — reaching the bottom of a column continues into the
-top of the next one, rather than stopping there — and Left/Right jump
-directly across columns, same row. (An earlier version of this doc had
-Up/Down clamp at each column's edge, matching the mockup's own arrow-key
-JS; that felt wrong once actually used in a terminal and was corrected
-after implementation.)
-
-`Panel` needs:
-
-```rust
-pub struct Panel {
-    pub path: PathBuf,
-    pub entries: Vec<Entry>,
-    pub selected: usize,   // index into entries, unchanged
-    pub columns: usize,    // NEW: computed by ui.rs from area width, written back each frame
-}
-```
-
-Column-major index math (row-major storage, column-major display, same
-trick the mockup's JS uses via `data-row`/`data-col`):
+The file grid fills column 1 top-to-bottom before column 2 (Far
+Manager's own "Brief" view convention) — Up/Down flow through the whole
+grid in that column-major order (reaching the bottom of a column
+continues into the top of the next one), Left/Right jump a whole column
+at once, same row.
 
 ```rust
 impl Panel {
-    fn rows(&self) -> usize { self.entries.len().div_ceil(self.columns) }
+    fn rows(&self) -> usize { ... } // entries.len().div_ceil(columns), clamped to what's visible
 
-    // entries is already stored in column-major order, so a plain linear
-    // step already flows correctly from one column into the next.
     pub fn move_up(&mut self)    { self.selected = self.selected.saturating_sub(1) }
     pub fn move_down(&mut self)  { if self.selected + 1 < self.entries.len() { self.selected += 1 } }
-
-    // Left/Right jump a whole column (same row), independent of Up/Down.
-    pub fn move_left(&mut self)  { self.selected = self.selected.saturating_sub(self.rows()) }
-    pub fn move_right(&mut self) { let n = self.selected + self.rows();
-                                       if n < self.entries.len() { self.selected = n } }
+    pub fn move_left(&mut self)  { ... } // jumps back by rows(), paginating across pages at the edge
+    pub fn move_right(&mut self) { ... } // mirror of move_left
 }
 ```
 
-`columns` is derived, not user-set: `ui.rs` computes it each frame from
-`area.width / min_column_width` (mockup uses a fixed 2, but the panel
-width is fixed there too — real terminal panels resize, so this should
-scale: 1 column below some width threshold, 2+ above). Store it back on
-`Panel` so `move_up`/`move_down` — which run from `main.rs`, outside
-`ui.rs` — see the same column count the last frame rendered with.
+`columns` is derived each frame by `ui::draw_panel` from
+`area.width / MIN_COLUMN_WIDTH` and written back onto `Panel` so
+`move_left`/`move_right` (which run from `explorer::command`, outside
+`ui`) agree with what was actually rendered. `scroll_offset` and
+`visible_rows` (added once real directories exceeded what one screen
+could show) keep the currently-visible page in sync with the cursor —
+see `Panel::ensure_selected_visible_paginated`'s own doc comment for
+why this needs real tracked state rather than handing every entry to a
+plain `List` and trusting it to scroll on its own (it doesn't).
+`marks: HashSet<usize>` (`panel/marks.rs`) is the Far Manager-style
+multi-select F5/F6/F8 act on when non-empty, falling back to the
+cursor entry otherwise.
 
-Left/Right currently means "switch active panel" (there's no such binding
-yet in the scaffold, `Tab` does it) — decide: either Left/Right always
-means "move across columns within the panel, clamped at the edge" (matches
-the mockup, which never crosses into the other panel), or reserve it for
-switching panels and use a different key for cross-column movement inside
-one panel. The mockup's own JS clamps at panel edges, so recommend the
-former: Left/Right stays column movement inside the active panel, Tab
-keeps switching panels.
+## Popup chrome: Classic vs Rounded
 
-## Theming
+Every popup (F9 menu, color-scheme/UI pickers, Ctrl+P shell picker,
+Alt+F1/F2 drive menu, Find file, the F5/F6/F8 confirm prompts) renders
+through `ui::popup::draw_frame(frame, area, theme, style, title, width,
+height)`, which returns the caller's own content `Rect` regardless of
+which `PopupStyle` (`theming::PopupStyle`) is active:
 
-`theme.rs` becomes the single source of truth, values lifted straight
-from the mockup's inline CSS:
+- `Classic` — plain square `Block::borders(ALL)`, title baked into the
+  border, no interior padding. The look every popup used before
+  `ui/popup.rs` existed.
+- `Rounded` — `BorderType::Rounded`, uniform padding, `title` rendered
+  as the frame's own first content line with a separator under it.
 
-```rust
-pub struct Theme {
-    pub bg: Color,          // #0d1117
-    pub surface: Color,     // #161b22
-    pub border: Color,      // #30363d
-    pub border_dim: Color,  // #21262d
-    pub text: Color,        // #e6edf3
-    pub text_dim: Color,    // #8b949e
-    pub text_muted: Color,  // #6e7681
-    pub accent: Color,      // #58a6ff  — focus / cursor row / F-key labels
-    pub success: Color,     // #3fb950
-    pub danger: Color,      // #f85149  — F8 Delete only
-    pub warning: Color,     // #d29922  — marked/selected files
-}
-```
+Both are permanent, user-selectable options (F9 -> Options -> UI,
+`theming::popup_style_menu`) rather than one converging on the other —
+see `.claude/rules/litastum-popup-design.md` for `Rounded`'s own
+settled fill/corner-glyph history. `ui/editor_find.rs`'s Ctrl+F search
+box deliberately opts out of this shared chrome entirely (reported too
+large/labeled with it) — see its own doc comment.
 
-`ratatui::style::Color::Rgb` takes these directly (crossterm backend
-supports truecolor on all three target platforms this project cares
-about). `ui.rs` takes `&Theme` alongside `&App` — pass it through `draw()`
-rather than making it a global, so tests/snapshots can swap themes later
-without statics.
+## What's still out of scope
 
-Maps onto the mockup's states directly:
-- active panel border → `accent`, inactive → `border`
-- current row (focused panel) → `accent` at low alpha + left border —
-  ratatui has no alpha; approximate with a solid `bg`-blended `Rgb`
-  precomputed in `theme.rs`, or just invert fg/bg like the current
-  scaffold's `Cyan`/`Black` selection style
-- current row (unfocused panel) → `border` left-border only, no fill
-  (mockup's `.fm-panel:not(.fm-active) .fm-current`)
-- marked files → `warning` at low alpha + left border (multi-select
-  doesn't exist in `Panel` yet — needs a `marked: HashSet<usize>` field
-  when F5/F6/F8 gain real "act on selection" semantics instead of
-  "act on cursor")
-- F8 label → `danger`, all other F-keys → `accent` (matches mockup
-  exactly: only Delete is red)
-
-## Command layer
-
-Right now `main.rs::handle_event` both resolves keys *and* executes them
-(`open_editor_for_selection` is inlined there). Splitting these two
-concerns means the growing key table (F1-F10, Left/Right, future
-Copy/Move/Delete confirmation flows) doesn't keep bloating `main.rs`:
-
-```rust
-// keymap.rs
-pub enum Command {
-    MoveUp, MoveDown, MoveLeft, MoveRight,
-    EnterSelected, ToggleActive,
-    EditSelected, Quit,
-    // later: CopySelected, MoveSelected, DeleteSelected(needs confirm), NewFolder, ...
-}
-pub fn resolve(key: KeyCode) -> Option<Command> { ... }
-
-// command.rs
-pub fn execute(cmd: Command, app: &mut App, terminal: &mut Terminal<...>) -> Result<()> { ... }
-```
-
-This is also where the roadmap's stage-4 scripting plugs in later: `rhai`
-scripts emit the *same* `Command` values instead of touching `fs`/process
-directly (per `CLAUDE.md`'s existing constraint) — `command.rs::execute`
-becomes the one chokepoint both keyboard and scripts go through.
-
-## What this sketch deliberately leaves out
-
-- Multi-select (`marked` set) — needed for real Copy/Move/Delete-on-
-  selection, but the mockup only shows the *visual* state, not the
-  interaction; add when F5/F6/F8 stop being cursor-only.
-- ~~Status bar / command-line input~~ — done since this sketch was
-  written: `command_line.rs` + `shell.rs`, see
-  `.claude/rules/litastum-command-line.md`.
-- `vfs.rs`, `script.rs` — stubbed as module
-  names above for where they'll live per `CLAUDE.md`'s staged roadmap;
-  not designed here since they're several stages out.
-
-## Suggested implementation order
-
-1. `theme.rs` — pure data, zero risk, unlocks visually matching the
-   mockup immediately in the existing single-column `List` renderer.
-2. Column-major `Panel` nav + `ui.rs` grid rendering (replace `List`
-   with a manual `Layout`/`Table`-based grid, since `ratatui::List` can't
-   do column-major fill).
-3. `keymap.rs` + `command.rs` extraction from `main.rs` — mechanical
-   refactor, no behavior change, makes step 4 additive instead of
-   invasive.
-4. Wire the new Left/Right column movement and Tab panel-switch through
-   the new command layer.
+- `vfs.rs` (archives, SFTP — roadmap stage 6) and `script.rs` (`rhai`
+  scripting — roadmap stage 4): not started. `explorer::command::execute`
+  is already the intended chokepoint scripts will emit `Command` values
+  through, per `.claude/rules/litastum-stack.md`'s constraint against
+  scripts touching the filesystem/process directly.
+- Multi-select exists (`panel/marks.rs`) but only for
+  Copy/Move/Delete/Rename — no other command reads `marked` yet.
+- Diff view / conflict resolver — placeholder only, see
+  `TODO/next-up.md`.
