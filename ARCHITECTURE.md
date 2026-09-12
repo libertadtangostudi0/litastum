@@ -37,10 +37,16 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
   explorer/system_open.rs — Shift+Enter: hands a path to the OS's own
                             file manager (explorer.exe/open/xdg-open)
   explorer/user_menu/    —   F2 -- per-directory script menu, native
-                            format LitastumMenu.toml (parse.rs: Far
+                            format LitastumMenu.toml (parse/ -- Far
                             Manager's own FarMenu.ini nested-block DSL
-                            + !&/!?Label?Default! macros, used only to
-                            *read* a FarMenu.ini for one-time porting;
+                            (dsl.rs, used only to *read* a FarMenu.ini
+                            for one-time porting), the full Far !...!
+                            macro set + litastum's own {{...}} macros
+                            (substitution.rs -- named to avoid colliding
+                            with Far's own, much bigger and unrelated
+                            macro-recording feature, not implemented
+                            here), and the !?Label?Default!/
+                            {{prompt:...}} placeholder (prompts.rs);
                             toml_format.rs: litastum's own serde-backed
                             TOML shape + MenuItem conversion; state.rs:
                             file resolution, porting on confirmation,

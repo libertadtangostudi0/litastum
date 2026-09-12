@@ -159,7 +159,8 @@ fn run_selected_user_menu_item(app: &mut App, terminal: &mut Terminal<CrosstermB
 /// currently has focus (`app.active`), `left`/`right` are the fixed
 /// on-screen panels regardless of focus, matching real Far Manager's
 /// own four-way addressing (`!^`/`!##`/`![`/`!]`, see
-/// `parse::consume_far_token`'s own doc comment). Built fresh right
+/// `parse`'s own `substitution` submodule for the actual token
+/// dispatch). Built fresh right
 /// before running a menu item's commands -- never stored, since panel
 /// state (cursor position, marks) can change between one run and the
 /// next.

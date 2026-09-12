@@ -1,5 +1,9 @@
 # User menu (F2)
 
+See `TODO/user-menu-spec-symbols.md` for the full special-symbols
+reference table (Far's `!...!` family and litastum's own `{{...}}`
+family) -- this file stays the running feature/design log.
+
 - [x] `F2` opens a per-directory user menu (`explorer::user_menu`),
       reading litastum's own `LitastumMenu.toml` from the active
       panel's directory. If neither it nor a `FarMenu.ini` exists,
