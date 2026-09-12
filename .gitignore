@@ -114,7 +114,8 @@ assets/debug/
 # the filename, for manually testing panel scrolling/navigation).
 /temp
 
-# F2 user menu (explorer/user_menu) -- a per-directory local file, not
-# unanchored so it's caught wherever F2 creates or ports one (any
+# F2 user menu (explorer/user_menu) -- per-directory local files, left
+# unanchored so they're caught wherever F2 creates/reads one (any
 # subdirectory used while testing), not just the repo root.
 LitastumMenu.toml
+FarMenu.ini
