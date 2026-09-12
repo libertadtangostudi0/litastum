@@ -18,3 +18,4 @@ Design for the items below: `ARCHITECTURE.md`.
 - [Next up](TODO/next-up.md)
 - [Git integration](TODO/git-integration.md)
 - [Housekeeping](TODO/housekeeping.md)
+- [Code quality](TODO/code-quality.md) — best-practices review findings, not urgent
