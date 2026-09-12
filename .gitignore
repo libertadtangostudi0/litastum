@@ -116,6 +116,11 @@ assets/debug/
 
 # F2 user menu (explorer/user_menu) -- per-directory local files, left
 # unanchored so they're caught wherever F2 creates/reads one (any
-# subdirectory used while testing), not just the repo root.
+# subdirectory used while testing), not just the repo root. The .bak
+# suffix covers the backups state::port_far_menu/
+# backup_far_menu_without_porting make of either file before
+# overwriting/moving it.
 LitastumMenu.toml
+LitastumMenu.toml.bak
 FarMenu.ini
+FarMenu.ini.bak
