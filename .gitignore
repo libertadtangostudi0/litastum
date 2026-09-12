@@ -113,3 +113,8 @@ assets/debug/
 # which creates 100 numbered files, 1.txt-100.txt, content matching
 # the filename, for manually testing panel scrolling/navigation).
 /temp
+
+# F2 user menu (explorer/user_menu) -- a per-directory local file, not
+# unanchored so it's caught wherever F2 creates or ports one (any
+# subdirectory used while testing), not just the repo root.
+LitastumMenu.toml
