@@ -18,9 +18,13 @@ use super::completion::complete;
 use super::history::{record_history, save_history, suggest_history, CommandHistoryMenu};
 
 /// Key handling in the browser: `Ctrl+P` opens the shell picker,
-/// `Shift+F6` opens the rename prompt, `Alt+F1`/`Alt+F2`/`Alt+F7`/
-/// `Alt+F8` open their own popups (all need the raw modifier, which
-/// `keymap::resolve`'s table can't see since it only keys off
+/// `Shift+F6` opens the rename prompt, `Shift+Enter` (command line
+/// empty) opens a directory under the cursor in the OS's own file
+/// manager instead of navigating into it (a file opens in the built-in
+/// editor instead, same as plain `Enter` — see `explorer::keymap::
+/// Command::OpenInFileManager`'s own doc comment), `Alt+F1`/`Alt+F2`/
+/// `Alt+F7`/`Alt+F8` open their own popups (all need the raw modifier,
+/// which `keymap::resolve`'s table can't see since it only keys off
 /// `KeyCode`), `Shift+Left`/`Right` and `Ctrl+Shift+Left`/`Right`
 /// select within the command line (character- and word-wise), plain
 /// `Ctrl+Left`/`Right` moves the cursor by a word with no selection —
@@ -55,6 +59,20 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     // to be special-cased ahead of it, same as Ctrl+P above.
     if key.code == KeyCode::F(6) && key.modifiers.contains(KeyModifiers::SHIFT) {
         return execute(Command::RenameSelected, app);
+    }
+
+    // Shift+Enter -- on a directory, opens it in the OS's own file
+    // manager (`explorer::system_open`) instead of navigating into it;
+    // on a file, opens the built-in editor, same as plain Enter
+    // (`Command::OpenInFileManager`'s own doc comment has the full
+    // reasoning) -- needs the raw modifier, same reason as Shift+F6
+    // above. Only while the command line is empty, matching plain
+    // Enter's own "acts on the panel selection" case immediately below
+    // in `keymap::resolve` -- with something typed, Shift+Enter has no
+    // special meaning here and falls through to the same "run it"
+    // handling plain Enter gets.
+    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) && app.command_line.is_empty() {
+        return execute(Command::OpenInFileManager, app);
     }
 
     // Alt+F7 -- real Far Manager's own global shortcut for "Find file",

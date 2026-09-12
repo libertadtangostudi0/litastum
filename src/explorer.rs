@@ -6,6 +6,7 @@ mod find_file;
 mod fs_ops;
 mod keymap;
 mod panel;
+mod system_open;
 
 pub use command::execute;
 pub use confirm::{handle_confirm_delete_key, handle_confirm_transfer_key};

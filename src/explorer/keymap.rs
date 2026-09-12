@@ -11,7 +11,26 @@ pub enum Command {
     MoveDown,
     MoveLeft,
     MoveRight,
+    /// `Enter` — descends into the directory under the cursor (or its
+    /// parent, for `..`), same as always; on a *file*, opens it in the
+    /// built-in editor instead (`explorer::command::open_editor`, the
+    /// same thing `F4`/`EditSelected` does) rather than doing nothing,
+    /// per an explicit request that plain `Enter` shouldn't be a no-op
+    /// on a file.
     EnterSelected,
+    /// `Shift+Enter` — on a directory, opens it in the OS's own file
+    /// manager (`explorer::system_open`) instead of navigating the
+    /// panel into it, analogous to Far Manager's own external-open
+    /// bindings (the same thing a real double-click on a folder would
+    /// do); on a *file*, opens it in the built-in editor, exactly like
+    /// plain `Enter` does (see `EnterSelected` above) rather than
+    /// handing it to the OS too — requested directly, so `Shift+Enter`
+    /// and plain `Enter` behave identically on a file and differ only
+    /// on a directory. Modifier-specific, so it's resolved directly in
+    /// `command_line::handle_browsing_key` rather than through this
+    /// module's `resolve` table (which only keys off `KeyCode`, not
+    /// modifiers), same reason as `RenameSelected` below.
+    OpenInFileManager,
     ToggleActive,
     EditSelected,
     /// F9 — opens the top menu (`menu.rs`), currently `Settings` →

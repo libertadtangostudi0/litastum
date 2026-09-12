@@ -1,10 +1,13 @@
+use std::path::PathBuf;
+
 use color_eyre::eyre::Result;
+use tracing::warn;
 
 use crate::app::{App, DeleteEntry, Mode, PendingDelete, PendingTransfer, TransferOp, TransferSource};
 use crate::editor::Editor;
 use crate::theming::MainMenu;
 use super::keymap::Command;
-use super::Panel;
+use super::{system_open, Panel};
 
 
 /// Executes a resolved `Command` against the app state. This is the one
@@ -17,7 +20,20 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
         Command::MoveDown => app.active_panel().move_down(),
         Command::MoveLeft => app.active_panel().move_left(),
         Command::MoveRight => app.active_panel().move_right(),
-        Command::EnterSelected => app.active_panel().enter_selected()?,
+        Command::EnterSelected => {
+            if current_entry_is_dir(app) {
+                app.active_panel().enter_selected()?
+            } else {
+                open_editor(app)
+            }
+        }
+        Command::OpenInFileManager => {
+            if current_entry_is_dir(app) {
+                open_directory_in_file_manager(app)
+            } else {
+                open_editor(app)
+            }
+        }
         Command::ToggleActive => app.toggle_active(),
         Command::EditSelected => open_editor(app),
         Command::OpenMenu => app.mode = Mode::MainMenu(MainMenu::open()),
@@ -36,9 +52,26 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
 }
 
 
+/// Whether the entry under the cursor is a directory (`..` included) —
+/// the branch point both `EnterSelected` (plain `Enter`) and
+/// `OpenInFileManager` (`Shift+Enter`) need: a file always opens in the
+/// built-in editor regardless of which of the two was pressed
+/// (requested directly — plain `Enter` used to be a no-op on a file,
+/// only `F4` opened it), and only a directory tells the two apart (one
+/// navigates the panel into it, the other hands it to the OS file
+/// manager). An empty panel (no entry at all) reads as "not a
+/// directory", same as `false` — both callers fall through to
+/// `open_editor`, which itself no-ops on a `None` `selected_path()`.
+fn current_entry_is_dir(app: &mut App) -> bool {
+    app.active_panel().current().is_some_and(|entry| entry.is_dir)
+}
+
+
 /// Opens the file under the cursor in the built-in editor (`editor.rs`,
-/// backed by `edtui`). Does nothing for directories, and for files that
-/// fail to load as UTF-8 text (binary files aren't supported yet — see
+/// backed by `edtui`). Does nothing for directories (never actually
+/// reached for one — see `current_entry_is_dir` above — but kept as a
+/// real guard rather than an assumption), and for files that fail to
+/// load as UTF-8 text (binary files aren't supported yet — see
 /// `TODO/editor.md`) rather than crashing the app.
 fn open_editor(app: &mut App) {
     let Some(path) = app.active_panel().selected_path() else {
@@ -51,6 +84,46 @@ fn open_editor(app: &mut App) {
     let syntax_theme = app.syntax_theme.clone();
     if let Ok(editor) = Editor::open(path, syntax_theme) {
         app.mode = Mode::Editing(editor);
+    }
+}
+
+
+/// `Shift+Enter` on a directory: hands it off to the OS's own file
+/// manager (`system_open::open`) instead of navigating the panel into
+/// it. `".."` isn't a real, separately-openable entry the way an
+/// ordinary subdirectory is -- it's a navigation aid pointing at the
+/// panel's *parent*, but the directory actually being browsed right now
+/// (and the one this command should reveal) is the panel's own current
+/// `path`. A first attempt resolved `".."` to that parent directory
+/// instead (mirroring `Panel::enter_selected`'s own handling) -- fixed
+/// once retested against the real report: with the cursor on `..`,
+/// `Shift+Enter` should open the panel's own current directory, not
+/// jump a level further up. A spawn failure (the OS command itself
+/// missing, e.g. `xdg-open` on a minimal Linux install) is logged, not
+/// surfaced to the user as an app error -- same reasoning as every
+/// other external process spawn in this codebase.
+fn open_directory_in_file_manager(app: &mut App) {
+    let Some(path) = directory_open_target(app.active_panel()) else {
+        return;
+    };
+
+    if let Err(err) = system_open::open(&path) {
+        warn!(path = %path.display(), %err, "failed to open directory in the OS file manager");
+    }
+}
+
+
+/// The real filesystem path `open_directory_in_file_manager` should
+/// hand to the OS -- split out from it so this (the `..` special case,
+/// see that function's own doc comment) is testable without spawning a
+/// real process. `None` only for an empty panel (no entry under the
+/// cursor at all).
+fn directory_open_target(panel: &Panel) -> Option<PathBuf> {
+    let entry = panel.current()?;
+    if entry.name == ".." {
+        Some(panel.path.clone())
+    } else {
+        Some(panel.path.join(&entry.name))
     }
 }
 
@@ -361,5 +434,139 @@ mod tests {
         };
         let expected = pending.destination.chars().count() - "café_résumé.txt".chars().count();
         assert_eq!(pending.cursor, expected);
+    }
+
+    mod current_entry_is_dir_tests {
+        use super::*;
+
+        #[test]
+        fn true_for_a_directory_entry() {
+            let dir = scratch_dir();
+            fs::create_dir(dir.join("sub")).unwrap();
+            let mut app = test_app(dir);
+            app.panels[0].selected = app.panels[0].entries.iter().position(|e| e.name == "sub").unwrap();
+
+            assert!(current_entry_is_dir(&mut app));
+        }
+
+        #[test]
+        fn true_for_dotdot() {
+            let mut app = app_with_selected_file("victim.txt");
+            app.panels[0].selected = 0; // ".." is always entry 0 when a parent exists
+
+            assert!(current_entry_is_dir(&mut app));
+        }
+
+        #[test]
+        fn false_for_a_file_entry() {
+            let mut app = app_with_selected_file("victim.txt");
+
+            assert!(!current_entry_is_dir(&mut app));
+        }
+
+        /// A panel rooted at a non-root scratch directory always lists
+        /// at least `..` (see `panel::tests::panel_with_dotdot_and`'s
+        /// own reasoning) -- genuinely empty (`current()` returning
+        /// `None`) only happens with no entries at all, which needs
+        /// clearing `entries` directly rather than trusting an ordinary
+        /// scratch directory to produce it.
+        #[test]
+        fn false_for_an_empty_panel() {
+            let mut app = test_app(scratch_dir());
+            app.panels[0].entries.clear();
+
+            assert!(!current_entry_is_dir(&mut app));
+        }
+    }
+
+    mod enter_selected_and_open_in_file_manager_tests {
+        use super::*;
+
+        /// Regression coverage for the real request: plain `Enter` on a
+        /// file used to be a no-op (only `F4`/`EditSelected` opened the
+        /// editor) -- it should now open the built-in editor, exactly
+        /// like `F4`.
+        #[test]
+        fn enter_selected_on_a_file_opens_the_editor() {
+            let mut app = app_with_selected_file("victim.txt");
+
+            execute(Command::EnterSelected, &mut app).unwrap();
+
+            assert!(matches!(app.mode, Mode::Editing(_)));
+        }
+
+        /// `Shift+Enter` on a file behaves exactly like plain `Enter` --
+        /// requested directly, so the two only differ on a directory.
+        #[test]
+        fn open_in_file_manager_on_a_file_also_opens_the_editor() {
+            let mut app = app_with_selected_file("victim.txt");
+
+            execute(Command::OpenInFileManager, &mut app).unwrap();
+
+            assert!(matches!(app.mode, Mode::Editing(_)));
+        }
+
+        /// Plain `Enter` on a directory still navigates the panel into
+        /// it -- unaffected by the file-opens-the-editor change above.
+        #[test]
+        fn enter_selected_on_a_directory_still_navigates_into_it() {
+            let dir = scratch_dir();
+            fs::create_dir(dir.join("sub")).unwrap();
+            let mut app = test_app(dir.clone());
+            app.panels[0].selected = app.panels[0].entries.iter().position(|e| e.name == "sub").unwrap();
+
+            execute(Command::EnterSelected, &mut app).unwrap();
+
+            assert_eq!(app.panels[0].path, dir.join("sub"));
+            assert!(matches!(app.mode, Mode::Browsing));
+        }
+    }
+
+    mod directory_open_target_tests {
+        use super::*;
+
+        #[test]
+        fn targets_the_subdirectory_under_the_cursor() {
+            let dir = scratch_dir();
+            fs::create_dir(dir.join("sub")).unwrap();
+            let mut app = test_app(dir.clone());
+            app.panels[0].selected = app.panels[0].entries.iter().position(|e| e.name == "sub").unwrap();
+
+            let target = directory_open_target(&app.panels[0]);
+
+            assert_eq!(target, Some(dir.join("sub")));
+        }
+
+        /// Regression coverage for the real report, in two rounds: a
+        /// first attempt resolved `..` to the panel's *parent*
+        /// (`panel.path.parent()`) -- reported wrong on retest: with the
+        /// cursor on `..`, `Shift+Enter` should open the panel's own
+        /// *current* directory (what's actually being browsed right
+        /// now), not jump a level further up. `..` isn't a distinct
+        /// entry with somewhere else of its own to point Explorer at.
+        #[test]
+        fn targets_the_panels_own_current_directory_for_dotdot_not_its_parent() {
+            let dir = scratch_dir();
+            let sub = dir.join("sub");
+            fs::create_dir(&sub).unwrap();
+            let mut app = test_app(sub.clone());
+            app.panels[0].selected = 0; // ".." is always entry 0 when a parent exists
+
+            let target = directory_open_target(&app.panels[0]);
+
+            assert_eq!(target, Some(sub), "should resolve to the panel's own current directory, not its parent");
+        }
+
+        /// Same "genuinely empty" caveat as `current_entry_is_dir_tests
+        /// ::false_for_an_empty_panel` -- a non-root scratch directory
+        /// always has `..`, so `entries` needs clearing directly rather
+        /// than relying on a fresh scratch directory to be entry-less.
+        #[test]
+        fn none_for_an_empty_panel() {
+            let mut app = test_app(scratch_dir());
+            app.panels[0].entries.clear();
+
+            assert_eq!(directory_open_target(&app.panels[0]), None);
+        }
     }
 }
