@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::debug;
 
 use crate::app::{App, Mode};
+use crate::explorer;
 
 use super::find_history;
 
@@ -293,17 +294,30 @@ fn close_editor_or_confirm(app: &mut App) -> Result<()> {
 /// The editor is actually closing for good (no unsaved changes, or they
 /// were just discarded) -- reloads the active panel (in case anything
 /// changed on disk while editing) and hands control back to wherever
-/// `F4` was originally pressed from: `Mode::Browsing` normally, or
+/// `F4` was originally pressed from: `Mode::Browsing` normally,
 /// `Mode::FindFile` if it was pressed from the Find file results popup
-/// (`app.editor_return_to`, set by `find_file/input.rs::edit_selected_result`
-/// and taken here exactly once). `Mode::ConfirmDiscard`'s own `Cancel`
-/// path (back into the editor, nothing lost) deliberately does *not*
-/// call this -- the editor hasn't actually closed there.
+/// (`app.editor_return_to`, set by `find_file/input.rs::edit_selected_result`),
+/// or `Mode::UserMenu` if it was pressed on a `Commands` item in the
+/// `F2` user menu (`app.user_menu_command_edit`, set by
+/// `explorer::user_menu::input::open_edit_selected_command`) -- each
+/// taken (`Option::take`) exactly once here; at most one is ever
+/// actually set at a time, since the editor can only have been opened
+/// from one place. The user-menu case also has to *finish* the edit
+/// (`explorer::finish_command_edit`: read the scratch file's final
+/// contents back into the item, persist, delete the scratch file),
+/// not just pick which mode to restore -- unlike the other two cases,
+/// the editor here was never pointed at the item's real backing file.
+/// `Mode::ConfirmDiscard`'s own `Cancel` path (back into the editor,
+/// nothing lost) deliberately does *not* call this -- the editor hasn't
+/// actually closed there.
 fn return_from_editor(app: &mut App) -> Result<()> {
     app.active_panel().reload()?;
-    app.mode = match app.editor_return_to.take() {
-        Some(state) => Mode::FindFile(state),
-        None => Mode::Browsing,
+    app.mode = if let Some(state) = app.editor_return_to.take() {
+        Mode::FindFile(state)
+    } else if let Some(edit) = app.user_menu_command_edit.take() {
+        Mode::UserMenu(explorer::finish_command_edit(edit))
+    } else {
+        Mode::Browsing
     };
     Ok(())
 }

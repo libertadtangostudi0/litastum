@@ -16,7 +16,11 @@
 //!   creating a fresh file (`create_menu_file`), `UserMenuState`
 //!   (browsing, possibly nested, add/remove an item and persist),
 //!   `UserMenuPromptState` (collecting `!?...?!` answers before running
-//!   an item), `AddUserMenuItemState` (the `Ins` add-item form).
+//!   an item), `AddUserMenuItemState` (the `Ins` add-item form),
+//!   `UserMenuCommandEdit`/`create_command_edit_file`/`finish_command_edit`
+//!   (`F4` on an item -- editing just its own command(s) in the real
+//!   built-in editor via a scratch file, not the whole
+//!   `LitastumMenu.toml`).
 //! - `input`: key handling for all of the above, including handing the
 //!   finished command list off to `command_line::run_shell_command_lines`.
 
@@ -27,7 +31,7 @@ mod toml_format;
 
 pub use input::{handle_add_user_menu_item_key, handle_confirm_port_far_menu_key, handle_user_menu_key, handle_user_menu_prompt_key};
 pub use parse::MenuItemBody;
-pub use state::{create_menu_file, resolve_menu, AddUserMenuItemState, MenuFile, UserMenuPromptState, UserMenuState};
+pub use state::{create_menu_file, finish_command_edit, resolve_menu, AddUserMenuItemState, MenuFile, UserMenuCommandEdit, UserMenuPromptState, UserMenuState};
 
 // `Prompt`/`MenuItem` have no production caller outside this module --
 // `state.rs`'s own code reaches both through `parse` directly. Only

@@ -17,8 +17,8 @@ pub use find_file::{handle_find_file_key, FindFilePhase, FindFileState};
 pub use keymap::{resolve, Command};
 pub use panel::Panel;
 pub use user_menu::{
-    handle_add_user_menu_item_key, handle_confirm_port_far_menu_key, handle_user_menu_key, handle_user_menu_prompt_key, resolve_menu, AddUserMenuItemState,
-    MenuFile, MenuItemBody, UserMenuPromptState, UserMenuState,
+    handle_add_user_menu_item_key, handle_confirm_port_far_menu_key, handle_user_menu_key, handle_user_menu_prompt_key, finish_command_edit, resolve_menu,
+    AddUserMenuItemState, MenuFile, MenuItemBody, UserMenuCommandEdit, UserMenuPromptState, UserMenuState,
 };
 // `Prompt`/`MenuItem` have no production caller of their own --
 // `user_menu`'s own code reaches both through its internal `parse`

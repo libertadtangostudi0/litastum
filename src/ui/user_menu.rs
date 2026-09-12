@@ -24,7 +24,7 @@ pub fn draw_user_menu(frame: &mut Frame, area: Rect, menu: &UserMenuState, theme
     let level = menu.current_level();
     let extra = popup::chrome_extra_rows(style);
     let height = (level.items.len().max(1) as u16 + 4 + extra).clamp(6 + extra, area.height);
-    let inner = popup::draw_frame(frame, area, theme, style, Line::from(Span::raw(" User menu ")), 46, height);
+    let inner = popup::draw_frame(frame, area, theme, style, Line::from(Span::raw(" User menu ")), 56, height);
 
     let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
@@ -59,6 +59,8 @@ pub fn draw_user_menu(frame: &mut Frame, area: Rect, menu: &UserMenuState, theme
     let hint = Line::from(vec![
         Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
         Span::styled(" select  ", Style::default().fg(theme.text_dim)),
+        Span::styled("F4", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" edit cmd  ", Style::default().fg(theme.text_dim)),
         Span::styled("Ins", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
         Span::styled(" add  ", Style::default().fg(theme.text_dim)),
         Span::styled("Del", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),

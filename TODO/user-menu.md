@@ -74,6 +74,40 @@
       accordingly, falling back to plain UTF-8 when there's no BOM at
       all; `port_far_menu` reads through this instead of a bare
       `fs::read_to_string`, which fails outright on non-UTF-8 bytes.
+- [x] **`F4` on a highlighted `Commands` item opens just that item's own
+      command(s) in the real built-in editor** -- a scratch file
+      (`state::create_command_edit_file`, one command per line) outside
+      the project, opened via `Mode::Editing` exactly like any other
+      file (real undo, syntax highlighting, multi-line editing), not a
+      bespoke UI form. `app.user_menu_command_edit` (same
+      "park the menu, hand it back once the editor really closes"
+      shape as `app.editor_return_to`) carries the menu alongside the
+      scratch path; `editor_keymap::return_from_editor` finishes the
+      session (`state::finish_command_edit`) once the editor actually
+      closes -- reads the scratch file's current lines back into the
+      item's commands, persists, deletes the scratch file. A no-op on a
+      `Submenu` item (nothing single to edit there).
+
+      This landed after two rejected attempts, both reported directly:
+      the first opened the *entire* `LitastumMenu.toml` in the built-in
+      editor ("хочется редактировать не весь конфиг, а только команду/ы
+      внутри элемента" -- not the whole config, just the item's own
+      command(s)); the second, misreading that as "avoid the file
+      editor entirely," built a bespoke single-line popup form instead
+      -- also wrong ("редактирование должно быть в редакторе" -- it
+      has to be the real editor, just scoped to this one item, not the
+      whole file). Both were removed rather than kept alongside this.
+- [x] **`Right`/`Left` work as navigation alternates for `Enter`/`Esc`**
+      on the menu -- `Left` backs up one level or closes the menu at the
+      top level, identical to `Esc` in every case. `Right` descends into
+      a submenu identical to `Enter`, but on a `Commands` item
+      deliberately does *not* run it the way `Enter` does -- an earlier
+      version made `Right` behave identically to `Enter` there too,
+      reported directly as a real hazard: simply arrowing through the
+      menu could fire a real command. `Right` on a `Commands` item now
+      opens it for editing instead (the exact same flow `F4` uses,
+      `input::open_selected_item`/`open_edit_selected_command`) --
+      `Enter` is the *only* key that actually runs anything.
 
 ## Known gaps
 
@@ -88,12 +122,11 @@
       doesn't have one either for a plain user menu, so this matches,
       but worth remembering if a future item type needs one.
 - [ ] The `Ins` add-item form is deliberately minimal: no hotkey field,
-      no multi-command items, no `!&`/`!?Label?Default!` authoring
-      help. Still easiest to add those by hand-editing
-      `LitastumMenu.toml` afterward (a submenu added via the form can
-      be entered and built out with more `Ins`-added items, but a
-      hotkey or a second command line on one of them needs the text
-      editor).
+      no `!&`/`!?Label?Default!` authoring help. `F4`'s edit-in-editor
+      flow does support multiple command lines (one per line in the
+      scratch file), unlike `Ins`'s own single-command-only shape --
+      still no hotkey field there either. Still easiest to author a
+      hotkey by hand-editing `LitastumMenu.toml` directly.
 - [ ] `Delete` has no confirmation and no undo -- accepted deliberately
       (see above), but worth revisiting if this ever needs to guard
       against a stray keypress the way F8's own delete does for real

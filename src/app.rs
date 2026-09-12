@@ -5,7 +5,7 @@ use edtui::syntect::highlighting::Theme as SynTheme;
 
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
 use crate::editor::Editor;
-use crate::explorer::{AddUserMenuItemState, DriveMenu, FindFileState, Panel, UserMenuPromptState, UserMenuState};
+use crate::explorer::{AddUserMenuItemState, DriveMenu, FindFileState, Panel, UserMenuCommandEdit, UserMenuPromptState, UserMenuState};
 use crate::theming::{MainMenu, PopupStyle, PopupStyleMenu, Theme, ThemeMenu};
 
 
@@ -300,6 +300,20 @@ pub struct App {
     /// `Mode::ConfirmDiscard` back into the editor doesn't consume it,
     /// since the editor hasn't actually closed yet.
     pub editor_return_to: Option<FindFileState>,
+    /// Same idea as `editor_return_to`, for `F4` pressed on a `Commands`
+    /// item in the `F2` user menu instead of the Find file results
+    /// popup -- the editor there is opened on a scratch file holding
+    /// just that item's own command(s)
+    /// (`explorer::user_menu::input::open_edit_selected_command`), not
+    /// the item's real backing `LitastumMenu.toml`, so closing it needs
+    /// to both restore `Mode::UserMenu` *and* feed the scratch file's
+    /// final contents back into the item
+    /// (`explorer::user_menu::state::finish_command_edit`) -- more than
+    /// `editor_return_to`'s own plain "which mode to restore" job, hence
+    /// its own field rather than folding both into one enum. Only one
+    /// of the two is ever meaningfully in flight at once, since the
+    /// editor can only have been opened from one place.
+    pub user_menu_command_edit: Option<UserMenuCommandEdit>,
 }
 
 
@@ -328,6 +342,7 @@ impl App {
             search_history: Vec::new(),
             alt_held: false,
             editor_return_to: None,
+            user_menu_command_edit: None,
         })
     }
 
