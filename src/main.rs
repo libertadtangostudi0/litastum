@@ -172,6 +172,7 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
         Mode::ChangeDrive(_) => explorer::handle_drive_menu_key(app, key),
         Mode::UserMenu(_) => explorer::handle_user_menu_key(app, key, terminal),
         Mode::UserMenuPrompt(_) => explorer::handle_user_menu_prompt_key(app, key, terminal),
+        Mode::ConfirmPortFarMenu(_) => explorer::handle_confirm_port_far_menu_key(app, key),
         Mode::Browsing => command_line::handle_browsing_key(app, key, terminal),
     }
 }

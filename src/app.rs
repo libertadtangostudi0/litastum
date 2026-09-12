@@ -46,11 +46,15 @@ pub enum Mode {
     /// `Alt+F1`/`Alt+F2` — the per-panel "change drive" popup.
     ChangeDrive(DriveMenu),
     /// `F2` — Far Manager's own user menu (`explorer::user_menu`),
-    /// browsing a (possibly nested) `LitastumMenu.ini`/`FarMenu.ini`.
+    /// browsing a (possibly nested) `LitastumMenu.toml`.
     UserMenu(UserMenuState),
     /// Collecting a selected user-menu item's own `!?Label?Default!`
     /// answers before running it.
     UserMenuPrompt(UserMenuPromptState),
+    /// `F2` found a `FarMenu.ini` but no `LitastumMenu.toml` yet --
+    /// asks whether to port it (the path is `FarMenu.ini` itself)
+    /// before browsing, rather than converting or reading it silently.
+    ConfirmPortFarMenu(PathBuf),
 }
 
 

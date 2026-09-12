@@ -9,7 +9,7 @@ use crate::app::{App, Mode};
 use crate::command_line;
 use crate::text_field;
 use super::parse::{self, MenuItemBody};
-use super::state::UserMenuPromptState;
+use super::state::{self, UserMenuPromptState, UserMenuState};
 
 
 /// Key handling while browsing a (possibly nested) user menu
@@ -169,6 +169,55 @@ pub fn handle_user_menu_prompt_key(app: &mut App, key: KeyEvent, terminal: &mut 
 }
 
 
+/// A user-triggered answer on the `Mode::ConfirmPortFarMenu` prompt --
+/// same shape as `explorer::keymap::ConfirmDeleteCommand`, kept local
+/// to this module rather than shared with it since the two prompts
+/// don't otherwise have anything in common.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortFarMenuCommand {
+    Confirm,
+    Cancel,
+    Ignore,
+}
+
+/// Resolves a raw key press on the "port FarMenu.ini?" prompt -- `Y`
+/// confirms, `N`/`Esc` cancels, same convention as
+/// `explorer::keymap::resolve_confirm_delete`.
+pub fn resolve_port_far_menu(key: KeyEvent) -> PortFarMenuCommand {
+    match key.code {
+        KeyCode::Char('y' | 'Y') => PortFarMenuCommand::Confirm,
+        KeyCode::Char('n' | 'N') | KeyCode::Esc => PortFarMenuCommand::Cancel,
+        _ => PortFarMenuCommand::Ignore,
+    }
+}
+
+/// Key handling on `Mode::ConfirmPortFarMenu` (`explorer::command::
+/// open_user_menu` opens this when `F2` finds a `FarMenu.ini` but no
+/// `LitastumMenu.toml` yet): `Y` actually ports it
+/// (`state::port_far_menu` -- parses the DSL, writes the TOML,
+/// `FarMenu.ini` itself untouched) and opens the result for browsing;
+/// `N`/`Esc` cancels back to browsing with nothing written.
+pub fn handle_confirm_port_far_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    let Mode::ConfirmPortFarMenu(_) = &app.mode else {
+        return Ok(());
+    };
+
+    match resolve_port_far_menu(key) {
+        PortFarMenuCommand::Confirm => {
+            let Mode::ConfirmPortFarMenu(far_path) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+                unreachable!("just matched Mode::ConfirmPortFarMenu above");
+            };
+            let items = state::port_far_menu(&far_path);
+            app.mode = Mode::UserMenu(UserMenuState::from_items(items));
+        }
+        PortFarMenuCommand::Cancel => app.mode = Mode::Browsing,
+        PortFarMenuCommand::Ignore => {}
+    }
+
+    Ok(())
+}
+
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -203,11 +252,14 @@ mod tests {
     mod handle_user_menu_key_tests {
         use super::*;
 
+        /// `content` is parsed as the DSL (`parse::parse`), same as
+        /// `FarMenu.ini`'s own format -- convenient shorthand for
+        /// building test fixtures by hand; not a claim that this is
+        /// what `LitastumMenu.toml` looks like on disk (see
+        /// `toml_format.rs` for that).
         fn app_with_menu(content: &str) -> App {
-            let dir = scratch_dir();
-            fs::write(dir.join("LitastumMenu.ini"), content).unwrap();
-            let mut app = test_app(dir.clone());
-            app.mode = Mode::UserMenu(UserMenuState::open(&dir).unwrap());
+            let mut app = test_app(scratch_dir());
+            app.mode = Mode::UserMenu(UserMenuState::from_items(parse::parse(content)));
             app
         }
 
@@ -331,6 +383,59 @@ mod tests {
             let mut terminal = dummy_terminal();
 
             handle_user_menu_prompt_key(&mut app, key(KeyCode::Char('x')), &mut terminal).unwrap();
+
+            assert!(matches!(app.mode, Mode::Browsing));
+        }
+    }
+
+    mod handle_confirm_port_far_menu_key_tests {
+        use super::*;
+
+        fn app_with_far_menu(content: &str) -> (App, std::path::PathBuf) {
+            let dir = scratch_dir();
+            let far_path = dir.join("FarMenu.ini");
+            fs::write(&far_path, content).unwrap();
+            let mut app = test_app(dir);
+            app.mode = Mode::ConfirmPortFarMenu(far_path.clone());
+            (app, far_path)
+        }
+
+        #[test]
+        fn y_ports_the_file_and_opens_the_menu() {
+            let (mut app, far_path) = app_with_far_menu("s: status\ngit status -s\n");
+
+            handle_confirm_port_far_menu_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+
+            let Mode::UserMenu(menu) = &app.mode else { panic!("expected Mode::UserMenu") };
+            assert_eq!(menu.current_level().items[0].title, "status");
+            assert!(far_path.with_file_name("LitastumMenu.toml").is_file(), "should have written LitastumMenu.toml alongside FarMenu.ini");
+        }
+
+        #[test]
+        fn n_cancels_without_writing_anything() {
+            let (mut app, far_path) = app_with_far_menu("s: status\ngit status -s\n");
+
+            handle_confirm_port_far_menu_key(&mut app, key(KeyCode::Char('n'))).unwrap();
+
+            assert!(matches!(app.mode, Mode::Browsing));
+            assert!(!far_path.with_file_name("LitastumMenu.toml").exists());
+        }
+
+        #[test]
+        fn esc_cancels_the_same_as_n() {
+            let (mut app, _far_path) = app_with_far_menu("s: status\ngit status -s\n");
+
+            handle_confirm_port_far_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+            assert!(matches!(app.mode, Mode::Browsing));
+        }
+
+        #[test]
+        fn is_a_noop_outside_confirm_port_mode() {
+            let (mut app, _far_path) = app_with_far_menu("s: status\ngit status -s\n");
+            app.mode = Mode::Browsing;
+
+            handle_confirm_port_far_menu_key(&mut app, key(KeyCode::Char('y'))).unwrap();
 
             assert!(matches!(app.mode, Mode::Browsing));
         }

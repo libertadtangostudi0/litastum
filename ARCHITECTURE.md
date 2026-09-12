@@ -36,13 +36,17 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             input handling, .txt export)
   explorer/system_open.rs — Shift+Enter: hands a path to the OS's own
                             file manager (explorer.exe/open/xdg-open)
-  explorer/user_menu/    —   F2 -- FarMenu.ini-compatible per-directory
-                            script menu (parse.rs: the nested-block
-                            grammar + !&/!?Label?Default! macros;
-                            state.rs: file resolution/migration into
-                            LitastumMenu.ini, nested navigation, the
-                            prompt-collection state; input.rs: key
-                            handling, hands finished commands off to
+  explorer/user_menu/    —   F2 -- per-directory script menu, native
+                            format LitastumMenu.toml (parse.rs: Far
+                            Manager's own FarMenu.ini nested-block DSL
+                            + !&/!?Label?Default! macros, used only to
+                            *read* a FarMenu.ini for one-time porting;
+                            toml_format.rs: litastum's own serde-backed
+                            TOML shape + MenuItem conversion; state.rs:
+                            file resolution, porting on confirmation,
+                            nested navigation, the prompt-collection
+                            state; input.rs: key handling, hands
+                            finished commands off to
                             command_line::run_shell_command_lines)
 
 editor.rs               — F4 built-in editor, backed by `edtui`

@@ -35,10 +35,10 @@ pub enum Command {
     EditSelected,
     /// `F2` — Far Manager's own "user menu" (`explorer::user_menu`): a
     /// per-directory list of shell-command shortcuts, read from
-    /// `LitastumMenu.ini` (or migrated from a compatible `FarMenu.ini`
-    /// found in the active panel's directory). If neither file exists,
-    /// creates an empty `LitastumMenu.ini` there and opens it in the
-    /// built-in editor instead of browsing an empty menu.
+    /// `LitastumMenu.toml`. If only a compatible `FarMenu.ini` exists,
+    /// offers to port it first (`Mode::ConfirmPortFarMenu`); if neither
+    /// exists, creates an empty `LitastumMenu.toml` there and opens it
+    /// in the built-in editor instead of browsing an empty menu.
     OpenUserMenu,
     /// F9 — opens the top menu (`menu.rs`), currently `Settings` →
     /// `Color schemes` (`theme_menu.rs`); a minimal analog of Far

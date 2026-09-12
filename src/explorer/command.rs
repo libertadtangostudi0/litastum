@@ -53,28 +53,36 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
 }
 
 
-/// `F2`: opens the active panel's own user menu
-/// (`explorer::user_menu::UserMenuState`) -- a `LitastumMenu.ini`, or a
-/// `FarMenu.ini` migrated into one on the spot, if either exists. If
-/// neither does, creates an empty `LitastumMenu.ini` right there and
-/// opens it in the built-in editor instead of browsing an empty popup
-/// with nothing in it to select -- there's a menu to *write* at that
-/// point, not one to browse yet. A failed creation (read-only
-/// directory, permissions, ...) is a silent no-op, same as any other
-/// "couldn't act on this" case in this codebase.
+/// `F2`: opens the active panel's own user menu. Three cases, per
+/// `user_menu::resolve_menu`:
+/// - `LitastumMenu.toml` already exists -- browse it directly.
+/// - Only a `FarMenu.ini` exists -- ask before touching anything
+///   (`Mode::ConfirmPortFarMenu`), rather than converting or reading it
+///   silently; `handle_confirm_port_far_menu_key` does the actual port
+///   once confirmed.
+/// - Neither exists -- creates an empty `LitastumMenu.toml` right there
+///   and opens it in the built-in editor instead of browsing an empty
+///   popup with nothing in it to select. A failed creation (read-only
+///   directory, permissions, ...) is a silent no-op, same as any other
+///   "couldn't act on this" case in this codebase.
 fn open_user_menu(app: &mut App) {
     let dir = app.active_panel().path.clone();
-    if let Some(menu) = user_menu::UserMenuState::open(&dir) {
-        app.mode = Mode::UserMenu(menu);
-        return;
-    }
-
-    let Some(path) = user_menu::create_menu_file(&dir) else {
-        return;
-    };
-    let syntax_theme = app.syntax_theme.clone();
-    if let Ok(editor) = Editor::open(path, syntax_theme) {
-        app.mode = Mode::Editing(editor);
+    match user_menu::resolve_menu(&dir) {
+        user_menu::MenuFile::Own(items) => {
+            app.mode = Mode::UserMenu(user_menu::UserMenuState::from_items(items));
+        }
+        user_menu::MenuFile::FarMenuFound(far_path) => {
+            app.mode = Mode::ConfirmPortFarMenu(far_path);
+        }
+        user_menu::MenuFile::NotFound => {
+            let Some(path) = user_menu::create_menu_file(&dir) else {
+                return;
+            };
+            let syntax_theme = app.syntax_theme.clone();
+            if let Ok(editor) = Editor::open(path, syntax_theme) {
+                app.mode = Mode::Editing(editor);
+            }
+        }
     }
 }
 
@@ -603,7 +611,7 @@ mod tests {
         #[test]
         fn opens_the_menu_when_a_litastum_menu_file_exists() {
             let dir = scratch_dir();
-            fs::write(dir.join("LitastumMenu.ini"), "s: status\ngit status -s\n").unwrap();
+            fs::write(dir.join("LitastumMenu.toml"), "[[item]]\ntitle = \"status\"\nhotkey = \"s\"\ncommands = [\"git status -s\"]\n").unwrap();
             let mut app = test_app(dir);
 
             execute(Command::OpenUserMenu, &mut app).unwrap();
@@ -614,7 +622,7 @@ mod tests {
         /// Regression coverage for the real report: this used to be a
         /// silent no-op with no menu file, indistinguishable from `F2`
         /// simply not being bound at all. There's nothing to *browse*
-        /// yet without a file, so it creates an empty `LitastumMenu.ini`
+        /// yet without a file, so it creates an empty `LitastumMenu.toml`
         /// and opens the built-in editor on it instead of an empty
         /// popup with nothing to select.
         #[test]
@@ -625,7 +633,23 @@ mod tests {
             execute(Command::OpenUserMenu, &mut app).unwrap();
 
             assert!(matches!(app.mode, Mode::Editing(_)), "should open the built-in editor on the freshly created file");
-            assert!(dir.join("LitastumMenu.ini").is_file());
+            assert!(dir.join("LitastumMenu.toml").is_file());
+        }
+
+        /// A real `FarMenu.ini` should be *offered*, not read or
+        /// converted directly -- the actual point of the port-on-
+        /// confirm flow requested directly, instead of the earlier
+        /// silent-migration behavior.
+        #[test]
+        fn offers_to_port_a_far_menu_instead_of_reading_it_directly() {
+            let dir = scratch_dir();
+            fs::write(dir.join("FarMenu.ini"), "s: status\ngit status -s\n").unwrap();
+            let mut app = test_app(dir.clone());
+
+            execute(Command::OpenUserMenu, &mut app).unwrap();
+
+            assert!(matches!(app.mode, Mode::ConfirmPortFarMenu(_)));
+            assert!(!dir.join("LitastumMenu.toml").exists(), "must not convert until confirmed");
         }
     }
 }

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Modifier, Style},
@@ -99,6 +101,32 @@ pub fn draw_user_menu_prompt(frame: &mut Frame, area: Rect, prompt: &UserMenuPro
 }
 
 
+/// Renders `Mode::ConfirmPortFarMenu`'s "port this?" prompt -- `F2`
+/// found `far_path` (a real `FarMenu.ini`) but no `LitastumMenu.toml`
+/// yet. `Y` converts and browses it (`explorer::user_menu::input::
+/// handle_confirm_port_far_menu_key`), `N`/`Esc` cancels with nothing
+/// written -- same Y/N shape as `ui/mod.rs::draw_confirm_discard_popup`.
+pub fn draw_confirm_port_far_menu(frame: &mut Frame, area: Rect, far_path: &Path, theme: &Theme, style: PopupStyle) {
+    let extra = popup::chrome_extra_rows(style);
+    let height = 4 + extra;
+    let inner = popup::draw_frame(frame, area, theme, style, Line::from(Span::raw(" Port FarMenu.ini? ")), 56, height);
+
+    let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(inner);
+
+    let file_name = far_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "FarMenu.ini".to_string());
+    let message = format!("Found {file_name} -- convert to LitastumMenu.toml?");
+    frame.render_widget(Line::from(Span::styled(message, Style::default().fg(theme.text))), rows[0]);
+
+    let hint = Line::from(vec![
+        Span::styled("Y", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" convert    ", Style::default().fg(theme.text_dim)),
+        Span::styled("N", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" / Esc cancel", Style::default().fg(theme.text_dim)),
+    ]);
+    frame.render_widget(hint, rows[1]);
+}
+
+
 /// Renders the field's value with its `Shift+Left`/`Right` selection
 /// (if any) picked out, same highlight `confirm.rs::destination_line`
 /// uses for the transfer-destination field -- no selection just renders
@@ -124,12 +152,9 @@ fn field_line(prompt: &UserMenuPromptState, theme: &Theme) -> Line<'static> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
-    use crate::test_support::unique_scratch_dir;
 
     fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
         let area = buffer.area;
@@ -147,15 +172,17 @@ mod tests {
         buffer_text(terminal.backend().buffer())
     }
 
-    fn menu_from(content: &str) -> UserMenuState {
-        let dir = unique_scratch_dir("ui-user-menu");
-        fs::write(dir.join("LitastumMenu.ini"), content).unwrap();
-        UserMenuState::open(&dir).unwrap()
+    fn command_item(title: &str) -> crate::explorer::MenuItem {
+        crate::explorer::MenuItem { hotkey: None, title: title.to_string(), body: MenuItemBody::Commands(vec!["echo hi".to_string()]) }
+    }
+
+    fn submenu_item(title: &str, children: Vec<crate::explorer::MenuItem>) -> crate::explorer::MenuItem {
+        crate::explorer::MenuItem { hotkey: None, title: title.to_string(), body: MenuItemBody::Submenu(children) }
     }
 
     #[test]
     fn shows_items_and_a_submenu_marker() {
-        let menu = menu_from("s: status\ngit status -s\n\np: parent\n{\nc: child\necho hi\n}\n");
+        let menu = UserMenuState::from_items(vec![command_item("status"), submenu_item("parent", vec![command_item("child")])]);
         let text = rendered_menu(&menu, PopupStyle::Rounded);
         assert!(text.contains("status"));
         assert!(text.contains("parent"));
@@ -164,16 +191,30 @@ mod tests {
 
     #[test]
     fn empty_level_shows_a_hint_instead_of_panicking() {
-        let menu = menu_from("");
+        let menu = UserMenuState::from_items(Vec::new());
         let text = rendered_menu(&menu, PopupStyle::Rounded);
         assert!(text.contains("No items"));
     }
 
     #[test]
     fn classic_style_still_renders_without_panicking() {
-        let menu = menu_from("s: status\ngit status -s\n");
+        let menu = UserMenuState::from_items(vec![command_item("status")]);
         let text = rendered_menu(&menu, PopupStyle::Classic);
         assert!(text.contains("status"));
+    }
+
+    #[test]
+    fn confirm_port_far_menu_shows_the_file_name_and_hints() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::dark();
+        let far_path = std::path::Path::new("FarMenu.ini");
+        terminal.draw(|frame| draw_confirm_port_far_menu(frame, frame.area(), far_path, &theme, PopupStyle::Rounded)).unwrap();
+        let text = buffer_text(terminal.backend().buffer());
+        assert!(text.contains("FarMenu.ini"));
+        assert!(text.contains("LitastumMenu.toml"));
+        assert!(text.contains("convert"));
+        assert!(text.contains("cancel"));
     }
 
     #[test]

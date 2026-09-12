@@ -1,83 +1,115 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tracing::{debug, warn};
+use tracing::warn;
 
 use super::parse::{self, MenuItem, MenuItemBody, Prompt};
+use super::toml_format;
 
-/// litastum's own user-menu file name -- read/written directly, no
-/// migration concerns once it exists.
-const OWN_FILE_NAME: &str = "LitastumMenu.ini";
+/// litastum's own user-menu file name -- a native, structured format
+/// (`toml_format.rs`), not Far Manager's own hand-rolled DSL
+/// (`parse.rs`). Picked over sticking with the same DSL specifically
+/// so this app can read-modify-write it programmatically later
+/// (adding/removing an item from the UI) without a bespoke serializer.
+const OWN_FILE_NAME: &str = "LitastumMenu.toml";
 /// Real Far Manager's own per-directory user-menu file name.
 const FAR_FILE_NAME: &str = "FarMenu.ini";
 
-/// Finds `dir`'s user-menu file, preferring litastum's own
-/// `LitastumMenu.ini`; falls back to a real `FarMenu.ini` if that's all
-/// that's there, copying its content into `LitastumMenu.ini` right
-/// away so every future `F2` in this directory reads litastum's own
-/// file from then on -- `FarMenu.ini` itself is never modified or
-/// deleted, only read once as the seed for our own copy. If the copy
-/// itself fails (read-only directory, permissions, ...) this still
-/// returns `FarMenu.ini` so the menu works for this session regardless
-/// -- best-effort persistence, same "never block on a failed write"
-/// rule `theming::config` already follows for theme/setup persistence.
-fn resolve_menu_file(dir: &Path) -> Option<PathBuf> {
+/// What `F2` finds in a directory -- drives
+/// `explorer::command::open_user_menu`'s own branching between
+/// browsing, offering to port a `FarMenu.ini`, or creating a fresh
+/// file.
+pub enum MenuFile {
+    /// `LitastumMenu.toml` exists and was read -- a malformed file
+    /// still resolves to an empty item list rather than an error (see
+    /// `toml_format::parse_toml`'s own doc comment), so this variant
+    /// covers both cases.
+    Own(Vec<MenuItem>),
+    /// No `LitastumMenu.toml`, but a `FarMenu.ini` is here -- offer to
+    /// port it (`Mode::ConfirmPortFarMenu`) rather than reading or
+    /// converting it silently.
+    FarMenuFound(PathBuf),
+    /// Neither file exists.
+    NotFound,
+}
+
+/// Looks for `dir`'s user menu -- litastum's own `LitastumMenu.toml`
+/// first, falling back to reporting a `FarMenu.ini` if that's all
+/// that's there. Never writes anything itself -- porting only happens
+/// once the user actually confirms it (`port_far_menu`, called from
+/// `Mode::ConfirmPortFarMenu`'s own key handling).
+pub fn resolve_menu(dir: &Path) -> MenuFile {
     let own = dir.join(OWN_FILE_NAME);
     if own.is_file() {
-        return Some(own);
+        return match fs::read_to_string(&own) {
+            Ok(content) => MenuFile::Own(toml_format::parse_toml(&content)),
+            Err(err) => {
+                warn!(path = %own.display(), %err, "LitastumMenu.toml exists but could not be read");
+                MenuFile::Own(Vec::new())
+            }
+        };
     }
 
     let far = dir.join(FAR_FILE_NAME);
-    if !far.is_file() {
-        return None;
+    if far.is_file() {
+        return MenuFile::FarMenuFound(far);
     }
 
-    match fs::read_to_string(&far) {
-        Ok(content) => match fs::write(&own, &content) {
-            Ok(()) => {
-                debug!(from = %far.display(), to = %own.display(), "migrated FarMenu.ini into LitastumMenu.ini");
-                Some(own)
-            }
-            Err(err) => {
-                warn!(path = %own.display(), %err, "failed to migrate FarMenu.ini into LitastumMenu.ini; using FarMenu.ini directly this session");
-                Some(far)
-            }
-        },
-        Err(err) => {
-            warn!(path = %far.display(), %err, "FarMenu.ini exists but could not be read");
-            None
-        }
-    }
+    MenuFile::NotFound
 }
 
 
-/// Loads and parses `dir`'s user menu, if it has one at all (see
-/// `resolve_menu_file`). `None` only when there's no menu file to read
-/// -- a present-but-empty or malformed one still returns `Some(vec![])`
-/// (`parse::parse` never fails outright, see its own doc comment).
-pub fn load_menu(dir: &Path) -> Option<Vec<MenuItem>> {
-    let path = resolve_menu_file(dir)?;
-    match fs::read_to_string(&path) {
-        Ok(content) => Some(parse::parse(&content)),
+/// Ports `far_path` (a real `FarMenu.ini`) into a `LitastumMenu.toml`
+/// alongside it -- called only once the user has confirmed it
+/// (`Mode::ConfirmPortFarMenu`). Returns the parsed items regardless of
+/// whether the write itself succeeded (best-effort persistence, same
+/// "never block on a failed write" rule `theming::config` already
+/// follows for theme/setup persistence) -- `far_path` itself is never
+/// modified or deleted.
+pub fn port_far_menu(far_path: &Path) -> Vec<MenuItem> {
+    let dir = far_path.parent().unwrap_or_else(|| Path::new("."));
+    let content = match fs::read_to_string(far_path) {
+        Ok(content) => content,
         Err(err) => {
-            warn!(path = %path.display(), %err, "user menu file could not be read");
-            None
+            warn!(path = %far_path.display(), %err, "FarMenu.ini could not be read for porting");
+            return Vec::new();
         }
+    };
+
+    let (items, toml) = toml_format::port_ini_to_toml(&content);
+    let own = dir.join(OWN_FILE_NAME);
+    if let Err(err) = fs::write(&own, &toml) {
+        warn!(path = %own.display(), %err, "failed to write LitastumMenu.toml after porting FarMenu.ini");
     }
+    items
 }
 
 
-/// Creates an empty `LitastumMenu.ini` in `dir` -- `F2` calls this when
-/// `resolve_menu_file` finds neither it nor a `FarMenu.ini` to migrate,
-/// so there's actually something to open in the built-in editor right
-/// away (`explorer::command::open_user_menu`) instead of browsing an
-/// empty popup with nothing in it to select. `None` if the write itself
-/// fails (a read-only directory, permissions, ...) -- `F2` just does
-/// nothing then, same as any other "couldn't act on this" case in this
-/// codebase.
+/// Creates a fresh `LitastumMenu.toml` in `dir`, with a commented-out
+/// example to get started -- `F2` calls this when `resolve_menu` finds
+/// neither file at all, so there's actually something to open in the
+/// built-in editor right away (`explorer::command::open_user_menu`)
+/// instead of an empty popup with nothing in it to select. `None` if
+/// the write itself fails (a read-only directory, permissions, ...) --
+/// `F2` just does nothing then, same as any other "couldn't act on
+/// this" case in this codebase.
 pub fn create_menu_file(dir: &Path) -> Option<PathBuf> {
+    const TEMPLATE: &str = "\
+# LitastumMenu.toml -- F2 user menu. Uncomment and edit:
+#
+# [[item]]
+# title = \"status\"
+# hotkey = \"s\"
+# commands = [\"git status -s\"]
+#
+# [[item]]
+# title = \"submenu example\"
+# [[item.submenu]]
+# title = \"nested item\"
+# commands = [\"echo hi\"]
+";
     let path = dir.join(OWN_FILE_NAME);
-    fs::write(&path, "").ok()?;
+    fs::write(&path, TEMPLATE).ok()?;
     Some(path)
 }
 
@@ -102,18 +134,18 @@ pub struct UserMenuState {
 }
 
 impl UserMenuState {
-    /// `None` if `dir` has neither a `LitastumMenu.ini` nor a
-    /// `FarMenu.ini` to read at all -- `explorer::command::open_user_menu`
-    /// creates an empty `LitastumMenu.ini` and opens it for editing
-    /// instead in that case, rather than browsing an empty popup with
-    /// nothing in it to select.
-    pub fn open(dir: &Path) -> Option<Self> {
-        let items = load_menu(dir)?;
-        Some(Self { stack: vec![UserMenuLevel { items, selected: 0 }] })
+    /// Builds the browsing state from an already-resolved item list
+    /// (`MenuFile::Own`, or the result of `port_far_menu`) -- file
+    /// resolution itself lives in `resolve_menu`/`port_far_menu` above, kept
+    /// separate so `explorer::command::open_user_menu` can decide what
+    /// to do (browse, offer to port, or create) before ever building
+    /// one of these.
+    pub fn from_items(items: Vec<MenuItem>) -> Self {
+        Self { stack: vec![UserMenuLevel { items, selected: 0 }] }
     }
 
     pub fn current_level(&self) -> &UserMenuLevel {
-        self.stack.last().expect("stack is never empty -- open() always seeds one level, and back() refuses to pop the last one")
+        self.stack.last().expect("stack is never empty -- from_items always seeds one level, and back() refuses to pop the last one")
     }
 
     fn current_level_mut(&mut self) -> &mut UserMenuLevel {
@@ -238,41 +270,73 @@ mod tests {
         unique_scratch_dir("user-menu")
     }
 
-    mod resolve_menu_file_tests {
+    mod resolve_tests {
         use super::*;
 
         #[test]
-        fn none_when_neither_file_exists() {
+        fn not_found_when_neither_file_exists() {
+            assert!(matches!(resolve_menu(&scratch_dir()), MenuFile::NotFound));
+        }
+
+        #[test]
+        fn reads_an_existing_litastum_menu() {
             let dir = scratch_dir();
-            assert_eq!(resolve_menu_file(&dir), None);
+            fs::write(dir.join(OWN_FILE_NAME), "[[item]]\ntitle = \"status\"\nhotkey = \"s\"\ncommands = [\"git status -s\"]\n").unwrap();
+
+            let MenuFile::Own(items) = resolve_menu(&dir) else { panic!("expected MenuFile::Own") };
+
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].title, "status");
         }
 
         #[test]
         fn prefers_an_existing_litastum_menu_over_far_menu() {
             let dir = scratch_dir();
-            fs::write(dir.join(OWN_FILE_NAME), "s: mine\necho mine\n").unwrap();
+            fs::write(dir.join(OWN_FILE_NAME), "[[item]]\ntitle = \"mine\"\ncommands = [\"echo mine\"]\n").unwrap();
             fs::write(dir.join(FAR_FILE_NAME), "s: theirs\necho theirs\n").unwrap();
 
-            let path = resolve_menu_file(&dir).unwrap();
+            let MenuFile::Own(items) = resolve_menu(&dir) else { panic!("expected MenuFile::Own") };
 
-            assert_eq!(fs::read_to_string(path).unwrap(), "s: mine\necho mine\n");
+            assert_eq!(items[0].title, "mine");
         }
 
-        /// The actual point of the whole migration feature: a real
-        /// `FarMenu.ini` should work out of the box, and litastum should
-        /// keep using its own copy afterward without touching the
-        /// original.
+        /// The whole point of the port-on-confirm flow: a real
+        /// `FarMenu.ini` should be *found*, not read directly or
+        /// silently converted -- `resolve_menu` only reports it, leaving the
+        /// actual conversion to `port_far_menu` once confirmed.
         #[test]
-        fn migrates_a_far_menu_into_litastums_own_file() {
+        fn reports_a_far_menu_without_reading_or_converting_it() {
             let dir = scratch_dir();
-            let far_content = "s: status\ngit status -s\n";
-            fs::write(dir.join(FAR_FILE_NAME), far_content).unwrap();
+            fs::write(dir.join(FAR_FILE_NAME), "s: status\ngit status -s\n").unwrap();
 
-            let path = resolve_menu_file(&dir).unwrap();
+            let result = resolve_menu(&dir);
 
-            assert_eq!(path, dir.join(OWN_FILE_NAME));
-            assert_eq!(fs::read_to_string(&path).unwrap(), far_content);
-            assert_eq!(fs::read_to_string(dir.join(FAR_FILE_NAME)).unwrap(), far_content, "the original FarMenu.ini must be left untouched");
+            assert!(matches!(result, MenuFile::FarMenuFound(path) if path == dir.join(FAR_FILE_NAME)));
+            assert!(!dir.join(OWN_FILE_NAME).exists(), "resolve alone must not create LitastumMenu.toml");
+        }
+    }
+
+    mod port_far_menu_tests {
+        use super::*;
+
+        /// The actual point of porting: a real `FarMenu.ini` becomes a
+        /// working `LitastumMenu.toml` alongside it, and the original
+        /// is left untouched.
+        #[test]
+        fn ports_a_far_menu_into_a_working_litastum_toml() {
+            let dir = scratch_dir();
+            let far_path = dir.join(FAR_FILE_NAME);
+            let far_content = "s: status\ngit status -s\n\nc: commit\n{\nc: Commit\ngit commit -m \"!?Commit title?!\"\n}\n";
+            fs::write(&far_path, far_content).unwrap();
+
+            let items = port_far_menu(&far_path);
+
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].title, "status");
+            assert_eq!(fs::read_to_string(&far_path).unwrap(), far_content, "FarMenu.ini must be left untouched");
+
+            let MenuFile::Own(reread) = resolve_menu(&dir) else { panic!("expected the ported LitastumMenu.toml to now resolve") };
+            assert_eq!(reread, items);
         }
     }
 
@@ -280,21 +344,22 @@ mod tests {
         use super::*;
 
         #[test]
-        fn creates_an_empty_litastum_menu_file() {
+        fn creates_a_litastum_menu_file() {
             let dir = scratch_dir();
 
             let path = create_menu_file(&dir).unwrap();
 
             assert_eq!(path, dir.join(OWN_FILE_NAME));
-            assert_eq!(fs::read_to_string(&path).unwrap(), "");
+            assert!(path.is_file());
         }
 
         #[test]
-        fn the_created_file_is_then_found_by_resolve_menu_file() {
+        fn the_created_file_is_then_found_by_resolve_menu() {
             let dir = scratch_dir();
             create_menu_file(&dir).unwrap();
 
-            assert_eq!(resolve_menu_file(&dir), Some(dir.join(OWN_FILE_NAME)));
+            let MenuFile::Own(items) = resolve_menu(&dir) else { panic!("expected MenuFile::Own") };
+            assert!(items.is_empty(), "the template is all comments, so no real items yet");
         }
     }
 
@@ -302,7 +367,7 @@ mod tests {
         use super::*;
 
         fn menu_with(items: Vec<MenuItem>) -> UserMenuState {
-            UserMenuState { stack: vec![UserMenuLevel { items, selected: 0 }] }
+            UserMenuState::from_items(items)
         }
 
         fn command_item(title: &str) -> MenuItem {
@@ -311,22 +376,6 @@ mod tests {
 
         fn submenu_item(title: &str, children: Vec<MenuItem>) -> MenuItem {
             MenuItem { hotkey: None, title: title.to_string(), body: MenuItemBody::Submenu(children) }
-        }
-
-        #[test]
-        fn open_returns_none_without_a_menu_file() {
-            assert!(UserMenuState::open(&scratch_dir()).is_none());
-        }
-
-        #[test]
-        fn open_loads_a_real_menu_file() {
-            let dir = scratch_dir();
-            fs::write(dir.join(OWN_FILE_NAME), "s: status\ngit status -s\n").unwrap();
-
-            let menu = UserMenuState::open(&dir).unwrap();
-
-            assert_eq!(menu.current_level().items.len(), 1);
-            assert_eq!(menu.current_level().items[0].title, "status");
         }
 
         #[test]

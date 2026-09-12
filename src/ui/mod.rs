@@ -71,7 +71,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         | Mode::CommandHistory(_)
         | Mode::ChangeDrive(_)
         | Mode::UserMenu(_)
-        | Mode::UserMenuPrompt(_) => {}
+        | Mode::UserMenuPrompt(_)
+        | Mode::ConfirmPortFarMenu(_) => {}
     }
 
     let root = Layout::default()
@@ -152,6 +153,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
             let cursor = user_menu::draw_user_menu_prompt(frame, area, prompt, &theme, popup_style);
             frame.set_cursor_position(cursor);
         }
+        Mode::ConfirmPortFarMenu(far_path) => user_menu::draw_confirm_port_far_menu(frame, area, far_path, &theme, popup_style),
         _ => {}
     }
 

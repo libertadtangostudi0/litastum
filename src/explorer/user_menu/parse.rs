@@ -1,6 +1,11 @@
 use std::collections::HashSet;
 
-/// One parsed entry from a `LitastumMenu.ini`/`FarMenu.ini` file.
+/// One parsed menu entry -- built either by `parse` below (reading a
+/// real `FarMenu.ini`, for one-time porting) or by
+/// `toml_format::parse_toml` (reading litastum's own
+/// `LitastumMenu.toml`). Both file formats resolve to the same
+/// in-memory shape, which is what `state.rs`/`input.rs` actually
+/// browse and execute.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem {
     /// The single character before the item's own `:` (`"s: status"` ->
@@ -31,11 +36,13 @@ pub enum MenuItemBody {
 }
 
 
-/// Parses a whole `LitastumMenu.ini`/`FarMenu.ini` file's content into
-/// its top-level items. Real Far Manager's user-menu format isn't
-/// actually `[section]`/`key=value` INI at all (despite the `.ini`
-/// extension) -- it's Far's own small nested-block DSL, confirmed
-/// against a real published menu (`pkjq/far-git-menu`'s `FarMenu.ini`):
+/// Parses a real `FarMenu.ini`'s content into its top-level items --
+/// used only for one-time porting into `LitastumMenu.toml`
+/// (`state::port_far_menu`), never for litastum's own file. Far
+/// Manager's user-menu format isn't actually `[section]`/`key=value`
+/// INI at all (despite the `.ini` extension) -- it's Far's own small
+/// nested-block DSL, confirmed against a real published menu
+/// (`pkjq/far-git-menu`'s `FarMenu.ini`):
 ///
 /// ```text
 /// G: GIT
