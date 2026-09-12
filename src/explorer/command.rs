@@ -7,7 +7,7 @@ use crate::app::{App, DeleteEntry, Mode, PendingDelete, PendingTransfer, Transfe
 use crate::editor::Editor;
 use crate::theming::MainMenu;
 use super::keymap::Command;
-use super::{system_open, Panel};
+use super::{system_open, user_menu, Panel};
 
 
 /// Executes a resolved `Command` against the app state. This is the one
@@ -36,6 +36,7 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
         }
         Command::ToggleActive => app.toggle_active(),
         Command::EditSelected => open_editor(app),
+        Command::OpenUserMenu => open_user_menu(app),
         Command::OpenMenu => app.mode = Mode::MainMenu(MainMenu::open()),
         Command::CopySelected => request_transfer(app, TransferOp::Copy),
         Command::MoveSelected => request_transfer(app, TransferOp::Move),
@@ -49,6 +50,32 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
         Command::Quit => app.should_quit = true,
     }
     Ok(())
+}
+
+
+/// `F2`: opens the active panel's own user menu
+/// (`explorer::user_menu::UserMenuState`) -- a `LitastumMenu.ini`, or a
+/// `FarMenu.ini` migrated into one on the spot, if either exists. If
+/// neither does, creates an empty `LitastumMenu.ini` right there and
+/// opens it in the built-in editor instead of browsing an empty popup
+/// with nothing in it to select -- there's a menu to *write* at that
+/// point, not one to browse yet. A failed creation (read-only
+/// directory, permissions, ...) is a silent no-op, same as any other
+/// "couldn't act on this" case in this codebase.
+fn open_user_menu(app: &mut App) {
+    let dir = app.active_panel().path.clone();
+    if let Some(menu) = user_menu::UserMenuState::open(&dir) {
+        app.mode = Mode::UserMenu(menu);
+        return;
+    }
+
+    let Some(path) = user_menu::create_menu_file(&dir) else {
+        return;
+    };
+    let syntax_theme = app.syntax_theme.clone();
+    if let Ok(editor) = Editor::open(path, syntax_theme) {
+        app.mode = Mode::Editing(editor);
+    }
 }
 
 
@@ -567,6 +594,38 @@ mod tests {
             app.panels[0].entries.clear();
 
             assert_eq!(directory_open_target(&app.panels[0]), None);
+        }
+    }
+
+    mod open_user_menu_tests {
+        use super::*;
+
+        #[test]
+        fn opens_the_menu_when_a_litastum_menu_file_exists() {
+            let dir = scratch_dir();
+            fs::write(dir.join("LitastumMenu.ini"), "s: status\ngit status -s\n").unwrap();
+            let mut app = test_app(dir);
+
+            execute(Command::OpenUserMenu, &mut app).unwrap();
+
+            assert!(matches!(app.mode, Mode::UserMenu(_)));
+        }
+
+        /// Regression coverage for the real report: this used to be a
+        /// silent no-op with no menu file, indistinguishable from `F2`
+        /// simply not being bound at all. There's nothing to *browse*
+        /// yet without a file, so it creates an empty `LitastumMenu.ini`
+        /// and opens the built-in editor on it instead of an empty
+        /// popup with nothing to select.
+        #[test]
+        fn creates_and_opens_a_new_menu_file_when_neither_exists() {
+            let dir = scratch_dir();
+            let mut app = test_app(dir.clone());
+
+            execute(Command::OpenUserMenu, &mut app).unwrap();
+
+            assert!(matches!(app.mode, Mode::Editing(_)), "should open the built-in editor on the freshly created file");
+            assert!(dir.join("LitastumMenu.ini").is_file());
         }
     }
 }

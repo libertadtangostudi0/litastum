@@ -395,25 +395,47 @@ fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdo
         return Ok(());
     }
 
+    run_shell_command_lines(app, terminal, &[input])
+}
+
+
+/// Suspends the TUI and runs each of `lines` in sequence through the
+/// active shell profile, inheriting stdio (so interactive programs
+/// still work), pausing once at the end for a keypress before
+/// redrawing -- shared by the command line's own `Enter` (a single
+/// line, `run_command_line` above) and the user menu's own item
+/// execution (`explorer::user_menu`, one or more lines run back to
+/// back, matching real Far Manager's own multi-line user-menu items —
+/// e.g. `git pull` followed by `git remote update ...`). A spawn
+/// failure for one line is printed to the suspended console and
+/// doesn't stop the remaining lines from still running, same as a
+/// plain sequence of typed commands would behave.
+pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, lines: &[String]) -> Result<()> {
+    if lines.is_empty() {
+        return Ok(());
+    }
+
     let profile = app.shell_profiles[app.active_shell].clone();
     let cwd = app.active_panel().path.clone();
-    debug!(shell = profile.name, %input, cwd = %cwd.display(), "command line: running");
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-    print_themed(&app.theme, format_args!("{}> {input}\n", cwd.display()))?;
-    let status = std::process::Command::new(&profile.program)
-        .args(&profile.args_prefix)
-        .arg(&input)
-        .current_dir(&cwd)
-        .status();
-    match status {
-        Ok(status) if !status.success() => {
-            debug!(?status, "command exited non-zero");
+    for line in lines {
+        debug!(shell = profile.name, %line, cwd = %cwd.display(), "running shell command");
+        print_themed(&app.theme, format_args!("{}> {line}\n", cwd.display()))?;
+        let status = std::process::Command::new(&profile.program)
+            .args(&profile.args_prefix)
+            .arg(line)
+            .current_dir(&cwd)
+            .status();
+        match status {
+            Ok(status) if !status.success() => {
+                debug!(?status, "command exited non-zero");
+            }
+            Err(err) => print_themed(&app.theme, format_args!("failed to launch '{}': {err}\n", profile.program))?,
+            Ok(_) => {}
         }
-        Err(err) => print_themed(&app.theme, format_args!("failed to launch '{}': {err}\n", profile.program))?,
-        Ok(_) => {}
     }
     print_themed(&app.theme, format_args!("\nPress any key to continue...\n"))?;
 
@@ -434,6 +456,7 @@ fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdo
     app.active_panel().reload()?;
     Ok(())
 }
+
 
 /// Appends `c` to the typed command.
 pub fn insert_char(line: &mut String, c: char) {

@@ -5,7 +5,7 @@ use edtui::syntect::highlighting::Theme as SynTheme;
 
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
 use crate::editor::Editor;
-use crate::explorer::{DriveMenu, FindFileState, Panel};
+use crate::explorer::{DriveMenu, FindFileState, Panel, UserMenuPromptState, UserMenuState};
 use crate::theming::{MainMenu, PopupStyle, PopupStyleMenu, Theme, ThemeMenu};
 
 
@@ -45,6 +45,12 @@ pub enum Mode {
     CommandHistory(CommandHistoryMenu),
     /// `Alt+F1`/`Alt+F2` — the per-panel "change drive" popup.
     ChangeDrive(DriveMenu),
+    /// `F2` — Far Manager's own user menu (`explorer::user_menu`),
+    /// browsing a (possibly nested) `LitastumMenu.ini`/`FarMenu.ini`.
+    UserMenu(UserMenuState),
+    /// Collecting a selected user-menu item's own `!?Label?Default!`
+    /// answers before running it.
+    UserMenuPrompt(UserMenuPromptState),
 }
 
 

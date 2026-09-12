@@ -36,6 +36,14 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             input handling, .txt export)
   explorer/system_open.rs — Shift+Enter: hands a path to the OS's own
                             file manager (explorer.exe/open/xdg-open)
+  explorer/user_menu/    —   F2 -- FarMenu.ini-compatible per-directory
+                            script menu (parse.rs: the nested-block
+                            grammar + !&/!?Label?Default! macros;
+                            state.rs: file resolution/migration into
+                            LitastumMenu.ini, nested navigation, the
+                            prompt-collection state; input.rs: key
+                            handling, hands finished commands off to
+                            command_line::run_shell_command_lines)
 
 editor.rs               — F4 built-in editor, backed by `edtui`
   editor/editor/         —   Editor: open/save/view, search (search.rs),
@@ -65,7 +73,11 @@ theming.rs              — Theme, color-scheme loading/persistence,
 
 command_line.rs         — the always-live Far-style command line
   command_line/browsing/ —   Mode::Browsing key dispatch (the other big
-                              chokepoint alongside explorer::command::execute)
+                              chokepoint alongside explorer::command::execute);
+                              also owns run_shell_command_lines, the shared
+                              "suspend the TUI, run N lines through the
+                              active shell" primitive explorer::user_menu
+                              reuses for its own item execution
   command_line/completion.rs — Tab path completion, cycling
   command_line/history.rs —  command history, Alt+F8 popup, ghost-text
                               autosuggestion
@@ -78,7 +90,7 @@ ui/mod.rs               — pure(ish) rendering: App -> ratatui widgets
   ui/popup.rs            —   shared popup chrome (draw_frame, key_pill,
                               separator), style-aware (Classic/Rounded)
   ui/{menu,shell,drive_menu,find_file,confirm,theme_menu,
-      popup_style_menu,editor_find,command_line}.rs
+      popup_style_menu,editor_find,command_line,user_menu}.rs
                          —   one rendering module per popup/overlay
 ```
 

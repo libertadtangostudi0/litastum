@@ -33,6 +33,13 @@ pub enum Command {
     OpenInFileManager,
     ToggleActive,
     EditSelected,
+    /// `F2` — Far Manager's own "user menu" (`explorer::user_menu`): a
+    /// per-directory list of shell-command shortcuts, read from
+    /// `LitastumMenu.ini` (or migrated from a compatible `FarMenu.ini`
+    /// found in the active panel's directory). If neither file exists,
+    /// creates an empty `LitastumMenu.ini` there and opens it in the
+    /// built-in editor instead of browsing an empty menu.
+    OpenUserMenu,
     /// F9 — opens the top menu (`menu.rs`), currently `Settings` →
     /// `Color schemes` (`theme_menu.rs`); a minimal analog of Far
     /// Manager's F9 menu, scoped to just that path for now.
@@ -87,6 +94,7 @@ pub fn resolve(key: KeyCode) -> Option<Command> {
         KeyCode::Right => Some(Command::MoveRight),
         KeyCode::Enter => Some(Command::EnterSelected),
         KeyCode::Tab => Some(Command::ToggleActive),
+        KeyCode::F(2) => Some(Command::OpenUserMenu),
         KeyCode::F(4) => Some(Command::EditSelected),
         KeyCode::F(5) => Some(Command::CopySelected),
         KeyCode::F(6) => Some(Command::MoveSelected),
@@ -137,6 +145,11 @@ mod tests {
     #[test]
     fn f9_opens_the_menu() {
         assert_eq!(resolve(KeyCode::F(9)), Some(Command::OpenMenu));
+    }
+
+    #[test]
+    fn f2_opens_the_user_menu() {
+        assert_eq!(resolve(KeyCode::F(2)), Some(Command::OpenUserMenu));
     }
 
     #[test]

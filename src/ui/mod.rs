@@ -23,6 +23,7 @@ mod popup;
 mod popup_style_menu;
 mod shell;
 mod theme_menu;
+mod user_menu;
 
 /// Panels narrower than this (per column) fall back to a single column.
 const MIN_COLUMN_WIDTH: u16 = 24;
@@ -68,7 +69,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         | Mode::ConfirmTransfer(_)
         | Mode::FindFile(_)
         | Mode::CommandHistory(_)
-        | Mode::ChangeDrive(_) => {}
+        | Mode::ChangeDrive(_)
+        | Mode::UserMenu(_)
+        | Mode::UserMenuPrompt(_) => {}
     }
 
     let root = Layout::default()
@@ -144,6 +147,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
             command_line::draw_command_history(frame, area, menu, &app.command_history, &app.command_line, &theme);
         }
         Mode::ChangeDrive(menu) => drive_menu::draw_drive_menu(frame, area, menu, &theme, popup_style),
+        Mode::UserMenu(menu) => user_menu::draw_user_menu(frame, area, menu, &theme, popup_style),
+        Mode::UserMenuPrompt(prompt) => {
+            let cursor = user_menu::draw_user_menu_prompt(frame, area, prompt, &theme, popup_style);
+            frame.set_cursor_position(cursor);
+        }
         _ => {}
     }
 
