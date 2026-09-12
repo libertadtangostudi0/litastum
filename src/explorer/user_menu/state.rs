@@ -1,4 +1,5 @@
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use tracing::warn;
@@ -15,30 +16,46 @@ const OWN_FILE_NAME: &str = "LitastumMenu.toml";
 /// Real Far Manager's own per-directory user-menu file name.
 const FAR_FILE_NAME: &str = "FarMenu.ini";
 
-/// What `F2` finds in a directory -- drives
-/// `explorer::command::open_user_menu`'s own branching between
+/// What `F2` (or the startup check in `main.rs`) finds in a directory --
+/// drives `explorer::command::open_user_menu`'s own branching between
 /// browsing, offering to port a `FarMenu.ini`, or creating a fresh
 /// file.
 pub enum MenuFile {
-    /// `LitastumMenu.toml` exists and was read -- a malformed file
-    /// still resolves to an empty item list rather than an error (see
-    /// `toml_format::parse_toml`'s own doc comment), so this variant
-    /// covers both cases.
+    /// `LitastumMenu.toml` exists (and no `FarMenu.ini` is sitting next
+    /// to it -- see `resolve_menu`'s own doc comment for why that takes
+    /// priority) -- a malformed file still resolves to an empty item
+    /// list rather than an error (see `toml_format::parse_toml`'s own
+    /// doc comment), so this variant covers both cases.
     Own(Vec<MenuItem>),
-    /// No `LitastumMenu.toml`, but a `FarMenu.ini` is here -- offer to
-    /// port it (`Mode::ConfirmPortFarMenu`) rather than reading or
-    /// converting it silently.
+    /// A `FarMenu.ini` is here -- offer to port it
+    /// (`Mode::ConfirmPortFarMenu`) rather than reading or converting
+    /// it silently. Reported *even if* `LitastumMenu.toml` also
+    /// exists already -- dropping a `FarMenu.ini` into an already-
+    /// configured directory should still surface the choice (port and
+    /// overwrite, backing up the old config first, or decline and just
+    /// have `FarMenu.ini` backed up out of the way) rather than being
+    /// silently ignored.
     FarMenuFound(PathBuf),
     /// Neither file exists.
     NotFound,
 }
 
-/// Looks for `dir`'s user menu -- litastum's own `LitastumMenu.toml`
-/// first, falling back to reporting a `FarMenu.ini` if that's all
-/// that's there. Never writes anything itself -- porting only happens
-/// once the user actually confirms it (`port_far_menu`, called from
-/// `Mode::ConfirmPortFarMenu`'s own key handling).
+/// Looks for `dir`'s user menu. A `FarMenu.ini` takes priority over an
+/// already-existing `LitastumMenu.toml` -- reported directly: dropping
+/// a `FarMenu.ini` into a directory that already has a configured menu
+/// used to be silently ignored (this function returned `Own` without
+/// even checking for `FarMenu.ini`), which meant there was no way to
+/// deliberately re-import one short of deleting `LitastumMenu.toml`
+/// first. Never writes anything itself -- porting (`port_far_menu`) or
+/// backing `FarMenu.ini` out of the way (`backup_far_menu_without_porting`)
+/// only happens once the user actually answers the prompt this
+/// produces (`Mode::ConfirmPortFarMenu`).
 pub fn resolve_menu(dir: &Path) -> MenuFile {
+    let far = dir.join(FAR_FILE_NAME);
+    if far.is_file() {
+        return MenuFile::FarMenuFound(far);
+    }
+
     let own = dir.join(OWN_FILE_NAME);
     if own.is_file() {
         return match fs::read_to_string(&own) {
@@ -50,25 +67,41 @@ pub fn resolve_menu(dir: &Path) -> MenuFile {
         };
     }
 
-    let far = dir.join(FAR_FILE_NAME);
-    if far.is_file() {
-        return MenuFile::FarMenuFound(far);
-    }
-
     MenuFile::NotFound
 }
 
 
+/// Backup suffix appended to whichever file `port_far_menu`/
+/// `backup_far_menu_without_porting` move out of the way -- a single
+/// slot, not a timestamped one: this is a rare, explicitly-confirmed
+/// action, and clobbering an *older* backup on a second port is an
+/// acceptable trade-off for not reinventing unique-file-name logic
+/// that already exists (differently shaped) in `find_file/export.rs`.
+const BACKUP_SUFFIX: &str = ".bak";
+
 /// Ports `far_path` (a real `FarMenu.ini`) into a `LitastumMenu.toml`
 /// alongside it -- called only once the user has confirmed it
 /// (`Mode::ConfirmPortFarMenu`). Returns the parsed items regardless of
-/// whether the write itself succeeded (best-effort persistence, same
-/// "never block on a failed write" rule `theming::config` already
-/// follows for theme/setup persistence) -- `far_path` itself is never
-/// modified or deleted.
+/// whether either write below actually succeeded (best-effort
+/// persistence, same "never block on a failed write" rule
+/// `theming::config` already follows for theme/setup persistence).
+///
+/// Two backups happen here, both requested directly after "what if I
+/// already have a menu and drop a new FarMenu.ini in" came up:
+/// - An *existing* `LitastumMenu.toml` is renamed to
+///   `LitastumMenu.toml.bak` before being overwritten -- porting
+///   shouldn't silently discard a menu someone already built by hand
+///   or through the UI.
+/// - `FarMenu.ini` itself is renamed to `FarMenu.ini.bak` once ported --
+///   unlike the very first version of this feature (which left it
+///   completely untouched), it has to move out of the way now that
+///   `resolve_menu` reports a `FarMenu.ini`'s mere presence every time
+///   regardless of whether `LitastumMenu.toml` already exists; leaving
+///   it in place would re-trigger this same prompt on every future
+///   `F2`/startup check.
 pub fn port_far_menu(far_path: &Path) -> Vec<MenuItem> {
     let dir = far_path.parent().unwrap_or_else(|| Path::new("."));
-    let content = match fs::read_to_string(far_path) {
+    let content = match read_text_file_any_encoding(far_path) {
         Ok(content) => content,
         Err(err) => {
             warn!(path = %far_path.display(), %err, "FarMenu.ini could not be read for porting");
@@ -78,10 +111,86 @@ pub fn port_far_menu(far_path: &Path) -> Vec<MenuItem> {
 
     let (items, toml) = toml_format::port_ini_to_toml(&content);
     let own = dir.join(OWN_FILE_NAME);
+
+    if own.is_file() {
+        let backup = dir.join(format!("{OWN_FILE_NAME}{BACKUP_SUFFIX}"));
+        if let Err(err) = fs::rename(&own, &backup) {
+            warn!(path = %backup.display(), %err, "failed to back up the existing LitastumMenu.toml before overwriting it");
+        }
+    }
     if let Err(err) = fs::write(&own, &toml) {
         warn!(path = %own.display(), %err, "failed to write LitastumMenu.toml after porting FarMenu.ini");
     }
+
+    let far_backup = far_path.with_file_name(format!("{FAR_FILE_NAME}{BACKUP_SUFFIX}"));
+    if let Err(err) = fs::rename(far_path, &far_backup) {
+        warn!(path = %far_backup.display(), %err, "failed to move FarMenu.ini aside after porting it");
+    }
+
     items
+}
+
+
+/// `N`/`Esc` on the "port FarMenu.ini?" prompt: moves `far_path` aside
+/// to `FarMenu.ini.bak` without reading or converting it, purely so it
+/// stops being detected (and re-prompted for) on every future `F2`/
+/// startup check -- `resolve_menu` reports a `FarMenu.ini`'s mere
+/// presence unconditionally, so declining still has to make it go away
+/// somehow. Returns the backup path so the caller can tell the user
+/// where it ended up; `None` if the rename itself failed (permissions,
+/// ...), logged and left as a silent no-op otherwise -- the file simply
+/// stays in place and gets offered again next time.
+pub fn backup_far_menu_without_porting(far_path: &Path) -> Option<PathBuf> {
+    let backup = far_path.with_file_name(format!("{FAR_FILE_NAME}{BACKUP_SUFFIX}"));
+    match fs::rename(far_path, &backup) {
+        Ok(()) => Some(backup),
+        Err(err) => {
+            warn!(path = %backup.display(), %err, "failed to back up FarMenu.ini");
+            None
+        }
+    }
+}
+
+
+/// Reads `path` as text, decoding whichever of UTF-8, UTF-16LE, or
+/// UTF-16BE it's actually encoded in -- reported directly: a real
+/// `FarMenu.ini` (exported straight from an actual Far Manager
+/// install) failed to port at all, silently producing zero items.
+/// Confirmed by inspecting the raw bytes: it starts with `FF FE` (a
+/// UTF-16LE byte-order mark) followed by every character null-padded
+/// -- real Far Manager saves this file in UTF-16LE, not UTF-8, and a
+/// plain `fs::read_to_string` (strict UTF-8) fails outright on it,
+/// since two-byte-per-character text is essentially never valid UTF-8.
+/// Detected by byte-order mark, the same convention every other text
+/// tool uses to tell these apart, since nothing else in the file names
+/// its own encoding. Falls back to plain UTF-8 (also stripping a UTF-8
+/// BOM, `EF BB BF`, if present) when there's no UTF-16 BOM -- covers a
+/// hand-written or already-UTF-8 `FarMenu.ini` too, not just Far
+/// Manager's own default export.
+fn read_text_file_any_encoding(path: &Path) -> io::Result<String> {
+    let bytes = fs::read(path)?;
+
+    if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        return Ok(decode_utf16(rest, u16::from_le_bytes));
+    }
+    if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        return Ok(decode_utf16(rest, u16::from_be_bytes));
+    }
+
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+    String::from_utf8(bytes.to_vec()).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+/// Pairs up `bytes` two at a time (via `from_units`, `u16::from_le_bytes`
+/// or `u16::from_be_bytes`) into UTF-16 code units and decodes them --
+/// lossy (`char::REPLACEMENT_CHARACTER` for anything malformed) rather
+/// than failing outright, since a slightly-corrupt menu file should
+/// still port whatever of it *does* decode rather than porting nothing
+/// at all. A trailing odd byte (a malformed file missing its last low
+/// or high byte) is simply dropped by `chunks_exact(2)`.
+fn decode_utf16(bytes: &[u8], from_units: fn([u8; 2]) -> u16) -> String {
+    let units: Vec<u16> = bytes.chunks_exact(2).map(|pair| from_units([pair[0], pair[1]])).collect();
+    String::from_utf16_lossy(&units)
 }
 
 
@@ -114,59 +223,100 @@ pub fn create_menu_file(dir: &Path) -> Option<PathBuf> {
 }
 
 
-/// One level of `UserMenuState`'s own navigation stack -- the items
-/// visible at that level, and which one the cursor is on.
-pub struct UserMenuLevel {
-    pub items: Vec<MenuItem>,
+/// A read-only view of whichever level `UserMenuState` currently has
+/// on screen -- its items, and which one the cursor is on. Borrowed
+/// fresh from the single canonical tree (`UserMenuState::root`) on
+/// every call rather than stored, so an edit at any depth
+/// (`insert_item`/`delete_selected`) is immediately reflected without
+/// a separate "sync the clone back up" step -- see `UserMenuState`'s
+/// own doc comment for why that matters.
+pub struct UserMenuLevelView<'a> {
+    pub items: &'a [MenuItem],
     pub selected: usize,
 }
 
 
-/// `F2`: browsing a (possibly nested) user menu. `stack.last()` is the
-/// level currently shown; entering a submenu pushes a new level on top
-/// without discarding the one below (so `Esc` restores it exactly,
-/// cursor position included), same shape as `theming::MainMenu`'s own
-/// two-level `Main`/`Commands`/`Options` navigation, just generalized
-/// to arbitrary depth since a real menu file can nest as deep as its
-/// author likes.
+/// `F2`: browsing a (possibly nested) user menu, and adding/removing
+/// items in place. `root` is the *single* canonical tree (what actually
+/// gets persisted); `stack` is the path of indices walked from `root`
+/// to reach whichever level is currently shown, `selected` the cursor
+/// within that level. An earlier version cloned each submenu's children
+/// into its own owned level on `enter_submenu` -- fine for read-only
+/// browsing, but wrong the moment editing was added: an edit made three
+/// levels deep would only ever touch that level's own disposable clone,
+/// invisible to `root` and lost the instant `back()` popped it. Walking
+/// `root` through `stack` on every access instead means there is
+/// nowhere else for the data to live, so an edit at any depth is
+/// automatically visible everywhere (including after `persist`ing to
+/// `LitastumMenu.toml`) with no separate sync step.
 pub struct UserMenuState {
-    stack: Vec<UserMenuLevel>,
+    root: Vec<MenuItem>,
+    /// Indices into progressively deeper `Submenu` levels, parent to
+    /// child -- `stack.last()`'s value is which item *of the current
+    /// level's own parent* was entered to get here (kept so `back()`
+    /// can restore the cursor to exactly that item, same as the old
+    /// per-level `selected` used to).
+    stack: Vec<usize>,
+    selected: usize,
+    /// Where `LitastumMenu.toml` lives -- `insert_item`/`delete_selected`
+    /// write `root` back here after every change.
+    dir: PathBuf,
 }
 
 impl UserMenuState {
     /// Builds the browsing state from an already-resolved item list
     /// (`MenuFile::Own`, or the result of `port_far_menu`) -- file
-    /// resolution itself lives in `resolve_menu`/`port_far_menu` above, kept
-    /// separate so `explorer::command::open_user_menu` can decide what
-    /// to do (browse, offer to port, or create) before ever building
-    /// one of these.
-    pub fn from_items(items: Vec<MenuItem>) -> Self {
-        Self { stack: vec![UserMenuLevel { items, selected: 0 }] }
+    /// resolution itself lives in `resolve_menu`/`port_far_menu` above,
+    /// kept separate so `explorer::command::open_user_menu` can decide
+    /// what to do (browse, offer to port, or create) before ever
+    /// building one of these. `dir` is where edits get persisted back
+    /// to (`LitastumMenu.toml`), independent of wherever `items`
+    /// itself originally came from (a fresh read, or a just-completed
+    /// port).
+    pub fn from_items(dir: PathBuf, items: Vec<MenuItem>) -> Self {
+        Self { root: items, stack: Vec::new(), selected: 0, dir }
     }
 
-    pub fn current_level(&self) -> &UserMenuLevel {
-        self.stack.last().expect("stack is never empty -- from_items always seeds one level, and back() refuses to pop the last one")
+    /// Walks `root` down through `stack` to whichever level is
+    /// currently shown.
+    fn current_items(&self) -> &[MenuItem] {
+        let mut items = &self.root;
+        for &index in &self.stack {
+            let MenuItemBody::Submenu(children) = &items[index].body else {
+                unreachable!("stack only ever holds indices enter_submenu confirmed pointed at a Submenu");
+            };
+            items = children;
+        }
+        items
     }
 
-    fn current_level_mut(&mut self) -> &mut UserMenuLevel {
-        self.stack.last_mut().expect("see current_level's own comment")
+    fn current_items_mut(&mut self) -> &mut Vec<MenuItem> {
+        let mut items = &mut self.root;
+        for &index in &self.stack {
+            let MenuItemBody::Submenu(children) = &mut items[index].body else {
+                unreachable!("see current_items's own comment")
+            };
+            items = children;
+        }
+        items
+    }
+
+    pub fn current_level(&self) -> UserMenuLevelView<'_> {
+        UserMenuLevelView { items: self.current_items(), selected: self.selected }
     }
 
     pub fn move_up(&mut self) {
-        let level = self.current_level_mut();
-        level.selected = level.selected.saturating_sub(1);
+        self.selected = self.selected.saturating_sub(1);
     }
 
     pub fn move_down(&mut self) {
-        let level = self.current_level_mut();
-        if level.selected + 1 < level.items.len() {
-            level.selected += 1;
+        if self.selected + 1 < self.current_items().len() {
+            self.selected += 1;
         }
     }
 
     pub fn selected_item(&self) -> Option<&MenuItem> {
-        let level = self.current_level();
-        level.items.get(level.selected)
+        self.current_items().get(self.selected)
     }
 
     /// Descends into the highlighted item if it's a submenu -- `true`
@@ -174,11 +324,11 @@ impl UserMenuState {
     /// level; the caller is expected to try running it as commands
     /// instead in that case.
     pub fn enter_submenu(&mut self) -> bool {
-        let Some(MenuItem { body: MenuItemBody::Submenu(children), .. }) = self.selected_item() else {
+        if !matches!(self.selected_item(), Some(MenuItem { body: MenuItemBody::Submenu(_), .. })) {
             return false;
-        };
-        let children = children.clone();
-        self.stack.push(UserMenuLevel { items: children, selected: 0 });
+        }
+        self.stack.push(self.selected);
+        self.selected = 0;
         true
     }
 
@@ -187,12 +337,121 @@ impl UserMenuState {
     /// caller should close the menu entirely) -- same contract as
     /// `theming::MainMenu::back`.
     pub fn back(&mut self) -> bool {
-        if self.stack.len() > 1 {
-            self.stack.pop();
-            true
-        } else {
-            false
+        let Some(parent_selected) = self.stack.pop() else {
+            return false;
+        };
+        self.selected = parent_selected;
+        true
+    }
+
+    /// Inserts `item` right after the highlighted one at the current
+    /// level (or at the very start of an empty level), selects it, and
+    /// persists the whole tree to `LitastumMenu.toml`.
+    pub fn insert_item(&mut self, item: MenuItem) {
+        let insert_at = if self.current_items().is_empty() { 0 } else { self.selected + 1 };
+        self.current_items_mut().insert(insert_at, item);
+        self.selected = insert_at;
+        self.persist();
+    }
+
+    /// Removes the highlighted item at the current level (a no-op on
+    /// an empty level), clamps the cursor to what's left, and persists.
+    pub fn delete_selected(&mut self) {
+        let selected = self.selected;
+        let items = self.current_items_mut();
+        if items.is_empty() {
+            return;
         }
+        items.remove(selected);
+        let remaining = self.current_items().len();
+        if self.selected >= remaining {
+            self.selected = remaining.saturating_sub(1);
+        }
+        self.persist();
+    }
+
+    /// Writes `root` back to `LitastumMenu.toml` in `dir` -- best-effort,
+    /// same "never block on a failed write" rule as everywhere else
+    /// file persistence happens in this app; a failure just means the
+    /// in-memory edit (still visible for the rest of this session)
+    /// didn't make it to disk.
+    fn persist(&self) {
+        let toml = toml_format::to_toml_string(&self.root);
+        let path = self.dir.join(OWN_FILE_NAME);
+        if let Err(err) = fs::write(&path, &toml) {
+            warn!(path = %path.display(), %err, "failed to save LitastumMenu.toml after editing the user menu");
+        }
+    }
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AddItemStage {
+    Title,
+    Command,
+}
+
+/// `Mode::AddUserMenuItem`: a small two-field form (`Ins` while
+/// browsing the user menu) for adding a new item without leaving the
+/// popup to hand-edit `LitastumMenu.toml`. Deliberately minimal -- no
+/// hotkey field, no multi-command items, no authoring help for `!&`/
+/// `!?Label?Default!` -- those are still easiest to add by hand-editing
+/// the file afterward; this covers the common case (one title, one
+/// command, or a bare submenu to build out by entering it and adding
+/// more items the same way).
+pub struct AddUserMenuItemState {
+    stage: AddItemStage,
+    pub title: String,
+    pub title_cursor: usize,
+    pub title_selection_anchor: Option<usize>,
+    pub command: String,
+    pub command_cursor: usize,
+    pub command_selection_anchor: Option<usize>,
+}
+
+impl AddUserMenuItemState {
+    pub fn new() -> Self {
+        Self {
+            stage: AddItemStage::Title,
+            title: String::new(),
+            title_cursor: 0,
+            title_selection_anchor: None,
+            command: String::new(),
+            command_cursor: 0,
+            command_selection_anchor: None,
+        }
+    }
+
+    pub fn is_title_stage(&self) -> bool {
+        self.stage == AddItemStage::Title
+    }
+
+    /// `Enter` on the title field -- advances to the command field if
+    /// the title isn't blank (`true`), a no-op otherwise (`false`):
+    /// there's nothing sensible to call a titleless menu item.
+    pub fn advance_from_title(&mut self) -> bool {
+        if self.title.trim().is_empty() {
+            return false;
+        }
+        self.stage = AddItemStage::Command;
+        true
+    }
+
+    /// `Enter` on the command field -- builds the finished item: a
+    /// `Commands` leaf if `command` has anything in it, an empty
+    /// `Submenu` otherwise (entering it right afterward and adding more
+    /// items the same way is how a submenu actually gets built out).
+    pub fn finish(&self) -> MenuItem {
+        let title = self.title.trim().to_string();
+        let command = self.command.trim();
+        let body = if command.is_empty() { MenuItemBody::Submenu(Vec::new()) } else { MenuItemBody::Commands(vec![command.to_string()]) };
+        MenuItem { hotkey: None, title, body }
+    }
+}
+
+impl Default for AddUserMenuItemState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -289,15 +548,22 @@ mod tests {
             assert_eq!(items[0].title, "status");
         }
 
+        /// Regression coverage for the real request: dropping a
+        /// `FarMenu.ini` into a directory that already has a configured
+        /// `LitastumMenu.toml` used to be silently ignored (the old
+        /// `Own`-wins precedence). It should now still surface the
+        /// choice -- `FarMenuFound`, not `Own` -- so porting can
+        /// deliberately overwrite (with a backup) an already-configured
+        /// menu.
         #[test]
-        fn prefers_an_existing_litastum_menu_over_far_menu() {
+        fn a_far_menu_takes_priority_over_an_existing_litastum_menu() {
             let dir = scratch_dir();
             fs::write(dir.join(OWN_FILE_NAME), "[[item]]\ntitle = \"mine\"\ncommands = [\"echo mine\"]\n").unwrap();
             fs::write(dir.join(FAR_FILE_NAME), "s: theirs\necho theirs\n").unwrap();
 
-            let MenuFile::Own(items) = resolve_menu(&dir) else { panic!("expected MenuFile::Own") };
+            let result = resolve_menu(&dir);
 
-            assert_eq!(items[0].title, "mine");
+            assert!(matches!(result, MenuFile::FarMenuFound(path) if path == dir.join(FAR_FILE_NAME)));
         }
 
         /// The whole point of the port-on-confirm flow: a real
@@ -320,8 +586,7 @@ mod tests {
         use super::*;
 
         /// The actual point of porting: a real `FarMenu.ini` becomes a
-        /// working `LitastumMenu.toml` alongside it, and the original
-        /// is left untouched.
+        /// working `LitastumMenu.toml` alongside it.
         #[test]
         fn ports_a_far_menu_into_a_working_litastum_toml() {
             let dir = scratch_dir();
@@ -333,10 +598,164 @@ mod tests {
 
             assert_eq!(items.len(), 2);
             assert_eq!(items[0].title, "status");
-            assert_eq!(fs::read_to_string(&far_path).unwrap(), far_content, "FarMenu.ini must be left untouched");
 
             let MenuFile::Own(reread) = resolve_menu(&dir) else { panic!("expected the ported LitastumMenu.toml to now resolve") };
             assert_eq!(reread, items);
+        }
+
+        /// Regression coverage for the real request: once ported,
+        /// `FarMenu.ini` has to move out of the way -- `resolve_menu`
+        /// now reports its mere presence unconditionally, so leaving it
+        /// in place (the very first version of this feature's own
+        /// behavior) would re-trigger the same prompt on every future
+        /// `F2`/startup check.
+        #[test]
+        fn moves_far_menu_ini_aside_after_porting_it() {
+            let dir = scratch_dir();
+            let far_path = dir.join(FAR_FILE_NAME);
+            let far_content = "s: status\ngit status -s\n";
+            fs::write(&far_path, far_content).unwrap();
+
+            port_far_menu(&far_path);
+
+            assert!(!far_path.exists(), "FarMenu.ini should have been moved aside");
+            let backup_content = fs::read_to_string(dir.join("FarMenu.ini.bak")).unwrap();
+            assert_eq!(backup_content, far_content);
+            assert!(matches!(resolve_menu(&dir), MenuFile::Own(_)), "should no longer be re-detected as a FarMenu.ini to port");
+        }
+
+        /// Regression coverage for the actual real-world report: a
+        /// `FarMenu.ini` exported straight from a real Far Manager
+        /// install ported to zero items -- confirmed by inspecting its
+        /// raw bytes directly, it's UTF-16LE with a BOM (`FF FE`, every
+        /// ASCII character null-padded), which a strict-UTF-8 read
+        /// fails on outright. Built here the same way a real text
+        /// editor saving "UTF-16 LE" would produce it, not by guessing
+        /// at the byte layout.
+        #[test]
+        fn ports_a_real_utf16le_far_menu_ini() {
+            let dir = scratch_dir();
+            let far_path = dir.join(FAR_FILE_NAME);
+            let text = "s: status\r\ngit status -s\r\n";
+            let mut bytes = vec![0xFF, 0xFE];
+            for unit in text.encode_utf16() {
+                bytes.extend_from_slice(&unit.to_le_bytes());
+            }
+            fs::write(&far_path, &bytes).unwrap();
+
+            let items = port_far_menu(&far_path);
+
+            assert_eq!(items.len(), 1, "should have actually parsed the UTF-16LE content, not silently produced nothing");
+            assert_eq!(items[0].title, "status");
+            assert_eq!(items[0].body, MenuItemBody::Commands(vec!["git status -s".to_string()]));
+        }
+
+        /// Regression coverage for the actual "what if I already have a
+        /// menu" scenario this whole change was requested for: porting
+        /// over an existing `LitastumMenu.toml` must not silently
+        /// discard it.
+        #[test]
+        fn backs_up_an_existing_litastum_menu_before_overwriting_it() {
+            let dir = scratch_dir();
+            let own_path = dir.join(OWN_FILE_NAME);
+            let old_content = "[[item]]\ntitle = \"old\"\ncommands = [\"echo old\"]\n";
+            fs::write(&own_path, old_content).unwrap();
+            let far_path = dir.join(FAR_FILE_NAME);
+            fs::write(&far_path, "s: new\necho new\n").unwrap();
+
+            let items = port_far_menu(&far_path);
+
+            assert_eq!(items[0].title, "new", "the freshly ported menu should be what's active now");
+            let backup_content = fs::read_to_string(dir.join("LitastumMenu.toml.bak")).unwrap();
+            assert_eq!(backup_content, old_content, "the old menu should be preserved as a backup, not lost");
+        }
+    }
+
+    mod backup_far_menu_without_porting_tests {
+        use super::*;
+
+        #[test]
+        fn moves_far_menu_ini_to_a_backup_and_returns_its_path() {
+            let dir = scratch_dir();
+            let far_path = dir.join(FAR_FILE_NAME);
+            let content = "s: status\ngit status -s\n";
+            fs::write(&far_path, content).unwrap();
+
+            let backup = backup_far_menu_without_porting(&far_path).unwrap();
+
+            assert_eq!(backup, dir.join("FarMenu.ini.bak"));
+            assert!(!far_path.exists());
+            assert_eq!(fs::read_to_string(&backup).unwrap(), content);
+        }
+
+        #[test]
+        fn does_not_touch_any_existing_litastum_menu() {
+            let dir = scratch_dir();
+            let own_path = dir.join(OWN_FILE_NAME);
+            fs::write(&own_path, "[[item]]\ntitle = \"mine\"\ncommands = [\"echo mine\"]\n").unwrap();
+            let far_path = dir.join(FAR_FILE_NAME);
+            fs::write(&far_path, "s: theirs\necho theirs\n").unwrap();
+
+            backup_far_menu_without_porting(&far_path);
+
+            let MenuFile::Own(items) = resolve_menu(&dir) else { panic!("expected MenuFile::Own now that FarMenu.ini is gone") };
+            assert_eq!(items[0].title, "mine");
+        }
+    }
+
+    mod read_text_file_any_encoding_tests {
+        use super::*;
+
+        fn utf16_bytes(text: &str, bom: [u8; 2], to_bytes: fn(u16) -> [u8; 2]) -> Vec<u8> {
+            let mut bytes = bom.to_vec();
+            for unit in text.encode_utf16() {
+                bytes.extend_from_slice(&to_bytes(unit));
+            }
+            bytes
+        }
+
+        #[test]
+        fn reads_plain_utf8() {
+            let dir = scratch_dir();
+            let path = dir.join("plain.txt");
+            fs::write(&path, "hello").unwrap();
+            assert_eq!(read_text_file_any_encoding(&path).unwrap(), "hello");
+        }
+
+        #[test]
+        fn strips_a_utf8_bom() {
+            let dir = scratch_dir();
+            let path = dir.join("bom.txt");
+            let mut bytes = vec![0xEF, 0xBB, 0xBF];
+            bytes.extend_from_slice(b"hello");
+            fs::write(&path, &bytes).unwrap();
+            assert_eq!(read_text_file_any_encoding(&path).unwrap(), "hello");
+        }
+
+        /// The actual real-world case: real Far Manager's own default
+        /// `FarMenu.ini` encoding.
+        #[test]
+        fn reads_utf16_le_with_bom() {
+            let dir = scratch_dir();
+            let path = dir.join("utf16le.ini");
+            fs::write(&path, utf16_bytes("hello \u{416}", [0xFF, 0xFE], u16::to_le_bytes)).unwrap();
+            assert_eq!(read_text_file_any_encoding(&path).unwrap(), "hello \u{416}");
+        }
+
+        #[test]
+        fn reads_utf16_be_with_bom() {
+            let dir = scratch_dir();
+            let path = dir.join("utf16be.ini");
+            fs::write(&path, utf16_bytes("hello \u{416}", [0xFE, 0xFF], u16::to_be_bytes)).unwrap();
+            assert_eq!(read_text_file_any_encoding(&path).unwrap(), "hello \u{416}");
+        }
+
+        #[test]
+        fn errors_on_genuinely_invalid_utf8_with_no_bom() {
+            let dir = scratch_dir();
+            let path = dir.join("invalid.ini");
+            fs::write(&path, [0xFF, 0x00, 0x01]).unwrap(); // 0xFF alone (no matching 0xFE) is invalid UTF-8
+            assert!(read_text_file_any_encoding(&path).is_err());
         }
     }
 
@@ -367,7 +786,7 @@ mod tests {
         use super::*;
 
         fn menu_with(items: Vec<MenuItem>) -> UserMenuState {
-            UserMenuState::from_items(items)
+            UserMenuState::from_items(scratch_dir(), items)
         }
 
         fn command_item(title: &str) -> MenuItem {
@@ -423,6 +842,130 @@ mod tests {
             menu.back();
 
             assert_eq!(menu.current_level().selected, 1, "should still be on \"b\", not reset to 0");
+        }
+
+        #[test]
+        fn insert_item_adds_right_after_the_selected_item_and_selects_it() {
+            let mut menu = menu_with(vec![command_item("a"), command_item("b")]);
+
+            menu.insert_item(command_item("new"));
+
+            let level = menu.current_level();
+            assert_eq!(level.items.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(), vec!["a", "new", "b"]);
+            assert_eq!(level.selected, 1, "the newly inserted item should be selected");
+        }
+
+        #[test]
+        fn insert_item_into_an_empty_level_works() {
+            let mut menu = menu_with(Vec::new());
+
+            menu.insert_item(command_item("first"));
+
+            assert_eq!(menu.current_level().items.len(), 1);
+            assert_eq!(menu.current_level().selected, 0);
+        }
+
+        #[test]
+        fn delete_selected_removes_the_highlighted_item_and_clamps_the_cursor() {
+            let mut menu = menu_with(vec![command_item("a"), command_item("b")]);
+            menu.move_down(); // selected on "b" (last)
+
+            menu.delete_selected();
+
+            assert_eq!(menu.current_level().items.len(), 1);
+            assert_eq!(menu.current_level().items[0].title, "a");
+            assert_eq!(menu.current_level().selected, 0, "should clamp back onto the remaining item");
+        }
+
+        #[test]
+        fn delete_selected_on_an_empty_level_does_not_panic() {
+            let mut menu = menu_with(Vec::new());
+            menu.delete_selected();
+            assert!(menu.current_level().items.is_empty());
+        }
+
+        /// The actual point of the whole rewrite from a stack-of-clones
+        /// to a single canonical tree: editing *inside a nested
+        /// submenu* must be visible after backing out of it, and must
+        /// make it into the persisted file -- neither was true when
+        /// `enter_submenu` cloned children into a disposable level.
+        #[test]
+        fn editing_inside_a_nested_submenu_persists_and_survives_navigating_back_out() {
+            let dir = scratch_dir();
+            let mut menu = UserMenuState::from_items(dir.clone(), vec![submenu_item("parent", vec![command_item("child")])]);
+
+            menu.enter_submenu();
+            menu.insert_item(command_item("new sibling"));
+            menu.back();
+
+            // Re-enter and check the edit is still there in memory...
+            menu.enter_submenu();
+            let titles: Vec<&str> = menu.current_level().items.iter().map(|i| i.title.as_str()).collect();
+            assert_eq!(titles, vec!["child", "new sibling"]);
+
+            // ...and that it was actually written to disk, not just
+            // held in the in-memory clone the old design would have
+            // silently discarded.
+            let MenuFile::Own(reread) = resolve_menu(&dir) else { panic!("expected MenuFile::Own") };
+            let MenuItemBody::Submenu(children) = &reread[0].body else { panic!("expected the top item to still be a submenu") };
+            assert_eq!(children.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(), vec!["child", "new sibling"]);
+        }
+    }
+
+    mod add_user_menu_item_state_tests {
+        use super::*;
+
+        #[test]
+        fn advance_from_title_moves_to_the_command_stage() {
+            let mut form = AddUserMenuItemState::new();
+            form.title = "status".to_string();
+
+            assert!(form.advance_from_title());
+            assert!(!form.is_title_stage());
+        }
+
+        #[test]
+        fn advance_from_title_refuses_a_blank_title() {
+            let mut form = AddUserMenuItemState::new();
+            form.title = "   ".to_string();
+
+            assert!(!form.advance_from_title());
+            assert!(form.is_title_stage(), "should stay on the title stage");
+        }
+
+        #[test]
+        fn finish_with_a_command_builds_a_leaf_item() {
+            let mut form = AddUserMenuItemState::new();
+            form.title = "status".to_string();
+            form.command = "git status -s".to_string();
+
+            let item = form.finish();
+
+            assert_eq!(item.title, "status");
+            assert_eq!(item.hotkey, None);
+            assert_eq!(item.body, MenuItemBody::Commands(vec!["git status -s".to_string()]));
+        }
+
+        #[test]
+        fn finish_with_no_command_builds_an_empty_submenu() {
+            let mut form = AddUserMenuItemState::new();
+            form.title = "git".to_string();
+
+            let item = form.finish();
+
+            assert_eq!(item.body, MenuItemBody::Submenu(Vec::new()));
+        }
+
+        #[test]
+        fn finish_trims_the_title_and_command() {
+            let mut form = AddUserMenuItemState::new();
+            form.title = "  status  ".to_string();
+            form.command = "  git status -s  ".to_string();
+
+            let item = form.finish();
+
+            assert_eq!(item.title, "status");
+            assert_eq!(item.body, MenuItemBody::Commands(vec!["git status -s".to_string()]));
         }
     }
 

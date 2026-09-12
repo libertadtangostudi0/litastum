@@ -44,9 +44,12 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             toml_format.rs: litastum's own serde-backed
                             TOML shape + MenuItem conversion; state.rs:
                             file resolution, porting on confirmation,
-                            nested navigation, the prompt-collection
-                            state; input.rs: key handling, hands
-                            finished commands off to
+                            nested navigation over one canonical tree
+                            (not a stack of clones -- an edit at any
+                            depth has to reach the same tree that gets
+                            persisted), add/remove an item + persist,
+                            the prompt-collection state; input.rs: key
+                            handling, hands finished commands off to
                             command_line::run_shell_command_lines)
 
 editor.rs               — F4 built-in editor, backed by `edtui`

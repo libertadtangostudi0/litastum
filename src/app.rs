@@ -5,7 +5,7 @@ use edtui::syntect::highlighting::Theme as SynTheme;
 
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
 use crate::editor::Editor;
-use crate::explorer::{DriveMenu, FindFileState, Panel, UserMenuPromptState, UserMenuState};
+use crate::explorer::{AddUserMenuItemState, DriveMenu, FindFileState, Panel, UserMenuPromptState, UserMenuState};
 use crate::theming::{MainMenu, PopupStyle, PopupStyleMenu, Theme, ThemeMenu};
 
 
@@ -51,10 +51,24 @@ pub enum Mode {
     /// Collecting a selected user-menu item's own `!?Label?Default!`
     /// answers before running it.
     UserMenuPrompt(UserMenuPromptState),
-    /// `F2` found a `FarMenu.ini` but no `LitastumMenu.toml` yet --
+    /// `F2` (or the startup check in `main.rs`) found a `FarMenu.ini` --
     /// asks whether to port it (the path is `FarMenu.ini` itself)
     /// before browsing, rather than converting or reading it silently.
+    /// Reported even when `LitastumMenu.toml` already exists too (see
+    /// `explorer::user_menu::state::resolve_menu`'s own doc comment).
     ConfirmPortFarMenu(PathBuf),
+    /// `Ins` on the user menu -- the add-item form. Holds the menu
+    /// being edited so `Esc`/a finished add hands it straight back to
+    /// `Mode::UserMenu`, same shape as `ConfirmDiscard(Editor)` above.
+    AddUserMenuItem(UserMenuState, AddUserMenuItemState),
+    /// A one-line, dismiss-on-any-key notification -- currently only
+    /// used to tell the user where `FarMenu.ini` ended up after
+    /// declining to port it (`explorer::user_menu::input::
+    /// handle_confirm_port_far_menu_key`), but deliberately generic
+    /// (just a `String`) rather than named after that one caller, since
+    /// this app has no status-bar message surface otherwise (see
+    /// `ui/confirm.rs`'s own doc comment on that gap).
+    Info(String),
 }
 
 

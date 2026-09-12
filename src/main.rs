@@ -57,6 +57,17 @@ fn main() -> Result<()> {
     // not in App::new, so tests building an App via test_support::test_app
     // never touch a real editor_search_history.txt on disk.
     app.search_history = editor::find_history::load_history();
+    // One-time startup check, requested directly: a FarMenu.ini sitting
+    // in the directory litastum was launched from should be offered for
+    // porting immediately, not only once the user happens to press F2
+    // there -- same Mode::ConfirmPortFarMenu popup either way
+    // (`explorer::user_menu::state::resolve_menu` reports a FarMenu.ini's
+    // presence unconditionally, even over an already-configured
+    // LitastumMenu.toml, so this also covers "I already have a menu and
+    // just dropped a new FarMenu.ini in").
+    if let explorer::MenuFile::FarMenuFound(far_path) = explorer::resolve_menu(&app.panels[0].path) {
+        app.mode = Mode::ConfirmPortFarMenu(far_path);
+    }
     let result = run(&mut terminal, &mut app);
     restore_terminal(&mut terminal)?;
     // Unlike command_history.txt (saved incrementally, per command run,
@@ -173,6 +184,13 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
         Mode::UserMenu(_) => explorer::handle_user_menu_key(app, key, terminal),
         Mode::UserMenuPrompt(_) => explorer::handle_user_menu_prompt_key(app, key, terminal),
         Mode::ConfirmPortFarMenu(_) => explorer::handle_confirm_port_far_menu_key(app, key),
+        Mode::AddUserMenuItem(..) => explorer::handle_add_user_menu_item_key(app, key),
+        // Any key dismisses -- there's nothing to answer, just
+        // something to acknowledge having read.
+        Mode::Info(_) => {
+            app.mode = Mode::Browsing;
+            Ok(())
+        }
         Mode::Browsing => command_line::handle_browsing_key(app, key, terminal),
     }
 }

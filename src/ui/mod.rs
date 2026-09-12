@@ -11,7 +11,7 @@ use ratatui::{
 use crate::app::{App, Mode};
 use crate::editor::Editor;
 use crate::explorer::{Entry, HighlightRole, Panel};
-use crate::theming::Theme;
+use crate::theming::{PopupStyle, Theme};
 
 mod command_line;
 mod confirm;
@@ -72,7 +72,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         | Mode::ChangeDrive(_)
         | Mode::UserMenu(_)
         | Mode::UserMenuPrompt(_)
-        | Mode::ConfirmPortFarMenu(_) => {}
+        | Mode::ConfirmPortFarMenu(_)
+        | Mode::AddUserMenuItem(..)
+        | Mode::Info(_) => {}
     }
 
     let root = Layout::default()
@@ -154,6 +156,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
             frame.set_cursor_position(cursor);
         }
         Mode::ConfirmPortFarMenu(far_path) => user_menu::draw_confirm_port_far_menu(frame, area, far_path, &theme, popup_style),
+        Mode::AddUserMenuItem(menu, form) => {
+            user_menu::draw_user_menu(frame, area, menu, &theme, popup_style);
+            let cursor = user_menu::draw_add_user_menu_item(frame, area, form, &theme, popup_style);
+            frame.set_cursor_position(cursor);
+        }
+        Mode::Info(message) => draw_info_popup(frame, area, message, &theme, popup_style),
         _ => {}
     }
 
@@ -349,6 +357,27 @@ fn draw_confirm_discard_popup(frame: &mut Frame, area: Rect, theme: &Theme) {
         ]),
     ];
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+
+/// Renders `Mode::Info`'s one-line notification -- dismissed by any
+/// key (`main.rs::handle_event`). Currently the only caller is
+/// `explorer::user_menu::input::handle_confirm_port_far_menu_key`
+/// telling the user where a declined `FarMenu.ini` got backed up to,
+/// but the mode itself carries a plain `String` rather than anything
+/// user-menu-specific, so this stays a general-purpose primitive.
+fn draw_info_popup(frame: &mut Frame, area: Rect, message: &str, theme: &Theme, style: PopupStyle) {
+    let extra = popup::chrome_extra_rows(style);
+    let width = (message.chars().count() as u16 + 6).clamp(30, area.width);
+    let height = 4 + extra;
+    let inner = popup::draw_frame(frame, area, theme, style, Line::from(Span::raw(" Info ")), width, height);
+
+    let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(inner);
+
+    frame.render_widget(Line::from(Span::styled(message.to_string(), Style::default().fg(theme.text))), rows[0]);
+
+    let hint = Line::from(vec![Span::styled("any key", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)), Span::styled(" ok", Style::default().fg(theme.text_dim))]);
+    frame.render_widget(hint, rows[1]);
 }
 
 

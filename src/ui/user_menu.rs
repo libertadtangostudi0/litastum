@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::explorer::{MenuItemBody, UserMenuPromptState, UserMenuState};
+use crate::explorer::{AddUserMenuItemState, MenuItemBody, UserMenuPromptState, UserMenuState};
 use crate::text_field;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
@@ -59,10 +59,49 @@ pub fn draw_user_menu(frame: &mut Frame, area: Rect, menu: &UserMenuState, theme
     let hint = Line::from(vec![
         Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
         Span::styled(" select  ", Style::default().fg(theme.text_dim)),
+        Span::styled("Ins", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" add  ", Style::default().fg(theme.text_dim)),
+        Span::styled("Del", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" remove  ", Style::default().fg(theme.text_dim)),
         Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
         Span::styled(" back", Style::default().fg(theme.text_dim)),
     ]);
     frame.render_widget(hint, rows[1]);
+}
+
+
+/// Renders the `Ins` add-item form (`Mode::AddUserMenuItem`) -- one
+/// field at a time, title then command, same sequential shape as
+/// `draw_user_menu_prompt` below. An empty command builds a submenu
+/// instead of a leaf item (`AddUserMenuItemState::finish`'s own doc
+/// comment), so the label says as much. Returns where the real
+/// terminal cursor should sit, same mechanism as every other text-entry
+/// popup in this app.
+pub fn draw_add_user_menu_item(frame: &mut Frame, area: Rect, form: &AddUserMenuItemState, theme: &Theme, style: PopupStyle) -> Position {
+    let (title, value, cursor, selection_anchor) = if form.is_title_stage() {
+        (" Title ", &form.title, form.title_cursor, form.title_selection_anchor)
+    } else {
+        (" Command (empty = submenu) ", &form.command, form.command_cursor, form.command_selection_anchor)
+    };
+
+    let extra = popup::chrome_extra_rows(style);
+    let height = 4 + extra;
+    let inner = popup::draw_frame(frame, area, theme, style, Line::from(Span::raw(title)), 50, height);
+
+    let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(inner);
+
+    frame.render_widget(field_line(value, cursor, selection_anchor, theme), rows[0]);
+
+    let next_label = if form.is_title_stage() { " next  " } else { " add  " };
+    let hint = Line::from(vec![
+        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(next_label, Style::default().fg(theme.text_dim)),
+        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" cancel", Style::default().fg(theme.text_dim)),
+    ]);
+    frame.render_widget(hint, rows[1]);
+
+    Position { x: rows[0].x + cursor as u16, y: rows[0].y }
 }
 
 
@@ -86,7 +125,7 @@ pub fn draw_user_menu_prompt(frame: &mut Frame, area: Rect, prompt: &UserMenuPro
 
     let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(inner);
 
-    frame.render_widget(field_line(prompt, theme), rows[0]);
+    frame.render_widget(field_line(&prompt.value, prompt.cursor, prompt.selection_anchor, theme), rows[0]);
 
     let next_label = if current < total { " next  " } else { " run  " };
     let hint = Line::from(vec![
@@ -127,17 +166,18 @@ pub fn draw_confirm_port_far_menu(frame: &mut Frame, area: Rect, far_path: &Path
 }
 
 
-/// Renders the field's value with its `Shift+Left`/`Right` selection
+/// Renders a text field's value with its `Shift+Left`/`Right` selection
 /// (if any) picked out, same highlight `confirm.rs::destination_line`
 /// uses for the transfer-destination field -- no selection just renders
-/// as plain text.
-fn field_line(prompt: &UserMenuPromptState, theme: &Theme) -> Line<'static> {
-    let Some(anchor) = prompt.selection_anchor else {
-        return Line::from(Span::styled(prompt.value.clone(), Style::default().fg(theme.text)));
+/// as plain text. Shared by every single-line text-entry popup in this
+/// module (the prompt popup, the add-item form).
+fn field_line(value: &str, cursor: usize, selection_anchor: Option<usize>, theme: &Theme) -> Line<'static> {
+    let Some(anchor) = selection_anchor else {
+        return Line::from(Span::styled(value.to_string(), Style::default().fg(theme.text)));
     };
 
-    let (start, end) = text_field::selection_range(anchor, prompt.cursor);
-    let chars: Vec<char> = prompt.value.chars().collect();
+    let (start, end) = text_field::selection_range(anchor, cursor);
+    let chars: Vec<char> = value.chars().collect();
     let before: String = chars[..start].iter().collect();
     let selected: String = chars[start..end].iter().collect();
     let after: String = chars[end..].iter().collect();
@@ -155,6 +195,7 @@ mod tests {
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
+    use crate::test_support::unique_scratch_dir;
 
     fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
         let area = buffer.area;
@@ -182,7 +223,7 @@ mod tests {
 
     #[test]
     fn shows_items_and_a_submenu_marker() {
-        let menu = UserMenuState::from_items(vec![command_item("status"), submenu_item("parent", vec![command_item("child")])]);
+        let menu = UserMenuState::from_items(unique_scratch_dir("ui-user-menu"), vec![command_item("status"), submenu_item("parent", vec![command_item("child")])]);
         let text = rendered_menu(&menu, PopupStyle::Rounded);
         assert!(text.contains("status"));
         assert!(text.contains("parent"));
@@ -191,14 +232,14 @@ mod tests {
 
     #[test]
     fn empty_level_shows_a_hint_instead_of_panicking() {
-        let menu = UserMenuState::from_items(Vec::new());
+        let menu = UserMenuState::from_items(unique_scratch_dir("ui-user-menu"), Vec::new());
         let text = rendered_menu(&menu, PopupStyle::Rounded);
         assert!(text.contains("No items"));
     }
 
     #[test]
     fn classic_style_still_renders_without_panicking() {
-        let menu = UserMenuState::from_items(vec![command_item("status")]);
+        let menu = UserMenuState::from_items(unique_scratch_dir("ui-user-menu"), vec![command_item("status")]);
         let text = rendered_menu(&menu, PopupStyle::Classic);
         assert!(text.contains("status"));
     }
@@ -215,6 +256,41 @@ mod tests {
         assert!(text.contains("LitastumMenu.toml"));
         assert!(text.contains("convert"));
         assert!(text.contains("cancel"));
+    }
+
+    #[test]
+    fn add_item_form_title_stage_shows_the_title_field() {
+        let mut form = AddUserMenuItemState::new();
+        form.title = "status".to_string();
+        form.title_cursor = form.title.chars().count();
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::dark();
+        let mut cursor = Position::default();
+        terminal.draw(|frame| cursor = draw_add_user_menu_item(frame, frame.area(), &form, &theme, PopupStyle::Rounded)).unwrap();
+
+        let text = buffer_text(terminal.backend().buffer());
+        assert!(text.contains("Title"));
+        assert!(text.contains("status"));
+        assert!(cursor.x > 0);
+    }
+
+    #[test]
+    fn add_item_form_command_stage_shows_the_submenu_hint_and_command_field() {
+        let mut form = AddUserMenuItemState::new();
+        form.title = "git".to_string();
+        form.advance_from_title();
+        form.command = "git status -s".to_string();
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::dark();
+        terminal.draw(|frame| { draw_add_user_menu_item(frame, frame.area(), &form, &theme, PopupStyle::Rounded); }).unwrap();
+
+        let text = buffer_text(terminal.backend().buffer());
+        assert!(text.contains("submenu"));
+        assert!(text.contains("git status -s"));
     }
 
     #[test]

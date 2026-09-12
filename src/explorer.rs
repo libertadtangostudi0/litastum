@@ -16,7 +16,10 @@ pub use entry::{Entry, HighlightRole};
 pub use find_file::{handle_find_file_key, FindFilePhase, FindFileState};
 pub use keymap::{resolve, Command};
 pub use panel::Panel;
-pub use user_menu::{handle_confirm_port_far_menu_key, handle_user_menu_key, handle_user_menu_prompt_key, MenuItemBody, UserMenuPromptState, UserMenuState};
+pub use user_menu::{
+    handle_add_user_menu_item_key, handle_confirm_port_far_menu_key, handle_user_menu_key, handle_user_menu_prompt_key, resolve_menu, AddUserMenuItemState,
+    MenuFile, MenuItemBody, UserMenuPromptState, UserMenuState,
+};
 // `Prompt`/`MenuItem` have no production caller of their own --
 // `user_menu`'s own code reaches both through its internal `parse`
 // module directly. Only `ui::user_menu`'s tests build one from outside

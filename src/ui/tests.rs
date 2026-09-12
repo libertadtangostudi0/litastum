@@ -66,3 +66,21 @@ fn labels_stay_within_the_six_character_budget() {
         assert!(label.len() <= 6, "{key}'s label {label:?} is {} characters, over the 6-character budget", label.len());
     }
 }
+
+#[test]
+fn draw_info_popup_shows_the_message_and_the_dismiss_hint() {
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let theme = Theme::dark();
+    terminal
+        .draw(|frame| draw_info_popup(frame, frame.area(), "FarMenu.ini backed up as FarMenu.ini.bak", &theme, crate::theming::PopupStyle::Rounded))
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let text: String = (0..buffer.area.height)
+        .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("FarMenu.ini.bak"));
+    assert!(text.contains("any key"));
+}

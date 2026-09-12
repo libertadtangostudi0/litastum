@@ -55,11 +55,14 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
 
 /// `F2`: opens the active panel's own user menu. Three cases, per
 /// `user_menu::resolve_menu`:
-/// - `LitastumMenu.toml` already exists -- browse it directly.
-/// - Only a `FarMenu.ini` exists -- ask before touching anything
+/// - A `FarMenu.ini` exists -- ask before touching anything
 ///   (`Mode::ConfirmPortFarMenu`), rather than converting or reading it
 ///   silently; `handle_confirm_port_far_menu_key` does the actual port
-///   once confirmed.
+///   once confirmed. Takes priority even over an already-existing
+///   `LitastumMenu.toml` (`resolve_menu`'s own doc comment) -- the same
+///   startup check runs once in `main.rs`, so this same prompt can also
+///   appear before `F2` is ever pressed.
+/// - Only `LitastumMenu.toml` exists -- browse it directly.
 /// - Neither exists -- creates an empty `LitastumMenu.toml` right there
 ///   and opens it in the built-in editor instead of browsing an empty
 ///   popup with nothing in it to select. A failed creation (read-only
@@ -69,7 +72,7 @@ fn open_user_menu(app: &mut App) {
     let dir = app.active_panel().path.clone();
     match user_menu::resolve_menu(&dir) {
         user_menu::MenuFile::Own(items) => {
-            app.mode = Mode::UserMenu(user_menu::UserMenuState::from_items(items));
+            app.mode = Mode::UserMenu(user_menu::UserMenuState::from_items(dir, items));
         }
         user_menu::MenuFile::FarMenuFound(far_path) => {
             app.mode = Mode::ConfirmPortFarMenu(far_path);
