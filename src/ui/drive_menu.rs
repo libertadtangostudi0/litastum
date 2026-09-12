@@ -2,29 +2,21 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem},
+    widgets::{List, ListItem},
     Frame,
 };
 
 use crate::explorer::{format_bytes, DriveMenu};
-use crate::theming::Theme;
-use crate::ui::centered_rect;
+use crate::theming::{PopupStyle, Theme};
+use crate::ui::popup;
 
 /// Renders the `Alt+F1`/`Alt+F2` "change drive" popup: one row per
 /// drive (letter, type, total/free space — `"—"` for a size that
 /// couldn't be read, e.g. an empty removable/CD drive).
-pub fn draw_drive_menu(frame: &mut Frame, area: Rect, menu: &DriveMenu, theme: &Theme) {
-    let height = (menu.drives.len().max(1) as u16 + 4).clamp(6, area.height);
-    let popup = centered_rect(50, height, area);
-
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
-        .title(" Change drive ");
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
+pub fn draw_drive_menu(frame: &mut Frame, area: Rect, menu: &DriveMenu, theme: &Theme, style: PopupStyle) {
+    let extra = popup::chrome_extra_rows(style);
+    let height = (menu.drives.len().max(1) as u16 + 4 + extra).clamp(6 + extra, area.height);
+    let inner = popup::draw_frame(frame, area, theme, style, Line::from(Span::raw(" Change drive ")), 50, height);
 
     let rows = Layout::default()
         .direction(Direction::Vertical)

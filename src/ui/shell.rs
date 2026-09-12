@@ -2,28 +2,20 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem},
+    widgets::{List, ListItem},
     Frame,
 };
 
 use crate::app::ShellMenu;
 use crate::command_line::ShellProfile;
-use crate::theming::Theme;
-use crate::ui::centered_rect;
+use crate::theming::{PopupStyle, Theme};
+use crate::ui::popup;
 
 /// Renders the `Ctrl+P` shell-profile picker popup.
-pub fn draw_shell_menu(frame: &mut Frame, area: Rect, menu: &ShellMenu, profiles: &[ShellProfile], theme: &Theme) {
-    let height = (profiles.len() as u16 + 4).clamp(6, area.height);
-    let popup = centered_rect(36, height, area);
-
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
-        .title(" Shell ");
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
+pub fn draw_shell_menu(frame: &mut Frame, area: Rect, menu: &ShellMenu, profiles: &[ShellProfile], theme: &Theme, style: PopupStyle) {
+    let extra = popup::chrome_extra_rows(style);
+    let height = (profiles.len() as u16 + 4 + extra).clamp(6 + extra, area.height);
+    let inner = popup::draw_frame(frame, area, theme, style, Line::from(Span::raw(" Shell ")), 36, height);
 
     let rows = Layout::default()
         .direction(Direction::Vertical)

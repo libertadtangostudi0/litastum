@@ -135,6 +135,15 @@ mod persist_tests {
     }
 
     #[test]
+    fn popup_style_round_trips_through_try_persist_and_read_config() {
+        let dir = scratch_dir();
+        try_persist(&dir, |c| c.popup_style = Some(PopupStyle::Classic)).unwrap();
+
+        let config = read_config(&dir);
+        assert_eq!(config.popup_style, Some(PopupStyle::Classic));
+    }
+
+    #[test]
     fn saving_the_active_shell_does_not_clobber_an_existing_theme_choice() {
         let dir = scratch_dir();
         fs::write(dir.join("config.json"), r#"{"interface_theme": "keep-me"}"#).unwrap();

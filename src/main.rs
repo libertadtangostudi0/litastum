@@ -43,6 +43,10 @@ fn main() -> Result<()> {
             app.active_shell = index;
         }
     }
+    // Same isolation reasoning as command_history/search_history below
+    // -- loaded here, not in App::new, so tests via test_support::test_app
+    // never touch the real config.json for this.
+    app.popup_style = theming::config::load_active_popup_style();
     // Loaded here rather than in `App::new` itself so every test that
     // builds an `App` (nearly all of them, via `test_support::test_app`)
     // stays isolated from whatever real `command_history.txt` happens
@@ -162,6 +166,7 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
         Mode::MainMenu(_) => theming::handle_main_menu_key(app, key),
         Mode::ThemeMenu(_) => theming::handle_theme_menu_key(app, key),
         Mode::ShellMenu(_) => command_line::handle_shell_menu_key(app, key),
+        Mode::PopupStyleMenu(_) => theming::handle_popup_style_menu_key(app, key),
         Mode::FindFile(_) => explorer::handle_find_file_key(app, key),
         Mode::CommandHistory(_) => command_line::handle_history_key(app, key),
         Mode::ChangeDrive(_) => explorer::handle_drive_menu_key(app, key),

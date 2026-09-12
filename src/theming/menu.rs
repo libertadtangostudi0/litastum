@@ -6,6 +6,7 @@ use crate::app::{App, Mode};
 use crate::command_line::CommandHistoryMenu;
 use crate::explorer::FindFileState;
 use super::config;
+use super::popup_style_menu::PopupStyleMenu;
 use super::theme_menu::ThemeMenu;
 
 /// F9's top menu. Enough structure to reach what's actually been asked
@@ -28,7 +29,7 @@ impl MenuLevel {
         match self {
             MenuLevel::Main => &["Commands", "Options"],
             MenuLevel::Commands => &["Find file", "History"],
-            MenuLevel::Options => &["Color schemes", "Save setup"],
+            MenuLevel::Options => &["Color schemes", "UI", "Save setup"],
         }
     }
 }
@@ -139,6 +140,7 @@ pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
                 (MenuLevel::Commands, Some("Find file")) => app.mode = Mode::FindFile(FindFileState::new()),
                 (MenuLevel::Commands, Some("History")) => app.mode = Mode::CommandHistory(CommandHistoryMenu::open()),
                 (MenuLevel::Options, Some("Color schemes")) => app.mode = Mode::ThemeMenu(ThemeMenu::open()),
+                (MenuLevel::Options, Some("UI")) => app.mode = Mode::PopupStyleMenu(PopupStyleMenu::open(app.popup_style)),
                 (MenuLevel::Options, Some("Save setup")) => {
                     // Far Manager's own Shift+F9 -- persists the
                     // current session's choices (so far, just which
@@ -191,7 +193,7 @@ mod tests {
         menu.enter(MenuLevel::Options);
         assert_eq!(menu.level, MenuLevel::Options);
         assert_eq!(menu.selected, 0);
-        assert_eq!(menu.level.items(), &["Color schemes", "Save setup"]);
+        assert_eq!(menu.level.items(), &["Color schemes", "UI", "Save setup"]);
     }
 
     #[test]
@@ -292,11 +294,24 @@ mod tests {
         let mut app = app_in_main_menu();
         let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
         menu.enter(MenuLevel::Options);
+        menu.move_down();
         menu.move_down(); // "Save setup"
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
         assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn handle_main_menu_key_select_ui_opens_popup_style_menu() {
+        let mut app = app_in_main_menu();
+        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
+        menu.enter(MenuLevel::Options);
+        menu.move_down(); // "UI"
+
+        handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert!(matches!(app.mode, Mode::PopupStyleMenu(_)));
     }
 
     #[test]

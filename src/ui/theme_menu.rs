@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::theming::{Theme, ThemeMenu, ThemeMenuEntry};
+use crate::theming::{PopupStyle, Theme, ThemeMenu, ThemeMenuEntry};
 use crate::ui::popup;
 
 /// Renders the F9 color-scheme picker popup: a list of theme names
@@ -14,14 +14,34 @@ use crate::ui::popup;
 /// if it matches what's actually configured, a "current" label), or a
 /// hint that none were found. Redesigned onto the shared popup card
 /// (`ui/popup.rs`) alongside the F9 menu and delete-confirm popups.
-pub fn draw_theme_menu(frame: &mut Frame, area: Rect, menu: &ThemeMenu, theme: &Theme) {
+pub fn draw_theme_menu(frame: &mut Frame, area: Rect, menu: &ThemeMenu, theme: &Theme, style: PopupStyle) {
+    const WIDTH: u16 = 46;
     let height = (menu.themes.len().max(1) as u16 + 13).clamp(15, area.height);
-    let inner = popup::draw_frame(frame, area, theme, 46, height);
+    let needs_scroll = menu.themes.len() as u16 + 13 > height;
+
+    // Content width once whichever style's own chrome is subtracted --
+    // see `draw_confirm_delete_popup`'s own comment on this same
+    // arithmetic; needed here to right-align the scroll indicator
+    // before `popup::draw_frame` has a chance to hand back a real inner
+    // `Rect` to measure it against.
+    let content_width = match style {
+        PopupStyle::Classic => WIDTH.saturating_sub(2),
+        PopupStyle::Rounded => WIDTH.saturating_sub(2 * (1 + 2)),
+    };
+    let title = if needs_scroll {
+        Line::from(vec![
+            Span::styled("Color scheme", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
+            Span::raw(" ".repeat((content_width as usize).saturating_sub(13))),
+            Span::styled("⌃", Style::default().fg(theme.text_dim)),
+        ])
+    } else {
+        Line::from(Span::styled("Color scheme", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)))
+    };
+    let inner = popup::draw_frame(frame, area, theme, style, title, WIDTH, height);
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // title
             Constraint::Length(1), // separator
             Constraint::Length(1), // legend
             Constraint::Length(1), // blank -- breathing room before the list, proportional to the gap after it
@@ -32,19 +52,7 @@ pub fn draw_theme_menu(frame: &mut Frame, area: Rect, menu: &ThemeMenu, theme: &
         ])
         .split(inner);
 
-    let needs_scroll = menu.themes.len() as u16 + 13 > height;
-    let title = if needs_scroll {
-        Line::from(vec![
-            Span::styled("Color scheme", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
-            Span::raw(" ".repeat((inner.width as usize).saturating_sub(13))),
-            Span::styled("⌃", Style::default().fg(theme.text_dim)),
-        ])
-    } else {
-        Line::from(Span::styled("Color scheme", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)))
-    };
-    frame.render_widget(title, rows[0]);
-
-    frame.render_widget(popup::separator(inner.width, theme), rows[1]);
+    frame.render_widget(popup::separator(inner.width, theme), rows[0]);
 
     let legend = Line::from(vec![
         Span::styled("• ", Style::default().fg(theme.text_dim)),
@@ -53,14 +61,14 @@ pub fn draw_theme_menu(frame: &mut Frame, area: Rect, menu: &ThemeMenu, theme: &
         Span::styled("• ", Style::default().fg(theme.text_dim)),
         Span::styled("editor", Style::default().fg(theme.text)),
     ]);
-    frame.render_widget(legend, rows[2]);
+    frame.render_widget(legend, rows[1]);
 
     if menu.themes.is_empty() {
         let empty = Paragraph::new(Line::from(Span::styled(
             "No themes found — drop a Windows Terminal scheme .json",
             Style::default().fg(theme.text_dim),
         )));
-        frame.render_widget(empty, rows[4]);
+        frame.render_widget(empty, rows[3]);
     } else {
         let items: Vec<ListItem> = menu
             .themes
@@ -77,10 +85,10 @@ pub fn draw_theme_menu(frame: &mut Frame, area: Rect, menu: &ThemeMenu, theme: &
         // overflows.
         let list = List::new(items);
         let mut state = ListState::default().with_selected(Some(menu.selected));
-        frame.render_stateful_widget(list, rows[4], &mut state);
+        frame.render_stateful_widget(list, rows[3], &mut state);
     }
 
-    frame.render_widget(popup::separator(inner.width, theme), rows[6]);
+    frame.render_widget(popup::separator(inner.width, theme), rows[5]);
 
     let hint = Line::from(vec![
         Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
@@ -91,7 +99,7 @@ pub fn draw_theme_menu(frame: &mut Frame, area: Rect, menu: &ThemeMenu, theme: &
         Span::styled(" editor", Style::default().fg(theme.text_dim)),
     ])
     .centered();
-    frame.render_widget(hint, rows[7]);
+    frame.render_widget(hint, rows[6]);
 }
 
 
@@ -185,7 +193,7 @@ mod tests {
         let theme = Theme::dark();
         terminal
             .draw(|frame| {
-                draw_theme_menu(frame, frame.area(), menu, &theme);
+                draw_theme_menu(frame, frame.area(), menu, &theme, PopupStyle::Rounded);
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
@@ -234,7 +242,7 @@ mod tests {
         let theme = Theme::dark();
         terminal
             .draw(|frame| {
-                draw_theme_menu(frame, frame.area(), &menu, &theme);
+                draw_theme_menu(frame, frame.area(), &menu, &theme, PopupStyle::Rounded);
             })
             .unwrap();
 
@@ -277,5 +285,25 @@ mod tests {
         let menu = menu_with(&[], None);
         let text = rendered(&menu);
         assert!(text.contains("No themes found"));
+    }
+
+    #[test]
+    fn classic_style_still_shows_the_swatch_and_name() {
+        let menu = menu_with(&["dracula"], None);
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::dark();
+        terminal
+            .draw(|frame| {
+                draw_theme_menu(frame, frame.area(), &menu, &theme, PopupStyle::Classic);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text: String = (0..buffer.area.height)
+            .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("dracula"));
+        assert!(text.contains("Color scheme"));
     }
 }

@@ -6,7 +6,7 @@ use edtui::syntect::highlighting::Theme as SynTheme;
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
 use crate::editor::Editor;
 use crate::explorer::{DriveMenu, FindFileState, Panel};
-use crate::theming::{MainMenu, Theme, ThemeMenu};
+use crate::theming::{MainMenu, PopupStyle, PopupStyleMenu, Theme, ThemeMenu};
 
 
 /// What the app is currently showing. Only one at a time — there's no
@@ -37,6 +37,8 @@ pub enum Mode {
     ThemeMenu(ThemeMenu),
     /// The Ctrl+P shell-profile picker popup, shown over the browser.
     ShellMenu(ShellMenu),
+    /// F9 → Options → UI -- which popup chrome style is active.
+    PopupStyleMenu(PopupStyleMenu),
     /// F9 → Commands → Find file.
     FindFile(FindFileState),
     /// F9 → Commands → History.
@@ -175,6 +177,13 @@ pub struct App {
     /// the zero-config default. Every `Editor` opened during the
     /// session is handed a clone of whatever this currently is.
     pub syntax_theme: Option<SynTheme>,
+    /// Which chrome flavor popups render with -- see `theming::PopupStyle`.
+    /// Loaded once at startup (`main.rs`, same pattern as `active_shell`
+    /// below, not `theme`/`syntax_theme` above -- reading it from
+    /// `config.json` needs real disk I/O, which would otherwise leak
+    /// into every test built through `test_support::test_app`) and
+    /// swappable at runtime through F9 → Options → UI.
+    pub popup_style: PopupStyle,
     /// The always-live command line at the bottom of the browser (Far
     /// Manager-style) — see `command_line.rs` for the editing logic
     /// and `.claude/rules/litastum-stack.md` for the design.
@@ -282,6 +291,7 @@ impl App {
             should_quit: false,
             theme,
             syntax_theme,
+            popup_style: PopupStyle::default(),
             command_line: String::new(),
             command_line_cursor: 0,
             command_line_selection_anchor: None,

@@ -2,33 +2,26 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem},
+    widgets::{List, ListItem},
     Frame,
 };
 
-use crate::theming::{MainMenu, MenuLevel, Theme};
-use crate::ui::centered_rect;
+use crate::theming::{MainMenu, MenuLevel, PopupStyle, Theme};
+use crate::ui::popup;
 
 /// Renders the F9 top menu: whichever level's items are current
 /// (`MenuLevel::items`), with the highlighted row picked out.
-pub fn draw_main_menu(frame: &mut Frame, area: Rect, menu: &MainMenu, theme: &Theme) {
+pub fn draw_main_menu(frame: &mut Frame, area: Rect, menu: &MainMenu, theme: &Theme, style: PopupStyle) {
     let items = menu.level.items();
-    let height = (items.len() as u16 + 4).clamp(6, area.height);
-    let popup = centered_rect(30, height, area);
-
-    frame.render_widget(Clear, popup);
+    let extra = popup::chrome_extra_rows(style);
+    let height = (items.len() as u16 + 4 + extra).clamp(6 + extra, area.height);
 
     let title = match menu.level {
         MenuLevel::Main => " Menu ",
         MenuLevel::Commands => " Commands ",
         MenuLevel::Options => " Options ",
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
-        .title(title);
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
+    let inner = popup::draw_frame(frame, area, theme, style, Line::from(Span::raw(title)), 30, height);
 
     let rows = Layout::default()
         .direction(Direction::Vertical)

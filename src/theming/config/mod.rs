@@ -7,6 +7,7 @@ use edtui::syntect::highlighting::Theme as SynTheme;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
+use super::popup_style::PopupStyle;
 use super::scheme::ColorScheme;
 use super::theme::Theme;
 
@@ -82,6 +83,12 @@ struct Config {
     /// made, the way the theme picker's own choices do). Applied back
     /// at startup in `main.rs` if it names a profile that still exists.
     active_shell: Option<String>,
+    /// F9 -> Options -> UI's own choice (`PopupStyle`) -- unlike
+    /// `interface_theme`/`editor_theme`, this doesn't name an external
+    /// file to search for, so it's stored (and read back) directly as
+    /// the enum's own serde representation rather than through
+    /// `find_scheme`'s lookup machinery.
+    popup_style: Option<PopupStyle>,
 }
 
 
@@ -297,6 +304,30 @@ pub fn save_setup(shell_profile_name: &str) {
 pub fn load_active_shell() -> Option<String> {
     let config_dir = config_dir()?;
     read_config(&config_dir).active_shell
+}
+
+
+/// The popup chrome style configured via F9 -> Options -> UI, or
+/// `PopupStyle::default()` (`Rounded`) if nothing's configured yet or
+/// the config dir/file itself is unavailable -- same "never blocks
+/// startup, degrade to a sensible default" rule as `load_active_theme`.
+pub fn load_active_popup_style() -> PopupStyle {
+    let Some(config_dir) = config_dir() else {
+        debug!("no config directory available on this platform; using default popup style");
+        return PopupStyle::default();
+    };
+    read_config(&config_dir).popup_style.unwrap_or_default()
+}
+
+
+/// Persists `style` as the active popup chrome (best-effort, same as
+/// `set_interface_theme`/`save_setup` -- a write failure is logged but
+/// doesn't stop the live preview from applying, since `app.popup_style`
+/// is already set by the caller regardless of whether this succeeds).
+pub fn set_popup_style(style: PopupStyle) {
+    if let Some(config_dir) = config_dir() {
+        persist(&config_dir, |config| config.popup_style = Some(style));
+    }
 }
 
 

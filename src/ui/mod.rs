@@ -20,6 +20,7 @@ mod editor_find;
 mod find_file;
 mod menu;
 mod popup;
+mod popup_style_menu;
 mod shell;
 mod theme_menu;
 
@@ -62,6 +63,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         | Mode::MainMenu(_)
         | Mode::ThemeMenu(_)
         | Mode::ShellMenu(_)
+        | Mode::PopupStyleMenu(_)
         | Mode::ConfirmDelete(_)
         | Mode::ConfirmTransfer(_)
         | Mode::FindFile(_)
@@ -122,24 +124,26 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
     // The F9/Ctrl+P popups show over the browser, like a Far Manager
     // menu, not in place of it -- unlike Editing/ConfirmDiscard above,
     // which replace the whole screen.
+    let popup_style = app.popup_style;
     match &app.mode {
-        Mode::MainMenu(state) => menu::draw_main_menu(frame, area, state, &theme),
-        Mode::ThemeMenu(menu) => theme_menu::draw_theme_menu(frame, area, menu, &theme),
-        Mode::ShellMenu(menu) => shell::draw_shell_menu(frame, area, menu, &app.shell_profiles, &theme),
-        Mode::ConfirmDelete(pending) => confirm::draw_confirm_delete_popup(frame, area, pending, &theme),
+        Mode::MainMenu(state) => menu::draw_main_menu(frame, area, state, &theme, popup_style),
+        Mode::ThemeMenu(menu) => theme_menu::draw_theme_menu(frame, area, menu, &theme, popup_style),
+        Mode::ShellMenu(menu) => shell::draw_shell_menu(frame, area, menu, &app.shell_profiles, &theme, popup_style),
+        Mode::PopupStyleMenu(menu) => popup_style_menu::draw_popup_style_menu(frame, area, menu, &theme, popup_style),
+        Mode::ConfirmDelete(pending) => confirm::draw_confirm_delete_popup(frame, area, pending, &theme, popup_style),
         Mode::ConfirmTransfer(pending) => {
-            let cursor = confirm::draw_confirm_transfer_popup(frame, area, pending, &theme);
+            let cursor = confirm::draw_confirm_transfer_popup(frame, area, pending, &theme, popup_style);
             frame.set_cursor_position(cursor);
         }
         Mode::FindFile(state) => {
-            if let Some(cursor) = find_file::draw_find_file(frame, area, state, &theme) {
+            if let Some(cursor) = find_file::draw_find_file(frame, area, state, &theme, popup_style) {
                 frame.set_cursor_position(cursor);
             }
         }
         Mode::CommandHistory(menu) => {
             command_line::draw_command_history(frame, area, menu, &app.command_history, &app.command_line, &theme);
         }
-        Mode::ChangeDrive(menu) => drive_menu::draw_drive_menu(frame, area, menu, &theme),
+        Mode::ChangeDrive(menu) => drive_menu::draw_drive_menu(frame, area, menu, &theme, popup_style),
         _ => {}
     }
 
