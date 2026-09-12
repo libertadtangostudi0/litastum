@@ -38,12 +38,54 @@
       `Mode::Info` popup saying where it went -- either answer has to
       move it out of the way, or its mere presence would re-trigger
       this same prompt on every future `F2`/startup check.
-- [x] `!&` (the entry under the cursor) and `!?Label?Default!`
-      (interactive prompt, substituted before running -- one popup per
-      unique label, `Mode::UserMenuPrompt`) both work, matching real
-      Far Manager's own macros -- these live in `parse.rs` too, since
-      they're substituted into a `Commands` item's strings regardless
-      of which file format produced them.
+- [x] `!&` and `!?Label?Default!` work, matching real Far Manager's own
+      macros -- superseded below by the fuller macro engine, but kept
+      here for history.
+- [x] **Full Far `!...!` macro set, plus a new litastum-native `{{...}}`
+      family** (`parse::substitute_macros`/`consume_far_token`/
+      `consume_litastum_token`) -- requested directly: reading real
+      Far syntax properly (not just the two macros first implemented),
+      *and* a high-level syntax of litastum's own that doesn't collide
+      with `cmd`/PowerShell/`sh`'s own special characters the way Far's
+      `!...!` genuinely does (cmd's `!VAR!` delayed-expansion syntax
+      uses the exact same delimiter). Confirmed against Far's own
+      `@MetaSymbols` help topic (`FarEng.hlf.m4`), not guessed:
+      - `!.!`/`!`/`` !` ``/`!~`/`` !`~ `` -- cursor file name with
+        extension, without extension, extension only (long/short
+        variants of each).
+      - `!-!`/`!+!` -- short name with extension (falls back to the
+        long name -- see gaps below).
+      - `!&`/`!&~[Q|q]` -- inline space-separated list of marked files
+        (or just the cursor file if none are marked, same rule
+        `Panel::marked_or_current` already uses for F5/F6/F8), quoted
+        by default, `q` for unquoted.
+      - `!@!`/`!$!` -- Far's "name of a file containing the list"
+        (falls back to the same inline list `!&` produces -- see gaps).
+      - `!:`/`!\`/`!/`/`!=\`/`!=/` -- current drive/path (symlink-
+        resolved variants fall back to the plain path).
+      - `!##`/`!^`/`![`/`!]` -- toggles which panel (passive/active/
+        left/right) subsequent macros in the *same command* resolve
+        against, exactly like real Far.
+      - `!!` -- literal `!`.
+      - litastum's own `{{cursor}}` (`!.!`'s equivalent) and
+        `{{prompt:Label}}`/`{{prompt:Label:Default}}` (`!?Label?Default!`'s
+        equivalent, going through the exact same `extract_prompts`/
+        `substitute_prompts` path -- both syntaxes work in the same
+        command, even mixed).
+
+      **Gaps, all deliberate and documented at the code that hits
+      them**: short (8.3) filename variants fall back to the long name
+      (no Windows short-name lookup here, and no such concept at all on
+      macOS/Linux); `!=\`/`!=/` fall back to the plain, unresolved path
+      (no symlink-canonicalization helper yet); `!?!` (Far's separate
+      per-file "description" feature) is left as literal text
+      (litastum has no equivalent); `!@!`/`!$!` don't actually write a
+      scratch file the way real Far does -- keeps `parse.rs` I/O-free,
+      at the cost of that one narrow "avoid a command-line length
+      limit" use case. `{{...}}` currently only covers the two macros
+      actually asked for (`cursor`, `prompt`) -- more litastum-native
+      equivalents (marked list, current path, ...) can follow the same
+      `consume_litastum_token` pattern later if wanted.
 - [x] Running an item's commands reuses the command line's own
       `command_line::run_shell_command_lines` (suspends the TUI,
       inherits stdio, pauses for a keypress) -- extracted from

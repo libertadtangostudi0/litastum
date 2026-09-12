@@ -8,8 +8,9 @@ use tracing::debug;
 use crate::app::{App, Mode};
 use crate::command_line;
 use crate::editor::Editor;
+use crate::explorer::Panel;
 use crate::text_field;
-use super::parse::{self, MenuItemBody};
+use super::parse::{self, MacroContext, MenuItemBody, PanelMacroContext};
 use super::state::{self, AddUserMenuItemState, UserMenuCommandEdit, UserMenuPromptState, UserMenuState};
 
 
@@ -109,9 +110,11 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent, terminal: &mut Termina
 
 
 /// `Enter` on the user menu: descends into a highlighted submenu, or --
-/// for a `Commands` item -- substitutes `!&`, and either runs the
-/// result immediately (`command_line::run_shell_command_lines`) or, if
-/// any `!?Label?Default!` placeholders remain, opens
+/// for a `Commands` item -- substitutes every Far (`!.!`, `!&`, ...) or
+/// litastum-native (`{{cursor}}`) macro (`parse::substitute_macros`),
+/// and either runs the result immediately
+/// (`command_line::run_shell_command_lines`) or, if any
+/// `!?Label?Default!`/`{{prompt:...}}` placeholders remain, opens
 /// `Mode::UserMenuPrompt` to collect them first.
 fn run_selected_user_menu_item(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     let entered = {
@@ -137,8 +140,8 @@ fn run_selected_user_menu_item(app: &mut App, terminal: &mut Terminal<CrosstermB
         (raw_commands.clone(), item.title.clone())
     };
 
-    let cursor_path = app.active_panel().selected_path();
-    let commands: Vec<String> = raw_commands.iter().map(|command| parse::substitute_cursor_path(command, cursor_path.as_deref())).collect();
+    let macro_context = build_macro_context(app);
+    let commands: Vec<String> = raw_commands.iter().map(|command| parse::substitute_macros(command, &macro_context)).collect();
     let prompts = parse::extract_prompts(&commands);
 
     debug!(item = %item_title, prompt_count = prompts.len(), "user menu: running item");
@@ -148,6 +151,34 @@ fn run_selected_user_menu_item(app: &mut App, terminal: &mut Terminal<CrosstermB
     }
     app.mode = Mode::UserMenuPrompt(UserMenuPromptState::new(commands, prompts));
     Ok(())
+}
+
+
+/// Builds the macro-substitution context (`parse::MacroContext`) from
+/// `app`'s two panels -- `active`/`passive` follow whichever panel
+/// currently has focus (`app.active`), `left`/`right` are the fixed
+/// on-screen panels regardless of focus, matching real Far Manager's
+/// own four-way addressing (`!^`/`!##`/`![`/`!]`, see
+/// `parse::consume_far_token`'s own doc comment). Built fresh right
+/// before running a menu item's commands -- never stored, since panel
+/// state (cursor position, marks) can change between one run and the
+/// next.
+fn build_macro_context(app: &App) -> MacroContext {
+    let passive_index = 1 - app.active;
+    MacroContext {
+        active: panel_macro_context(&app.panels[app.active]),
+        passive: panel_macro_context(&app.panels[passive_index]),
+        left: panel_macro_context(&app.panels[0]),
+        right: panel_macro_context(&app.panels[1]),
+    }
+}
+
+fn panel_macro_context(panel: &Panel) -> PanelMacroContext {
+    PanelMacroContext {
+        dir: panel.path.clone(),
+        cursor: panel.selected_path(),
+        selected: panel.marked_or_current().iter().map(|entry| panel.path.join(&entry.name)).collect(),
+    }
 }
 
 
