@@ -18,12 +18,22 @@ use crate::theming::{MainMenu, PopupStyle, PopupStyleMenu, Theme, ThemeMenu};
 pub enum Mode {
     /// The dual-pane browser.
     Browsing,
-    /// A file open for editing (F4).
+    /// A file open for editing (F4) -- or, when `App::markdown_edit_preview`
+    /// is `Some`, `F3` on a `.md`/`.markdown` file: the *same* variant,
+    /// drawn split (editor left, live preview right,
+    /// `ui::draw`'s own `left_columns`/`right_columns` computation)
+    /// instead of full-screen, rather than a second, near-duplicate
+    /// `Mode` -- reusing this one keeps every bit of `editor_keymap.rs`'s
+    /// Save/Close/discard-confirm/`return_from_editor` logic exactly as
+    /// it already was, since none of that cares *why* an `Editor` is
+    /// open, just that one is.
     Editing(Editor),
     /// Editing was interrupted by `Esc` with unsaved changes: the
     /// editor is shown behind a "discard changes?" prompt rather than
     /// silently closing. Holds the editor so `Editor` moves straight
     /// back into `Editing` on cancel, with no data loss either way.
+    /// Same split-vs-full-screen distinction as `Editing` above, driven
+    /// by the same `App::markdown_edit_preview`.
     ConfirmDiscard(Editor),
     /// The F9 top menu (`menu.rs`) — currently `Settings` leading to
     /// `Color schemes` (below).
@@ -82,24 +92,20 @@ pub enum Mode {
     /// (`explorer::image_preview::handle_image_preview_key`); `Esc`/`F3`
     /// again closes it back to `Mode::Browsing`.
     ImagePreview(ImagePreviewState),
-    /// `F3` on a `.md`/`.markdown` file -- same right-panel-replacement
-    /// convention as `ImagePreview` above
-    /// (`explorer::markdown_preview::open_preview`,
-    /// `ui::markdown_preview::draw_markdown_preview`), but a real
-    /// rendered preview (headings/bold/lists/quotes/code shown
-    /// structurally) rather than a decoded image. `Up`/`Down`/`PageUp`/
-    /// `PageDown` scroll (`explorer::markdown_preview::handle_markdown_preview_key`);
-    /// `Esc`/`F3` again closes back to `Mode::Browsing`.
-    MarkdownPreview(MarkdownPreviewState),
-    /// `l` on the Markdown preview -- a filterable, keyboard-driven list
-    /// of every link in the document (`explorer::markdown_preview::MarkdownLinkSearchState`),
+    /// `l` while the embedded Markdown preview has focus
+    /// (`App::markdown_edit_preview`, see its own doc comment) -- a
+    /// filterable, keyboard-driven list of every link in the document
+    /// (`explorer::markdown_preview::MarkdownLinkSearchState`),
     /// requested directly as a reliable alternative to `Ctrl`+click
     /// (whose own row-based hit-testing drifts once word-wrap is
     /// involved -- see `MarkdownPreviewState::link_at`'s own doc
-    /// comment). Holds the preview alongside the search form so `Esc`/
-    /// `Enter` can hand it straight back, same shape as
-    /// `AddUserMenuItem(UserMenuState, AddUserMenuItemState)` above.
-    MarkdownLinkSearch(MarkdownPreviewState, MarkdownLinkSearchState),
+    /// comment). Holds the `Editor` "parked" here (it can't stay in
+    /// `Mode::Editing` at the same time `Mode` is this) so `Esc`/`Enter`
+    /// can hand it straight back to `Mode::Editing(editor)` -- the
+    /// `MarkdownPreviewState` itself stays put in
+    /// `App::markdown_edit_preview` throughout, never moved into `Mode`
+    /// at all, since it's shared between this and `Mode::Editing`.
+    MarkdownLinkSearch(Editor, MarkdownLinkSearchState),
 }
 
 
@@ -374,6 +380,26 @@ pub struct App {
     /// never been turned on. `restore_terminal` only includes
     /// `DisableMouseCapture` in its own cleanup when this is `true`.
     pub mouse_capture_enabled: bool,
+    /// `F3` on a `.md`/`.markdown` file: a live rendered preview shown
+    /// alongside the built-in editor (`Mode::Editing`/`ConfirmDiscard`,
+    /// drawn split by `ui::draw` whenever this is `Some` -- see
+    /// `Mode::Editing`'s own doc comment), refreshed on every `Ctrl+S`
+    /// (`editor_keymap::handle_editor_key`'s own `Save` arm) so editing
+    /// the source and checking the rendered result stays a single
+    /// side-by-side workflow rather than a separate preview-then-edit
+    /// round trip. Requested directly ("одновременно просматривать
+    /// .md, редактировать его в левой панели и при сохранении смотреть
+    /// что в правой"). Lives here rather than inside `Mode::Editing`'s
+    /// own tuple so every *other* `Mode::Editing`/`ConfirmDiscard` call
+    /// site (plain `F4`, Find file's own edit-selected-result, the user
+    /// menu's scratch-file command editor) doesn't need to thread a
+    /// second, almost-always-`None` field through -- `None` there is
+    /// just this field never having been set. `app.active` (`0` =
+    /// editor, `1` = preview) decides which side keyboard input reaches
+    /// while this is `Some`; `Tab` toggles it (`main.rs::handle_key_event`).
+    /// Cleared by `editor_keymap::return_from_editor` the moment the
+    /// editor actually closes for good.
+    pub markdown_edit_preview: Option<MarkdownPreviewState>,
 }
 
 
@@ -405,6 +431,7 @@ impl App {
             user_menu_command_edit: None,
             image_picker: Picker::halfblocks(),
             mouse_capture_enabled: false,
+            markdown_edit_preview: None,
         })
     }
 

@@ -1,21 +1,16 @@
-use ratatui::{
-    layout::Rect,
-    style::Style,
-    widgets::{Block, Borders},
-    Frame,
-};
+use ratatui::{layout::Rect, text::Line, Frame};
 use ratatui_image::{FilterType, Resize, StatefulImage};
 
 use crate::explorer::ImagePreviewState;
 use crate::theming::Theme;
+use crate::ui::preview::{draw_preview_frame, file_title};
 
 /// Renders `F3`'s currently-previewed image into `area` -- replaces the
 /// right panel's own file listing entirely while `Mode::ImagePreview` is
 /// active (`ui::draw`'s own panel-drawing site), rather than overlaying
-/// a popup on top of it. Same border styling `draw_panel` uses for the
-/// *active* panel (`theme.accent`), since this panel is the one `F3`
-/// switched focus to (`explorer::image_preview::open_preview`'s own doc
-/// comment).
+/// a popup on top of it. Border/title chrome comes from
+/// `ui::preview::draw_preview_frame`, shared with
+/// `ui::markdown_preview::draw_markdown_preview`.
 ///
 /// `Resize::Fit`'s own default filter (left unset) is
 /// `FilterType::Nearest` -- reported directly as looking "terrible" on
@@ -29,10 +24,8 @@ use crate::theming::Theme;
 /// a resize only happens once per image open/`Left`/`Right` switch, not
 /// per frame, so it's not worth trading quality for.
 pub fn draw_image_preview(frame: &mut Frame, area: Rect, state: &mut ImagePreviewState, theme: &Theme) {
-    let title = state.current_path().file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-    let block = Block::default().borders(Borders::ALL).border_style(Style::default().fg(theme.accent)).title(title);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let title = file_title(state.current_path());
+    let inner = draw_preview_frame(frame, area, theme, Line::raw(title), None);
 
     let image = StatefulImage::default().resize(Resize::Fit(Some(FilterType::Lanczos3)));
     frame.render_stateful_widget(image, inner, state.protocol_mut());

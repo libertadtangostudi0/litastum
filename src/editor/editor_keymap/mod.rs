@@ -1,6 +1,7 @@
 use color_eyre::eyre::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tracing::debug;
+use crossterm::event::{DisableMouseCapture, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::execute;
+use tracing::{debug, warn};
 
 use crate::app::{App, Mode};
 use crate::explorer;
@@ -198,7 +199,17 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
     match command {
         EditorCommand::Close => unreachable!("handled above"),
-        EditorCommand::Save => active_editor.save()?,
+        EditorCommand::Save => {
+            active_editor.save()?;
+            // Keeps a linked embedded preview (`App::markdown_edit_preview`)
+            // in sync with what was just written -- requested directly
+            // ("при сохранении смотреть что в правой (preview)"). A
+            // disjoint field borrow from `active_editor` above (both are
+            // separate fields of `app`), not a re-borrow of `app.mode`.
+            if let Some(preview) = &mut app.markdown_edit_preview {
+                preview.reload();
+            }
+        }
         EditorCommand::Find => active_editor.start_search(),
         EditorCommand::SelectAll => active_editor.select_all(),
         EditorCommand::WordSelect { forward } => active_editor.extend_word_selection(forward),
@@ -272,8 +283,14 @@ fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
 /// `Esc` in the editor: closes straight back to browsing if the buffer
 /// has no unsaved changes, otherwise moves to `Mode::ConfirmDiscard`
-/// instead of discarding them silently.
-fn close_editor_or_confirm(app: &mut App) -> Result<()> {
+/// instead of discarding them silently. `pub(crate)` (not just a
+/// private `fn`) so `explorer::markdown_preview::input::handle_markdown_edit_preview_key`
+/// can reuse it too -- `Esc`/`F3` on the *embedded preview* half of a
+/// combined editor+preview session (`App::markdown_edit_preview`) needs
+/// to close the whole session exactly like `Esc` on the editor half
+/// already does, unsaved-changes prompt included, rather than
+/// duplicating this logic for that one extra caller.
+pub(crate) fn close_editor_or_confirm(app: &mut App) -> Result<()> {
     let Mode::Editing(editor) = &app.mode else {
         return Ok(());
     };
@@ -310,8 +327,23 @@ fn close_editor_or_confirm(app: &mut App) -> Result<()> {
 /// `Mode::ConfirmDiscard`'s own `Cancel` path (back into the editor,
 /// nothing lost) deliberately does *not* call this -- the editor hasn't
 /// actually closed there.
+///
+/// Also clears `App::markdown_edit_preview` and turns mouse capture
+/// back off (`DisableMouseCapture`) whenever a linked preview was
+/// showing -- the embedded-preview half of a combined editor+preview
+/// session (`explorer::markdown_preview::open_edit_preview`) has no
+/// close path of its own once this actually runs, since `Esc`/`F3` on
+/// either half funnels through `close_editor_or_confirm` into here.
+/// Plain `F4` editing never sets `markdown_edit_preview` at all, so
+/// this is a no-op for it.
 fn return_from_editor(app: &mut App) -> Result<()> {
     app.active_panel().reload()?;
+    if app.markdown_edit_preview.take().is_some() && app.mouse_capture_enabled {
+        if let Err(err) = execute!(std::io::stdout(), DisableMouseCapture) {
+            warn!(%err, "failed to disable mouse capture after closing the markdown editor+preview session");
+        }
+        app.mouse_capture_enabled = false;
+    }
     app.mode = if let Some(state) = app.editor_return_to.take() {
         Mode::FindFile(state)
     } else if let Some(edit) = app.user_menu_command_edit.take() {

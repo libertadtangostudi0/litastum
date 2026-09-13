@@ -7,16 +7,16 @@ use super::links::MarkdownLink;
 use super::render::render_markdown;
 use super::{is_markdown_file, MarkdownLine, MarkdownSpanKind, PAGE_SIZE};
 
-/// `F3` on a `.md`/`.markdown` file (`Mode::MarkdownPreview`): the
-/// file's content, already parsed into styled lines
-/// (`render_markdown`), and which line is scrolled to the top of the
-/// preview area. A real rendered preview (headings/bold/lists/quotes/
-/// code shown structurally, not as highlighted raw text) rather than
-/// just opening the file read-only in the built-in editor -- the two
-/// options `TODO/viewer.md` originally left open; this is closer to
-/// what "preview" usually means for Markdown specifically (a browser-
-/// style rendering), and reuses none of the editor's own machinery, so
-/// it stays a genuinely separate, simpler code path.
+/// `F3` on a `.md`/`.markdown` file: the file's content, already parsed
+/// into styled lines (`render_markdown`), and which line is scrolled to
+/// the top of the preview area. Shown live alongside the built-in
+/// editor for the same file (`App::markdown_edit_preview`) -- a real
+/// rendered preview (headings/bold/lists/quotes/code shown
+/// structurally, not as highlighted raw text) rather than a second copy
+/// of the editor's own syntax-highlighted raw-text view, and reuses
+/// none of the editor's own machinery, so it stays a genuinely separate,
+/// simpler code path; `reload()` is the one place they touch, called
+/// after every `Ctrl+S` so editing and rendering stay in sync.
 pub struct MarkdownPreviewState {
     path: PathBuf,
     lines: Vec<MarkdownLine>,
@@ -68,6 +68,18 @@ pub struct MarkdownPreviewState {
     /// module already does for rendering, so hit-testing and what's
     /// actually on screen can never disagree.
     visible_row_links: Vec<Vec<(u16, u16, String)>>,
+    /// The source line (0-indexed) each entry of `lines` started at --
+    /// same length as `lines`, parallel by index, produced by
+    /// `render_markdown` alongside it. Only ever read through
+    /// `sync_to_editor_cursor`; see its own doc comment.
+    line_source_rows: Vec<usize>,
+    /// Which entry of `lines` corresponds to the built-in editor's own
+    /// cursor line right now, if any -- set by `sync_to_editor_cursor`,
+    /// read by `ui::markdown_preview::draw_markdown_preview` to paint
+    /// that line with a highlighted background. `None` before the first
+    /// sync (nothing edited yet this session) or if the document is
+    /// empty.
+    highlighted_line: Option<usize>,
 }
 
 impl MarkdownPreviewState {
@@ -87,7 +99,42 @@ impl MarkdownPreviewState {
             }
         };
 
-        Some(Self { path: path.to_path_buf(), lines: render_markdown(&content), scroll: 0, content_area: None, link_message: None, visible_row_links: Vec::new() })
+        let (lines, line_source_rows) = render_markdown(&content);
+        Some(Self {
+            path: path.to_path_buf(),
+            lines,
+            scroll: 0,
+            content_area: None,
+            link_message: None,
+            visible_row_links: Vec::new(),
+            line_source_rows,
+            highlighted_line: None,
+        })
+    }
+
+    /// Re-reads and re-renders this preview's own file from disk --
+    /// called right after a successful `Editor::save()` so the embedded
+    /// preview (`App::markdown_edit_preview`) reflects what was just
+    /// written, without recreating a whole new `MarkdownPreviewState`
+    /// (which would also lose `scroll`). `scroll` is clamped to the
+    /// freshly re-rendered line count rather than reset to `0` --
+    /// editing near the end of a long document and saving shouldn't
+    /// jump the preview back to the top. Leaves everything untouched on
+    /// a read failure (logged, not surfaced -- same "never blocks on
+    /// this" convention as the rest of this module) rather than
+    /// blanking a previously-good preview over a transient disk error.
+    pub fn reload(&mut self) {
+        let content = match fs::read_to_string(&self.path) {
+            Ok(content) => content,
+            Err(err) => {
+                warn!(path = %self.path.display(), %err, "failed to reload markdown preview after save");
+                return;
+            }
+        };
+        let (lines, line_source_rows) = render_markdown(&content);
+        self.lines = lines;
+        self.line_source_rows = line_source_rows;
+        self.scroll = self.scroll.min(self.lines.len().saturating_sub(1));
     }
 
     /// Records where the content was actually drawn this frame --
@@ -163,6 +210,66 @@ impl MarkdownPreviewState {
 
     pub fn page_up(&mut self) {
         self.scroll = self.scroll.saturating_sub(PAGE_SIZE);
+    }
+
+    /// Scrolls to and highlights the rendered line corresponding to the
+    /// built-in editor's own cursor row (`Editor::cursor_row`) -- called
+    /// every frame while a linked editor has keyboard focus (`ui::draw`,
+    /// only while `App::active == 0`, so a manual scroll through the
+    /// preview itself -- `App::active == 1` -- isn't immediately
+    /// overwritten).
+    ///
+    /// `relative_position` (`0.0` = the matched line lands at the very
+    /// top of the preview's own visible area, `1.0` = the very bottom)
+    /// is where the cursor currently sits within the *editor's* own
+    /// visible page -- `ui::draw` computes it from `Editor::cursor_row`/
+    /// `viewport_top_row`, this method just places the matched preview
+    /// line at the same fraction of `visible_height` (the preview's own
+    /// content row count). Requested directly, twice: first "сделать
+    /// одновременной... выделить строку", then, once a simpler always-
+    /// top-aligned version was actually seen in use, "можно их примерно
+    /// на одном уровне держать по странице, если редактирование в
+    /// середине страницы, то и превью в том же месте" -- top-aligning
+    /// technically kept them in sync but put the highlighted line at a
+    /// different *screen row* than the cursor's own, which is what
+    /// "held at the same level" actually meant.
+    pub fn sync_to_editor_cursor(&mut self, source_row: usize, relative_position: f64, visible_height: usize) {
+        let Some(line_index) = self.line_for_source_row(source_row) else {
+            return;
+        };
+        self.highlighted_line = Some(line_index);
+        let offset = (relative_position.clamp(0.0, 1.0) * visible_height as f64).round() as usize;
+        self.scroll = line_index.saturating_sub(offset);
+    }
+
+    /// Which entry of `lines()` is currently highlighted as "the line
+    /// being edited," if any -- see `highlighted_line`'s own field doc
+    /// comment.
+    pub fn highlighted_line(&self) -> Option<usize> {
+        self.highlighted_line
+    }
+
+    /// The index into `lines()` whose own source line is the closest
+    /// one at or before `source_row` -- skips blank separator lines
+    /// entirely (`render_markdown` stamps each with whatever row the
+    /// block it followed *closed* on, which is often the exact same row
+    /// as that block's own last real content line -- including one
+    /// would make it the ambiguous, wrong pick whenever a scan for "the
+    /// last line at or before this row" reaches it first). Falls back
+    /// to the first real content line if `source_row` sits before
+    /// everything (e.g. the cursor is on a blank line at the very top);
+    /// `None` only when the document has no content lines at all.
+    fn line_for_source_row(&self, source_row: usize) -> Option<usize> {
+        let mut best: Option<usize> = None;
+        for (index, line) in self.lines.iter().enumerate() {
+            if line.is_empty() {
+                continue;
+            }
+            if self.line_source_rows[index] <= source_row {
+                best = Some(index);
+            }
+        }
+        best.or_else(|| self.lines.iter().position(|line| !line.is_empty()))
     }
 
     /// The URL of the link actually rendered at screen position

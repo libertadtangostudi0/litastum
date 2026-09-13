@@ -22,6 +22,7 @@ mod image_preview;
 mod markdown_preview;
 mod menu;
 mod popup;
+mod preview;
 mod popup_style_menu;
 mod shell;
 mod theme_menu;
@@ -43,8 +44,16 @@ const MIN_COLUMN_WIDTH: u16 = 24;
 pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
     let theme = app.theme; // Theme is Copy -- see theme.rs for why
     let area = frame.area();
+    // Plain `F4` editing (no linked preview) and its own `ConfirmDiscard`
+    // still take over the *entire* frame, exactly as before. Once
+    // `App::markdown_edit_preview` is `Some` (`F3` on a `.md`/`.markdown`
+    // file, `explorer::markdown_preview::open_edit_preview`), both fall
+    // through instead to the ordinary panel-layout code below, which
+    // draws the editor into the *left* panel's own slot and the live
+    // preview into the *right* one -- see `left_columns`/`right_columns`.
+    let has_linked_preview = app.markdown_edit_preview.is_some();
     match &mut app.mode {
-        Mode::Editing(editor) => {
+        Mode::Editing(editor) if !has_linked_preview => {
             draw_editor(frame, area, editor, &theme);
             if editor.is_searching() {
                 // Drawn on top, same "popup over a full-screen mode"
@@ -57,7 +66,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
             }
             return [(1, 1), (1, 1)];
         }
-        Mode::ConfirmDiscard(editor) => {
+        Mode::ConfirmDiscard(editor) if !has_linked_preview => {
             draw_editor(frame, area, editor, &theme);
             draw_confirm_discard_popup(frame, area, &theme);
             return [(1, 1), (1, 1)];
@@ -78,7 +87,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         | Mode::AddUserMenuItem(..)
         | Mode::Info(_)
         | Mode::ImagePreview(_)
-        | Mode::MarkdownPreview(_)
+        | Mode::Editing(_)
+        | Mode::ConfirmDiscard(_)
         | Mode::MarkdownLinkSearch(..) => {}
     }
 
@@ -96,34 +106,91 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(root[0]);
 
-    let left_columns = draw_panel(frame, panels[0], &app.panels[0], app.active == 0, &theme);
+    // Keeps the embedded preview scrolled to (and highlighting) roughly
+    // the same *relative* line the editor's own cursor is on -- e.g.
+    // editing halfway down the editor's own visible page keeps the
+    // matching preview line roughly halfway down its own page too,
+    // rather than always snapping it to the very top. Requested
+    // directly, twice: first "прокрутку... сделать одновременной...
+    // выделить строку", then, once that top-aligned version was seen
+    // in use, "можно их примерно на одном уровне держать по странице,
+    // если редактирование в середине страницы, то и превью в том же
+    // месте" -- a top-aligned sync technically kept them "together" but
+    // put the highlighted line at a different *screen row* than the
+    // cursor whenever the cursor wasn't already at the editor's own top
+    // line, which is what "on the same level" actually meant. Computed
+    // from `edtui`'s own real live viewport top (`Editor::viewport_top_row`,
+    // `EditorState::viewport_offset`) rather than assumed -- unlike
+    // `Panel`'s own scroll offset (this app's own state), the editor's
+    // vertical scrolling is entirely `edtui`'s internal business, so
+    // this is the one number it does expose for exactly this kind of
+    // external sync. Both heights are derived the same way their own
+    // `draw_editor`/`draw_preview_frame` compute their real inner
+    // content area (editor: minus the border edtui's own Block draws,
+    // minus the one-row hint line below it; preview: minus its own
+    // border) rather than duplicating that layout math by guesswork.
+    // Gated on `app.active == 0` (the editor has keyboard focus) so
+    // Tab-ing over to the preview and scrolling it manually isn't
+    // immediately undone the next frame just because the cursor hasn't
+    // moved.
+    if has_linked_preview && app.active == 0 {
+        let cursor_info = match &app.mode {
+            Mode::Editing(editor) | Mode::ConfirmDiscard(editor) => Some((editor.cursor_row(), editor.viewport_top_row())),
+            _ => None,
+        };
+        if let Some((cursor_row, viewport_top)) = cursor_info {
+            let editor_visible_height = panels[0].height.saturating_sub(3); // border (2) + hint row (1)
+            let preview_visible_height = panels[1].height.saturating_sub(2); // border (2)
+            let relative_position = if editor_visible_height > 0 {
+                (cursor_row.saturating_sub(viewport_top) as f64 / editor_visible_height as f64).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            if let Some(preview) = app.markdown_edit_preview.as_mut() {
+                preview.sync_to_editor_cursor(cursor_row, relative_position, preview_visible_height as usize);
+            }
+        }
+    }
+
+    // `F3` on a `.md`/`.markdown` file draws the built-in editor into
+    // the *left* slot (`App::markdown_edit_preview`'s own doc comment,
+    // `Mode::Editing`'s doc comment) instead of that panel's own file
+    // listing -- `Mode::MarkdownLinkSearch` parks the editor in its own
+    // tuple while its popup is up (below), but the same editor, same
+    // slot, still underneath it.
+    let left_columns = match &mut app.mode {
+        Mode::Editing(editor) | Mode::ConfirmDiscard(editor) if has_linked_preview => {
+            draw_editor(frame, panels[0], editor, &theme);
+            (1, 1)
+        }
+        Mode::MarkdownLinkSearch(editor, _) => {
+            draw_editor(frame, panels[0], editor, &theme);
+            (1, 1)
+        }
+        _ => draw_panel(frame, panels[0], &app.panels[0], app.active == 0, &theme),
+    };
     // `F3` replaces the right panel's own file listing with the
     // previewed image or rendered Markdown entirely
-    // (`explorer::image_preview`/`markdown_preview::open_preview`'s own
-    // doc comments) -- not a popup drawn over it, unlike every other
+    // (`explorer::image_preview`/`markdown_preview::open_edit_preview`'s
+    // own doc comments) -- not a popup drawn over it, unlike every other
     // `Mode` handled in the match below. `Panel::set_columns`/
     // `set_visible_rows` don't matter here: navigation commands never
-    // reach the right panel while either preview `Mode` is active (each
-    // has its own `handle_*_preview_key` intercepting every key), and
-    // the very next frame after `Esc`/`F3` closes the preview
+    // reach the right panel while either preview is showing (each has
+    // its own `handle_*_preview_key`/`app.active`-gated dispatch
+    // intercepting every key), and the very next frame after closing it
     // recomputes real values again.
-    let right_columns = match &mut app.mode {
-        Mode::ImagePreview(state) => {
-            image_preview::draw_image_preview(frame, panels[1], state, &theme);
-            (1, 1)
-        }
-        Mode::MarkdownPreview(state) => {
-            markdown_preview::draw_markdown_preview(frame, panels[1], state, &theme);
-            (1, 1)
-        }
+    let right_columns = if let Mode::ImagePreview(state) = &mut app.mode {
+        image_preview::draw_image_preview(frame, panels[1], state, &theme);
+        (1, 1)
+    } else if has_linked_preview && matches!(&app.mode, Mode::Editing(_) | Mode::ConfirmDiscard(_) | Mode::MarkdownLinkSearch(..)) {
         // The link-search popup (below) is an overlay over this same
-        // underlying preview -- draw it exactly like `MarkdownPreview`
-        // itself here, so the document stays visible behind the popup.
-        Mode::MarkdownLinkSearch(state, _) => {
-            markdown_preview::draw_markdown_preview(frame, panels[1], state, &theme);
-            (1, 1)
-        }
-        _ => draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme),
+        // underlying preview -- draw it exactly like the plain combined
+        // view here, so the document stays visible behind the popup.
+        let preview = app.markdown_edit_preview.as_mut().expect("has_linked_preview just confirmed this is Some");
+        markdown_preview::draw_markdown_preview(frame, panels[1], preview, &theme);
+        (1, 1)
+    } else {
+        draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme)
     };
     let cwd = app.panels[app.active].path.clone();
     let prefix_len = draw_command_line(frame, root[1], &cwd, &app.command_line, app.command_line_selection_anchor, app.command_line_cursor, &theme);
@@ -196,6 +263,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         Mode::Info(message) => draw_info_popup(frame, area, message, &theme, popup_style),
         Mode::MarkdownLinkSearch(_, search) => {
             let cursor = markdown_preview::draw_markdown_link_search(frame, area, search, &theme, popup_style);
+            frame.set_cursor_position(cursor);
+        }
+        // Both mirror plain `F4`'s own popups (top of this function) --
+        // reached here instead because a linked preview
+        // (`App::markdown_edit_preview`) sent `Editing`/`ConfirmDiscard`
+        // through the ordinary split-panel path above rather than the
+        // early, full-screen return.
+        Mode::ConfirmDiscard(_) if has_linked_preview => draw_confirm_discard_popup(frame, area, &theme),
+        Mode::Editing(editor) if has_linked_preview && editor.is_searching() => {
+            let cursor = editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme);
             frame.set_cursor_position(cursor);
         }
         _ => {}

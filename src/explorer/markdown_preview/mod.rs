@@ -6,7 +6,7 @@ mod wrap;
 
 use std::path::Path;
 
-pub use input::{handle_markdown_link_search_key, handle_markdown_preview_key, handle_markdown_preview_mouse, open_preview};
+pub use input::{handle_markdown_edit_preview_key, handle_markdown_link_search_key, handle_markdown_preview_mouse, open_edit_preview};
 pub use links::MarkdownLinkSearchState;
 pub use state::MarkdownPreviewState;
 pub use wrap::wrap_markdown_line;

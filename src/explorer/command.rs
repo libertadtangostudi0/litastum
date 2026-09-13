@@ -55,11 +55,12 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
 
 
 /// `F3`: previews the entry under the cursor -- an image
-/// (`image_preview::open_preview`) or a `.md`/`.markdown` file
-/// (`markdown_preview::open_preview`), checked by extension before
-/// either module even tries to open it, so exactly one preview kind
-/// ever runs per press. A no-op for anything else (a directory, an
-/// unsupported/undecodable file) -- each module's own `open_preview`
+/// (`image_preview::open_preview`) or, for a `.md`/`.markdown` file, the
+/// built-in editor and a live rendered preview side by side
+/// (`markdown_preview::open_edit_preview`) -- checked by extension
+/// before either module even tries to open it, so exactly one preview
+/// kind ever runs per press. A no-op for anything else (a directory, an
+/// unsupported/undecodable file) -- each module's own open function
 /// already no-ops on its own non-matching cases, but checking here
 /// first avoids a wasted `fs::read_dir`/decode attempt for a file
 /// that's obviously the other kind.
@@ -71,7 +72,7 @@ fn preview_selected(app: &mut App) {
     if image_preview::is_supported_image(&path) {
         image_preview::open_preview(app);
     } else if markdown_preview::is_markdown_file(&path) {
-        markdown_preview::open_preview(app);
+        markdown_preview::open_edit_preview(app);
     }
 }
 

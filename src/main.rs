@@ -16,7 +16,7 @@ use std::io::{self, Stdout};
 use color_eyre::eyre::Result;
 use crossterm::{
     cursor::SetCursorStyle,
-    event::{self, DisableMouseCapture, Event, KeyEventKind, KeyModifiers},
+    event::{self, DisableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -223,11 +223,14 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
 fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     match event::read()? {
         Event::Key(key) => handle_key_event(app, key, terminal),
-        // Only ever arrives while `Mode::MarkdownPreview` has turned
-        // capture on for itself (`explorer::markdown_preview::open_preview`'s
-        // own doc comment) -- every other mode just never gets a mouse
-        // event to begin with, so no mode check is needed here the way
+        // Only ever arrives while `App::markdown_edit_preview` has
+        // turned capture on for itself
+        // (`explorer::markdown_preview::open_edit_preview`'s own doc
+        // comment) -- every other mode just never gets a mouse event to
+        // begin with, so no mode check is needed here the way
         // `handle_key_event`'s own big match needs one per mode.
+        // `handle_markdown_preview_mouse` itself no-ops outside
+        // `Mode::Editing`/without a linked preview.
         Event::Mouse(mouse) => {
             explorer::handle_markdown_preview_mouse(app, mouse);
             Ok(())
@@ -250,6 +253,19 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &m
     app.alt_held = key.modifiers.contains(KeyModifiers::ALT);
 
     match &app.mode {
+        // `Tab` toggles which half of a combined editor+preview session
+        // (`App::markdown_edit_preview`) keyboard input reaches -- `0`
+        // the editor, `1` the embedded preview -- intercepted here,
+        // ahead of both `editor::handle_editor_key` and
+        // `explorer::handle_markdown_edit_preview_key`, since it's
+        // meaningless to either on its own (plain `F4` editing, with no
+        // linked preview, forwards `Tab` straight to the editor as
+        // always -- see the `_ if` guard's own condition).
+        Mode::Editing(_) if app.markdown_edit_preview.is_some() && key.code == KeyCode::Tab => {
+            app.active = 1 - app.active;
+            Ok(())
+        }
+        Mode::Editing(_) if app.markdown_edit_preview.is_some() && app.active == 1 => explorer::handle_markdown_edit_preview_key(app, key),
         Mode::Editing(_) => editor::handle_editor_key(app, key),
         Mode::ConfirmDiscard(_) => editor::handle_confirm_discard_key(app, key),
         Mode::ConfirmDelete(_) => explorer::handle_confirm_delete_key(app, key),
@@ -267,10 +283,6 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &m
         Mode::AddUserMenuItem(..) => explorer::handle_add_user_menu_item_key(app, key),
         Mode::ImagePreview(_) => {
             explorer::handle_image_preview_key(app, key);
-            Ok(())
-        }
-        Mode::MarkdownPreview(_) => {
-            explorer::handle_markdown_preview_key(app, key);
             Ok(())
         }
         Mode::MarkdownLinkSearch(..) => {

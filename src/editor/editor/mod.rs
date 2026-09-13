@@ -258,6 +258,35 @@ impl Editor {
         self.state.cursor
     }
 
+    /// The cursor's current row (0-indexed) into the buffer -- used by
+    /// `explorer::markdown_preview::state::MarkdownPreviewState::sync_to_editor_cursor`
+    /// to keep a linked embedded preview (`App::markdown_edit_preview`)
+    /// scrolled to roughly the same source line as whatever's being
+    /// edited, and to highlight it there. Requested directly
+    /// ("прокрутку текста надо сделать одновременной... выделить
+    /// строку на превью, которая редактируется в редакторе").
+    pub fn cursor_row(&self) -> usize {
+        self.state.cursor.row
+    }
+
+    /// The buffer row currently scrolled to the *top* of the editor's
+    /// own visible area -- `edtui`'s own live viewport offset
+    /// (`EditorState::viewport_offset`), updated as part of its normal
+    /// rendering. Combined with `cursor_row` by `ui::draw` to work out
+    /// how far down its own visible page the cursor currently sits, so
+    /// a linked embedded preview (`App::markdown_edit_preview`) can
+    /// scroll to roughly the same *relative* position on its own page
+    /// rather than always snapping the matched line to its own top --
+    /// requested directly, after a first, top-aligned version put the
+    /// highlighted line at a visibly different screen row than the
+    /// cursor whenever editing wasn't already at the very top of the
+    /// editor ("можно... держать примерно на одном уровне... если
+    /// редактирование в середине страницы, то и превью в том же
+    /// месте").
+    pub fn viewport_top_row(&self) -> usize {
+        self.state.viewport_offset().1
+    }
+
 
     /// Writes the current buffer back to the file it was opened from.
     pub fn save(&mut self) -> io::Result<()> {

@@ -59,8 +59,7 @@ app is otherwise following (`F3` view vs. `F4` edit).
       bullet/number prefixes and indentation), links (accent + underline,
       URL itself not shown -- a preview, not a browser), and horizontal
       rules. Same right-panel-replacement convention `F3`'s image
-      preview already established (`app.active = 1`,
-      `Mode::MarkdownPreview`, `Esc`/`F3` to close) -- `Up`/`Down`/
+      preview already established (`Esc`/`F3` to close) -- `Up`/`Down`/
       `PageUp`/`PageDown` scroll instead of `Left`/`Right` cycling
       (there's no "next .md in the directory" concept requested the way
       there was for images). `pulldown-cmark` added with
@@ -179,7 +178,7 @@ app is otherwise following (`F3` view vs. `F4` edit).
       exact by construction, no screen-position guessing at all): typing
       narrows by label or URL (case-insensitive), `Up`/`Down` move,
       `Enter` opens the highlighted one and `Esc` cancels, both
-      returning to `Mode::MarkdownPreview`. Modeled on the editor's own
+      returning to the preview. Modeled on the editor's own
       `Ctrl+F` search box for the query field itself (append/backspace
       only, no cursor movement -- a short filter query has no real need
       for `text_field.rs`'s fuller editing machinery). `Ctrl`+click
@@ -258,6 +257,87 @@ app is otherwise following (`F3` view vs. `F4` edit).
       `editor/editor_keymap/`, ...), just also split by concern
       (rendering, wrapping, state, links, input) since the production
       code on its own needed more than a mechanical test-only move.
+- [x] **`F3` on `.md`/`.markdown` now opens the built-in editor and the
+      live preview side by side**, requested directly ("одновременно
+      просматривать .md, редактировать его в левой панели и при
+      сохранении смотреть что в правой (preview)") -- replaces the
+      earlier read-only-only preview for these files entirely (the
+      standalone `Mode::MarkdownPreview` variant, with no editor
+      attached, is gone; `Mode::Editing`/`ConfirmDiscard` are reused
+      instead, split into two panels instead of full-screen whenever
+      `App::markdown_edit_preview` is `Some` -- see `Mode::Editing`'s
+      own doc comment for why this reuses those two variants rather
+      than adding parallel ones, which would have meant duplicating
+      `editor_keymap.rs`'s Save/Close/discard-confirm logic). `Ctrl+S`
+      still saves as `F4` always has, and now also calls
+      `MarkdownPreviewState::reload()` to re-render the just-written
+      file into the linked preview -- editing and checking the result
+      is one continuous workflow instead of a separate preview-then-
+      edit round trip. `App::active` (`0` = editor, `1` = preview)
+      decides which half keyboard input reaches; `Tab`
+      (`main.rs::handle_key_event`) toggles it -- deliberately claimed
+      here the same way it's claimed for panel-switching in ordinary
+      `Mode::Browsing`, so the embedded preview keeps its own
+      `Up`/`Down`/`PageUp`/`PageDown` scrolling and `l`/`Ctrl`+click
+      link interactivity (a real, explicit decision -- an earlier,
+      simpler design considered making the embedded preview read-only/
+      non-interactive, rejected once it became clear that would make
+      `Ctrl`+click and `l`-search unreachable for `.md` files
+      altogether, since there's no longer a preview-without-an-editor
+      entry point). `l` on the preview half "parks" the `Editor` inside
+      `Mode::MarkdownLinkSearch`'s own tuple (`Mode` can only hold one
+      thing at a time) while its popup is up; `Esc`/`F3` on *either*
+      half closes the whole session through the exact same
+      `editor::close_editor_or_confirm` plain `F4` editing already
+      uses, unsaved-changes prompt included, regardless of which side
+      had focus when it was pressed.
+
+      **Follow-up, requested directly** ("прокрутку текста надо сделать
+      одновременной (схожий контент) примерно на одном уровне... выделить
+      строку на превью, которая редактируется в редакторе"): the preview
+      now scrolls to and highlights whichever rendered line corresponds
+      to the editor's own cursor line, every frame the editor has focus
+      (`App::active == 0`) -- `render_markdown` now also returns, per
+      rendered line, the 0-indexed *source* line it started at
+      (`Parser::into_offset_iter`'s own byte ranges translated to a line
+      number), and `MarkdownPreviewState::sync_to_editor_cursor` maps
+      `Editor::cursor_row()` to the closest matching rendered line
+      (skipping blank separator lines, which share a source row with
+      whatever block just closed and would otherwise be picked instead
+      of the real content line right before them), and records it as
+      `highlighted_line` for `draw_markdown_preview` to paint with
+      `theme.current_row_bg` -- every wrapped visual row of a
+      highlighted paragraph, not just its first. Approximate by
+      construction (documented on `render_markdown` itself): a source
+      paragraph spanning several lines collapses to one flowed preview
+      line stamped with just its first source line, so mid-paragraph
+      cursor positions all land on the same preview line -- matches
+      what was actually asked for ("примерно", not byte-exact).
+      Deliberately gated on `App::active == 0` so Tab-ing to the preview
+      and scrolling it by hand isn't immediately undone the next frame
+      just because the cursor hasn't moved.
+
+      **Second follow-up, once the first (top-aligning) version was
+      actually seen in use**: "можно их примерно на одном уровне держать
+      по странице, если редактирование в середине страницы, то и превью
+      в том же месте" -- always scrolling the matched line to the
+      preview's own top kept the two in sync but put it at a visibly
+      different *screen row* than the cursor whenever the cursor wasn't
+      already at the very top of the editor's own visible page, which
+      is what "held at the same level" actually meant. Fixed by matching
+      the *relative* position instead of always top-aligning:
+      `Editor::viewport_top_row` (`EditorState::viewport_offset`, the
+      one thing `edtui` does expose about its own live scroll position)
+      combined with `Editor::cursor_row` tells `ui::draw` how far down
+      the editor's own visible page the cursor currently sits (`0.0` at
+      the top, `1.0` at the bottom); `sync_to_editor_cursor` now takes
+      that fraction plus the preview's own visible row count and offsets
+      `scroll` back from the matched line by that same fraction of its
+      own height, so editing halfway down the editor's page keeps the
+      matching preview line roughly halfway down its own page too.
+      Both panels' visible-row counts are derived the same way
+      `draw_editor`/`draw_preview_frame` compute their own real content
+      area (border/hint rows subtracted) rather than assumed.
 - [ ] Widen image preview to `.gif`/`.webp` (the `image` crate can
       already decode both -- just a `Cargo.toml` feature-flag and
       `SUPPORTED_EXTENSIONS` change) -- not asked for explicitly, so not

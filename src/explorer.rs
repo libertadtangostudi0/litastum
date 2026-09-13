@@ -19,7 +19,7 @@ pub use find_file::{handle_find_file_key, FindFilePhase, FindFileState};
 pub use image_preview::{handle_image_preview_key, ImagePreviewState};
 pub use keymap::{resolve, Command};
 pub use markdown_preview::{
-    handle_markdown_link_search_key, handle_markdown_preview_key, handle_markdown_preview_mouse, wrap_markdown_line, MarkdownLine, MarkdownLinkSearchState, MarkdownPreviewState,
+    handle_markdown_edit_preview_key, handle_markdown_link_search_key, handle_markdown_preview_mouse, wrap_markdown_line, MarkdownLine, MarkdownLinkSearchState, MarkdownPreviewState,
     MarkdownSpan, MarkdownSpanKind,
 };
 // `MarkdownLink` has no production caller outside `markdown_preview`

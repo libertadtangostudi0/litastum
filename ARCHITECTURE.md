@@ -42,8 +42,16 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             ratatui-image); ui/image_preview.rs draws it
                             into the right panel's own area in place of
                             its usual file listing. See TODO/viewer.md.
-  explorer/markdown_preview/ — F3 on a .md/.markdown file: split into a
-                            directory once the single-file version
+  explorer/markdown_preview/ — F3 on a .md/.markdown file: opens the
+                            built-in editor (left panel, Mode::Editing --
+                            reused as-is, not a separate Mode, so it
+                            keeps editor_keymap.rs's Save/Close/discard-
+                            confirm logic unchanged) plus a linked live
+                            preview (App::markdown_edit_preview, right
+                            panel), refreshed on every Ctrl+S. App::active
+                            (0/1) picks which side keyboard input
+                            reaches; Tab toggles it (main.rs). Split into
+                            a directory once the single-file version
                             passed ~1500 lines (production code alone
                             was already over the ~500-line threshold,
                             not just its tests -- see
@@ -69,7 +77,8 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             label, never its raw URL -- see its own doc
                             comment for the truncated-URL-turns-into-a
                             -broken-but-real-looking-link bug this
-                            avoids), visible_row_links, scroll, link_at
+                            avoids), visible_row_links, scroll, link_at,
+                            reload() (re-renders from disk after a save)
     links.rs                   —   MarkdownLink, MarkdownLinkSearchState,
                             LinkTarget (Url/File), resolve_link_target,
                             open_link -- dispatches a resolved Url to
@@ -78,7 +87,11 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             feeling slow through system_open::open's
                             explorer.exe path) and a resolved File to
                             system_open::open
-    input.rs                    —   open_preview, handle_markdown_preview_key,
+    input.rs                    —   open_edit_preview (Editor::open +
+                            MarkdownPreviewState::open, links them via
+                            App::markdown_edit_preview),
+                            handle_markdown_edit_preview_key (App::active
+                            == 1: scroll, l, Esc/F3 -> editor::close_editor_or_confirm),
                             open_link_search, handle_markdown_link_search_key,
                             handle_markdown_preview_mouse
     (tests split the same way, one sibling tests.rs)
@@ -87,7 +100,8 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             replacement convention as image_preview.rs.
                             Links: Ctrl+click (exact hit-test) or `l` ->
                             Mode::MarkdownLinkSearch (a filterable list
-                            from MarkdownPreviewState::links()) -- both
+                            from MarkdownPreviewState::links(), parking
+                            the Editor in its own tuple meanwhile) -- both
                             resolve/open through the same open_link/
                             resolve_link_target. See TODO/viewer.md.
   explorer/user_menu/    —   F2 -- per-directory script menu, native
@@ -156,6 +170,13 @@ text_field.rs           — shared cursor/selection editing (transfer
 ui/mod.rs               — pure(ish) rendering: App -> ratatui widgets
   ui/popup.rs            —   shared popup chrome (draw_frame, key_pill,
                               separator), style-aware (Classic/Rounded)
+  ui/preview.rs          —   shared full-panel-preview chrome
+                              (draw_preview_frame, file_title) --
+                              image_preview.rs and markdown_preview.rs
+                              both build on this instead of each
+                              constructing their own accent-bordered
+                              Block, same "shared primitive" pattern
+                              popup.rs already established for popups
   ui/{menu,shell,drive_menu,find_file,confirm,theme_menu,
       popup_style_menu,editor_find,command_line,user_menu}.rs
                          —   one rendering module per popup/overlay

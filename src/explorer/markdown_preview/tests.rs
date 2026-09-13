@@ -80,7 +80,7 @@ mod render_markdown_tests {
 
     #[test]
     fn renders_a_heading_with_its_own_level() {
-        let lines = render_markdown("# Title\n");
+        let (lines, _) = render_markdown("# Title\n");
         let heading = lines.iter().find(|line| !line.is_empty()).unwrap();
         assert_eq!(line_text(heading), "Title");
         assert_eq!(heading[0].kind, MarkdownSpanKind::Heading(1));
@@ -88,7 +88,7 @@ mod render_markdown_tests {
 
     #[test]
     fn renders_bold_and_italic_spans() {
-        let lines = render_markdown("plain **bold** and *italic*\n");
+        let (lines, _) = render_markdown("plain **bold** and *italic*\n");
         let line = &lines[0];
         let bold = line.iter().find(|s| s.text == "bold").unwrap();
         assert_eq!(bold.kind, MarkdownSpanKind::Bold);
@@ -98,14 +98,14 @@ mod render_markdown_tests {
 
     #[test]
     fn renders_inline_code_as_a_code_span() {
-        let lines = render_markdown("run `cargo test` now\n");
+        let (lines, _) = render_markdown("run `cargo test` now\n");
         let code = lines[0].iter().find(|s| s.text == "cargo test").unwrap();
         assert_eq!(code.kind, MarkdownSpanKind::Code);
     }
 
     #[test]
     fn renders_a_fenced_code_block_as_code_lines() {
-        let lines = render_markdown("```\nfn main() {}\nlet x = 1;\n```\n");
+        let (lines, _) = render_markdown("```\nfn main() {}\nlet x = 1;\n```\n");
         let code_lines: Vec<&MarkdownLine> = lines.iter().filter(|line| line.iter().any(|s| s.kind == MarkdownSpanKind::Code)).collect();
         assert_eq!(code_lines.len(), 2);
         assert_eq!(line_text(code_lines[0]), "fn main() {}");
@@ -114,21 +114,21 @@ mod render_markdown_tests {
 
     #[test]
     fn renders_unordered_list_items_with_a_bullet_prefix() {
-        let lines = render_markdown("- one\n- two\n");
+        let (lines, _) = render_markdown("- one\n- two\n");
         let items: Vec<String> = lines.iter().filter(|l| !l.is_empty()).map(line_text).collect();
         assert_eq!(items, vec!["- one", "- two"]);
     }
 
     #[test]
     fn renders_ordered_list_items_with_their_own_numbers() {
-        let lines = render_markdown("1. first\n2. second\n");
+        let (lines, _) = render_markdown("1. first\n2. second\n");
         let items: Vec<String> = lines.iter().filter(|l| !l.is_empty()).map(line_text).collect();
         assert_eq!(items, vec!["1. first", "2. second"]);
     }
 
     #[test]
     fn renders_nested_list_items_indented() {
-        let lines = render_markdown("- top\n  - nested\n");
+        let (lines, _) = render_markdown("- top\n  - nested\n");
         let items: Vec<String> = lines.iter().filter(|l| !l.is_empty()).map(line_text).collect();
         assert_eq!(items[0], "- top");
         assert!(items[1].starts_with("  - "), "nested item should be indented: {items:?}");
@@ -136,22 +136,34 @@ mod render_markdown_tests {
 
     #[test]
     fn renders_a_blockquote_with_the_quote_kind() {
-        let lines = render_markdown("> quoted text\n");
+        let (lines, _) = render_markdown("> quoted text\n");
         let line = lines.iter().find(|l| !l.is_empty()).unwrap();
         assert_eq!(line[0].kind, MarkdownSpanKind::Quote);
     }
 
     #[test]
     fn renders_a_horizontal_rule_as_its_own_line() {
-        let lines = render_markdown("above\n\n---\n\nbelow\n");
+        let (lines, _) = render_markdown("above\n\n---\n\nbelow\n");
         assert!(lines.iter().any(|l| l.len() == 1 && l[0].kind == MarkdownSpanKind::Rule));
     }
 
     #[test]
     fn trims_trailing_blank_lines() {
-        let lines = render_markdown("one paragraph\n");
+        let (lines, _) = render_markdown("one paragraph\n");
         assert!(!lines.is_empty());
         assert!(!lines.last().unwrap().is_empty(), "should not end on a blank line");
+    }
+
+    /// The whole point of returning source rows alongside the rendered
+    /// lines: `MarkdownPreviewState::sync_to_editor_cursor` needs to
+    /// know which *source* line each rendered paragraph actually came
+    /// from, not just its position in the output.
+    #[test]
+    fn tracks_the_source_line_each_rendered_paragraph_started_at() {
+        let (lines, rows) = render_markdown("first\n\nsecond\n\nthird\n");
+        assert_eq!(lines.len(), rows.len(), "rows must stay parallel to lines");
+        let content: Vec<(String, usize)> = lines.iter().zip(rows.iter()).filter(|(line, _)| !line.is_empty()).map(|(line, &row)| (line_text(line), row)).collect();
+        assert_eq!(content, vec![("first".to_string(), 0), ("second".to_string(), 2), ("third".to_string(), 4)]);
     }
 }
 
@@ -274,23 +286,95 @@ mod markdown_preview_state_tests {
 
         assert_eq!(state.link_at(0, 0), Some("https://example.com"), "row 0 on screen should now be the scrolled-to line holding the link");
     }
+
+    fn line_text_at(state: &MarkdownPreviewState, index: usize) -> String {
+        state.lines()[index].iter().map(|span| span.text.as_str()).collect()
+    }
+
+    /// The actual point of the whole sync feature: moving the editor's
+    /// cursor onto a source line highlights the rendered line it became
+    /// and scrolls it into view.
+    #[test]
+    fn sync_to_editor_cursor_highlights_and_scrolls_to_the_matching_line() {
+        let dir = unique_scratch_dir("markdown-preview");
+        let path = dir.join("readme.md");
+        fs::write(&path, "first\n\nsecond\n\nthird\n").unwrap();
+        let mut state = MarkdownPreviewState::open(&path).unwrap();
+
+        state.sync_to_editor_cursor(2, 0.0, 24); // "second" starts at source line 2
+
+        let index = state.highlighted_line().expect("should have matched a line");
+        assert_eq!(line_text_at(&state, index), "second");
+        assert_eq!(state.scroll(), index);
+    }
+
+    /// The actual point of the follow-up request: a cursor positioned
+    /// halfway down the *editor's* own visible page should scroll the
+    /// preview so the matched line lands halfway down *its* own page
+    /// too, not always snapped to the top.
+    #[test]
+    fn sync_to_editor_cursor_offsets_the_scroll_by_the_relative_position() {
+        let dir = unique_scratch_dir("markdown-preview");
+        let path = dir.join("readme.md");
+        let content: String = (0..20).map(|i| format!("line {i}\n\n")).collect();
+        fs::write(&path, &content).unwrap();
+        let mut state = MarkdownPreviewState::open(&path).unwrap();
+
+        // "line 10" starts at source row 20 (each paragraph plus its
+        // own trailing blank separator takes 2 source lines).
+        state.sync_to_editor_cursor(20, 0.5, 10);
+
+        let index = state.highlighted_line().expect("should have matched a line");
+        assert_eq!(line_text_at(&state, index), "line 10");
+        assert_eq!(state.scroll(), index - 5, "should scroll back by half the given visible height");
+    }
+
+    /// A cursor row with no rendered line of its own (a blank separator
+    /// line between two paragraphs) should still highlight *something*
+    /// sensible -- the closest preceding real content, not nothing and
+    /// not the next paragraph down.
+    #[test]
+    fn sync_to_editor_cursor_falls_back_to_the_closest_preceding_line() {
+        let dir = unique_scratch_dir("markdown-preview");
+        let path = dir.join("readme.md");
+        fs::write(&path, "first\n\nsecond\n").unwrap();
+        let mut state = MarkdownPreviewState::open(&path).unwrap();
+
+        state.sync_to_editor_cursor(1, 0.0, 24); // the blank line between "first" and "second"
+
+        let index = state.highlighted_line().unwrap();
+        assert_eq!(line_text_at(&state, index), "first");
+    }
+
+    #[test]
+    fn sync_to_editor_cursor_is_a_noop_on_an_empty_document() {
+        let dir = unique_scratch_dir("markdown-preview");
+        let path = dir.join("readme.md");
+        fs::write(&path, "").unwrap();
+        let mut state = MarkdownPreviewState::open(&path).unwrap();
+
+        state.sync_to_editor_cursor(0, 0.0, 24);
+
+        assert_eq!(state.highlighted_line(), None);
+    }
 }
 
-mod open_preview_tests {
+mod open_edit_preview_tests {
     use super::*;
     use crate::test_support::test_app;
 
     #[test]
-    fn opens_the_preview_and_switches_the_right_panel_active() {
+    fn opens_the_editor_and_a_linked_preview_with_the_editor_active() {
         let dir = unique_scratch_dir("markdown-preview-open");
         fs::write(dir.join("readme.md"), "# hi\n").unwrap();
         let mut app = test_app(dir.clone());
         app.panels[0].selected = app.panels[0].entries.iter().position(|e| e.name == "readme.md").unwrap();
 
-        open_preview(&mut app);
+        open_edit_preview(&mut app);
 
-        assert!(matches!(app.mode, Mode::MarkdownPreview(_)));
-        assert_eq!(app.active, 1, "the right panel should become active");
+        assert!(matches!(app.mode, Mode::Editing(_)));
+        assert!(app.markdown_edit_preview.is_some(), "should link a live preview alongside the editor");
+        assert_eq!(app.active, 0, "the left panel (the editor) should start active, ready to type into");
     }
 
     #[test]
@@ -300,86 +384,99 @@ mod open_preview_tests {
         let mut app = test_app(dir);
         app.panels[0].selected = app.panels[0].entries.iter().position(|e| e.name == "notes.txt").unwrap();
 
-        open_preview(&mut app);
+        open_edit_preview(&mut app);
 
         assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.markdown_edit_preview.is_none());
     }
 }
 
-mod handle_markdown_preview_key_tests {
+mod handle_markdown_edit_preview_key_tests {
     use super::*;
+    use crate::editor::Editor;
     use crate::test_support::{key, test_app};
 
-    fn app_in_preview() -> App {
+    /// Builds a combined editor+preview session (`App::markdown_edit_preview`
+    /// linked to `Mode::Editing`), focused on the preview half
+    /// (`app.active = 1`) -- the state `main.rs::handle_key_event`
+    /// routes to `handle_markdown_edit_preview_key` in the first place.
+    fn app_in_preview(content: &str) -> App {
         let dir = unique_scratch_dir("markdown-preview-keys");
         let path = dir.join("readme.md");
-        fs::write(&path, "line one\n\nline two\n\nline three\n").unwrap();
+        fs::write(&path, content).unwrap();
         let mut app = test_app(dir);
-        app.mode = Mode::MarkdownPreview(MarkdownPreviewState::open(&path).unwrap());
+        let preview = MarkdownPreviewState::open(&path).unwrap();
+        let editor = Editor::open(path, None).unwrap();
+        app.markdown_edit_preview = Some(preview);
+        app.mode = Mode::Editing(editor);
+        app.active = 1;
         app
     }
 
     #[test]
-    fn down_scrolls_forward() {
-        let mut app = app_in_preview();
+    fn down_scrolls_the_preview_forward() {
+        let mut app = app_in_preview("line one\n\nline two\n\nline three\n");
 
-        handle_markdown_preview_key(&mut app, key(KeyCode::Down));
+        handle_markdown_edit_preview_key(&mut app, key(KeyCode::Down)).unwrap();
 
-        let Mode::MarkdownPreview(state) = &app.mode else { panic!("expected Mode::MarkdownPreview") };
-        assert_eq!(state.scroll(), 1);
+        assert_eq!(app.markdown_edit_preview.as_ref().unwrap().scroll(), 1);
+    }
+
+    /// `Esc` closes the *whole* editor+preview session (`editor::close_editor_or_confirm`),
+    /// not just the preview half -- an unmodified, freshly opened editor
+    /// has no unsaved changes, so this returns straight to `Mode::Browsing`
+    /// with the linked preview cleared.
+    #[test]
+    fn esc_closes_the_whole_session() {
+        let mut app = app_in_preview("hello\n");
+
+        handle_markdown_edit_preview_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.markdown_edit_preview.is_none(), "closing should drop the linked preview too");
     }
 
     #[test]
-    fn esc_closes_the_preview() {
-        let mut app = app_in_preview();
+    fn f3_again_also_closes_the_whole_session() {
+        let mut app = app_in_preview("hello\n");
 
-        handle_markdown_preview_key(&mut app, key(KeyCode::Esc));
+        handle_markdown_edit_preview_key(&mut app, key(KeyCode::F(3))).unwrap();
 
         assert!(matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
-    fn f3_again_also_closes_the_preview() {
-        let mut app = app_in_preview();
+    fn is_a_noop_without_a_linked_preview() {
+        let dir = unique_scratch_dir("markdown-preview-keys");
+        let path = dir.join("readme.md");
+        fs::write(&path, "hello\n").unwrap();
+        let mut app = test_app(dir);
+        app.mode = Mode::Editing(Editor::open(path, None).unwrap());
 
-        handle_markdown_preview_key(&mut app, key(KeyCode::F(3)));
+        handle_markdown_edit_preview_key(&mut app, key(KeyCode::Down)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
-    }
-
-    #[test]
-    fn is_a_noop_outside_markdown_preview_mode() {
-        let mut app = app_in_preview();
-        app.mode = Mode::Browsing;
-
-        handle_markdown_preview_key(&mut app, key(KeyCode::Down));
-
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.markdown_edit_preview.is_none());
     }
 
     /// The actual point of the whole keyboard-search feature: `l` opens
-    /// it, holding the menu it was pressed from so `Esc`/`Enter` can
-    /// hand it straight back.
+    /// it, parking the editor so `Esc`/`Enter` can hand it straight
+    /// back.
     #[test]
     fn l_opens_the_link_search_when_the_document_has_links() {
-        let dir = unique_scratch_dir("markdown-preview-keys");
-        let path = dir.join("readme.md");
-        fs::write(&path, "[Anthropic](https://anthropic.com)\n").unwrap();
-        let mut app = test_app(dir);
-        app.mode = Mode::MarkdownPreview(MarkdownPreviewState::open(&path).unwrap());
+        let mut app = app_in_preview("[Anthropic](https://anthropic.com)\n");
 
-        handle_markdown_preview_key(&mut app, key(KeyCode::Char('l')));
+        handle_markdown_edit_preview_key(&mut app, key(KeyCode::Char('l'))).unwrap();
 
         assert!(matches!(app.mode, Mode::MarkdownLinkSearch(..)));
     }
 
     #[test]
     fn l_is_a_noop_when_the_document_has_no_links() {
-        let mut app = app_in_preview();
+        let mut app = app_in_preview("no links here\n");
 
-        handle_markdown_preview_key(&mut app, key(KeyCode::Char('l')));
+        handle_markdown_edit_preview_key(&mut app, key(KeyCode::Char('l'))).unwrap();
 
-        assert!(matches!(app.mode, Mode::MarkdownPreview(_)), "should stay put, nothing to search");
+        assert!(matches!(app.mode, Mode::Editing(_)), "should stay put, nothing to search");
     }
 }
 
@@ -461,8 +558,13 @@ mod markdown_link_search_state_tests {
 
 mod handle_markdown_link_search_key_tests {
     use super::*;
+    use crate::editor::Editor;
     use crate::test_support::{key, test_app};
 
+    /// `Mode::MarkdownLinkSearch` "parks" the `Editor` in its own tuple
+    /// (see its own doc comment) -- `App::markdown_edit_preview` is
+    /// untouched throughout, exactly as it is during ordinary
+    /// `Mode::Editing`.
     fn app_in_search() -> App {
         let dir = unique_scratch_dir("markdown-link-search-keys");
         let path = dir.join("readme.md");
@@ -470,7 +572,9 @@ mod handle_markdown_link_search_key_tests {
         let mut app = test_app(dir);
         let preview = MarkdownPreviewState::open(&path).unwrap();
         let links = preview.links();
-        app.mode = Mode::MarkdownLinkSearch(preview, MarkdownLinkSearchState::new(links));
+        let editor = Editor::open(path, None).unwrap();
+        app.markdown_edit_preview = Some(preview);
+        app.mode = Mode::MarkdownLinkSearch(editor, MarkdownLinkSearchState::new(links));
         app
     }
 
@@ -485,37 +589,38 @@ mod handle_markdown_link_search_key_tests {
     }
 
     #[test]
-    fn esc_cancels_back_to_the_preview_unchanged() {
+    fn esc_cancels_back_to_editing_with_the_preview_still_linked() {
         let mut app = app_in_search();
 
         handle_markdown_link_search_key(&mut app, key(KeyCode::Esc));
 
-        assert!(matches!(app.mode, Mode::MarkdownPreview(_)));
+        assert!(matches!(app.mode, Mode::Editing(_)));
+        assert!(app.markdown_edit_preview.is_some());
     }
 
     /// The actual end-to-end point of the whole feature: `Enter`
     /// resolves and reacts to the *selected* result, then returns to
-    /// the preview with a message recording what happened -- naming the
-    /// link's *label* ("Contributing"), not its raw URL, per
-    /// `MarkdownPreviewState::link_message`'s own field doc comment.
-    /// Deliberately selects the *relative, missing-file* link (`Down`
-    /// once), not the real absolute URL at index 0 -- a test that
-    /// actually opened a real URL would spawn a real OS process (a real
-    /// browser) every time this suite runs.
+    /// editing with a message recording what happened on the linked
+    /// preview -- naming the link's *label* ("Contributing"), not its
+    /// raw URL, per `MarkdownPreviewState::link_message`'s own field
+    /// doc comment. Deliberately selects the *relative, missing-file*
+    /// link (`Down` once), not the real absolute URL at index 0 -- a
+    /// test that actually opened a real URL would spawn a real OS
+    /// process (a real browser) every time this suite runs.
     #[test]
-    fn enter_opens_the_selected_link_and_returns_to_the_preview() {
+    fn enter_opens_the_selected_link_and_returns_to_editing() {
         let mut app = app_in_search();
         handle_markdown_link_search_key(&mut app, key(KeyCode::Down)); // select "Contributing" (CONTRIBUTING.md, doesn't exist here)
 
         handle_markdown_link_search_key(&mut app, key(KeyCode::Enter));
 
-        let Mode::MarkdownPreview(state) = &app.mode else { panic!("expected Mode::MarkdownPreview") };
-        let message = state.link_message().expect("should have recorded what Enter did");
+        assert!(matches!(app.mode, Mode::Editing(_)));
+        let message = app.markdown_edit_preview.as_ref().unwrap().link_message().expect("should have recorded what Enter did");
         assert!(message.contains("Contributing"), "message should name the label of the link that was selected: {message:?}");
     }
 
     #[test]
-    fn enter_with_no_matches_just_returns_to_the_preview() {
+    fn enter_with_no_matches_just_returns_to_editing() {
         let mut app = app_in_search();
         for c in "nonexistent".chars() {
             handle_markdown_link_search_key(&mut app, key(KeyCode::Char(c)));
@@ -523,8 +628,8 @@ mod handle_markdown_link_search_key_tests {
 
         handle_markdown_link_search_key(&mut app, key(KeyCode::Enter));
 
-        let Mode::MarkdownPreview(state) = &app.mode else { panic!("expected Mode::MarkdownPreview") };
-        assert_eq!(state.link_message(), None, "nothing was selected, so nothing should be reported either");
+        assert!(matches!(app.mode, Mode::Editing(_)));
+        assert_eq!(app.markdown_edit_preview.as_ref().unwrap().link_message(), None, "nothing was selected, so nothing should be reported either");
     }
 
     #[test]
@@ -589,6 +694,7 @@ mod resolve_link_target_tests {
 
 mod handle_markdown_preview_mouse_tests {
     use super::*;
+    use crate::editor::Editor;
     use crate::test_support::test_app;
 
     /// A left click with no `Ctrl` (or `Ctrl`+click landing on a line
@@ -603,7 +709,9 @@ mod handle_markdown_preview_mouse_tests {
         let mut app = test_app(dir);
         let mut state = MarkdownPreviewState::open(&path).unwrap();
         state.set_content_area(0, 0, 80, 24);
-        app.mode = Mode::MarkdownPreview(state);
+        let editor = Editor::open(path, None).unwrap();
+        app.markdown_edit_preview = Some(state);
+        app.mode = Mode::Editing(editor);
         app
     }
 
@@ -617,8 +725,7 @@ mod handle_markdown_preview_mouse_tests {
 
         handle_markdown_preview_mouse(&mut app, mouse_event(MouseEventKind::Down(MouseButton::Left), 0, 0, KeyModifiers::NONE));
 
-        let Mode::MarkdownPreview(state) = &app.mode else { panic!("expected Mode::MarkdownPreview") };
-        assert_eq!(state.scroll(), 0);
+        assert_eq!(app.markdown_edit_preview.as_ref().unwrap().scroll(), 0);
     }
 
     #[test]
@@ -627,7 +734,7 @@ mod handle_markdown_preview_mouse_tests {
 
         handle_markdown_preview_mouse(&mut app, mouse_event(MouseEventKind::Down(MouseButton::Left), 0, 0, KeyModifiers::CONTROL));
 
-        assert!(matches!(app.mode, Mode::MarkdownPreview(_)), "should not have crashed or changed mode");
+        assert!(matches!(app.mode, Mode::Editing(_)), "should not have crashed or changed mode");
     }
 
     /// Regression coverage for the real bug: an in-document anchor link
@@ -645,11 +752,13 @@ mod handle_markdown_preview_mouse_tests {
         let mut state = MarkdownPreviewState::open(&path).unwrap();
         state.set_content_area(0, 0, 80, 24);
         state.set_visible_row_links(vec![vec![(0, "Jump".chars().count() as u16, "#section".to_string())]]);
-        app.mode = Mode::MarkdownPreview(state);
+        let editor = Editor::open(path, None).unwrap();
+        app.markdown_edit_preview = Some(state);
+        app.mode = Mode::Editing(editor);
 
         handle_markdown_preview_mouse(&mut app, mouse_event(MouseEventKind::Down(MouseButton::Left), 0, 0, KeyModifiers::CONTROL));
 
-        assert!(matches!(app.mode, Mode::MarkdownPreview(_)), "should not have crashed or changed mode");
+        assert!(matches!(app.mode, Mode::Editing(_)), "should not have crashed or changed mode");
     }
 
     /// The actual point of the whole feedback feature: a click that
@@ -669,12 +778,13 @@ mod handle_markdown_preview_mouse_tests {
         let mut state = MarkdownPreviewState::open(&path).unwrap();
         state.set_content_area(0, 0, 80, 24);
         state.set_visible_row_links(vec![vec![(0, "Jump".chars().count() as u16, "#section".to_string())]]);
-        app.mode = Mode::MarkdownPreview(state);
+        let editor = Editor::open(path, None).unwrap();
+        app.markdown_edit_preview = Some(state);
+        app.mode = Mode::Editing(editor);
 
         handle_markdown_preview_mouse(&mut app, mouse_event(MouseEventKind::Down(MouseButton::Left), 0, 0, KeyModifiers::CONTROL));
 
-        let Mode::MarkdownPreview(state) = &app.mode else { panic!("expected Mode::MarkdownPreview") };
-        let message = state.link_message().expect("should have set a message explaining the click's outcome");
+        let message = app.markdown_edit_preview.as_ref().unwrap().link_message().expect("should have set a message explaining the click's outcome");
         assert!(message.contains("Jump"), "message should name the label of the link that was clicked: {message:?}");
     }
 
@@ -684,8 +794,7 @@ mod handle_markdown_preview_mouse_tests {
 
         handle_markdown_preview_mouse(&mut app, mouse_event(MouseEventKind::Down(MouseButton::Left), 0, 0, KeyModifiers::CONTROL));
 
-        let Mode::MarkdownPreview(state) = &app.mode else { panic!("expected Mode::MarkdownPreview") };
-        assert!(state.link_message().is_some(), "should say something, not stay silent");
+        assert!(app.markdown_edit_preview.as_ref().unwrap().link_message().is_some(), "should say something, not stay silent");
     }
 
     #[test]
@@ -694,8 +803,7 @@ mod handle_markdown_preview_mouse_tests {
 
         handle_markdown_preview_mouse(&mut app, mouse_event(MouseEventKind::ScrollDown, 0, 0, KeyModifiers::NONE));
 
-        let Mode::MarkdownPreview(state) = &app.mode else { panic!("expected Mode::MarkdownPreview") };
-        assert_eq!(state.scroll(), 1);
+        assert_eq!(app.markdown_edit_preview.as_ref().unwrap().scroll(), 1);
     }
 
     #[test]
@@ -704,12 +812,11 @@ mod handle_markdown_preview_mouse_tests {
 
         handle_markdown_preview_mouse(&mut app, mouse_event(MouseEventKind::ScrollUp, 0, 0, KeyModifiers::NONE));
 
-        let Mode::MarkdownPreview(state) = &app.mode else { panic!("expected Mode::MarkdownPreview") };
-        assert_eq!(state.scroll(), 0);
+        assert_eq!(app.markdown_edit_preview.as_ref().unwrap().scroll(), 0);
     }
 
     #[test]
-    fn is_a_noop_outside_markdown_preview_mode() {
+    fn is_a_noop_outside_editing_mode() {
         let mut app = app_in_preview();
         app.mode = Mode::Browsing;
 

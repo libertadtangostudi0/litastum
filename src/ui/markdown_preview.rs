@@ -2,19 +2,22 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{List, ListItem, Paragraph},
     Frame,
 };
 
 use crate::explorer::{wrap_markdown_line, MarkdownLine, MarkdownLinkSearchState, MarkdownPreviewState, MarkdownSpan, MarkdownSpanKind};
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
+use crate::ui::preview::{draw_preview_frame, file_title};
 
-/// Renders `F3`'s currently-previewed Markdown file into `area` --
-/// replaces the right panel's own file listing entirely while
-/// `Mode::MarkdownPreview` is active, same convention
-/// `ui::image_preview::draw_image_preview` already established for the
-/// image case (same active-panel border styling too).
+/// Renders `F3`'s currently-linked Markdown preview (`App::markdown_edit_preview`)
+/// into `area` -- replaces the right panel's own file listing entirely
+/// while it's `Some` (alongside the built-in editor in the left panel,
+/// `Mode::Editing`/`ConfirmDiscard`/`MarkdownLinkSearch`). Border/title
+/// chrome comes from `ui::preview::draw_preview_frame`, shared with
+/// `ui::image_preview::draw_image_preview` (same active-panel border
+/// styling for both).
 ///
 /// Word-wraps each logical line *itself* (`explorer::wrap_markdown_line`)
 /// rather than handing `ratatui`'s own `Paragraph` a `Wrap` to do it --
@@ -38,16 +41,10 @@ use crate::ui::popup;
 /// hint before that -- added after `Ctrl`+click was reported as giving
 /// no visible feedback at all, indistinguishable from not working.
 pub fn draw_markdown_preview(frame: &mut Frame, area: Rect, state: &mut MarkdownPreviewState, theme: &Theme) {
-    let title = state.path().file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let title = file_title(state.path());
     let footer = state.link_message().map(str::to_string).unwrap_or_else(|| "l: search links  Ctrl+click: open one directly".to_string());
     let footer_style = if state.link_message().is_some() { Style::default().fg(theme.warning) } else { Style::default().fg(theme.text_dim) };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent))
-        .title(title)
-        .title_bottom(Line::styled(footer, footer_style));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = draw_preview_frame(frame, area, theme, Line::raw(title), Some(Line::styled(footer, footer_style)));
     state.set_content_area(inner.x, inner.y, inner.width, inner.height);
 
     let width = inner.width as usize;
@@ -57,20 +54,29 @@ pub fn draw_markdown_preview(frame: &mut Frame, area: Rect, state: &mut Markdown
     // Word-wrap logical lines into visual rows, one logical line at a
     // time, stopping once there's enough to fill the visible area --
     // no point wrapping the entire rest of a long document just to
-    // throw most of it away below.
+    // throw most of it away below. `highlighted` tracks, in lockstep,
+    // whether each pushed visual row belongs to the one logical line
+    // `state.highlighted_line()` named -- every wrapped row of a
+    // highlighted multi-row paragraph gets painted, not just its first.
+    let highlighted_line = state.highlighted_line();
     let mut rows: Vec<MarkdownLine> = Vec::new();
-    for line in &state.lines()[start..] {
+    let mut highlighted: Vec<bool> = Vec::new();
+    for (offset, line) in state.lines()[start..].iter().enumerate() {
         if rows.len() >= height {
             break;
         }
-        rows.extend(wrap_markdown_line(line, width));
+        let is_highlighted = highlighted_line == Some(start + offset);
+        let wrapped = wrap_markdown_line(line, width);
+        highlighted.extend(std::iter::repeat(is_highlighted).take(wrapped.len()));
+        rows.extend(wrapped);
     }
     rows.truncate(height);
+    highlighted.truncate(height);
 
     let row_links: Vec<Vec<(u16, u16, String)>> = rows.iter().map(|row| row_link_hitboxes(row)).collect();
     state.set_visible_row_links(row_links);
 
-    let lines: Vec<Line> = rows.iter().map(|row| render_line(row, theme)).collect();
+    let lines: Vec<Line> = rows.iter().zip(&highlighted).map(|(row, &hl)| render_line(row, theme, hl)).collect();
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -149,12 +155,28 @@ pub fn draw_markdown_link_search(frame: &mut Frame, area: Rect, search: &Markdow
 /// Maps one `explorer::markdown_preview::MarkdownLine`'s spans into a
 /// real `ratatui::text::Line`, styled per `span_style` below -- the
 /// domain/rendering split `explorer::HighlightRole` already uses for
-/// file-type coloring in `ui.rs`'s own `build_list_item`.
-fn render_line<'a>(line: &'a [MarkdownSpan], theme: &Theme) -> Line<'a> {
+/// file-type coloring in `ui.rs`'s own `build_list_item`. `highlighted`
+/// paints every span's background with `theme.current_row_bg` on top of
+/// its own kind-based color -- the row `MarkdownPreviewState::sync_to_editor_cursor`
+/// matched to the built-in editor's own cursor line, same "row
+/// background, not a full-width fill" convention `ui/mod.rs::build_list_item`
+/// already uses for a panel's own selected row (this codebase never
+/// pads a line out to its column width just to color the rest of it).
+fn render_line<'a>(line: &'a [MarkdownSpan], theme: &Theme, highlighted: bool) -> Line<'a> {
     if line.is_empty() {
         return Line::default();
     }
-    Line::from(line.iter().map(|span| Span::styled(span.text.as_str(), span_style(span.kind, theme))).collect::<Vec<_>>())
+    Line::from(
+        line.iter()
+            .map(|span| {
+                let mut style = span_style(span.kind, theme);
+                if highlighted {
+                    style = style.bg(theme.current_row_bg);
+                }
+                Span::styled(span.text.as_str(), style)
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn span_style(kind: MarkdownSpanKind, theme: &Theme) -> Style {
@@ -232,6 +254,41 @@ mod tests {
         // instead of assuming a fixed row number.
         let found = (0..24).any(|row| state.link_at(1, row) == Some("https://anthropic.com"));
         assert!(found, "the link should be clickable somewhere in the rendered output");
+    }
+
+    /// The actual point of the whole sync feature: the rendered row
+    /// matching `MarkdownPreviewState::sync_to_editor_cursor`'s own
+    /// target line gets a `theme.current_row_bg` background, and only
+    /// that line -- confirms `render_line`'s `highlighted` flag is
+    /// actually reaching the real buffer, not just unit-tested against
+    /// a hand-built `Style` in isolation.
+    #[test]
+    fn the_synced_line_is_painted_with_the_current_row_background() {
+        use crate::explorer::MarkdownPreviewState;
+        use crate::test_support::unique_scratch_dir;
+        use std::fs;
+
+        let dir = unique_scratch_dir("markdown-preview-highlight");
+        let path = dir.join("readme.md");
+        fs::write(&path, "first\n\nsecond\n").unwrap();
+        let mut state = MarkdownPreviewState::open(&path).unwrap();
+        // Syncs to "first" (source line 0) rather than "second" --
+        // deliberately so `scroll` stays at 0 and *both* lines remain
+        // on screen at their usual rows, letting this test contrast a
+        // highlighted row against a genuinely-rendered unhighlighted
+        // one instead of one that's merely scrolled out of view.
+        state.sync_to_editor_cursor(0, 0.0, 22);
+
+        let backend = TestBackend::new(20, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::dark();
+        terminal.draw(|frame| draw_markdown_preview(frame, frame.area(), &mut state, &theme)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let first_row_bg = buffer[(1, 1)].bg;
+        let second_row_bg = buffer[(1, 3)].bg;
+        assert_eq!(first_row_bg, theme.current_row_bg, "the synced line (\"first\") should carry the highlight");
+        assert_ne!(second_row_bg, theme.current_row_bg, "an unrelated line (\"second\") should not");
     }
 
     #[test]
