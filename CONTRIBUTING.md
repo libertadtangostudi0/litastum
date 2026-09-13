@@ -8,27 +8,27 @@ focused PR is often the most useful thing you can send.
 ## Table of contents
 
 - [Before you start](https://github.com/libertadtangostudi0/litastum/blob/main/CONTRIBUTING.md#before-you-start)
-- [Reporting a bug](#reporting-a-bug)
-- [Suggesting a feature](#suggesting-a-feature)
-- [Development setup](#development-setup)
-- [Code style and conventions](#code-style-and-conventions)
-- [Use of AI tools](#use-of-ai-tools)
-- [Submitting a change](#submitting-a-change)
-- [Questions](#questions)
+- [Reporting a bug](https://github.com/libertadtangostudi0/litastum/blob/main/CONTRIBUTING.md#reporting-a-bug)
+- [Suggesting a feature](https://github.com/libertadtangostudi0/litastum/blob/main/CONTRIBUTING.md#suggesting-a-feature)
+- [Development setup](https://github.com/libertadtangostudi0/litastum/blob/main/CONTRIBUTING.md#development-setup)
+- [Code style and conventions](https://github.com/libertadtangostudi0/litastum/blob/main/CONTRIBUTING.md#code-style-and-conventions)
+- [Use of AI tools](https://github.com/libertadtangostudi0/litastum/blob/main/CONTRIBUTING.md#use-of-ai-tools)
+- [Submitting a change](https://github.com/libertadtangostudi0/litastum/blob/main/CONTRIBUTING.md#submitting-a-change)
+- [Questions](https://github.com/libertadtangostudi0/litastum/blob/main/CONTRIBUTING.md#questions)
 
 ## Before you start
 
 Skim these first — they'll save you from duplicating work or proposing
 something already decided against:
 
-- [`README.md`](README.md) — what litastum is, current status, build
+- [`README.md`](https://github.com/libertadtangostudi0/litastum/blob/main/README.md) — what litastum is, current status, build
   instructions.
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — module layout and design.
-- [`TODO.md`](TODO.md) — the actual punch list: known gaps, open
+- [`ARCHITECTURE.md`](https://github.com/libertadtangostudi0/litastum/blob/main/ARCHITECTURE.md) — module layout and design.
+- [`TODO.md`](https://github.com/libertadtangostudi0/litastum/blob/main/TODO.md) — the actual punch list: known gaps, open
   questions, and things already ruled out (read a bullet fully before
   assuming something's unaddressed — many explain *why* a simpler
   approach was rejected).
-- [`CLAUDE.md`](CLAUDE.md) and `.claude/rules/*.md` — the project's
+- [`CLAUDE.md`](https://github.com/libertadtangostudi0/litastum/blob/main/CLAUDE.md) and `.claude/rules/*.md` — the project's
   own running design log: stack choices and why, naming decisions,
   UI/theming conventions, and — often the most useful part — detailed
   postmortems of approaches that were tried and reverted. If you're
@@ -49,7 +49,7 @@ Open an issue with:
 
 ## Suggesting a feature
 
-Check [`TODO.md`](TODO.md) first — it's the closest thing this project
+Check [`TODO.md`](https://github.com/libertadtangostudi0/litastum/blob/main/TODO.md) first — it's the closest thing this project
 has to a roadmap, and your idea may already be scoped (or deliberately
 deferred, with a reason) there. If it's genuinely new, open an issue
 describing the use case, not just the mechanism — "I want X because Y"

@@ -10,7 +10,7 @@ conventions.
 - [x] F9 → Options → Color schemes in-app theme picker (`theme_menu.rs`,
       reached through `menu.rs`) — lists `themes/*.json`, applies live
       (no restart) and persists to `config.json`. See
-      [f9-menu.md](f9-menu.md) for how much of a real top-menu bar this
+      [f9-menu.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/f9-menu.md) for how much of a real top-menu bar this
       actually is (not much)
 - [ ] No hot-reload when a theme *file itself* is edited on disk while
       running (roadmap stage 5 territory, `notify` crate) — F9 re-scans

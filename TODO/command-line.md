@@ -37,7 +37,7 @@ in more detail.
       fell through to the exact same panel-navigation move as a bare
       arrow (not a behavior loss — bare arrows already did that).
 - [ ] No `Up`-arrow history recall — same reason, arrows are taken; see
-      [history.md](history.md) for the menu-driven way around this
+      [history.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/history.md) for the menu-driven way around this
       instead. Requested
       directly: `Alt+Up`/`Alt+Down` to cycle through `app.command_history`
       while typing (bare arrows stay panel-navigation-only, unaffected) —

@@ -29,7 +29,7 @@
       and `Shift+Up`/`Down`/`Left`/`Right` (toggle-and-move, whole-
       column for Left/Right) rather than the `Ins`+`Shift+arrow`
       combination originally sketched here — see
-      [copy-move.md](copy-move.md) for the full binding story and
+      [copy-move.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/copy-move.md) for the full binding story and
       `panel/marks.rs`. Marked entries
       render in `theme.warning` (the "attention/marked" color the
       original UI-theme plan had already named but never wired up),
@@ -80,6 +80,6 @@
       standalone F-key-triggered mode, an editor overlay, how it hooks
       into VCS state if at all, two-way vs. three-way, resolution UI).
       Don't start implementation from this bullet alone. See
-      [git-integration.md](git-integration.md) — likely related (a
+      [git-integration.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/git-integration.md) — likely related (a
       conflict resolver needs to know a file's conflicted-hunk
       structure from somewhere, which is git-specific).

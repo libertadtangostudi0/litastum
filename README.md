@@ -40,6 +40,6 @@ Requires a reasonably current stable Rust toolchain (install via
 
 Licensed under either of:
 
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- MIT license ([LICENSE-MIT](https://github.com/libertadtangostudi0/litastum/blob/main/LICENSE-MIT))
 
 at your option.

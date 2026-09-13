@@ -25,7 +25,7 @@ in detail yet, don't start implementation from these bullets alone:
       simpler text-based search for the file's own path/module name
       appearing elsewhere in tracked files (closer to what
       `find_file.rs`'s existing content-search machinery could be
-      extended to do, see [find-file.md](find-file.md)). Needs a
+      extended to do, see [find-file.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/find-file.md)). Needs a
       decision on which of these is actually wanted before scoping
       further.
 - [ ] **Commit search** — find commits by message/author/date/path,
@@ -34,6 +34,6 @@ in detail yet, don't start implementation from these bullets alone:
       shape to `find_file.rs`'s own search UI. Needs deciding: search
       scope (current file's history vs. whole repo), how results are
       presented/navigated (jump to a diff view — see the conflict-
-      resolver placeholder in [next-up.md](next-up.md)), and whether
+      resolver placeholder in [next-up.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/next-up.md)), and whether
       this needs its own history/persistence the way
-      [history.md](history.md)'s feature does.
+      [history.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/history.md)'s feature does.

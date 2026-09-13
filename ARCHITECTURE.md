@@ -42,22 +42,54 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             ratatui-image); ui/image_preview.rs draws it
                             into the right panel's own area in place of
                             its usual file listing. See TODO/viewer.md.
-  explorer/markdown_preview.rs — F3 on a .md/.markdown file:
-                            Mode::MarkdownPreview, MarkdownPreviewState
-                            (pulldown-cmark event stream -> styled
-                            MarkdownLine/MarkdownSpan, domain-only, no
-                            ratatui dependency here -- same split
-                            HighlightRole has from its own color mapping);
-                            ui/markdown_preview.rs maps MarkdownSpanKind
-                            to a real Style and draws into the right
-                            panel's own area, same replacement convention
-                            as image_preview.rs. Links: Ctrl+click
-                            (approximate, row-based hit-testing) or `l`
-                            -> Mode::MarkdownLinkSearch (exact, a
-                            filterable list from MarkdownPreviewState::
-                            links()) -- both resolve/open through the
-                            same open_link/resolve_link_target. See
-                            TODO/viewer.md.
+  explorer/markdown_preview/ — F3 on a .md/.markdown file: split into a
+                            directory once the single-file version
+                            passed ~1500 lines (production code alone
+                            was already over the ~500-line threshold,
+                            not just its tests -- see
+                            .claude/rules/code-conventions.md):
+    mod.rs                  —   MarkdownSpan/MarkdownSpanKind/
+                            MarkdownLine (domain-only, no ratatui
+                            dependency here -- same split HighlightRole
+                            has from its own color mapping),
+                            is_markdown_file, PAGE_SIZE, re-exports
+    render.rs                —   render_markdown: pulldown-cmark event
+                            stream -> styled MarkdownLine/MarkdownSpan
+    wrap.rs                   —   wrap_markdown_line/wrap_ranges
+                            reimplement ratatui's own greedy word-wrap
+                            so draw_markdown_preview can render
+                            already-wrapped rows (no Paragraph Wrap) and
+                            build MarkdownPreviewState::visible_row_links
+                            (exact per-row column hitboxes) from the
+                            identical rows -- link_at looks a click up
+                            in that table directly, so rendering and
+                            hit-testing can't disagree
+    state.rs                  —   MarkdownPreviewState: content_area,
+                            link_message (always built from a link's
+                            label, never its raw URL -- see its own doc
+                            comment for the truncated-URL-turns-into-a
+                            -broken-but-real-looking-link bug this
+                            avoids), visible_row_links, scroll, link_at
+    links.rs                   —   MarkdownLink, MarkdownLinkSearchState,
+                            LinkTarget (Url/File), resolve_link_target,
+                            open_link -- dispatches a resolved Url to
+                            system_open::open_url (cmd /C start, no
+                            Explorer IPC hop -- reported directly as
+                            feeling slow through system_open::open's
+                            explorer.exe path) and a resolved File to
+                            system_open::open
+    input.rs                    —   open_preview, handle_markdown_preview_key,
+                            open_link_search, handle_markdown_link_search_key,
+                            handle_markdown_preview_mouse
+    (tests split the same way, one sibling tests.rs)
+    ui/markdown_preview.rs maps MarkdownSpanKind to a real Style and
+                            draws into the right panel's own area, same
+                            replacement convention as image_preview.rs.
+                            Links: Ctrl+click (exact hit-test) or `l` ->
+                            Mode::MarkdownLinkSearch (a filterable list
+                            from MarkdownPreviewState::links()) -- both
+                            resolve/open through the same open_link/
+                            resolve_link_target. See TODO/viewer.md.
   explorer/user_menu/    —   F2 -- per-directory script menu, native
                             format LitastumMenu.toml (parse/ -- Far
                             Manager's own FarMenu.ini nested-block DSL

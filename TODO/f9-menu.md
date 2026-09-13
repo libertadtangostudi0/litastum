@@ -18,7 +18,7 @@
       matches a built-in profile) — the one setting that wasn't already
       being persisted somewhere.
 - [x] `Commands` → `Find file` and `History` — see
-      [find-file.md](find-file.md) and [history.md](history.md).
+      [find-file.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/find-file.md) and [history.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/history.md).
 
 `menu.rs` is deliberately *just* enough structure to reach what's
 actually been asked for so far — not a real F9 top-menu bar (Far

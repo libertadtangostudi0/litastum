@@ -187,16 +187,77 @@ app is otherwise following (`F3` view vs. `F4` edit).
       both paths now share) as a quick option for a short, unwrapped
       line -- not removed, just no longer the only option.
 
-      **Known, accepted gap**: hit-testing is line-level, not
-      column-precise -- `MarkdownPreviewState::link_at` maps a screen
-      row straight back to a logical-line index
-      (`scroll() + row offset`), without replicating `ratatui`'s own
-      `Paragraph` word-wrap. A short, unwrapped line (the common case
-      for a link) resolves correctly; a long line that wraps into
-      several visual rows can misattribute a click to the wrong nearby
-      logical line. Reimplementing `ratatui`'s exact wrap algorithm just
-      for pixel-perfect mouse hit-testing on what's fundamentally a
-      convenience feature wasn't judged worth it here.
+      **Follow-up: the line-level hit-testing gap above was reported as
+      a real bug, not just accepted** -- a link that happened to sit
+      right after a long, wrapped paragraph resolved to the wrong line
+      when `Ctrl`+clicked, confirmed directly (fixing an unrelated
+      anchor link to a full URL made the keyboard search find it, but
+      `Ctrl`+click on that same link still failed). Asked explicitly to
+      "fix the exact hit-test" rather than document the limitation or
+      drop `Ctrl`+click entirely. Fixed by no longer letting `ratatui`'s
+      own `Paragraph` wrap at all: `explorer::markdown_preview::
+      wrap_markdown_line`/`wrap_ranges` reimplement its greedy
+      word-wrap from scratch (word-boundary wrapping, hard-splitting an
+      overlong single word), and `ui::markdown_preview::
+      draw_markdown_preview` now wraps every visible logical line
+      itself, renders the *already-wrapped* rows with no `Paragraph`
+      `Wrap` at all, and builds `MarkdownPreviewState::visible_row_links`
+      (`Vec<Vec<(col_start, col_end, url)>>`, one entry per rendered
+      row) from those exact same rows. `link_at` now looks a click up
+      directly in that table instead of reconstructing a logical-line
+      index from `scroll() + row offset` -- rendering and hit-testing
+      are provably derived from the identical wrapped rows, so they can
+      no longer disagree. Covered by a unit-level `wrap_markdown_line`
+      suite (word-boundary wraps, overlong-word hard-splits, a link
+      spanning a wrap point) and one integration test that draws a real
+      wrapped paragraph through `draw_markdown_preview` and confirms the
+      link after it is still clickable.
+
+      **Another real bug, found right after fixing the above**: a long
+      opened URL truncated by the panel's own bottom-border width still
+      *looked* like a complete, valid link once cut off mid-path (e.g.
+      `.../blob/main/CONT`) -- reported directly as the link "looking
+      shortened" and then 404ing when followed. Root cause: some
+      terminals (Windows Terminal included) auto-detect and linkify
+      URL-shaped plain text on their own, entirely outside this app's
+      own `Ctrl`+click handling -- a user (or the terminal itself)
+      following *that* auto-detected, truncated hyperlink lands on a
+      real but broken address, which has nothing to do with this app's
+      own hit-testing (already exact, per the fix above) or with
+      `resolve_link_target`, which always resolves the link's real,
+      untruncated `url`. Fixed by never putting a raw URL into
+      `link_message` at all: `links::open_link` now names the link's
+      own *label* (its rendered text, e.g. "before you start") instead,
+      which is normally short, human-readable text that can't be
+      mistaken for a real link even if the border does still truncate
+      it. `MarkdownPreviewState::link_message`'s own field doc comment
+      has the full mechanism.
+
+      **Also reported alongside**: `Ctrl`+click on a link felt slow.
+      `system_open::open` (`explorer.exe <url>`) hands a URL to
+      Explorer's own already-running shell process over IPC -- correct
+      for opening a folder window, but a real, perceptible round-trip
+      just to launch a browser. Split into a distinct `system_open::open_url`
+      for real URLs (`cmd /C start "" <url>` on Windows -- `cmd`'s
+      builtin `start` calls `ShellExecute` directly, no Explorer IPC hop
+      needed), matching the same `cmd /C start` idiom other
+      cross-platform "open a URL" tools already use on Windows for this
+      exact reason. `links::resolve_link_target` now returns a
+      `LinkTarget` (`Url`/`File`) instead of always a `PathBuf`, so
+      `open_link` can route each kind to the command that actually fits
+      it -- a relative file reference still opens via `system_open::open`
+      unchanged.
+
+      **`explorer/markdown_preview.rs` was split into a directory**
+      (`explorer/markdown_preview/{mod,render,wrap,state,links,input}.rs`
+      + a sibling `tests.rs`) alongside the fixes above -- its
+      production code alone (not counting tests) had already passed the
+      project's own ~500-line decomposition threshold
+      (`.claude/rules/code-conventions.md`), the same "mod.rs + tests.rs"
+      pattern already used elsewhere in this codebase (`text_field/`,
+      `editor/editor_keymap/`, ...), just also split by concern
+      (rendering, wrapping, state, links, input) since the production
+      code on its own needed more than a mechanical test-only move.
 - [ ] Widen image preview to `.gif`/`.webp` (the `image` crate can
       already decode both -- just a `Cargo.toml` feature-flag and
       `SUPPORTED_EXTENSIONS` change) -- not asked for explicitly, so not

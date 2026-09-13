@@ -41,6 +41,58 @@ pub fn open(path: &Path) -> std::io::Result<Child> {
     build_open_command(path).spawn()
 }
 
+/// Builds (but doesn't run) the OS command that opens a URL (a real
+/// `http(s)://`/`mailto:` link, not a filesystem path) with the OS's
+/// own default handler -- split out from `build_open_command` above
+/// rather than reused for it, because Windows genuinely wants a
+/// different program for each.
+///
+/// - Windows: `cmd /C start "" <url>` instead of `explorer.exe <url>`
+///   (what `open` above would have used for anything, path or URL,
+///   before this split existed) -- reported directly as feeling
+///   noticeably slow for a `Ctrl`+click on a Markdown link. `explorer.exe
+///   <url>` works, but it does so by handing the URL to Explorer's own
+///   *already-running* shell process over IPC, which is the right tool
+///   for "open a folder window" but adds a real, perceptible round-trip
+///   just to launch a browser. `cmd`'s builtin `start` calls
+///   `ShellExecute` directly, no Explorer IPC hop needed -- the same
+///   `cmd /C start` idiom other cross-platform "open a URL" tools use
+///   on Windows for exactly this reason. The literal empty `""`
+///   argument is `start`'s own window-title placeholder -- required
+///   whenever the target itself might be quoted, or `start` misreads
+///   the first quoted argument as the title instead of the target.
+/// - macOS/other Unix: same `open`/`xdg-open` as a path -- both already
+///   handle a URL argument just as well as a file path, no split
+///   needed there.
+fn build_open_url_command(url: &str) -> Command {
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    }
+}
+
+/// `Ctrl`+click / `l`-search `Enter` on a Markdown link that resolved to
+/// a real URL (`markdown_preview::links::LinkTarget::Url`) -- see
+/// `build_open_url_command`'s own doc comment for why this is a
+/// distinct code path from `open` above rather than reusing it.
+pub fn open_url(url: &str) -> std::io::Result<Child> {
+    build_open_url_command(url).spawn()
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -75,5 +127,32 @@ mod tests {
         assert_eq!(command.get_program(), "xdg-open");
         let args: Vec<_> = command.get_args().collect();
         assert_eq!(args, vec![path.as_os_str()]);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_opens_a_url_via_cmd_start_not_explorer() {
+        let command = build_open_url_command("https://example.com");
+        assert_eq!(command.get_program(), "cmd");
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, vec!["/C", "start", "", "https://example.com"]);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_opens_a_url_with_open() {
+        let command = build_open_url_command("https://example.com");
+        assert_eq!(command.get_program(), "open");
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, vec!["https://example.com"]);
+    }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn other_unix_opens_a_url_with_xdg_open() {
+        let command = build_open_url_command("https://example.com");
+        assert_eq!(command.get_program(), "xdg-open");
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, vec!["https://example.com"]);
     }
 }
