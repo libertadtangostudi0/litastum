@@ -1,5 +1,17 @@
 # Next up
 
+- [x] **Startup showed one narrow single-file-per-row column, stuck
+      until the first keypress** — `Panel::new()` defaults `columns: 1`/
+      `visible_rows: 0` (`column_height()`'s own "not yet known"
+      sentinel) until `main.rs::run()`'s loop feeds back the real,
+      `ui::draw`-computed values -- but that feedback only ever reaches
+      the draw call *after* the one that already rendered with the
+      stale defaults, and `wait_for_event` blocks for real input in
+      between, so the wrong layout wasn't just a one-frame flash, it
+      stuck around until the user pressed something. Fixed with one
+      extra seed draw+apply cycle in `run()`, before the interactive
+      loop's own first frame, so real values are already in place by
+      the time anything is actually shown.
 - [ ] Scrolling/pagination for the file panel's entry list — requested
       directly. Currently the 2-column column-major grid
       (`.claude/rules/litastum-ui-theme.md`) has no scroll offset at

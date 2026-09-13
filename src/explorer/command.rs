@@ -7,7 +7,7 @@ use crate::app::{App, DeleteEntry, Mode, PendingDelete, PendingTransfer, Transfe
 use crate::editor::Editor;
 use crate::theming::MainMenu;
 use super::keymap::Command;
-use super::{image_preview, system_open, user_menu, Panel};
+use super::{image_preview, markdown_preview, system_open, user_menu, Panel};
 
 
 /// Executes a resolved `Command` against the app state. This is the one
@@ -36,7 +36,7 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
         }
         Command::ToggleActive => app.toggle_active(),
         Command::EditSelected => open_editor(app),
-        Command::PreviewSelected => image_preview::open_preview(app),
+        Command::PreviewSelected => preview_selected(app),
         Command::OpenUserMenu => open_user_menu(app),
         Command::OpenMenu => app.mode = Mode::MainMenu(MainMenu::open()),
         Command::CopySelected => request_transfer(app, TransferOp::Copy),
@@ -51,6 +51,28 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
         Command::Quit => app.should_quit = true,
     }
     Ok(())
+}
+
+
+/// `F3`: previews the entry under the cursor -- an image
+/// (`image_preview::open_preview`) or a `.md`/`.markdown` file
+/// (`markdown_preview::open_preview`), checked by extension before
+/// either module even tries to open it, so exactly one preview kind
+/// ever runs per press. A no-op for anything else (a directory, an
+/// unsupported/undecodable file) -- each module's own `open_preview`
+/// already no-ops on its own non-matching cases, but checking here
+/// first avoids a wasted `fs::read_dir`/decode attempt for a file
+/// that's obviously the other kind.
+fn preview_selected(app: &mut App) {
+    let Some(path) = app.active_panel().selected_path() else {
+        return;
+    };
+
+    if image_preview::is_supported_image(&path) {
+        image_preview::open_preview(app);
+    } else if markdown_preview::is_markdown_file(&path) {
+        markdown_preview::open_preview(app);
+    }
 }
 
 

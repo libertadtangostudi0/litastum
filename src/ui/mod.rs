@@ -19,6 +19,7 @@ mod drive_menu;
 mod editor_find;
 mod find_file;
 mod image_preview;
+mod markdown_preview;
 mod menu;
 mod popup;
 mod popup_style_menu;
@@ -76,7 +77,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         | Mode::ConfirmPortFarMenu(_)
         | Mode::AddUserMenuItem(..)
         | Mode::Info(_)
-        | Mode::ImagePreview(_) => {}
+        | Mode::ImagePreview(_)
+        | Mode::MarkdownPreview(_)
+        | Mode::MarkdownLinkSearch(..) => {}
     }
 
     let root = Layout::default()
@@ -95,19 +98,32 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
 
     let left_columns = draw_panel(frame, panels[0], &app.panels[0], app.active == 0, &theme);
     // `F3` replaces the right panel's own file listing with the
-    // previewed image entirely (`explorer::image_preview::open_preview`'s
-    // own doc comment) -- not a popup drawn over it, unlike every other
+    // previewed image or rendered Markdown entirely
+    // (`explorer::image_preview`/`markdown_preview::open_preview`'s own
+    // doc comments) -- not a popup drawn over it, unlike every other
     // `Mode` handled in the match below. `Panel::set_columns`/
     // `set_visible_rows` don't matter here: navigation commands never
-    // reach the right panel while `Mode::ImagePreview` is active
-    // (`image_preview::handle_image_preview_key` intercepts every key),
-    // and the very next frame after `Esc`/`F3` closes the preview
+    // reach the right panel while either preview `Mode` is active (each
+    // has its own `handle_*_preview_key` intercepting every key), and
+    // the very next frame after `Esc`/`F3` closes the preview
     // recomputes real values again.
-    let right_columns = if let Mode::ImagePreview(state) = &mut app.mode {
-        image_preview::draw_image_preview(frame, panels[1], state, &theme);
-        (1, 1)
-    } else {
-        draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme)
+    let right_columns = match &mut app.mode {
+        Mode::ImagePreview(state) => {
+            image_preview::draw_image_preview(frame, panels[1], state, &theme);
+            (1, 1)
+        }
+        Mode::MarkdownPreview(state) => {
+            markdown_preview::draw_markdown_preview(frame, panels[1], state, &theme);
+            (1, 1)
+        }
+        // The link-search popup (below) is an overlay over this same
+        // underlying preview -- draw it exactly like `MarkdownPreview`
+        // itself here, so the document stays visible behind the popup.
+        Mode::MarkdownLinkSearch(state, _) => {
+            markdown_preview::draw_markdown_preview(frame, panels[1], state, &theme);
+            (1, 1)
+        }
+        _ => draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme),
     };
     let cwd = app.panels[app.active].path.clone();
     let prefix_len = draw_command_line(frame, root[1], &cwd, &app.command_line, app.command_line_selection_anchor, app.command_line_cursor, &theme);
@@ -178,6 +194,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
             frame.set_cursor_position(cursor);
         }
         Mode::Info(message) => draw_info_popup(frame, area, message, &theme, popup_style),
+        Mode::MarkdownLinkSearch(_, search) => {
+            let cursor = markdown_preview::draw_markdown_link_search(frame, area, search, &theme, popup_style);
+            frame.set_cursor_position(cursor);
+        }
         _ => {}
     }
 

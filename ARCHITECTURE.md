@@ -42,6 +42,22 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             ratatui-image); ui/image_preview.rs draws it
                             into the right panel's own area in place of
                             its usual file listing. See TODO/viewer.md.
+  explorer/markdown_preview.rs — F3 on a .md/.markdown file:
+                            Mode::MarkdownPreview, MarkdownPreviewState
+                            (pulldown-cmark event stream -> styled
+                            MarkdownLine/MarkdownSpan, domain-only, no
+                            ratatui dependency here -- same split
+                            HighlightRole has from its own color mapping);
+                            ui/markdown_preview.rs maps MarkdownSpanKind
+                            to a real Style and draws into the right
+                            panel's own area, same replacement convention
+                            as image_preview.rs. Links: Ctrl+click
+                            (approximate, row-based hit-testing) or `l`
+                            -> Mode::MarkdownLinkSearch (exact, a
+                            filterable list from MarkdownPreviewState::
+                            links()) -- both resolve/open through the
+                            same open_link/resolve_link_target. See
+                            TODO/viewer.md.
   explorer/user_menu/    —   F2 -- per-directory script menu, native
                             format LitastumMenu.toml (parse/ -- Far
                             Manager's own FarMenu.ini nested-block DSL

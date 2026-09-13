@@ -6,7 +6,10 @@ use ratatui_image::picker::Picker;
 
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
 use crate::editor::Editor;
-use crate::explorer::{AddUserMenuItemState, DriveMenu, FindFileState, ImagePreviewState, Panel, UserMenuCommandEdit, UserMenuPromptState, UserMenuState};
+use crate::explorer::{
+    AddUserMenuItemState, DriveMenu, FindFileState, ImagePreviewState, MarkdownLinkSearchState, MarkdownPreviewState, Panel, UserMenuCommandEdit, UserMenuPromptState,
+    UserMenuState,
+};
 use crate::theming::{MainMenu, PopupStyle, PopupStyleMenu, Theme, ThemeMenu};
 
 
@@ -79,6 +82,24 @@ pub enum Mode {
     /// (`explorer::image_preview::handle_image_preview_key`); `Esc`/`F3`
     /// again closes it back to `Mode::Browsing`.
     ImagePreview(ImagePreviewState),
+    /// `F3` on a `.md`/`.markdown` file -- same right-panel-replacement
+    /// convention as `ImagePreview` above
+    /// (`explorer::markdown_preview::open_preview`,
+    /// `ui::markdown_preview::draw_markdown_preview`), but a real
+    /// rendered preview (headings/bold/lists/quotes/code shown
+    /// structurally) rather than a decoded image. `Up`/`Down`/`PageUp`/
+    /// `PageDown` scroll (`explorer::markdown_preview::handle_markdown_preview_key`);
+    /// `Esc`/`F3` again closes back to `Mode::Browsing`.
+    MarkdownPreview(MarkdownPreviewState),
+    /// `l` on the Markdown preview -- a filterable, keyboard-driven list
+    /// of every link in the document (`explorer::markdown_preview::MarkdownLinkSearchState`),
+    /// requested directly as a reliable alternative to `Ctrl`+click
+    /// (whose own row-based hit-testing drifts once word-wrap is
+    /// involved -- see `MarkdownPreviewState::link_at`'s own doc
+    /// comment). Holds the preview alongside the search form so `Esc`/
+    /// `Enter` can hand it straight back, same shape as
+    /// `AddUserMenuItem(UserMenuState, AddUserMenuItemState)` above.
+    MarkdownLinkSearch(MarkdownPreviewState, MarkdownLinkSearchState),
 }
 
 
@@ -338,6 +359,21 @@ pub struct App {
     /// `search_history` above), overwritten in `main()` right after
     /// construction, same pattern those two already use.
     pub image_picker: Picker,
+    /// Whether `crossterm`'s `EnableMouseCapture` is currently active --
+    /// set by `explorer::markdown_preview::open_preview` right after it
+    /// actually succeeds, cleared by `handle_markdown_preview_key`'s own
+    /// `Esc`/`F3` close path right after `DisableMouseCapture` succeeds.
+    /// Exists specifically so `main.rs::restore_terminal` knows whether
+    /// it's safe to send `DisableMouseCapture` at all when the app
+    /// exits -- reported as a real crash on Windows
+    /// (`Error: 0: Initial console modes not set`, `crossterm`'s own
+    /// Windows console backend errors out disabling mouse capture that
+    /// was never enabled in the first place, since it has no saved
+    /// "initial mode" to restore) when `F10` was pressed in a session
+    /// that never opened a Markdown preview at all, so mouse capture had
+    /// never been turned on. `restore_terminal` only includes
+    /// `DisableMouseCapture` in its own cleanup when this is `true`.
+    pub mouse_capture_enabled: bool,
 }
 
 
@@ -368,6 +404,7 @@ impl App {
             editor_return_to: None,
             user_menu_command_edit: None,
             image_picker: Picker::halfblocks(),
+            mouse_capture_enabled: false,
         })
     }
 

@@ -6,6 +6,7 @@ mod find_file;
 mod fs_ops;
 mod image_preview;
 mod keymap;
+mod markdown_preview;
 mod panel;
 mod system_open;
 mod user_menu;
@@ -17,6 +18,10 @@ pub use entry::{Entry, HighlightRole};
 pub use find_file::{handle_find_file_key, FindFilePhase, FindFileState};
 pub use image_preview::{handle_image_preview_key, ImagePreviewState};
 pub use keymap::{resolve, Command};
+pub use markdown_preview::{
+    handle_markdown_link_search_key, handle_markdown_preview_key, handle_markdown_preview_mouse, MarkdownLink, MarkdownLinkSearchState, MarkdownPreviewState, MarkdownSpan,
+    MarkdownSpanKind,
+};
 pub use panel::Panel;
 pub use user_menu::{
     handle_add_user_menu_item_key, handle_confirm_port_far_menu_key, handle_user_menu_key, handle_user_menu_prompt_key, finish_command_edit, resolve_menu,

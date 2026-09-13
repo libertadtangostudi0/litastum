@@ -11,7 +11,7 @@ Design for the items below: `ARCHITECTURE.md`.
 - [Theming](TODO/theming.md) (`scheme.rs`, `config.rs`) — landed, gaps left
 - [F9 menu](TODO/f9-menu.md) — Main → Commands/Options landed, real menu still to do
 - [User menu](TODO/user-menu.md) (`F2`) — FarMenu.ini-compatible, landed, gaps left
-- [File viewer](TODO/viewer.md) (`F3`) — image preview (jpg/jpeg/png/bmp) landed, `.md` preview still open
+- [File viewer](TODO/viewer.md) (`F3`) — image preview (jpg/jpeg/png/bmp) and rendered `.md`/`.markdown` preview both landed
 - [Find file](TODO/find-file.md) (`find_file.rs`) — F9 → Commands → Find file, landed, gaps left
 - [History](TODO/history.md) (`command_line.rs`) — F9 → Commands → History, landed, gaps left
 - [Command line](TODO/command-line.md) (`command_line.rs`, `shell.rs`) — landed, gaps left

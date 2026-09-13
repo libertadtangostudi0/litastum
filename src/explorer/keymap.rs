@@ -33,13 +33,15 @@ pub enum Command {
     OpenInFileManager,
     ToggleActive,
     EditSelected,
-    /// `F3` -- previews the entry under the cursor, if it's a supported
-    /// format (`.jpg`/`.jpeg`/`.png`/`.bmp` for now --
-    /// `explorer::image_preview::is_supported_image`), in the *right*
-    /// panel (`Mode::ImagePreview`). A no-op for anything else (a
-    /// directory, an unsupported file, an undecodable one) -- see
+    /// `F3` -- previews the entry under the cursor, in the *right*
+    /// panel: an image (`.jpg`/`.jpeg`/`.png`/`.bmp` --
+    /// `explorer::image_preview::is_supported_image`, `Mode::ImagePreview`)
+    /// or a `.md`/`.markdown` file, rendered
+    /// (`explorer::markdown_preview::is_markdown_file`,
+    /// `Mode::MarkdownPreview`). A no-op for anything else (a directory,
+    /// an unsupported file, an undecodable/unreadable one) -- see
     /// `TODO/viewer.md` for what F3 is eventually meant to cover beyond
-    /// images.
+    /// these two.
     PreviewSelected,
     /// `F2` — Far Manager's own "user menu" (`explorer::user_menu`): a
     /// per-directory list of shell-command shortcuts, read from

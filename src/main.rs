@@ -16,7 +16,7 @@ use std::io::{self, Stdout};
 use color_eyre::eyre::Result;
 use crossterm::{
     cursor::SetCursorStyle,
-    event::{self, Event, KeyEventKind, KeyModifiers},
+    event::{self, DisableMouseCapture, Event, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -45,6 +45,18 @@ fn main() -> Result<()> {
     if let Ok(picker) = ratatui_image::picker::Picker::from_query_stdio() {
         app.image_picker = picker;
     }
+    // The query above writes and reads raw escape sequences directly on
+    // stdio, bypassing `ratatui`'s own render buffer entirely -- reported
+    // directly as a real visible glitch (some stray text briefly shown
+    // in a panel before the real UI appears). `ratatui`'s own diffing
+    // render only rewrites cells that differ from its *own* last-known
+    // buffer, which starts out blank and has no idea the query just
+    // wrote real bytes to the actual screen -- so a query artifact
+    // sitting outside whatever the very first frame happens to redraw
+    // could otherwise linger. `Terminal::clear()` forces the next
+    // `draw()` to treat the whole screen as needing a full repaint,
+    // guaranteeing that first frame actually overwrites everything.
+    terminal.clear()?;
     // Applies a shell profile saved via F9 -> Options -> Save setup, if
     // its name still matches one of the built-in profiles -- a name
     // that no longer exists (profiles changed between runs) just falls
@@ -81,7 +93,7 @@ fn main() -> Result<()> {
         app.mode = Mode::ConfirmPortFarMenu(far_path);
     }
     let result = run(&mut terminal, &mut app);
-    restore_terminal(&mut terminal)?;
+    restore_terminal(&mut terminal, app.mouse_capture_enabled)?;
     // Unlike command_history.txt (saved incrementally, per command run,
     // from inside browsing::run_command_line), the search box has no
     // equivalent "needs a real Terminal" choke point to hang a disk
@@ -107,8 +119,29 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 }
 
 
-fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mouse_capture_enabled: bool) -> Result<()> {
     disable_raw_mode()?;
+    // `DisableMouseCapture` here is a safety net, not the primary
+    // toggle -- mouse capture is normally turned on/off around just the
+    // Markdown preview session itself
+    // (`explorer::markdown_preview::open_preview`/
+    // `handle_markdown_preview_key`), so it doesn't interfere with
+    // native mouse text-selection everywhere else in this app. But
+    // quitting (`F10`) while a preview happens to still be open would
+    // otherwise skip that "turn it back off" step and leak mouse
+    // capture into the user's terminal after this process exits.
+    //
+    // `mouse_capture_enabled` (`app.mouse_capture_enabled`) gates
+    // whether `DisableMouseCapture` is even attempted -- reported as a
+    // real crash on Windows (`Error: 0: Initial console modes not set`)
+    // from sending it *unconditionally*: `crossterm`'s Windows console
+    // backend has no "initial mode" saved to restore unless
+    // `EnableMouseCapture` actually ran first in this process, and
+    // quitting from a plain `Mode::Browsing` session (never having
+    // opened a Markdown preview at all) hit exactly that case.
+    if mouse_capture_enabled {
+        execute!(terminal.backend_mut(), DisableMouseCapture)?;
+    }
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
@@ -119,6 +152,28 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
 
 
 fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
+    // Seeds `app.panels`' own `columns`/`visible_rows` from the real
+    // terminal size before the loop's *own* first frame ever reaches the
+    // screen -- `Panel::new()` defaults both to a single-column
+    // placeholder (`columns: 1`, `visible_rows: 0`, `column_height()`'s
+    // own doc comment calls this the "not yet known" sentinel), and the
+    // real values computed by `ui::draw` only ever get fed back to
+    // *this* draw's own returned `layout` -- applied to `app.panels`
+    // only *after* the frame that used the old, wrong values has
+    // already been sent to the terminal. Reported directly as a real,
+    // persistent glitch (not just an imperceptible one-frame flash):
+    // every entry crammed into one narrow column, staying that way
+    // until the very next keypress forced a redraw, since
+    // `wait_for_event` below blocks for input in between. This extra
+    // draw+apply cycle up front means the loop's own first visible frame
+    // already has correct, real values to render with.
+    let mut layout = [(1usize, 0usize); 2];
+    terminal.draw(|frame| layout = ui::draw(frame, app))?;
+    for (panel, (cols, rows)) in app.panels.iter_mut().zip(layout) {
+        panel.set_columns(cols);
+        panel.set_visible_rows(rows);
+    }
+
     while !app.should_quit {
         let mut layout = [(1usize, 0usize); 2];
         terminal.draw(|frame| layout = ui::draw(frame, app))?;
@@ -166,9 +221,22 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
 
 
 fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    let Event::Key(key) = event::read()? else {
-        return Ok(());
-    };
+    match event::read()? {
+        Event::Key(key) => handle_key_event(app, key, terminal),
+        // Only ever arrives while `Mode::MarkdownPreview` has turned
+        // capture on for itself (`explorer::markdown_preview::open_preview`'s
+        // own doc comment) -- every other mode just never gets a mouse
+        // event to begin with, so no mode check is needed here the way
+        // `handle_key_event`'s own big match needs one per mode.
+        Event::Mouse(mouse) => {
+            explorer::handle_markdown_preview_mouse(app, mouse);
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     if key.kind != KeyEventKind::Press {
         return Ok(());
     }
@@ -199,6 +267,14 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
         Mode::AddUserMenuItem(..) => explorer::handle_add_user_menu_item_key(app, key),
         Mode::ImagePreview(_) => {
             explorer::handle_image_preview_key(app, key);
+            Ok(())
+        }
+        Mode::MarkdownPreview(_) => {
+            explorer::handle_markdown_preview_key(app, key);
+            Ok(())
+        }
+        Mode::MarkdownLinkSearch(..) => {
+            explorer::handle_markdown_link_search_key(app, key);
             Ok(())
         }
         // Any key dismisses -- there's nothing to answer, just
