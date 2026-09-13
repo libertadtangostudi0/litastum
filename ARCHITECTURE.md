@@ -36,6 +36,12 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             input handling, .txt export)
   explorer/system_open.rs — Shift+Enter: hands a path to the OS's own
                             file manager (explorer.exe/open/xdg-open)
+  explorer/image_preview.rs — F3 on a supported image (jpg/jpeg/png/bmp):
+                            Mode::ImagePreview, ImagePreviewState (decode
+                            + Left/Right cycling within the directory via
+                            ratatui-image); ui/image_preview.rs draws it
+                            into the right panel's own area in place of
+                            its usual file listing. See TODO/viewer.md.
   explorer/user_menu/    —   F2 -- per-directory script menu, native
                             format LitastumMenu.toml (parse/ -- Far
                             Manager's own FarMenu.ini nested-block DSL

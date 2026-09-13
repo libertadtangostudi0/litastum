@@ -2,10 +2,11 @@ use std::io;
 use std::path::PathBuf;
 
 use edtui::syntect::highlighting::Theme as SynTheme;
+use ratatui_image::picker::Picker;
 
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
 use crate::editor::Editor;
-use crate::explorer::{AddUserMenuItemState, DriveMenu, FindFileState, Panel, UserMenuCommandEdit, UserMenuPromptState, UserMenuState};
+use crate::explorer::{AddUserMenuItemState, DriveMenu, FindFileState, ImagePreviewState, Panel, UserMenuCommandEdit, UserMenuPromptState, UserMenuState};
 use crate::theming::{MainMenu, PopupStyle, PopupStyleMenu, Theme, ThemeMenu};
 
 
@@ -69,6 +70,15 @@ pub enum Mode {
     /// this app has no status-bar message surface otherwise (see
     /// `ui/confirm.rs`'s own doc comment on that gap).
     Info(String),
+    /// `F3` on a supported image file -- the right panel's own file
+    /// listing is replaced with a live preview of it
+    /// (`explorer::image_preview::open_preview`,
+    /// `ui::image_preview::draw_image_preview`) instead of the usual
+    /// browser layout on that side. `Left`/`Right` cycle through every
+    /// other image file in the same directory
+    /// (`explorer::image_preview::handle_image_preview_key`); `Esc`/`F3`
+    /// again closes it back to `Mode::Browsing`.
+    ImagePreview(ImagePreviewState),
 }
 
 
@@ -314,6 +324,20 @@ pub struct App {
     /// of the two is ever meaningfully in flight at once, since the
     /// editor can only have been opened from one place.
     pub user_menu_command_edit: Option<UserMenuCommandEdit>,
+    /// `F3`'s image preview: which rendering protocol the real terminal
+    /// actually supports -- queried once, in `main()`, via
+    /// `Picker::from_query_stdio()` (Sixel/Kitty/iTerm2 if the terminal
+    /// answers, half-blocks otherwise), before the main loop starts
+    /// reading keyboard events -- `ratatui_image`'s own docs require
+    /// this ordering, since the query writes/reads raw escape sequences
+    /// on stdio that could otherwise collide with (or be swallowed by)
+    /// `crossterm`'s own event reader. `App::new` itself just sets
+    /// `Picker::halfblocks()` (no real query -- keeps every test that
+    /// builds an `App` via `test_support::test_app` from touching real
+    /// stdio, same isolation reasoning as `command_history`/
+    /// `search_history` above), overwritten in `main()` right after
+    /// construction, same pattern those two already use.
+    pub image_picker: Picker,
 }
 
 
@@ -343,6 +367,7 @@ impl App {
             alt_held: false,
             editor_return_to: None,
             user_menu_command_edit: None,
+            image_picker: Picker::halfblocks(),
         })
     }
 

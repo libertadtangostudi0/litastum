@@ -33,6 +33,14 @@ pub enum Command {
     OpenInFileManager,
     ToggleActive,
     EditSelected,
+    /// `F3` -- previews the entry under the cursor, if it's a supported
+    /// format (`.jpg`/`.jpeg`/`.png`/`.bmp` for now --
+    /// `explorer::image_preview::is_supported_image`), in the *right*
+    /// panel (`Mode::ImagePreview`). A no-op for anything else (a
+    /// directory, an unsupported file, an undecodable one) -- see
+    /// `TODO/viewer.md` for what F3 is eventually meant to cover beyond
+    /// images.
+    PreviewSelected,
     /// `F2` — Far Manager's own "user menu" (`explorer::user_menu`): a
     /// per-directory list of shell-command shortcuts, read from
     /// `LitastumMenu.toml`. If only a compatible `FarMenu.ini` exists,
@@ -95,6 +103,7 @@ pub fn resolve(key: KeyCode) -> Option<Command> {
         KeyCode::Enter => Some(Command::EnterSelected),
         KeyCode::Tab => Some(Command::ToggleActive),
         KeyCode::F(2) => Some(Command::OpenUserMenu),
+        KeyCode::F(3) => Some(Command::PreviewSelected),
         KeyCode::F(4) => Some(Command::EditSelected),
         KeyCode::F(5) => Some(Command::CopySelected),
         KeyCode::F(6) => Some(Command::MoveSelected),
@@ -150,6 +159,11 @@ mod tests {
     #[test]
     fn f2_opens_the_user_menu() {
         assert_eq!(resolve(KeyCode::F(2)), Some(Command::OpenUserMenu));
+    }
+
+    #[test]
+    fn f3_previews_the_selected_entry() {
+        assert_eq!(resolve(KeyCode::F(3)), Some(Command::PreviewSelected));
     }
 
     #[test]

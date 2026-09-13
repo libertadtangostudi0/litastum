@@ -18,6 +18,7 @@ mod confirm;
 mod drive_menu;
 mod editor_find;
 mod find_file;
+mod image_preview;
 mod menu;
 mod popup;
 mod popup_style_menu;
@@ -74,7 +75,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         | Mode::UserMenuPrompt(_)
         | Mode::ConfirmPortFarMenu(_)
         | Mode::AddUserMenuItem(..)
-        | Mode::Info(_) => {}
+        | Mode::Info(_)
+        | Mode::ImagePreview(_) => {}
     }
 
     let root = Layout::default()
@@ -92,7 +94,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         .split(root[0]);
 
     let left_columns = draw_panel(frame, panels[0], &app.panels[0], app.active == 0, &theme);
-    let right_columns = draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme);
+    // `F3` replaces the right panel's own file listing with the
+    // previewed image entirely (`explorer::image_preview::open_preview`'s
+    // own doc comment) -- not a popup drawn over it, unlike every other
+    // `Mode` handled in the match below. `Panel::set_columns`/
+    // `set_visible_rows` don't matter here: navigation commands never
+    // reach the right panel while `Mode::ImagePreview` is active
+    // (`image_preview::handle_image_preview_key` intercepts every key),
+    // and the very next frame after `Esc`/`F3` closes the preview
+    // recomputes real values again.
+    let right_columns = if let Mode::ImagePreview(state) = &mut app.mode {
+        image_preview::draw_image_preview(frame, panels[1], state, &theme);
+        (1, 1)
+    } else {
+        draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme)
+    };
     let cwd = app.panels[app.active].path.clone();
     let prefix_len = draw_command_line(frame, root[1], &cwd, &app.command_line, app.command_line_selection_anchor, app.command_line_cursor, &theme);
     draw_function_keys(frame, root[2], &theme, app.alt_held);

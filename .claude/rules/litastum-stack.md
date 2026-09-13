@@ -514,10 +514,30 @@ plus that, once given a matching non-modal keymap.
 - Archives: `zip`, `tar` + `flate2`, `sevenz-rust` — avoid `libarchive`
   C bindings.
 - SFTP: `russh` (pure Rust) — avoid `ssh2`'s libssh2 C dependency.
-- Previews: `ratatui-image` (falls back to Unicode halfblocks
-  everywhere; native Sixel/Kitty/iTerm2 protocols are mostly
-  Unix-terminal territory — don't expect Windows Terminal to get the
-  high-fidelity path).
+- Previews: **landed** for images (`F3`, `explorer/image_preview.rs` +
+  `ui/image_preview.rs`) — `ratatui-image` + `image` (trimmed to
+  `default-features = false` with just the `jpeg`/`png`/`bmp` decode
+  features and the `crossterm` picker backend actually used, rather
+  than the full default set, which pulls in heavy AV1/WebP encoders
+  — `rav1e`/`ravif` — this app never needs). `App::image_picker`
+  (`Picker::from_query_stdio()`, queried once in `main()` right after
+  entering the alternate screen but before the main loop reads any
+  keyboard events — required ordering, since the query itself
+  writes/reads raw escape sequences on stdio) picks the best rendering
+  protocol the real terminal actually answers for (Sixel/Kitty/iTerm2),
+  falling back to `Picker::halfblocks()` only if the terminal doesn't
+  respond (e.g. legacy Windows Console/ConPTY, handled internally by
+  `ratatui-image` itself via a 2-second timeout, never blocking
+  startup). A first version forced `Picker::halfblocks()`
+  unconditionally, reasoning (without actually testing) that terminal
+  capability probing would be unreliable on Windows — reported
+  directly as looking unacceptably block/blurry once tried for real
+  (a screenshot with small text), which is exactly the "looks fine
+  everywhere but a terminal" case half-blocks can't do justice to;
+  querying properly instead of assuming lets a real Sixel-capable
+  terminal (Windows Terminal now included) render close to a real
+  image. `.md` file preview (also `F3`, per `TODO/viewer.md`) is still
+  unimplemented.
 - Plugins (if ever needed): WASM (`wasmtime`/`extism`) over native
   `.dll`/`.so` loading via `libloading`.
 

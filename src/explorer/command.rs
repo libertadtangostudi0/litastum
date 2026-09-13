@@ -7,7 +7,7 @@ use crate::app::{App, DeleteEntry, Mode, PendingDelete, PendingTransfer, Transfe
 use crate::editor::Editor;
 use crate::theming::MainMenu;
 use super::keymap::Command;
-use super::{system_open, user_menu, Panel};
+use super::{image_preview, system_open, user_menu, Panel};
 
 
 /// Executes a resolved `Command` against the app state. This is the one
@@ -36,6 +36,7 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
         }
         Command::ToggleActive => app.toggle_active(),
         Command::EditSelected => open_editor(app),
+        Command::PreviewSelected => image_preview::open_preview(app),
         Command::OpenUserMenu => open_user_menu(app),
         Command::OpenMenu => app.mode = Mode::MainMenu(MainMenu::open()),
         Command::CopySelected => request_transfer(app, TransferOp::Copy),

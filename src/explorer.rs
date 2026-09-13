@@ -4,6 +4,7 @@ mod drive_menu;
 mod entry;
 mod find_file;
 mod fs_ops;
+mod image_preview;
 mod keymap;
 mod panel;
 mod system_open;
@@ -14,6 +15,7 @@ pub use confirm::{handle_confirm_delete_key, handle_confirm_transfer_key};
 pub use drive_menu::{format_bytes, handle_drive_menu_key, DriveMenu};
 pub use entry::{Entry, HighlightRole};
 pub use find_file::{handle_find_file_key, FindFilePhase, FindFileState};
+pub use image_preview::{handle_image_preview_key, ImagePreviewState};
 pub use keymap::{resolve, Command};
 pub use panel::Panel;
 pub use user_menu::{

@@ -33,6 +33,18 @@ fn main() -> Result<()> {
     let mut terminal = setup_terminal()?;
     let (theme, syntax_theme) = theming::config::load_active_theme();
     let mut app = App::new(start_dir, theme, syntax_theme)?;
+    // Queried once here -- after entering the alternate screen
+    // (`setup_terminal` above) but before `run()` starts reading
+    // keyboard events -- see `App::image_picker`'s own doc comment for
+    // why that ordering matters (the query writes/reads raw escape
+    // sequences on stdio that could otherwise collide with, or be
+    // swallowed by, crossterm's own event reader). Falls back to
+    // `App::new`'s own `Picker::halfblocks()` default on any error,
+    // same "never blocks startup" rule the rest of this function
+    // follows.
+    if let Ok(picker) = ratatui_image::picker::Picker::from_query_stdio() {
+        app.image_picker = picker;
+    }
     // Applies a shell profile saved via F9 -> Options -> Save setup, if
     // its name still matches one of the built-in profiles -- a name
     // that no longer exists (profiles changed between runs) just falls
@@ -185,6 +197,10 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
         Mode::UserMenuPrompt(_) => explorer::handle_user_menu_prompt_key(app, key, terminal),
         Mode::ConfirmPortFarMenu(_) => explorer::handle_confirm_port_far_menu_key(app, key),
         Mode::AddUserMenuItem(..) => explorer::handle_add_user_menu_item_key(app, key),
+        Mode::ImagePreview(_) => {
+            explorer::handle_image_preview_key(app, key);
+            Ok(())
+        }
         // Any key dismisses -- there's nothing to answer, just
         // something to acknowledge having read.
         Mode::Info(_) => {
