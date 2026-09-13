@@ -32,7 +32,7 @@ pub fn draw_drive_menu(frame: &mut Frame, area: Rect, menu: &DriveMenu, theme: &
             let free = drive.free_bytes.map_or_else(|| "—".to_string(), format_bytes);
             let text = format!("{:<4}{:<10}{total:>10}{free:>10}", drive.label, drive.kind);
             let style = if index == menu.selected {
-                Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+                popup::selected_row_style(theme)
             } else {
                 Style::default().fg(theme.text)
             };

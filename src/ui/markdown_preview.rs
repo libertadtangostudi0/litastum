@@ -130,7 +130,7 @@ pub fn draw_markdown_link_search(frame: &mut Frame, area: Rect, search: &Markdow
             .enumerate()
             .map(|(i, link)| {
                 let row_style = if i == search.selected() {
-                    Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+                    popup::selected_row_style(theme)
                 } else {
                     Style::default().fg(theme.text)
                 };
@@ -162,6 +162,15 @@ pub fn draw_markdown_link_search(frame: &mut Frame, area: Rect, search: &Markdow
 /// background, not a full-width fill" convention `ui/mod.rs::build_list_item`
 /// already uses for a panel's own selected row (this codebase never
 /// pads a line out to its column width just to color the rest of it).
+/// `theme.selection_text`, when a scheme sets it, overrides the text
+/// color too -- reported directly from a screenshot of this exact
+/// highlighted line still showing light text after every *other*
+/// popup's own selected-row/text-selection styling got the same fix
+/// (`ui/popup.rs::selected_row_style`/`selected_text_style`); this
+/// preview's own highlighted line was the one place left still writing
+/// the old `Style::default().fg(...).bg(theme.current_row_bg)` shape by
+/// hand, since it needs to layer the background *on top of* each
+/// span's own kind-based color rather than starting from `theme.text`.
 fn render_line<'a>(line: &'a [MarkdownSpan], theme: &Theme, highlighted: bool) -> Line<'a> {
     if line.is_empty() {
         return Line::default();
@@ -172,6 +181,9 @@ fn render_line<'a>(line: &'a [MarkdownSpan], theme: &Theme, highlighted: bool) -
                 let mut style = span_style(span.kind, theme);
                 if highlighted {
                     style = style.bg(theme.current_row_bg);
+                    if let Some(selection_text) = theme.selection_text {
+                        style = style.fg(selection_text);
+                    }
                 }
                 Span::styled(span.text.as_str(), style)
             })
@@ -289,6 +301,35 @@ mod tests {
         let second_row_bg = buffer[(1, 3)].bg;
         assert_eq!(first_row_bg, theme.current_row_bg, "the synced line (\"first\") should carry the highlight");
         assert_ne!(second_row_bg, theme.current_row_bg, "an unrelated line (\"second\") should not");
+    }
+
+    /// Regression test for a real report: this exact highlighted line
+    /// still showed light text after every *other* popup's own
+    /// selected-row styling got `theme.selection_text` support
+    /// (`ui/popup.rs::selected_row_style`/`selected_text_style`) --
+    /// `render_line` was the one place left building the highlight
+    /// `Style` by hand instead of through those helpers.
+    #[test]
+    fn the_synced_line_uses_the_theme_override_text_color_when_set() {
+        use crate::explorer::MarkdownPreviewState;
+        use crate::test_support::unique_scratch_dir;
+        use std::fs;
+
+        let dir = unique_scratch_dir("markdown-preview-highlight");
+        let path = dir.join("readme.md");
+        fs::write(&path, "first\n\nsecond\n").unwrap();
+        let mut state = MarkdownPreviewState::open(&path).unwrap();
+        state.sync_to_editor_cursor(0, 0.0, 22);
+
+        let backend = TestBackend::new(20, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut theme = Theme::dark();
+        theme.selection_text = Some(ratatui::style::Color::Rgb(0, 0, 0));
+        terminal.draw(|frame| draw_markdown_preview(frame, frame.area(), &mut state, &theme)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let first_row_fg = buffer[(1, 1)].fg;
+        assert_eq!(first_row_fg, ratatui::style::Color::Rgb(0, 0, 0), "the highlighted line should use the theme's override text color");
     }
 
     #[test]

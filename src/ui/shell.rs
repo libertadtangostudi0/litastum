@@ -27,7 +27,7 @@ pub fn draw_shell_menu(frame: &mut Frame, area: Rect, menu: &ShellMenu, profiles
         .enumerate()
         .map(|(index, profile)| {
             let style = if index == menu.selected {
-                Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+                popup::selected_row_style(theme)
             } else {
                 Style::default().fg(theme.text)
             };

@@ -46,7 +46,7 @@ pub fn draw_user_menu(frame: &mut Frame, area: Rect, menu: &UserMenuState, theme
                     label.push_str("  \u{203a}");
                 }
                 let style = if index == level.selected {
-                    Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+                    popup::selected_row_style(theme)
                 } else {
                     Style::default().fg(theme.text)
                 };
@@ -186,7 +186,7 @@ fn field_line(value: &str, cursor: usize, selection_anchor: Option<usize>, theme
 
     Line::from(vec![
         Span::styled(before, Style::default().fg(theme.text)),
-        Span::styled(selected, Style::default().fg(theme.text).bg(theme.current_row_bg)),
+        Span::styled(selected, popup::selected_text_style(theme)),
         Span::styled(after, Style::default().fg(theme.text)),
     ])
 }

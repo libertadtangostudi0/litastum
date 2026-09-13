@@ -232,6 +232,40 @@ fn selection_end_cell_renders_with_selection_color_not_base() {
     );
 }
 
+/// `Theme::selection_text`, when a scheme sets it (requested directly,
+/// to keep text readable over a deliberately bright selection
+/// background), overrides the selected text's own foreground -- plain
+/// `theme.text` is the fallback (see the test above, which uses
+/// `Theme::dark()`, where `selection_text` is `None`) only when a
+/// scheme doesn't ask for this.
+#[test]
+fn selection_uses_the_theme_override_color_when_set() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let (mut editor, _path) = open_test_editor("chat + the end");
+    for _ in 0..7 {
+        editor.input(key(KeyCode::Right));
+    }
+    editor.extend_word_selection(false); // Ctrl+Shift+Left
+
+    let mut theme = Theme::dark();
+    theme.selection_text = Some(ratatui::style::Color::Rgb(0, 0, 0));
+    let backend = TestBackend::new(40, 3);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| {
+            let view = editor.view(&theme);
+            frame.render_widget(view, frame.area());
+        })
+        .unwrap();
+
+    let cursor_pos = editor.cursor_screen_position().expect("cursor should be visible after rendering");
+    let buf = terminal.backend().buffer();
+    let cell_fg = buf[(cursor_pos.x, cursor_pos.y)].fg;
+    assert_eq!(cell_fg, ratatui::style::Color::Rgb(0, 0, 0), "the selected text should use the theme's override color, not theme.text");
+}
+
 /// Regression test for a real report: the selection's own end cell
 /// renders correctly (see the test above), but the real terminal's
 /// own blinking bar cursor is drawn at the *left* edge of whatever

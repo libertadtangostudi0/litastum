@@ -131,7 +131,7 @@ fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Th
             .enumerate()
             .map(|(index, path)| {
                 let style = if index == state.selected {
-                    Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+                    popup::selected_row_style(theme)
                 } else {
                     Style::default().fg(theme.text)
                 };

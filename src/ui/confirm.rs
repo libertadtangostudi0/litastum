@@ -179,7 +179,7 @@ fn destination_line(pending: &PendingTransfer, theme: &Theme) -> Line<'static> {
 
     Line::from(vec![
         Span::styled(before, Style::default().fg(theme.text)),
-        Span::styled(selected, Style::default().fg(theme.text).bg(theme.current_row_bg)),
+        Span::styled(selected, popup::selected_text_style(theme)),
         Span::styled(after, Style::default().fg(theme.text)),
     ])
 }

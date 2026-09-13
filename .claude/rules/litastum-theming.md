@@ -179,6 +179,67 @@ used `theme.accent` directly before `Theme::command_line_prefix`
 existed). Rendered bold (`ui/mod.rs::draw_command_line`), matching real
 Far's own `[x] Bold` style flag on this color group.
 
+### `selectionForeground`: another litastum-specific field, optional with a different default
+
+Same shape as `commandLinePrefix` above — `ColorScheme::selection_foreground:
+Option<String>`, `#[serde(default)]`, absent from every scheme sourced
+from windowsterminalthemes.dev — but the fallback is deliberately
+different: `None` means *leave the text color alone*, not "substitute a
+fixed color." Forcing a uniform text color over `current_row_bg`
+(the panel's own cursor row, the editor's own text selection) would
+undo the file-type-coloring convention below for every scheme that
+never asked for this — `theme.text`/a file's own type color already
+reads fine over every built-in scheme's own muted `selectionBackground`.
+
+Added directly for `themes/molocai.json`: its `selectionBackground` was
+deliberately changed from the real Molokai scheme's own pale-blue
+`#b5d5ff` to its own bright ANSI `green` (`#98e123`, a bolder highlight
+the user wanted after browsing the theme's demo on windowsterminalthemes.dev
+— that green is actually the theme's `green` swatch used for a Jest
+diff highlight in the site's own demo content, not literally
+`selectionBackground`, but was liked well enough to become the real
+selection color here) — black text (`"selectionForeground": "#000000"`)
+keeps it readable ("внутри чёрный текст"). `ubuntu.json`/`alien-blood.json`/
+`dracula.json` got the same treatment shortly after, each picking a
+vivid color already in its own 16-slot palette (Ubuntu's `brightPurple`,
+AlienBlood's `brightGreen`, Dracula's own iconic `green`) rather than
+the source's own generic, uncustomized `selectionBackground` (several
+of these community schemes never bothered setting one, and all share
+the exact same pale-blue `#b5d5ff` as a result — accurate to the real
+scheme, just visually generic and often clashing with that scheme's own
+identity).
+
+**This surfaced a second gap once the file panel's own selected row
+started using black-on-green correctly**: every *other* popup's own
+selected-row/text-selection styling (`ui/menu.rs`, `theme_menu.rs`'s
+sibling pickers, `find_file.rs`, `command_line.rs`'s history popups,
+the Copy/Move destination field, ...) had the identical
+`Style::default().fg(theme.text).bg(theme.current_row_bg)` literal
+repeated independently in each file, none of them aware of
+`Theme::selection_text` — reported directly from a screenshot of the
+F9 menu still showing light text on the new green background.
+`ui/popup.rs::{selected_row_style, selected_text_style}` now centralize
+this (bold for a list row, plain for an in-place text selection); every
+popup that used to write that `Style` out longhand calls one of these
+instead, so a future theme's `selectionForeground` reaches every popup
+at once rather than needing to be threaded through each one by hand
+again.
+
+**One real spot still missed that pass**: `ui/markdown_preview.rs::render_line`'s
+own highlighted-line painting (the row `MarkdownPreviewState::sync_to_editor_cursor`
+matches to the built-in editor's cursor, in the linked embedded
+preview) — reported directly from a screenshot of the split editor+
+preview view, green background still showing light text on the
+*preview* side while the *editor* side (same line, same file) already
+showed black correctly. Didn't go through `ui/popup.rs`'s two helpers
+at all: it needs to layer `current_row_bg` *on top of* each span's own
+`span_style` kind-based color (heading/bold/link/... — a markdown
+line isn't uniformly `theme.text` the way a popup's plain list row is),
+which neither helper's fixed starting color fits. Fixed in place
+instead — the same `if let Some(selection_text) = theme.selection_text`
+override, applied only inside the `highlighted` branch, right after the
+background is layered on.
+
 ## File-type coloring (`panel.rs::HighlightRole`)
 
 Far Manager-style: entries are colored by a coarse category, not left

@@ -1,4 +1,4 @@
-use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+use ratatui::{backend::TestBackend, layout::Rect, style::Color, widgets::List, Terminal};
 
 use super::*;
 
@@ -83,4 +83,45 @@ fn draw_info_popup_shows_the_message_and_the_dismiss_hint() {
         .join("\n");
     assert!(text.contains("FarMenu.ini.bak"));
     assert!(text.contains("any key"));
+}
+
+fn test_entry(name: &str) -> Entry {
+    Entry { name: name.to_string(), is_dir: false, size: 0, modified: None }
+}
+
+/// A theme that doesn't set `selection_text` (every built-in scheme
+/// today, and any Windows Terminal JSON downloaded as-is) must keep
+/// the selected row's own file-type color, not have it silently
+/// replaced -- the deliberate "file-type color survives being
+/// selected" convention (`.claude/rules/litastum-theming.md`).
+#[test]
+fn selected_row_keeps_its_own_color_when_theme_has_no_selection_text_override() {
+    let theme = Theme::dark();
+    assert_eq!(theme.selection_text, None);
+    let item = build_list_item(&test_entry("notes.txt"), true, false, true, &theme);
+
+    let backend = TestBackend::new(20, 1);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|frame| frame.render_widget(List::new([item]), frame.area())).unwrap();
+
+    let fg = terminal.backend().buffer()[(0, 0)].fg;
+    assert_eq!(fg, theme.text, "an ordinary file's own color (theme.text) should be unchanged");
+}
+
+/// The actual point of the whole `selection_text` feature: a scheme
+/// that *does* set it (requested directly, to keep text readable over
+/// a deliberately bright selection background) overrides the selected
+/// row's text color.
+#[test]
+fn selected_row_uses_the_theme_override_color_when_set() {
+    let mut theme = Theme::dark();
+    theme.selection_text = Some(Color::Rgb(0, 0, 0));
+    let item = build_list_item(&test_entry("notes.txt"), true, false, true, &theme);
+
+    let backend = TestBackend::new(20, 1);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|frame| frame.render_widget(List::new([item]), frame.area())).unwrap();
+
+    let fg = terminal.backend().buffer()[(0, 0)].fg;
+    assert_eq!(fg, Color::Rgb(0, 0, 0), "the selected row should use the theme's override color");
 }

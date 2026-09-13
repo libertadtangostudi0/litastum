@@ -32,6 +32,28 @@ pub struct Theme {
     /// focus — `accent` blended over `bg` at ~15% alpha (ratatui has no
     /// real alpha blending, so this is precomputed).
     pub current_row_bg: Color,
+    /// Text color to use *over* `current_row_bg`, if a scheme's own
+    /// `current_row_bg` is bright/saturated enough that the ordinary
+    /// text color (or a file's own type color, in the panel) would read
+    /// poorly on it -- `None` (every built-in scheme, and any Windows
+    /// Terminal JSON downloaded as-is) means "don't override, keep
+    /// whatever color the text would already have," today's behavior
+    /// exactly. Requested directly, after setting a theme's own
+    /// `selectionBackground` to a vivid ANSI `green` swatch for a bolder
+    /// highlight than the theme's own real selection color: "внутри
+    /// чёрный текст" (black text inside it) -- reusing the whole-buffer
+    /// text or a file's own type color unmodified over a bright green
+    /// background would be hard to read. See `ColorScheme::to_theme`/
+    /// `ColorScheme::selection_foreground` for the optional,
+    /// litastum-specific `selectionForeground` JSON extension this
+    /// comes from -- same shape as `command_line_prefix` below, just
+    /// with "leave it alone" as the fallback instead of a fixed color,
+    /// since forcing a uniform text color over every theme's own
+    /// current-row highlight would undo the deliberate "file-type color
+    /// survives being the selected row" convention
+    /// (`.claude/rules/litastum-theming.md`) for every scheme that
+    /// never asked for this.
+    pub selection_text: Option<Color>,
     /// The `"{cwd}> "` prefix shown before typed text on the command
     /// line. Defaults to `accent` (and always did, before this field
     /// existed) — kept as its own field rather than folded into
@@ -60,6 +82,7 @@ impl Theme {
             warning: Color::Rgb(0xd2, 0x99, 0x22),
             success: Color::Rgb(0x3f, 0xb9, 0x50),
             current_row_bg: Color::Rgb(0x18, 0x27, 0x3a),
+            selection_text: None,
             command_line_prefix: Color::Rgb(0x58, 0xa6, 0xff),
         }
     }

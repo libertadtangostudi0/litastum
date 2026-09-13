@@ -9,6 +9,7 @@ use ratatui::{
 use crate::command_line::{matching_history, CommandHistoryMenu};
 use crate::theming::Theme;
 use crate::ui::centered_rect;
+use crate::ui::popup;
 
 /// Renders the History popup — filtered live against `query` (the same
 /// always-live command line everything else types into, per
@@ -44,7 +45,7 @@ pub fn draw_command_history(frame: &mut Frame, area: Rect, menu: &CommandHistory
             .enumerate()
             .map(|(index, entry)| {
                 let style = if index == menu.selected {
-                    Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+                    popup::selected_row_style(theme)
                 } else {
                     Style::default().fg(theme.text)
                 };
@@ -100,7 +101,7 @@ pub fn draw_history_suggestions(frame: &mut Frame, command_line_area: Rect, sugg
         .enumerate()
         .map(|(index, entry)| {
             let style = if index == selected {
-                Style::default().fg(theme.text).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+                popup::selected_row_style(theme)
             } else {
                 Style::default().fg(theme.text)
             };

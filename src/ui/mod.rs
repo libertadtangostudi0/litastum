@@ -405,7 +405,15 @@ fn build_list_item(entry: &Entry, is_selected: bool, is_marked: bool, panel_acti
     }
     if is_selected {
         style = if panel_active {
-            style.bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+            // `theme.selection_text` overrides the entry's own type
+            // color only when a scheme actually asks for it (see its
+            // own doc comment) -- every other scheme keeps today's
+            // behavior of leaving the file-type color alone here.
+            let mut selected_style = style.bg(theme.current_row_bg).add_modifier(Modifier::BOLD);
+            if let Some(selection_text) = theme.selection_text {
+                selected_style = selected_style.fg(selection_text);
+            }
+            selected_style
         } else {
             style.add_modifier(Modifier::UNDERLINED)
         };
@@ -543,7 +551,7 @@ fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &s
             let selected: String = chars[start..end].iter().collect();
             let after: String = chars[end..].iter().collect();
             spans.push(Span::styled(before, Style::default().fg(theme.text)));
-            spans.push(Span::styled(selected, Style::default().fg(theme.text).bg(theme.current_row_bg)));
+            spans.push(Span::styled(selected, popup::selected_text_style(theme)));
             spans.push(Span::styled(after, Style::default().fg(theme.text)));
         }
         None => spans.push(Span::styled(command_line.to_string(), Style::default().fg(theme.text))),

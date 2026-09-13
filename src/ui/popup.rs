@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::Style,
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Padding},
     Frame,
@@ -125,11 +125,63 @@ pub fn key_pill(key: &str, label: &str, bg: ratatui::style::Color, theme: &Theme
 }
 
 
+/// Style for a selected row in a list-style popup (F9 menu, the theme/
+/// shell/drive/popup-style pickers, Find file's own results, the
+/// Markdown link search list, the command-history popup) --
+/// `theme.current_row_bg` background, bold, with `theme.selection_text`
+/// overriding the text color when a scheme actually sets it (falls back
+/// to `theme.text`, every scheme's behavior before that field existed).
+/// Pulled out once identical `Style::default().fg(theme.text).bg(theme.current_row_bg)
+/// .add_modifier(Modifier::BOLD)` literals had spread to essentially
+/// every popup's own list rendering -- reported directly after a scheme
+/// set `current_row_bg` to a bright, saturated color (a vivid ANSI
+/// green) specifically so its own selected file-panel row would read
+/// black-on-green: every *other* popup's selected row kept using
+/// `theme.text` unconditionally and read poorly the same way the panel
+/// row used to, since none of them knew about the override yet.
+pub fn selected_row_style(theme: &Theme) -> Style {
+    Style::default().fg(theme.selection_text.unwrap_or(theme.text)).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
+}
+
+/// Same background/foreground pairing as `selected_row_style`, for an
+/// in-place text *selection* within an editable field (the Copy/Move
+/// destination field, a user-menu prompt field, the always-live command
+/// line's own `Shift`+arrow selection) -- no bold, since this highlights
+/// a run of characters within running text, not a whole list row.
+pub fn selected_text_style(theme: &Theme) -> Style {
+    Style::default().fg(theme.selection_text.unwrap_or(theme.text)).bg(theme.current_row_bg)
+}
+
+
 #[cfg(test)]
 mod tests {
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
+
+    /// `selected_row_style`/`selected_text_style` both fall back to
+    /// `theme.text` when a scheme sets no `selection_text` override --
+    /// every scheme's behavior before that field existed, still the
+    /// default for every scheme that doesn't ask for something else.
+    #[test]
+    fn selected_styles_fall_back_to_theme_text_without_an_override() {
+        let theme = Theme::dark();
+        assert_eq!(theme.selection_text, None);
+        assert_eq!(selected_row_style(&theme).fg, Some(theme.text));
+        assert_eq!(selected_text_style(&theme).fg, Some(theme.text));
+    }
+
+    /// The actual point of both helpers: a scheme that sets
+    /// `selection_text` (requested directly, to keep text readable
+    /// over a deliberately bright selection background) overrides it
+    /// in both list rows and in-place text selections alike.
+    #[test]
+    fn selected_styles_use_the_theme_override_when_set() {
+        let mut theme = Theme::dark();
+        theme.selection_text = Some(ratatui::style::Color::Rgb(0, 0, 0));
+        assert_eq!(selected_row_style(&theme).fg, Some(ratatui::style::Color::Rgb(0, 0, 0)));
+        assert_eq!(selected_text_style(&theme).fg, Some(ratatui::style::Color::Rgb(0, 0, 0)));
+    }
 
     fn render<F: FnOnce(&mut Frame)>(width: u16, height: u16, f: F) -> Terminal<TestBackend> {
         let backend = TestBackend::new(width, height);

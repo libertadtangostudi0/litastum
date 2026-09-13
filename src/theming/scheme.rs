@@ -68,6 +68,17 @@ pub struct ColorScheme {
     /// falls back to the same `accent` color when it's absent.
     #[serde(default, rename = "commandLinePrefix")]
     pub command_line_prefix: Option<String>,
+    /// Optional, litastum-specific extension, same shape as
+    /// `command_line_prefix` above — absent from every scheme sourced
+    /// from <https://windowsterminalthemes.dev/>. Overrides the text
+    /// color drawn *over* `selectionBackground` (the panel's current
+    /// row, the editor's own text selection); `None` (the default for
+    /// every scheme that doesn't set this) leaves that text whatever
+    /// color it would already be — see `Theme::selection_text`'s own
+    /// field doc comment for why "leave it alone" is the fallback here,
+    /// unlike `command_line_prefix`'s fallback to `accent`.
+    #[serde(default, rename = "selectionForeground")]
+    pub selection_foreground: Option<String>,
 }
 
 
@@ -101,6 +112,7 @@ impl ColorScheme {
             warning: rgb(&self.yellow),
             success: rgb(&self.green),
             current_row_bg: rgb(&self.selection_background),
+            selection_text: self.selection_foreground.as_deref().map(rgb),
             command_line_prefix,
         }
     }
@@ -390,6 +402,40 @@ mod tests {
         let scheme = ColorScheme::from_json_str(json).unwrap();
         assert_eq!(scheme.command_line_prefix.as_deref(), Some("#d7875f"));
         assert_eq!(scheme.to_theme().command_line_prefix, Color::Rgb(0xd7, 0x87, 0x5f));
+    }
+
+    /// The `selectionForeground` extension is optional too, same shape
+    /// as `commandLinePrefix` -- but unlike that one, absence means
+    /// "don't override anything" (`None`), not a fallback color: forcing
+    /// a uniform text color over every scheme's own current-row
+    /// highlight would undo the "file-type color survives being
+    /// selected" convention for every scheme that never asked for this.
+    #[test]
+    fn to_theme_selection_text_is_none_when_selection_foreground_is_absent() {
+        let scheme = ColorScheme::from_json_str(APPLE_SYSTEM_COLORS_JSON).unwrap();
+        assert_eq!(scheme.selection_foreground, None);
+        assert_eq!(scheme.to_theme().selection_text, None);
+    }
+
+    /// When a scheme *does* set the extension (requested directly, to
+    /// keep black text readable over a scheme's own selection color
+    /// deliberately set to a bright ANSI green), it should carry
+    /// through as `Theme::selection_text`.
+    #[test]
+    fn to_theme_selection_text_uses_the_extension_when_present() {
+        let json = r##"{
+            "name": "with-selection-fg",
+            "black": "#000000", "red": "#ff0000", "green": "#00ff00", "yellow": "#ffff00",
+            "blue": "#0000ff", "purple": "#ff00ff", "cyan": "#00ffff", "white": "#ffffff",
+            "brightBlack": "#000000", "brightRed": "#ff0000", "brightGreen": "#00ff00", "brightYellow": "#ffff00",
+            "brightBlue": "#0000ff", "brightPurple": "#ff00ff", "brightCyan": "#00ffff", "brightWhite": "#ffffff",
+            "background": "#111111", "foreground": "#eeeeee",
+            "selectionBackground": "#98e123", "cursorColor": "#333333",
+            "selectionForeground": "#000000"
+        }"##;
+        let scheme = ColorScheme::from_json_str(json).unwrap();
+        assert_eq!(scheme.selection_foreground.as_deref(), Some("#000000"));
+        assert_eq!(scheme.to_theme().selection_text, Some(Color::Rgb(0, 0, 0)));
     }
 
     #[test]

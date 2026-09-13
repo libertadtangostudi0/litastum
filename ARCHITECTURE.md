@@ -169,7 +169,12 @@ text_field.rs           — shared cursor/selection editing (transfer
 
 ui/mod.rs               — pure(ish) rendering: App -> ratatui widgets
   ui/popup.rs            —   shared popup chrome (draw_frame, key_pill,
-                              separator), style-aware (Classic/Rounded)
+                              separator), style-aware (Classic/Rounded);
+                              also selected_row_style/selected_text_style
+                              (theme.current_row_bg + theme.selection_text
+                              override) -- every popup's own selected-row/
+                              text-selection styling builds on these
+                              instead of repeating the same Style literal
   ui/preview.rs          —   shared full-panel-preview chrome
                               (draw_preview_frame, file_title) --
                               image_preview.rs and markdown_preview.rs
