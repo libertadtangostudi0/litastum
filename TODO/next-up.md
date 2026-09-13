@@ -12,6 +12,30 @@
       extra seed draw+apply cycle in `run()`, before the interactive
       loop's own first frame, so real values are already in place by
       the time anything is actually shown.
+- [x] **Holding a scroll-wheel/touchpad gesture, or an arrow/Page key,
+      then quickly reversing direction, felt sluggish to respond** --
+      reported twice, first against touchpad scrolling, then more
+      precisely against the built-in editor's own text caret ("каретка
+      ввода текста... идёт за пределы страницы и продолжает ещё ехать и
+      ехать... остановка при реверсе слишком медленная"). Root cause in
+      both cases: `main.rs::run()`'s loop does a full `terminal.draw()`
+      after *every single event* it handles, with no batching -- a
+      touchpad's own scroll momentum, or the OS's key-repeat while an
+      arrow/Page key is held, both generate a rapid burst of distinct
+      events rather than one, so reversing direction mid-burst meant
+      draining however many old-direction events were still queued
+      (each getting its own full, sometimes expensive redraw) before the
+      new direction was even read. Fixed the same way for both:
+      `main.rs::drain_pending_mouse_events`/`drain_pending_navigation_keys`
+      drain a same-direction burst without redrawing per event (so a
+      long, uninterrupted scroll/hold still redraws promptly rather than
+      once per tick), but stop *immediately* the moment a genuinely
+      reversed direction is read, rather than waiting out the rest of
+      the burst -- a real reversal is the one case where continuing to
+      coalesce is actively wrong. The navigation-key drain only ever
+      triggers for `Up`/`Down`/`PageUp`/`PageDown` (the keys actually
+      meant to be held to move through a long list/document) --
+      everything else, typing included, dispatches exactly as before.
 - [ ] Scrolling/pagination for the file panel's entry list — requested
       directly. Currently the 2-column column-major grid
       (`.claude/rules/litastum-ui-theme.md`) has no scroll offset at

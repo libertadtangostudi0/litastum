@@ -338,6 +338,122 @@ app is otherwise following (`F3` view vs. `F4` edit).
       Both panels' visible-row counts are derived the same way
       `draw_editor`/`draw_preview_frame` compute their own real content
       area (border/hint rows subtracted) rather than assumed.
+
+      **Third follow-up**: touchpad/mouse-wheel scrolling while the
+      combined editor+preview session was open felt laggy, sometimes
+      very much so ("довольно долгий отклик на прокрутку тачпадом и
+      колесом мыши. Иногда задержка очень долгая"). Root cause wasn't
+      in `handle_markdown_preview_mouse` itself -- a touchpad (and some
+      mice) deliver one scroll gesture as a rapid burst of many small
+      discrete tick events rather than a single one, and `main.rs::run`'s
+      own loop does a full `terminal.draw()` after *every single event*
+      `handle_event` returns from, with no coalescing -- so a fast
+      scroll queued up dozens of events, each getting its own full
+      redraw (word-wrapping the visible Markdown lines, `edtui`'s own
+      per-frame syntax highlighting, ...) before the next was even
+      read, and the UI visibly fell behind the gesture. Fixed in
+      `main.rs::drain_pending_mouse_events`: after handling one mouse
+      event, it keeps processing (but not redrawing for) every further
+      event already sitting in `crossterm`'s own queue
+      (`event::poll(Duration::from_secs(0))`, no blocking) for as long
+      as they keep being mouse events, so a whole burst collapses into
+      exactly one redraw once `run()`'s loop gets control back. A key
+      event found mid-burst is still handled, never silently dropped --
+      it just ends the drain there.
+
+      **Immediate follow-up, reported right after**: swiping down then
+      immediately back up felt like the *up* direction took a while to
+      register, compared to VS Code noticing a reversal "immediately."
+      The fix above drained the queue until it was genuinely *empty*,
+      not just until the original burst was accounted for -- a
+      touchpad's own scroll momentum keeps feeding events for a stretch
+      after the physical swipe reverses, so draining-until-empty
+      swallowed the whole down-momentum tail (and the one redraw after
+      it) before the reversal ever got painted, correct eventually but
+      only after however long the momentum lasted. Fixed by capping the
+      drain to one frame's worth of wall-clock time instead
+      (`main.rs::MOUSE_DRAIN_BUDGET`, 16ms -- roughly 60 FPS, the same
+      repaint cadence a smooth-scrolling app like VS Code itself uses,
+      which is what this was actually being compared against) --
+      `wait_for_event`'s own next iteration picks up any events left
+      over immediately, so a fast, uninterrupted scroll still redraws
+      about once per frame rather than once per tick, but a direction
+      reversal is never hidden behind more than one frame's own queued
+      backlog.
+
+      **"Can it be even faster?"**: the one-frame cap above still meant
+      a reversal landing right before the deadline waited out whatever
+      was left of it. `drain_pending_mouse_events` now also tracks the
+      last scroll direction it actually drained and returns *immediately*
+      the moment a newly-read event's direction differs from it (after
+      still handling that event, never dropping it) -- a real reversal
+      is the one case where continuing to coalesce is actively wrong,
+      since it's not "more of the same gesture" to merge, it's the next
+      one already starting, so there's no smoothness reason to hold it
+      back the way there is for same-direction events. A long,
+      uninterrupted scroll in one direction is untouched by this -- it
+      still only redraws roughly once per frame, same as before -- but
+      a reversal's own latency is no longer bounded by the frame budget
+      at all, just by how fast one more event can be read.
+
+      **"Previous version was faster"**: the one-frame time cap this
+      added actually made a *long* continuous scroll feel worse than
+      the uncapped version it replaced -- forcing a redraw roughly
+      every 16ms during one long, uninterrupted scroll is strictly more
+      total redraw work than draining the whole thing and redrawing
+      once, and the reversal check above already covers the actual
+      responsiveness concern the cap was originally added for. Removed
+      the cap entirely; `drain_pending_mouse_events` now drains until
+      the queue is genuinely empty again, same as the very first
+      version, with `last_scroll`'s reversal check as the only thing
+      that can cut a drain short. Traded off deliberately, per explicit
+      request ("позицию курсора при прокрутке можно не отслеживать, он
+      появится в начале верхней строки после остановки"): a long
+      same-direction scroll no longer redraws incrementally while still
+      in motion, only once the whole burst has actually drained --
+      fewer total redraws at the cost of not visually tracking the
+      scroll position until it settles.
+
+      **Follow-up report, this turned out to be about the keyboard, not
+      the mouse**: "мне кажется отслеживание инерционности перехода
+      курсора - не позволяет быстро поменять направление, медленно",
+      then clarified directly once asked what "курсор" meant here:
+      "имеется ввиду каретка ввода текста" -- the built-in editor's own
+      text caret, moved by holding `Up`/`Down`/`PageUp`/`PageDown`, not
+      mouse scrolling at all. Same root cause as the mouse case above,
+      one level removed: Windows' `crossterm` backend reports a held
+      key's OS auto-repeat as ordinary `KeyEventKind::Press` events (no
+      distinct "repeat" kind), so `run()`'s one-redraw-per-event loop
+      redrew on every repeat tick of a held navigation key too. Fixed
+      the same way, mirrored for keyboard: `main.rs::drain_pending_navigation_keys`
+      drains further `Up`/`Down`/`PageUp`/`PageDown` presses already
+      queued without redrawing per one, but returns immediately on a
+      genuine reversal (`Up`<->`Down`, `PageUp`<->`PageDown`, via
+      `is_navigation_reversal`), same shape as `last_scroll` above --
+      scoped to only these four
+      keys, so ordinary typing and every other binding still dispatches
+      exactly as before, one event at a time.
+
+      **One further speed request, with no specific bottleneck to go
+      on** ("если мы ещё немного ускорим быстродействие - будет
+      неплохо") -- two clarifying questions (hold-time vs. release-time
+      lag; editor+preview-specific vs. general) were both left
+      unanswered, so the only safe next step was removing overhead that
+      couldn't possibly be needed rather than chasing an unconfirmed
+      guess. Removed: this investigation's own temporary diagnostic
+      `debug!` calls in `main.rs::handle_event`/`drain_pending_mouse_events`
+      (`"mouse event (initial)"`/`"mouse event (drained)"`, explicitly
+      marked `// TEMPORARY` from the start, and made moot anyway once
+      the real cause turned out to be keyboard repeat, not mouse
+      timing), and `editor/editor/mod.rs::Editor::view`'s own
+      `debug!(?candidates, ..., "syntax highlighter lookup")`, which
+      fired unconditionally on every single editor redraw -- a
+      plausible per-frame cost with no upside once the lookup itself
+      had already been debugged. Not a verified fix for a specific
+      measured bottleneck (no profiling was done, since the diagnostic
+      questions above went unanswered), just removing scaffolding and
+      unconditional per-frame logging that was never load-bearing for
+      any feature.
 - [ ] Widen image preview to `.gif`/`.webp` (the `image` crate can
       already decode both -- just a `Cargo.toml` feature-flag and
       `SUPPORTED_EXTENSIONS` change) -- not asked for explicitly, so not

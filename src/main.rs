@@ -16,7 +16,7 @@ use std::io::{self, Stdout};
 use color_eyre::eyre::Result;
 use crossterm::{
     cursor::SetCursorStyle,
-    event::{self, DisableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{self, DisableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -233,13 +233,159 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
         // `Mode::Editing`/without a linked preview.
         Event::Mouse(mouse) => {
             explorer::handle_markdown_preview_mouse(app, mouse);
-            Ok(())
+            let last_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown).then_some(mouse.kind);
+            drain_pending_mouse_events(app, terminal, last_scroll)
         }
         _ => Ok(()),
     }
 }
 
+/// Processes every further event already sitting in `crossterm`'s own
+/// queue, without blocking (`event::poll` with a zero timeout), for as
+/// long as they keep being mouse events -- reported directly as a real
+/// lag, response to touchpad/mouse-wheel scrolling sometimes taking a
+/// very long time to catch up. A touchpad (and some mice) deliver
+/// one scroll gesture as a rapid burst of many small discrete tick
+/// events rather than a single one, but `run()`'s own loop does a full
+/// `terminal.draw()` after *every* event `handle_event` returns from --
+/// redrawing between each individual tick of a fast scroll means the
+/// UI visibly falls behind the gesture, worse the larger a single
+/// frame's own render cost is (word-wrapping a Markdown preview, `edtui`'s
+/// own per-frame syntax highlighting, ...). Draining the whole burst
+/// here and letting `run()` draw exactly once afterward fixes that
+/// without touching `handle_markdown_preview_mouse` itself at all -- the
+/// backlog was in how often a frame got drawn, not in how any single
+/// event was handled.
+///
+/// Drains until the queue is genuinely empty, not capped to a fixed
+/// time budget -- an earlier version added a one-frame (16ms) cap
+/// specifically so a direction reversal couldn't be hidden behind an
+/// unbounded backlog, but capping it that way meant a *long*,
+/// uninterrupted scroll now redrew roughly 60 times a second even
+/// though nothing but the scroll position itself was changing each
+/// time -- reported directly as feeling slower than the uncapped
+/// version that preceded it. `last_scroll` below already handles the
+/// actual reversal case directly (see its own doc), so the time cap
+/// wasn't buying anything the reversal check didn't already cover --
+/// removed rather than tuned smaller. The tradeoff this accepts,
+/// deliberately: a long same-direction scroll no longer redraws
+/// incrementally while it's still in motion, only once the whole burst
+/// has actually drained -- exactly what was asked for (no need to
+/// track the cursor position mid-scroll, it'll show up at the top of
+/// the view once scrolling stops), trading mid-scroll visual
+/// feedback for fewer total redraws.
+///
+/// `last_scroll`: the moment a drained event's own scroll direction
+/// actually differs from the previous one, this returns immediately
+/// after handling it, rather than continuing to drain. A real
+/// direction change is exactly the one case where continuing to
+/// coalesce is actively wrong -- it's not "more of the same gesture"
+/// to merge, it's the next gesture already starting. Plain clicks and
+/// non-scroll mouse events don't update `last_scroll` at all -- only
+/// an actual direction *change* between two scrolls should cut the
+/// drain short.
+///
+/// A key event found mid-burst is still handled (never silently
+/// dropped) -- it just ends the drain there, matching every other call
+/// site's own "one real event per `wait_for_event` call" convention.
+fn drain_pending_mouse_events(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, mut last_scroll: Option<MouseEventKind>) -> Result<()> {
+    while event::poll(std::time::Duration::from_secs(0))? {
+        match event::read()? {
+            Event::Mouse(mouse) => {
+                let is_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown);
+                let reversed = is_scroll && last_scroll.is_some_and(|prev| prev != mouse.kind);
+                explorer::handle_markdown_preview_mouse(app, mouse);
+                if reversed {
+                    return Ok(());
+                }
+                if is_scroll {
+                    last_scroll = Some(mouse.kind);
+                }
+            }
+            Event::Key(key) => return handle_key_event(app, key, terminal),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// `Up`/`Down`/`PageUp`/`PageDown`, held down, generate a rapid burst of
+/// distinct `KeyEventKind::Press` events via the OS's own key-repeat --
+/// `crossterm`'s Windows backend never reports a separate "repeat" kind
+/// distinguishing these from a fresh press (unlike some Unix terminals),
+/// so each one looks like an ordinary keystroke and gets its own full
+/// dispatch. These four are the ones actually meant to be held for a
+/// stretch to move through a long list/document/buffer, the exact same
+/// shape of problem `drain_pending_mouse_events` already fixed for a
+/// touchpad's own scroll-wheel burst -- reported directly against the
+/// built-in editor's own text caret specifically (it kept traveling
+/// past where the user stopped scrolling, and reversing direction took
+/// too long to catch up), but the same backlog can
+/// build up navigating a long file panel listing or popup list too,
+/// since `dispatch_key_event`'s own big match is one shared chokepoint
+/// for all of them.
+fn is_repeatable_navigation_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown)
+}
+
+/// Whether `next` reverses the axis `prev` was moving on -- `Up`/`Down`
+/// undo each other, `PageUp`/`PageDown` undo each other, but a
+/// same-key repeat or a switch between the two axes isn't a reversal at
+/// all (there's no "held down, then immediately Page Up" gesture this
+/// needs to special-case the way a scroll wheel's own two-directions-only
+/// axis does).
+fn is_navigation_reversal(prev: KeyCode, next: KeyCode) -> bool {
+    matches!((prev, next), (KeyCode::Up, KeyCode::Down) | (KeyCode::Down, KeyCode::Up) | (KeyCode::PageUp, KeyCode::PageDown) | (KeyCode::PageDown, KeyCode::PageUp))
+}
+
+/// Dispatches `key`, then -- only when it was one of the four
+/// held-to-scroll keys above -- drains any further same-axis repeats
+/// already queued up, redrawing once for the whole burst instead of
+/// once per repeat, exactly mirroring `drain_pending_mouse_events`'s
+/// own reasoning and its immediate-stop-on-reversal behavior. Every
+/// other key (typing, `Left`/`Right`, `Enter`, `Esc`, ...) is completely
+/// unaffected -- dispatched once, same as always, since those don't
+/// have this repeat-burst shape (`Left`/`Right` move by a single
+/// character/column, not a whole page, so a repeat backlog there is
+/// nowhere near long enough to notice, and coalescing typed characters
+/// would be actively wrong).
 fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    dispatch_key_event(app, key, terminal)?;
+    if key.kind == KeyEventKind::Press && is_repeatable_navigation_key(key.code) {
+        drain_pending_navigation_keys(app, terminal, key.code)?;
+    }
+    Ok(())
+}
+
+/// See `handle_key_event`'s own doc comment. A key found mid-burst that
+/// isn't one of the four repeatable navigation keys (or a mouse event)
+/// is still fully dispatched -- it just ends this drain, same "never
+/// silently drop an event, just stop coalescing" rule
+/// `drain_pending_mouse_events` already follows.
+fn drain_pending_navigation_keys(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, mut last: KeyCode) -> Result<()> {
+    while event::poll(std::time::Duration::from_secs(0))? {
+        match event::read()? {
+            Event::Key(key) if key.kind == KeyEventKind::Press && is_repeatable_navigation_key(key.code) => {
+                let reversed = is_navigation_reversal(last, key.code);
+                dispatch_key_event(app, key, terminal)?;
+                if reversed {
+                    return Ok(());
+                }
+                last = key.code;
+            }
+            Event::Key(key) => return dispatch_key_event(app, key, terminal),
+            Event::Mouse(mouse) => {
+                explorer::handle_markdown_preview_mouse(app, mouse);
+                let last_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown).then_some(mouse.kind);
+                return drain_pending_mouse_events(app, terminal, last_scroll);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn dispatch_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     if key.kind != KeyEventKind::Press {
         return Ok(());
     }

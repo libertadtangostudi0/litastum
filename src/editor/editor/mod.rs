@@ -350,7 +350,6 @@ impl Editor {
         }
 
         let syntax_highlighter = resolve_syntax_highlighter(&candidates, &self.first_line, custom_syntax_theme);
-        debug!(?candidates, found = syntax_highlighter.is_some(), "syntax highlighter lookup");
 
         let selection_style = Style::default().fg(theme.selection_text.unwrap_or(theme.text)).bg(theme.current_row_bg);
 
