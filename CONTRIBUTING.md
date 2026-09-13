@@ -7,7 +7,7 @@ focused PR is often the most useful thing you can send.
 
 ## Table of contents
 
-- [Before you start](#before-you-start)
+- [Before you start](https://github.com/libertadtangostudi0/litastum/blob/main/CONTRIBUTING.md#before-you-start)
 - [Reporting a bug](#reporting-a-bug)
 - [Suggesting a feature](#suggesting-a-feature)
 - [Development setup](#development-setup)
