@@ -49,6 +49,15 @@ use super::history::{record_history, save_history, suggest_history, CommandHisto
 pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     debug!(?key, "browsing key");
 
+    // Ctrl+O -- real Far Manager's own "show/hide panels" toggle,
+    // requested directly so real output already sitting on the actual
+    // terminal (a command run through `run_shell_command_lines`, or
+    // anything printed before litastum itself even started) can be
+    // looked at again without re-running whatever produced it.
+    if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return toggle_panels_hidden(terminal);
+    }
+
     if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
         app.mode = Mode::ShellMenu(ShellMenu { selected: app.active_shell });
         return Ok(());
@@ -493,6 +502,46 @@ pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermB
     terminal.clear()?;
 
     app.active_panel().reload()?;
+    Ok(())
+}
+
+
+/// `Ctrl+O` -- real Far Manager's own "show/hide panels" toggle.
+/// Blocking and stateless, the same shape as `run_shell_command_lines`
+/// itself: no `App` field records "panels are currently hidden"
+/// anywhere -- this simply doesn't return control to the main loop's
+/// own `terminal.draw()` call until the panels should reappear, the
+/// same way `run_shell_command_lines` doesn't return until its own
+/// "press any key to continue" pause ends.
+///
+/// Deliberately *doesn't* touch raw mode at all (unlike
+/// `run_shell_command_lines`, which disables it so a real subprocess
+/// gets normal line-buffered input) -- there's no subprocess here to
+/// hand the terminal to, and staying in raw mode means a stray
+/// keypress other than `Ctrl+O` is silently swallowed rather than
+/// echoed as literal text onto the very console output the user is
+/// trying to look at cleanly.
+///
+/// No "press any key" pause, no message printed at all, unlike
+/// `run_shell_command_lines`'s own post-command pause -- the entire
+/// point is to reveal whatever's *already* on the real terminal
+/// exactly as it is, not add anything on top of it. Only `Ctrl+O`
+/// itself brings the panels back; every other key (and mouse event) is
+/// silently ignored while hidden, matching real Far Manager's own
+/// behavior for this toggle.
+fn toggle_panels_hidden(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+    loop {
+        if let Event::Key(key) = event::read()? {
+            if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                break;
+            }
+        }
+    }
+
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    terminal.clear()?;
     Ok(())
 }
 

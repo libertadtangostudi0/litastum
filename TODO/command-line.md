@@ -25,6 +25,25 @@ in more detail.
       judged not worth a dedicated `Theme` field for this one highlight,
       reusing the one that's already there for the same *kind* of
       selection elsewhere).
+- [x] **`Ctrl+O` -- show/hide panels**, real Far Manager's own toggle,
+      requested directly. `handle_browsing_key` (checked ahead of even
+      `Ctrl+P`) calls `toggle_panels_hidden`, which leaves the
+      alternate screen (revealing whatever's actually on the real
+      terminal -- prior `run_shell_command_lines` output, or anything
+      printed before litastum even started) and blocks reading raw
+      `crossterm` events until `Ctrl+O` is pressed again, at which
+      point it re-enters the alternate screen and `terminal.clear()`s
+      before returning. No `App` field records "hidden" anywhere --
+      same stateless, blocking shape `run_shell_command_lines` itself
+      already uses for its own "press any key to continue" pause.
+      Deliberately doesn't touch raw mode (unlike
+      `run_shell_command_lines`, which disables it for a real
+      subprocess) -- staying in raw mode means every other key is
+      silently swallowed instead of echoing onto the very output the
+      user is trying to look at cleanly, and there's no subprocess here
+      to hand the terminal to in the first place. No "press any key"
+      message either -- the whole point is showing exactly what's
+      already there, not adding to it.
 - [x] Plain `Ctrl+Left`/`Right` (no `Shift`) moves the command-line
       cursor by a word with no selection — `text_field::move_word_left/
       right`, clearing any active selection rather than collapsing to

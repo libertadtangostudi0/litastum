@@ -16,16 +16,21 @@ Dispatch order in `command_line.rs::handle_browsing_key` (moved here
 from `main.rs` when every mode's handling got split out of it — this
 exact order matters, each step only runs if the previous one didn't
 already handle the key):
-1. `Ctrl+P` → open the shell picker (below).
-2. `Shift+F6` → rename prompt (needs the raw modifier, same reason as
+1. `Ctrl+O` → show/hide panels (below), real Far Manager's own toggle.
+   Checked first since it needs to win over everything else, including
+   `Ctrl+P` right after it — there's no real ordering conflict between
+   the two (`O` vs `P`), just keeping every raw-modifier special case
+   grouped at the top of the function together.
+2. `Ctrl+P` → open the shell picker (below).
+3. `Shift+F6` → rename prompt (needs the raw modifier, same reason as
    Tab below — `keymap::resolve`'s table only keys off `KeyCode`).
-3. `Enter` with a non-empty command line → run it.
-4. `Tab` with a non-empty command line → complete it (below) instead
+4. `Enter` with a non-empty command line → run it.
+5. `Tab` with a non-empty command line → complete it (below) instead
    of falling through to `keymap::resolve`'s Tab-as-`ToggleActive`
    binding.
-5. `keymap::resolve` — the fixed table (arrows, Tab *on an empty
+6. `keymap::resolve` — the fixed table (arrows, Tab *on an empty
    line*, F4/F9/F10, and `Enter` on an *empty* line).
-6. Anything left over (a plain character, `Backspace`, `Esc`) edits the
+7. Anything left over (a plain character, `Backspace`, `Esc`) edits the
    command line (`command_line.rs`).
 
 ## Scope cuts (deliberate, not oversights)
@@ -173,3 +178,39 @@ each run. `config.rs` already has the pattern for persisting a choice
 (from the theme picker) if this turns out to be wanted; left out here
 to keep the change scoped to "pick a shell for this session," which is
 what was actually asked for.
+
+## Show/hide panels (`Ctrl+O`)
+
+Real Far Manager's own toggle, requested directly to look at output
+already sitting on the real terminal (something run through `Enter`/a
+user-menu item, or anything printed before litastum even started)
+without re-running whatever produced it. `browsing::toggle_panels_hidden`
+is blocking and stateless — no `App` field anywhere records "panels
+are currently hidden"; it simply doesn't return control to the main
+loop's own `terminal.draw()` call until the panels should reappear,
+the same shape `run_shell_command_lines` already uses for its own
+"press any key to continue" pause.
+
+Implementation: `LeaveAlternateScreen` (revealing the real terminal's
+primary buffer, whatever's actually on it), then a blocking loop
+reading raw `crossterm` events directly (bypassing the normal per-
+frame `handle_event`/`draw` cycle entirely) until `Ctrl+O` is pressed
+again — every other key and mouse event is silently ignored while
+hidden, matching real Far's own behavior for this toggle, not just
+this app's own scope cut. `EnterAlternateScreen` + `terminal.clear()`
+on the way back out, same as `run_shell_command_lines`'s own return
+path.
+
+**Deliberately doesn't touch raw mode**, unlike `run_shell_command_lines`
+(which disables it so a real subprocess gets normal line-buffered
+input): there's no subprocess here to hand the terminal to, and
+staying in raw mode means a stray keypress other than `Ctrl+O` is
+silently swallowed rather than echoed as literal text onto the very
+output the user is trying to look at cleanly. No "press any key"
+message either, unlike that same function's own pause — the entire
+point is showing exactly what's already there, not adding to it.
+
+No unit test coverage, same reason `main.rs::handle_event`/
+`handle_browsing_key` itself already has none: this needs a real
+`Terminal`, and its own inner loop reads real `crossterm` events
+directly rather than going through anything test-fakeable.
