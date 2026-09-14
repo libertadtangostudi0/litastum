@@ -22,6 +22,11 @@ use super::theme::Theme;
 /// easier to inspect/clean up -- `pub(crate)` (not `pub`) since only
 /// this crate's own code ever needs to resolve the config directory,
 /// never something outside it.
+// Only read from `#[cfg(not(test))]` code below (`config_dir` is always
+// `None` in a test build, so it never even looks at this) -- the lint
+// is right that a test build genuinely never uses it, not a sign of
+// dead code in the real, non-test build.
+#[cfg_attr(test, allow(dead_code))]
 pub(crate) const CONFIG_DIR_ENV_VAR: &str = "LITASTUM_CONFIG_DIR";
 
 /// This app's config directory. Normally `<OS config dir>/litastum/`,

@@ -399,6 +399,46 @@ fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdo
 }
 
 
+/// Appends `line` -- the actual typed/substituted command text, e.g.
+/// `svn cleanup --remove-unversioned --remove-ignored "Project Alpha"`
+/// -- to `command` as the argument the active shell profile's own
+/// `/C`/`-Command`/`-c` flag receives. **Not** a plain `.arg(line)` on
+/// Windows -- reported directly, against a real quoted argument: the
+/// shell (`cmd`, or the file/folder name it names) ended up seeing the
+/// literal characters `"Project Alpha"`, quotes included, instead of
+/// the bare name they were meant to delimit (`svn`'s own error message
+/// named the culprit outright: `Error resolving case of
+/// '"Project Alpha"'`). Root cause: `Command::arg` on Windows
+/// re-escapes its argument for `CommandLineToArgvW`-style parsing
+/// (wrapping the whole string in an *extra* pair of quotes since it
+/// contains spaces, and backslash-escaping every quote already inside
+/// it) -- correct for a child that parses its own argv the normal
+/// Windows way, but `cmd.exe` (and `powershell.exe -Command`) instead
+/// *re-parses* their `/C`/`-Command` argument as an entire command
+/// line of their own, using their own, different quoting rules that
+/// don't treat a backslash before a quote as an escape at all. The net
+/// effect: the user's own quotes around `Project Alpha` survived,
+/// mangled, all the way through to `svn`'s own argv.
+/// `CommandExt::raw_arg` appends `line` completely unescaped instead,
+/// so `cmd`/`powershell` see exactly the text the user typed (or a
+/// menu macro substituted), quoted or not, and apply their own parsing
+/// to it themselves -- exactly what happens when the same line is
+/// typed directly into a `cmd.exe`/PowerShell window. Plain
+/// `.arg(line)` is correct (and `raw_arg` isn't available at all) on
+/// Unix: `sh -c` receives `line` as one real `argv` element with no
+/// re-escaping in between, no reparsing-child mismatch to correct for.
+fn append_command_line(command: &mut std::process::Command, line: &str) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.raw_arg(line);
+    }
+    #[cfg(not(windows))]
+    {
+        command.arg(line);
+    }
+}
+
 /// Suspends the TUI and runs each of `lines` in sequence through the
 /// active shell profile, inheriting stdio (so interactive programs
 /// still work), pausing once at the end for a keypress before
@@ -424,11 +464,10 @@ pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermB
     for line in lines {
         debug!(shell = profile.name, %line, cwd = %cwd.display(), "running shell command");
         print_themed(&app.theme, format_args!("{}> {line}\n", cwd.display()))?;
-        let status = std::process::Command::new(&profile.program)
-            .args(&profile.args_prefix)
-            .arg(line)
-            .current_dir(&cwd)
-            .status();
+        let mut command = std::process::Command::new(&profile.program);
+        command.args(&profile.args_prefix);
+        append_command_line(&mut command, line);
+        let status = command.current_dir(&cwd).status();
         match status {
             Ok(status) if !status.success() => {
                 debug!(?status, "command exited non-zero");
