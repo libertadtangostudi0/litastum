@@ -4,6 +4,20 @@ See `TODO/user-menu-spec-symbols.md` for the full special-symbols
 reference table (Far's `!...!` family and litastum's own `{{...}}`
 family) -- this file stays the running feature/design log.
 
+- [x] **Item hotkeys actually work as shortcuts, not just labels** --
+      reported directly ("не работают у нас хоткеи в меню f2 и
+      субменю с клавиатуры"): `MenuItem::hotkey` was parsed from
+      `"s: status"`-style headers and shown as a prefix in every row,
+      but nothing ever bound it to a key -- typing the shown letter did
+      nothing. `UserMenuState::select_by_hotkey` (`state.rs`) now moves
+      the cursor to the first item at the *current* level whose hotkey
+      matches (case-insensitive, matching real Far Manager), and
+      `input::handle_user_menu_key` runs/descends into it immediately
+      on a match, the same as pressing `Enter` right after landing on
+      it. Scoped to the level actually on screen -- a hotkey inside a
+      still-collapsed submenu doesn't match until that submenu is
+      entered, so it works the same way at any nesting depth without
+      searching into menus that aren't visible.
 - [x] `F2` opens a per-directory user menu (`explorer::user_menu`),
       reading litastum's own `LitastumMenu.toml` from the active
       panel's directory. If neither it nor a `FarMenu.ini` exists,

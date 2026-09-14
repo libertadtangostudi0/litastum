@@ -409,6 +409,25 @@ impl UserMenuState {
         self.current_items().get(self.selected)
     }
 
+    /// Moves the cursor to the first item at the *current* level whose
+    /// own `hotkey` matches `c` (case-insensitively, matching real Far
+    /// Manager's own convention -- its hotkeys aren't case-sensitive
+    /// either). `true` if one was found and the cursor moved there --
+    /// the caller (`input::handle_user_menu_key`) still has to actually
+    /// run/descend into it itself, same as it would for a plain `Enter`
+    /// press once the cursor is already sitting on the right item.
+    /// `false` (a silent no-op, cursor unchanged) for an unmatched
+    /// letter or an empty level -- deliberately narrow: real Far only
+    /// ever jumps within the level currently on screen, never searches
+    /// into a collapsed submenu.
+    pub fn select_by_hotkey(&mut self, c: char) -> bool {
+        let Some(index) = self.current_items().iter().position(|item| item.hotkey.is_some_and(|hotkey| hotkey.eq_ignore_ascii_case(&c))) else {
+            return false;
+        };
+        self.selected = index;
+        true
+    }
+
     /// Descends into the highlighted item if it's a submenu -- `true`
     /// on success. A no-op (`false`) for a `Commands` item or an empty
     /// level; the caller is expected to try running it as commands
@@ -1122,6 +1141,10 @@ mod tests {
             MenuItem { hotkey: None, title: title.to_string(), body: MenuItemBody::Commands(vec!["echo hi".to_string()]) }
         }
 
+        fn command_item_with_hotkey(hotkey: char, title: &str) -> MenuItem {
+            MenuItem { hotkey: Some(hotkey), title: title.to_string(), body: MenuItemBody::Commands(vec!["echo hi".to_string()]) }
+        }
+
         fn submenu_item(title: &str, children: Vec<MenuItem>) -> MenuItem {
             MenuItem { hotkey: None, title: title.to_string(), body: MenuItemBody::Submenu(children) }
         }
@@ -1136,6 +1159,51 @@ mod tests {
             menu.move_up();
             menu.move_up();
             assert_eq!(menu.current_level().selected, 0, "clamped at the first item");
+        }
+
+        /// Regression coverage for the real report: `hotkey` used to be
+        /// parsed and shown but never actually wired up to a key at
+        /// all.
+        #[test]
+        fn select_by_hotkey_moves_the_cursor_to_the_matching_item() {
+            let mut menu = menu_with(vec![command_item_with_hotkey('s', "status"), command_item_with_hotkey('c', "commit")]);
+
+            assert!(menu.select_by_hotkey('c'));
+
+            assert_eq!(menu.current_level().selected, 1);
+        }
+
+        #[test]
+        fn select_by_hotkey_is_case_insensitive() {
+            let mut menu = menu_with(vec![command_item_with_hotkey('s', "status")]);
+
+            assert!(menu.select_by_hotkey('S'));
+
+            assert_eq!(menu.current_level().selected, 0);
+        }
+
+        #[test]
+        fn select_by_hotkey_returns_false_and_leaves_the_cursor_alone_when_unmatched() {
+            let mut menu = menu_with(vec![command_item_with_hotkey('s', "status"), command_item_with_hotkey('c', "commit")]);
+            menu.move_down();
+
+            assert!(!menu.select_by_hotkey('z'));
+
+            assert_eq!(menu.current_level().selected, 1, "cursor should be unchanged");
+        }
+
+        /// The whole point of scoping the lookup to `current_items()`:
+        /// a hotkey only ever matches within whatever level is actually
+        /// on screen right now, same as real Far Manager -- a
+        /// collapsed submenu's own items aren't searched.
+        #[test]
+        fn select_by_hotkey_only_searches_the_current_level_not_a_collapsed_submenu() {
+            let mut menu = menu_with(vec![submenu_item("parent", vec![command_item_with_hotkey('c', "child")])]);
+
+            assert!(!menu.select_by_hotkey('c'), "the child's hotkey shouldn't match while its submenu is still collapsed");
+
+            menu.enter_submenu();
+            assert!(menu.select_by_hotkey('c'), "but does once actually inside that submenu");
         }
 
         #[test]

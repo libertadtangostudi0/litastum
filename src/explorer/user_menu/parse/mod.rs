@@ -43,16 +43,19 @@ pub use substitution::{substitute_macros, MacroContext, PanelMacroContext};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem {
     /// The single character before the item's own `:` (`"s: status"` ->
-    /// `Some('s')`), shown as a prefix in the list but not currently
-    /// wired up as an instant-select shortcut -- matches this
-    /// codebase's own existing precedent (`TODO/f9-menu.md`'s "no
-    /// keyboard shortcut letters" gap on the F9 menu too); `Up`/`Down`/
-    /// `Enter` is enough for now. `F1`..`F24`-style hotkeys (real Far
-    /// Manager also allows those) aren't recognized as hotkeys at all
-    /// here -- a line like `F5: refresh` doesn't match the single-char
-    /// prefix rule below, so it falls through to being read as a
-    /// hotkey-less item titled `F5: refresh`'s remainder, a known,
-    /// narrow gap rather than full parity with every hotkey Far allows.
+    /// `Some('s')`), shown as a prefix in the list *and* wired up as a
+    /// real instant-select shortcut (`UserMenuState::select_by_hotkey`,
+    /// dispatched from `input::handle_user_menu_key`) -- reported
+    /// directly as a real gap: an earlier version parsed and displayed
+    /// this field but never actually bound it to a key at all, so
+    /// typing the shown letter did nothing. Case-insensitive, matching
+    /// real Far Manager's own hotkey convention. `F1`..`F24`-style
+    /// hotkeys (real Far Manager also allows those) still aren't
+    /// recognized as hotkeys at all here -- a line like `F5: refresh`
+    /// doesn't match the single-char prefix rule below, so it falls
+    /// through to being read as a hotkey-less item titled `F5:
+    /// refresh`'s remainder, a known, narrow gap rather than full
+    /// parity with every hotkey Far allows.
     pub hotkey: Option<char>,
     pub title: String,
     pub body: MenuItemBody,

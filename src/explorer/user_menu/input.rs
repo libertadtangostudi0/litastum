@@ -19,8 +19,11 @@ use super::state::{self, AddUserMenuItemState, UserMenuCommandEdit, UserMenuProm
 /// into it, on a `Commands` item substitutes `!&` (the entry under the
 /// cursor) and, if any `!?Label?Default!` placeholders remain, opens
 /// `Mode::UserMenuPrompt` to collect them before running -- otherwise
-/// runs immediately; `Enter` is the *only* key that actually runs a
-/// command. `Right` mirrors `Enter` on a submenu (descends into it),
+/// runs immediately. A plain letter matching some item's own `hotkey`
+/// at the current level does the exact same thing `Enter` would once
+/// the cursor is sitting on that item (`UserMenuState::select_by_hotkey`) --
+/// together, `Enter` and a matched hotkey are the only two ways this
+/// runs a command. `Right` mirrors `Enter` on a submenu (descends into it),
 /// but on a `Commands` item opens that item's command(s) for editing
 /// instead of running them (`open_selected_item`/`open_edit_selected_command`,
 /// same flow `F4` uses) -- deliberately *not* the same as `Enter` here,
@@ -87,6 +90,29 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent, terminal: &mut Termina
     // than silently doing something else instead.
     if key.code == KeyCode::F(4) {
         open_edit_selected_command(app);
+        return Ok(());
+    }
+
+    // A plain letter matching some item's own `hotkey` at the *current*
+    // level jumps the cursor there and runs/descends into it
+    // immediately, matching real Far Manager's own user-menu
+    // convention (and, before this, a real gap: the hotkey was parsed
+    // and shown as a prefix in every row but never actually wired up as
+    // a shortcut at all -- reported directly). Same "needs the whole
+    // `&mut App` + `Terminal`" reasoning as `Enter` above, since a
+    // match runs `run_selected_user_menu_item` itself. An unmatched
+    // letter (or any other key still falling through to here) is a
+    // silent no-op past this point, same as before this was added.
+    if let KeyCode::Char(c) = key.code {
+        let matched = {
+            let Mode::UserMenu(menu) = &mut app.mode else {
+                return Ok(());
+            };
+            menu.select_by_hotkey(c)
+        };
+        if matched {
+            return run_selected_user_menu_item(app, terminal);
+        }
         return Ok(());
     }
 

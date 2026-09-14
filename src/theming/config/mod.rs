@@ -2,6 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[cfg(not(test))]
 use directories::ProjectDirs;
 use edtui::syntect::highlighting::Theme as SynTheme;
 use serde::{Deserialize, Serialize};
