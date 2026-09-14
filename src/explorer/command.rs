@@ -86,23 +86,40 @@ fn preview_selected(app: &mut App) {
 ///   `LitastumMenu.toml` (`resolve_menu`'s own doc comment) -- the same
 ///   startup check runs once in `main.rs`, so this same prompt can also
 ///   appear before `F2` is ever pressed.
-/// - Only `LitastumMenu.toml` exists -- browse it directly.
-/// - Neither exists -- creates an empty `LitastumMenu.toml` right there
-///   and opens it in the built-in editor instead of browsing an empty
-///   popup with nothing in it to select. A failed creation (read-only
-///   directory, permissions, ...) is a silent no-op, same as any other
+/// - Only `LitastumMenu.toml` exists -- browse it directly. If the
+///   active directory has neither file, `resolve_menu` falls back to a
+///   *common* menu in the OS config directory before giving up, so a
+///   menu set up once is available from any directory on any drive --
+///   `menu_dir` (where edits persist back to) is whichever of the two
+///   directories `resolve_menu` actually found something in, not
+///   necessarily the active panel's own `dir`.
+/// - Neither exists anywhere -- creates an empty `LitastumMenu.toml` in
+///   the *common* config directory (`user_menu::common_menu_dir`), not
+///   the active one, and opens it in the built-in editor instead of
+///   browsing an empty popup with nothing in it to select. Deliberately
+///   not the active directory: an earlier version created it there,
+///   which meant every directory a fresh `F2` was ever pressed in ended
+///   up with its own empty, commented-out-only `LitastumMenu.toml`
+///   scattered around -- reported directly, after the common-menu
+///   fallback above was added, that the template shouldn't be created
+///   anywhere except the one designated (common) location. A failed
+///   creation (no config directory available on this platform,
+///   read-only, permissions, ...) is a silent no-op, same as any other
 ///   "couldn't act on this" case in this codebase.
 fn open_user_menu(app: &mut App) {
     let dir = app.active_panel().path.clone();
     match user_menu::resolve_menu(&dir) {
-        user_menu::MenuFile::Own(items) => {
-            app.mode = Mode::UserMenu(user_menu::UserMenuState::from_items(dir, items));
+        user_menu::MenuFile::Own(menu_dir, items) => {
+            app.mode = Mode::UserMenu(user_menu::UserMenuState::from_items(menu_dir, items));
         }
         user_menu::MenuFile::FarMenuFound(far_path) => {
             app.mode = Mode::ConfirmPortFarMenu(far_path);
         }
         user_menu::MenuFile::NotFound => {
-            let Some(path) = user_menu::create_menu_file(&dir) else {
+            let Some(common_dir) = user_menu::common_menu_dir() else {
+                return;
+            };
+            let Some(path) = user_menu::create_menu_file(&common_dir) else {
                 return;
             };
             let syntax_theme = app.syntax_theme.clone();
@@ -646,21 +663,38 @@ mod tests {
             assert!(matches!(app.mode, Mode::UserMenu(_)));
         }
 
-        /// Regression coverage for the real report: this used to be a
-        /// silent no-op with no menu file, indistinguishable from `F2`
-        /// simply not being bound at all. There's nothing to *browse*
-        /// yet without a file, so it creates an empty `LitastumMenu.toml`
-        /// and opens the built-in editor on it instead of an empty
+        /// Regression coverage for the real report this originally
+        /// fixed: with no menu file anywhere, `F2` used to be a silent
+        /// no-op, indistinguishable from not being bound at all --
+        /// fixed by creating an empty `LitastumMenu.toml` and opening
+        /// the built-in editor on it right away instead of an empty
         /// popup with nothing to select.
+        ///
+        /// **Where** that fresh file gets created changed later, per a
+        /// second real report: an earlier version created it in the
+        /// *active* directory, which meant every directory `F2` was
+        /// ever pressed in with nothing configured yet ended up with
+        /// its own scattered, commented-out-only `LitastumMenu.toml` --
+        /// `open_user_menu` now creates it in the *common* config
+        /// directory (`user_menu::common_menu_dir`) instead, so a fresh
+        /// menu is set up in exactly one place. `common_menu_dir` is
+        /// `None` in a test build (`config_dir`'s own doc comment --
+        /// tests never touch the real OS config directory or
+        /// `LITASTUM_CONFIG_DIR`), so this specific integration test
+        /// can only pin down the "no config directory available"
+        /// half of that branch (a silent no-op, same as any other
+        /// "couldn't act on this" case) -- `create_menu_file`'s own
+        /// unit tests (`state.rs`) cover the actual file-creation
+        /// behavior directly, with an injected path.
         #[test]
-        fn creates_and_opens_a_new_menu_file_when_neither_exists() {
+        fn does_nothing_when_neither_exists_and_no_config_directory_is_available() {
             let dir = scratch_dir();
             let mut app = test_app(dir.clone());
 
             execute(Command::OpenUserMenu, &mut app).unwrap();
 
-            assert!(matches!(app.mode, Mode::Editing(_)), "should open the built-in editor on the freshly created file");
-            assert!(dir.join("LitastumMenu.toml").is_file());
+            assert!(matches!(app.mode, Mode::Browsing), "should be a silent no-op, same as any other unavailable-target case");
+            assert!(!dir.join("LitastumMenu.toml").exists(), "must not fall back to creating it in the active directory");
         }
 
         /// A real `FarMenu.ini` should be *offered*, not read or

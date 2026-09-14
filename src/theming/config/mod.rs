@@ -12,12 +12,55 @@ use super::scheme::ColorScheme;
 use super::theme::Theme;
 
 
-/// This app's config directory (`<OS config dir>/litastum/`), if the
-/// platform gives us one at all (some CI/headless environments don't
-/// report a home directory — that's not fatal, it just means no custom
-/// theme is possible, same as if the directory were simply empty).
-fn config_dir() -> Option<PathBuf> {
-    ProjectDirs::from("", "", "litastum").map(|dirs| dirs.config_dir().to_path_buf())
+/// Overrides `config_dir()`'s own OS-default location entirely when
+/// set, to any directory (not necessarily one named `litastum` at all).
+/// Added directly for local development: testing the F2 user menu's
+/// common-directory fallback (`explorer::user_menu::state::resolve_menu`)
+/// against the real `%APPDATA%\litastum\` meant creating a config
+/// there by hand every time just to exercise the feature, when the
+/// project's own checkout (`W:\rust\litastum`) was right there and
+/// easier to inspect/clean up -- `pub(crate)` (not `pub`) since only
+/// this crate's own code ever needs to resolve the config directory,
+/// never something outside it.
+pub(crate) const CONFIG_DIR_ENV_VAR: &str = "LITASTUM_CONFIG_DIR";
+
+/// This app's config directory. Normally `<OS config dir>/litastum/`,
+/// if the platform gives us one at all (some CI/headless environments
+/// don't report a home directory — that's not fatal, it just means no
+/// custom theme/menu is possible, same as if the directory were simply
+/// empty) — overridden wholesale by `LITASTUM_CONFIG_DIR` when that's
+/// set, see its own doc comment above for why.
+///
+/// **Always `None` in a test build** (`cfg(test)`), unconditionally --
+/// neither the real OS config directory nor `LITASTUM_CONFIG_DIR` is
+/// consulted at all. Every other function in this app that touches the
+/// real config directory has deliberately never been called from the
+/// test suite for exactly this reason (`theming::config::tests`' own
+/// comment: exercising the real path would make a test's result depend
+/// on whatever a developer running the suite actually has sitting
+/// there, config.json/LitastumMenu.toml included, rather than the code
+/// under test). `resolve_menu`'s new common-menu fallback broke that
+/// invariant by routing a real integration test
+/// (`explorer::command::tests::open_user_menu_tests::
+/// creates_and_opens_a_new_menu_file_when_neither_exists`) through this
+/// function for the first time -- it started failing the moment
+/// `LITASTUM_CONFIG_DIR` was actually set to a directory with a real
+/// menu in it (i.e. the moment the feature this env var exists for was
+/// being tested by hand). Gating here, at the one shared choke point,
+/// restores that invariant for every current and future caller rather
+/// than patching each affected test individually.
+pub(crate) fn config_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    {
+        None
+    }
+    #[cfg(not(test))]
+    {
+        if let Ok(dir) = std::env::var(CONFIG_DIR_ENV_VAR) {
+            return Some(PathBuf::from(dir));
+        }
+        ProjectDirs::from("", "", "litastum").map(|dirs| dirs.config_dir().to_path_buf())
+    }
 }
 
 

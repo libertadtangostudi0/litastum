@@ -42,6 +42,44 @@ family) -- this file stays the running feature/design log.
       `Mode::Info` popup saying where it went -- either answer has to
       move it out of the way, or its mere presence would re-trigger
       this same prompt on every future `F2`/startup check.
+- [x] **Common (cross-directory) menu fallback** -- reported directly:
+      a menu set up in one working copy wasn't found at all once
+      switched to another directory or drive, unlike real Far
+      Manager's own local-plus-common `menu.ini` precedence.
+      `resolve_menu` (`state.rs`) now tries the active directory first,
+      exactly as before, and only if *that* has neither
+      `LitastumMenu.toml` nor `FarMenu.ini` falls back to the same two
+      files in the OS config directory (`<config dir>/litastum/`, the
+      same directory `theming::config` already uses for
+      `config.json`/`themes/`) -- so navigating there in a panel and
+      pressing `F2` edits the common menu directly, no separate UI
+      needed. A local menu still always wins the moment one exists;
+      the fallback only ever fires when the active directory is
+      genuinely empty of both files. `MenuFile::Own` now carries the
+      directory the menu actually came from (not always the active
+      one), so edits persist back to wherever it was actually found,
+      local or common. An *empty* local `LitastumMenu.toml` (zero real
+      items -- either genuinely blank, or the commented-out-only
+      template a fresh `F2` writes) doesn't count as "found" for
+      fallback purposes either, so a directory where `F2` had been
+      pressed once before this feature existed doesn't permanently
+      shadow the common menu from then on. `LITASTUM_CONFIG_DIR` (env
+      var, `theming::config::config_dir`) overrides the config
+      directory wholesale, for local development against the project's
+      own checkout instead of the real `%APPDATA%\litastum\` -- always
+      `None` in a test build regardless of this env var or the real OS
+      path, so `cargo test`'s result never depends on what a developer
+      running the suite actually has configured on their machine.
+- [x] **A fresh `F2` with nothing found anywhere creates the empty
+      template in the *common* config directory, not the active one**
+      -- reported directly, right after the fallback above: the
+      original version still created a fresh `LitastumMenu.toml` in
+      whichever directory happened to be active, which meant the
+      template kept getting scattered into every directory `F2` was
+      ever pressed in with nothing configured yet. `create_menu_file`
+      also gained a `create_dir_all` on its target directory first,
+      since the common config directory may not exist on disk yet at
+      all on a machine that's never saved a theme/setup before.
 - [x] `!&` and `!?Label?Default!` work, matching real Far Manager's own
       macros -- superseded below by the fuller macro engine, but kept
       here for history.

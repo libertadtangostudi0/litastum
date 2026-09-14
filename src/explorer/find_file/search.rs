@@ -1,32 +1,60 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::explorer::is_vcs_dir_name;
+
 /// **Known potential performance weak spot — revisit if this is ever
 /// actually slow, not preemptively.** `search`/`search_into` below is a
 /// plain, synchronous, single-threaded recursive `fs::read_dir` walk,
 /// run directly on the key-handling thread: it blocks the whole UI
-/// (no spinner, no cancel) until it finishes, and there's no default
-/// exclusion of directories that are almost always uninteresting to
-/// search (`.git`, `target`, `node_modules`, ...) — the only safety net
-/// against a huge tree is the `MAX_RESULTS`/`MAX_VISITED` caps below,
-/// which bound the damage but don't make a big search *fast*. Fine for
-/// the repo sizes this has actually been tried against; a genuinely
-/// large tree (a monorepo, a deep `node_modules`) could make this
-/// noticeably slow or briefly freeze the UI. If that ever becomes a
-/// real complaint rather than a theoretical one, the fix directions
-/// are, in roughly increasing effort: skip well-known noise
-/// directories by default (`ignore`-crate-style pruning), run the walk
-/// on a background thread with a cancel key and a progress indicator,
-/// or parallelize the walk itself (e.g. `rayon`/`ignore::WalkBuilder`).
+/// (no spinner, no cancel) until it finishes, and only VCS metadata
+/// directories (`.git`/`.svn`/`.hg`/`.bzr`, see `is_vcs_dir_name` below)
+/// are pruned by default — other common noise (`target`, `node_modules`,
+/// ...) is not — the only other safety net against a huge tree is the
+/// `MAX_RESULTS`/`MAX_VISITED` caps below, which bound the damage but
+/// don't make a big search *fast*. Fine for the repo sizes this has
+/// actually been tried against; a genuinely large tree (a monorepo, a
+/// deep `node_modules`) could still make this noticeably slow or
+/// briefly freeze the UI. If that ever becomes a real complaint rather
+/// than a theoretical one, the fix directions are, in roughly
+/// increasing effort: skip more well-known noise directories by
+/// default (`ignore`-crate-style pruning), run the walk on a
+/// background thread with a cancel key and a progress indicator, or
+/// parallelize the walk itself (e.g. `rayon`/`ignore::WalkBuilder`).
 /// None of that is done here — this file is deliberately the simplest
 /// thing that could work, with the risk written down instead of
 /// silently discovered later at a bad moment.
 ///
+/// **VCS directory pruning was added after a real report**: searching
+/// a Subversion working copy for a file several directories deep
+/// (`rxclass_imp.cpp` under `IntelliCAD/Source/IntelliCAD/lib/IcArx/`)
+/// returned "No matches found", while real Far Manager found it
+/// instantly. Root cause was `MAX_VISITED` itself, not a matching bug:
+/// SVN's `.svn` metadata directory keeps a full pristine copy of every
+/// versioned file (`.svn/pristine/`), so a working copy's own `.svn`
+/// subtree alone can easily contain tens of thousands of entries —
+/// comfortably enough to exhaust the old `MAX_VISITED` (50,000, at the
+/// time) before the walk (plain `fs::read_dir` order, not sorted, not
+/// prioritized) ever reached the real target directory. `.git` has the
+/// same shape of problem (a full packed object store) even though it
+/// usually stays more compact; `.hg`/`.bzr` are pruned too for the same
+/// reason, for consistency with the VCS-directory list already used
+/// for file-panel coloring (`explorer/entry.rs::is_vcs_dir_name`)
+/// rather than hand-picking a different list here.
+///
 /// Results are capped, and the walk itself gives up after visiting
 /// this many entries — a huge tree shouldn't be able to hang the UI
-/// indefinitely even without directory exclusions.
+/// indefinitely even without directory exclusions. `MAX_VISITED` itself
+/// was raised from its original 50,000 once VCS-directory pruning above
+/// removed the main reason a real tree could blow through it — a plain
+/// synchronous `fs::read_dir` walk over a few million entries still
+/// only takes on the order of a second on a local disk, so this is
+/// still a "shouldn't hang forever" backstop, not a tuned performance
+/// budget; lower it back down if a genuinely huge non-VCS tree (a deep
+/// `node_modules`, a build output dir) is ever reported as freezing the
+/// UI for real.
 const MAX_RESULTS: usize = 200;
-const MAX_VISITED: usize = 50_000;
+const MAX_VISITED: usize = 2_000_000;
 
 /// Recursively searches `root` for entries whose file name matches
 /// `query` (case-insensitively), returning matching paths in the order
@@ -67,7 +95,7 @@ fn search_into(dir: &Path, query_lower: &str, results: &mut Vec<PathBuf>, visite
             results.push(path.clone());
         }
 
-        if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
+        if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) && !is_vcs_dir_name(&entry.file_name().to_string_lossy()) {
             search_into(&path, query_lower, results, visited);
         }
     }
@@ -166,6 +194,22 @@ mod tests {
         fs::create_dir_all(dir.join("target_dir")).unwrap();
 
         assert_eq!(search(&dir, "target"), vec![dir.join("target_dir")]);
+    }
+
+    /// Regression test for the actual reported bug: a file deep inside
+    /// a large Subversion working copy wasn't found at all, because the
+    /// walk exhausted `MAX_VISITED` inside `.svn`'s own pristine-copy
+    /// store before ever reaching the real target directory. Here the
+    /// noise dir only needs one bogus entry to prove it's skipped
+    /// entirely, not actually large enough to hit the real cap.
+    #[test]
+    fn search_skips_vcs_metadata_directories() {
+        let dir = scratch_dir();
+        fs::create_dir_all(dir.join(".svn")).unwrap();
+        fs::write(dir.join(".svn").join("target.txt"), b"hi").unwrap();
+        fs::write(dir.join("target.txt"), b"hi").unwrap();
+
+        assert_eq!(search(&dir, "target"), vec![dir.join("target.txt")]);
     }
 
     #[test]

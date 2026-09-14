@@ -78,7 +78,7 @@ impl Entry {
     }
 }
 
-fn is_vcs_dir_name(name: &str) -> bool {
+pub(crate) fn is_vcs_dir_name(name: &str) -> bool {
     matches!(name, ".git" | ".svn" | ".hg" | ".bzr")
 }
 
