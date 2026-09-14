@@ -116,14 +116,25 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             here), and the !?Label?Default!/
                             {{prompt:...}} placeholder (prompts.rs);
                             toml_format.rs: litastum's own serde-backed
-                            TOML shape + MenuItem conversion; state.rs:
-                            file resolution, porting on confirmation,
-                            nested navigation over one canonical tree
-                            (not a stack of clones -- an edit at any
-                            depth has to reach the same tree that gets
-                            persisted), add/remove an item + persist,
-                            the prompt-collection state; input.rs: key
-                            handling, hands finished commands off to
+                            TOML shape + MenuItem conversion; state/ --
+                            split by concern once the old flat state.rs
+                            passed ~500 lines: resolve.rs (local-then-
+                            common-config-dir file resolution),
+                            porting.rs (FarMenu.ini -> LitastumMenu.toml
+                            on confirmation, any-encoding read),
+                            template.rs (fresh-file template),
+                            browsing.rs (UserMenuState -- nested
+                            navigation over one canonical tree, not a
+                            stack of clones -- an edit at any depth has
+                            to reach the same tree that gets persisted),
+                            add_item.rs (Ins form), command_edit.rs (F4
+                            scratch-file edit), prompt.rs
+                            (!?Label?Default! collection state) -- every
+                            symbol re-exported from state/mod.rs exactly
+                            as state.rs used to export it, so nothing
+                            outside this directory needed to change;
+                            input.rs: key handling, hands finished
+                            commands off to
                             command_line::run_shell_command_lines)
 
 editor.rs               — F4 built-in editor, backed by `edtui`
