@@ -22,9 +22,15 @@ logging.rs            — tracing setup
 
 explorer.rs            — dual-pane browser: Panel, F-key commands,
   explorer/keymap.rs    —   KeyCode -> Command
-  explorer/command.rs   —   Command enum + execute(); the one chokepoint
-                            keyboard (and, later, scripts) funnels
-                            filesystem actions through
+  explorer/command/     —   execute(); the one chokepoint keyboard (and,
+                            later, scripts) funnels filesystem actions
+                            through. Split by concern once the old flat
+                            command.rs passed ~500 lines: open.rs
+                            (F2/F3/F4/Enter/Shift+Enter -- opening
+                            something), transfer.rs (F5/F6/F8/Shift+F6
+                            -- copy/move/delete/rename); execute() itself
+                            stays in mod.rs since it has to see every
+                            submodule's own handlers
   explorer/panel/       —   Panel: cwd, entries, cursor, column-major
                             nav, scrolling, marks (marks.rs), natural
                             sort (natural_sort.rs)
@@ -133,8 +139,15 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             symbol re-exported from state/mod.rs exactly
                             as state.rs used to export it, so nothing
                             outside this directory needed to change;
-                            input.rs: key handling, hands finished
-                            commands off to
+                            input/ -- key handling, also split by
+                            concern once the old flat input.rs passed
+                            ~500 lines: browsing.rs (Mode::UserMenu --
+                            navigation, running an item, the `F4`/
+                            `Right` command-edit entry points),
+                            prompt.rs (Mode::UserMenuPrompt),
+                            confirm_port.rs (Mode::ConfirmPortFarMenu),
+                            add_item.rs (Mode::AddUserMenuItem) -- hands
+                            finished commands off to
                             command_line::run_shell_command_lines)
 
 editor.rs               — F4 built-in editor, backed by `edtui`
@@ -165,11 +178,16 @@ theming.rs              — Theme, color-scheme loading/persistence,
 
 command_line.rs         — the always-live Far-style command line
   command_line/browsing/ —   Mode::Browsing key dispatch (the other big
-                              chokepoint alongside explorer::command::execute);
-                              also owns run_shell_command_lines, the shared
+                              chokepoint alongside explorer::command::execute),
+                              handle_browsing_key itself in mod.rs. Split
+                              by concern once the old flat mod.rs passed
+                              ~500 lines: shell_exec.rs (run_command_line,
+                              run_shell_command_lines -- the shared
                               "suspend the TUI, run N lines through the
                               active shell" primitive explorer::user_menu
-                              reuses for its own item execution
+                              reuses for its own item execution --
+                              toggle_panels_hidden, parse_cd_target),
+                              editing.rs (insert_char/backspace)
   command_line/completion.rs — Tab path completion, cycling
   command_line/history.rs —  command history, Alt+F8 popup, ghost-text
                               autosuggestion
@@ -178,7 +196,18 @@ command_line.rs         — the always-live Far-style command line
 text_field.rs           — shared cursor/selection editing (transfer
                            destination field, command line's selection)
 
-ui/mod.rs               — pure(ish) rendering: App -> ratatui widgets
+ui/mod.rs               — pure(ish) rendering: App -> ratatui widgets;
+                           draw() itself, the one central dispatcher.
+                           Split by concern once the old flat mod.rs
+                           passed ~500 lines: panel.rs (draw_panel/
+                           draw_entry_grid/build_list_item), editor_pane.rs
+                           (draw_editor, the ConfirmDiscard popup over
+                           it), info.rs (Mode::Info), function_keys.rs
+                           (the F-key hint row); draw_command_line moved
+                           into the already-existing command_line.rs
+                           alongside draw_command_history/
+                           draw_history_suggestions rather than getting
+                           a new file of its own
   ui/popup.rs            —   shared popup chrome (draw_frame, key_pill,
                               separator), style-aware (Classic/Rounded);
                               also selected_row_style/selected_text_style

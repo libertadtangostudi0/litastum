@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -10,6 +12,49 @@ use crate::command_line::{matching_history, CommandHistoryMenu};
 use crate::theming::Theme;
 use crate::ui::centered_rect;
 use crate::ui::popup;
+
+/// The always-live command line (Far Manager-style — see
+/// `command_line.rs`). Shows the active shell profile's name at the
+/// right edge, since which one a typed command actually runs against
+/// is otherwise invisible (`Ctrl+P` to change it).
+/// Renders `"{cwd}> {typed}"`, matching real Far Manager's own command
+/// line (which always shows the active panel's path, not just a bare
+/// `>` prompt with no indication of where a command would actually
+/// run). Returns the prefix's character count — `ui::draw` needs it to
+/// place the real terminal cursor right after the typed text, since
+/// that position now depends on `cwd`'s length, not a fixed `"> "`.
+///
+/// No shell-profile-name hint on the right edge anymore (an earlier
+/// version had one, `"Ctrl+P {shell_name}"`) — reported as visual
+/// clutter that doesn't belong on a Far-style command line; `Ctrl+P`'s
+/// own picker already shows which profile is active when opened.
+pub(super) fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &str, selection_anchor: Option<usize>, cursor: usize, theme: &Theme) -> u16 {
+    let prefix = format!("{}> ", cwd.display());
+
+    let mut spans = vec![Span::styled(prefix.clone(), Style::default().fg(theme.command_line_prefix).add_modifier(Modifier::BOLD))];
+
+    // A `Shift`/`Ctrl+Shift`+`Left`/`Right` selection (`command_line/
+    // browsing.rs`) highlights the same way the Copy/Move destination
+    // field's own selection does (`text_field.rs::destination_line`,
+    // `theme.current_row_bg`) -- no selection just renders as one plain
+    // span, same as before this feature existed.
+    match selection_anchor {
+        Some(anchor) => {
+            let (start, end) = crate::text_field::selection_range(anchor, cursor);
+            let chars: Vec<char> = command_line.chars().collect();
+            let before: String = chars[..start].iter().collect();
+            let selected: String = chars[start..end].iter().collect();
+            let after: String = chars[end..].iter().collect();
+            spans.push(Span::styled(before, Style::default().fg(theme.text)));
+            spans.push(Span::styled(selected, popup::selected_text_style(theme)));
+            spans.push(Span::styled(after, Style::default().fg(theme.text)));
+        }
+        None => spans.push(Span::styled(command_line.to_string(), Style::default().fg(theme.text))),
+    }
+
+    frame.render_widget(Line::from(spans), area);
+    prefix.chars().count() as u16
+}
 
 /// Renders the History popup — filtered live against `query` (the same
 /// always-live command line everything else types into, per

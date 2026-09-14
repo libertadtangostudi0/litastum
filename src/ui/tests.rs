@@ -1,6 +1,8 @@
 use ratatui::{backend::TestBackend, layout::Rect, style::Color, widgets::List, Terminal};
 
 use super::*;
+use crate::explorer::Entry;
+use crate::theming::Theme;
 
 /// Reads back the visible text of row `y`, column start inclusive,
 /// by concatenating each cell's symbol — the same shape a real
