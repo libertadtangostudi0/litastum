@@ -5,25 +5,25 @@ use std::sync::Mutex;
 use color_eyre::eyre::Result;
 use tracing_subscriber::EnvFilter;
 
-/// Log file is capped at this size; once a write would exceed it, the
-/// file is truncated and writing restarts from the top rather than
-/// growing forever.
-const MAX_LOG_BYTES: u64 = 30 * 1024 * 1024;
-
 const LOG_PATH: &str = "logs/litastum.log";
 
 
 /// Initializes file-based logging. The TUI owns the whole terminal via
 /// the alternate screen, so stdout/stderr aren't usable for
 /// diagnostics while it's running — everything goes to `logs/litastum.log`
-/// instead, capped at [`MAX_LOG_BYTES`] (see `SizeCappedFile`).
+/// instead, capped at `theming::config::limits().max_log_bytes` (see
+/// `SizeCappedFile`) -- reads `config.json` directly here rather than
+/// waiting for `App`/its own `limits()` caching to be set up, since
+/// logging has to be ready before anything else in `main()` even runs
+/// (the cache still only touches disk once, the first time anything
+/// calls `limits()`, so this doesn't cost a second read later).
 ///
 /// Level defaults to `debug` for this crate (see
 /// `.claude/rules/logging.md` for the level semantics we follow),
 /// `info` for dependencies; override with `RUST_LOG`.
 pub fn init() -> Result<()> {
     std::fs::create_dir_all("logs")?;
-    let file = SizeCappedFile::open(LOG_PATH, MAX_LOG_BYTES)?;
+    let file = SizeCappedFile::open(LOG_PATH, crate::theming::config::limits().max_log_bytes)?;
 
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,litastum=debug"));

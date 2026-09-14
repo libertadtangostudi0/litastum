@@ -9,9 +9,6 @@ use ratatui::{
 use crate::explorer::{Entry, HighlightRole, Panel};
 use crate::theming::Theme;
 
-/// Panels narrower than this (per column) fall back to a single column.
-const MIN_COLUMN_WIDTH: u16 = 24;
-
 /// Renders one panel (border, path title, footer) and its column-major
 /// file grid. Returns the `(columns, visible_rows)` actually used, so
 /// the caller can feed both back into `Panel::set_columns`/
@@ -33,7 +30,10 @@ pub(super) fn draw_panel(frame: &mut Frame, area: Rect, panel: &Panel, is_active
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let columns = (inner.width / MIN_COLUMN_WIDTH).max(1) as usize;
+    // Panels narrower than `panel_min_column_width` (per column) fall
+    // back to a single column.
+    let min_column_width = crate::theming::config::limits().panel_min_column_width;
+    let columns = (inner.width / min_column_width).max(1) as usize;
     draw_entry_grid(frame, inner, panel, columns, is_active, theme);
     (columns, inner.height as usize)
 }

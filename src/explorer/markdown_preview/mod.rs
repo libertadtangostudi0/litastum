@@ -18,14 +18,6 @@ pub use wrap::wrap_markdown_line;
 #[cfg(test)]
 pub use links::MarkdownLink;
 
-/// A fixed scroll step for `PageUp`/`PageDown` -- there's no per-frame
-/// feedback loop threading the preview area's real visible height back
-/// into `MarkdownPreviewState` (unlike `Panel`'s own `set_visible_rows`,
-/// fed back through `ui::draw`'s return value), so this is a reasonable
-/// approximation rather than an exact page, same tradeoff accepted
-/// elsewhere in this codebase for things not worth that plumbing.
-pub(super) const PAGE_SIZE: usize = 15;
-
 /// Whether `path` is a file `F3`'s Markdown preview knows how to open.
 pub fn is_markdown_file(path: &Path) -> bool {
     path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))

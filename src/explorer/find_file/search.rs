@@ -44,24 +44,24 @@ use crate::explorer::is_vcs_dir_name;
 ///
 /// Results are capped, and the walk itself gives up after visiting
 /// this many entries — a huge tree shouldn't be able to hang the UI
-/// indefinitely even without directory exclusions. `MAX_VISITED` itself
-/// was raised from its original 50,000 once VCS-directory pruning above
-/// removed the main reason a real tree could blow through it — a plain
-/// synchronous `fs::read_dir` walk over a few million entries still
-/// only takes on the order of a second on a local disk, so this is
-/// still a "shouldn't hang forever" backstop, not a tuned performance
-/// budget; lower it back down if a genuinely huge non-VCS tree (a deep
-/// `node_modules`, a build output dir) is ever reported as freezing the
-/// UI for real.
-const MAX_RESULTS: usize = 200;
-const MAX_VISITED: usize = 2_000_000;
-
+/// indefinitely even without directory exclusions. Both caps live in
+/// `theming::config::limits()` now (`find_file_max_results`/
+/// `find_file_max_visited`) rather than as fixed `const`s here — the
+/// visited cap in particular was already raised once, from an original
+/// 50,000, once VCS-directory pruning above removed the main reason a
+/// real tree could blow through it (see the module doc comment above
+/// for that whole story); a real override path in `config.json` means
+/// a future "still too small"/"too aggressive" report doesn't need a
+/// rebuild to try a different number. A plain synchronous
+/// `fs::read_dir` walk over a few million entries still only takes on
+/// the order of a second on a local disk, so the default is still a
+/// "shouldn't hang forever" backstop, not a tuned performance budget.
+///
 /// Recursively searches `root` for entries whose file name matches
 /// `query` (case-insensitively), returning matching paths in the order
 /// found (a plain `fs::read_dir` walk order, not sorted — good enough
-/// for a first pass at this feature). See `MAX_RESULTS`/`MAX_VISITED`
-/// above for the safety caps, and this module's own doc comment for
-/// the performance caveat.
+/// for a first pass at this feature). See this module's own doc
+/// comment for the performance caveat.
 ///
 /// `query` is a glob pattern (`*`/`?`, Far Manager's own convention for
 /// this dialog — `*.md`, `read?e.txt`) if it contains either wildcard
@@ -71,20 +71,21 @@ const MAX_VISITED: usize = 2_000_000;
 /// *literally* (as the six-character substring `"*.md"`, which no real
 /// file name contains) before this distinction existed.
 pub fn search(root: &Path, query: &str) -> Vec<PathBuf> {
+    let limits = crate::theming::config::limits();
     let mut results = Vec::new();
     let mut visited = 0;
     let query_lower = query.to_lowercase();
-    search_into(root, &query_lower, &mut results, &mut visited);
+    search_into(root, &query_lower, &mut results, &mut visited, limits.find_file_max_results, limits.find_file_max_visited);
     results
 }
 
-fn search_into(dir: &Path, query_lower: &str, results: &mut Vec<PathBuf>, visited: &mut usize) {
+fn search_into(dir: &Path, query_lower: &str, results: &mut Vec<PathBuf>, visited: &mut usize, max_results: usize, max_visited: usize) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
 
     for entry in entries.filter_map(|entry| entry.ok()) {
-        if results.len() >= MAX_RESULTS || *visited >= MAX_VISITED {
+        if results.len() >= max_results || *visited >= max_visited {
             return;
         }
         *visited += 1;
@@ -96,7 +97,7 @@ fn search_into(dir: &Path, query_lower: &str, results: &mut Vec<PathBuf>, visite
         }
 
         if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) && !is_vcs_dir_name(&entry.file_name().to_string_lossy()) {
-            search_into(&path, query_lower, results, visited);
+            search_into(&path, query_lower, results, visited, max_results, max_visited);
         }
     }
 }

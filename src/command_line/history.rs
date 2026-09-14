@@ -8,10 +8,6 @@ use crate::app::{App, Mode};
 
 use super::browsing::{backspace, insert_char};
 
-/// Longest `App::command_history` is allowed to grow — oldest entries
-/// drop off the front once exceeded.
-const MAX_HISTORY: usize = 50;
-
 /// Where persisted history lives — a plain file in the current working
 /// directory, not the OS config dir (`.claude/rules` already have that
 /// pattern in `theming/config.rs` for `config.json`/themes; this is
@@ -58,14 +54,15 @@ pub(super) fn save_history(history: &[String]) {
 /// conflict, which is what makes History workable at all. Skips a
 /// repeat of the immediately-previous entry (typing `dir` three times
 /// in a row shouldn't fill History with three identical lines), and
-/// caps total length at `MAX_HISTORY`, dropping the oldest entry once
-/// exceeded. Doesn't persist by itself — see `save_history` above.
+/// caps total length at `theming::config::limits().max_command_history`,
+/// dropping the oldest entry once exceeded. Doesn't persist by itself
+/// — see `save_history` above.
 pub fn record_history(app: &mut App, input: &str) {
     if app.command_history.last().map(String::as_str) == Some(input) {
         return;
     }
     app.command_history.push(input.to_string());
-    if app.command_history.len() > MAX_HISTORY {
+    if app.command_history.len() > crate::theming::config::limits().max_command_history {
         app.command_history.remove(0);
     }
 }
@@ -244,11 +241,12 @@ mod tests {
 
         #[test]
         fn record_history_caps_at_max_history_dropping_the_oldest() {
-            let mut app = app_with_history((0..MAX_HISTORY).map(|_| "placeholder").collect());
+            let max_history = crate::theming::config::limits().max_command_history;
+            let mut app = app_with_history((0..max_history).map(|_| "placeholder").collect());
             // Break up the run of identical "placeholder" entries first, or
             // the immediate-repeat skip above would swallow the new one.
             record_history(&mut app, "distinct");
-            assert_eq!(app.command_history.len(), MAX_HISTORY);
+            assert_eq!(app.command_history.len(), max_history);
             assert_eq!(app.command_history.last().unwrap(), "distinct");
         }
     }

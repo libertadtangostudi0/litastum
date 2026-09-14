@@ -57,3 +57,24 @@ always errors rather than transparently copying).
       operation finishes; fine for small files, not for a big tree
 - [ ] A failed transfer is only logged (`debug!`), not shown to the
       user — same status-bar gap as delete
+- [ ] **`copy_dir_recursive` doesn't handle symlinks specially** —
+      found during a perf/weak-spot audit pass, not yet reported by
+      anyone hitting it in practice. `DirEntry::file_type()` doesn't
+      follow a symlink (it's `lstat`-based), so a symlink pointing at a
+      directory reads as "not a directory" and falls through to the
+      plain-file branch (`fs::copy`), which then fails outright since
+      its source path is actually a directory. A symlink pointing at a
+      *file* does "work" today, but only by accident: `fs::copy`
+      follows it and copies the target's real content, silently turning
+      the copy into an ordinary file and losing the symlink itself --
+      not obviously the wanted behavior either. Needs a product
+      decision before fixing, not just a mechanical patch: should a
+      copy *recreate the symlink itself* at the destination (matching
+      what most real file managers/`cp -a` do), or deliberately
+      *dereference* it (copy whatever it currently points to, as a
+      normal file/tree)? Low real-world hit rate on Windows specifically
+      (creating a symlink needs Developer Mode or admin rights), higher
+      on Unix or for a junction/symlink created by other tooling (WSL,
+      git, an IDE). Whichever direction is picked, add regression
+      coverage for it in `fs_ops.rs`'s own test module (currently has
+      no symlink case at all).

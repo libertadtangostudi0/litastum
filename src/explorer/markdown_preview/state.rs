@@ -5,7 +5,7 @@ use tracing::warn;
 
 use super::links::MarkdownLink;
 use super::render::render_markdown;
-use super::{is_markdown_file, MarkdownLine, MarkdownSpanKind, PAGE_SIZE};
+use super::{is_markdown_file, MarkdownLine, MarkdownSpanKind};
 
 /// `F3` on a `.md`/`.markdown` file: the file's content, already parsed
 /// into styled lines (`render_markdown`), and which line is scrolled to
@@ -204,12 +204,21 @@ impl MarkdownPreviewState {
         self.scroll = self.scroll.saturating_sub(1);
     }
 
+    /// A fixed scroll step (`theming::config::limits().markdown_preview_page_size`)
+    /// -- there's no per-frame feedback loop threading the preview
+    /// area's real visible height back into this state (unlike
+    /// `Panel`'s own `set_visible_rows`, fed back through `ui::draw`'s
+    /// return value), so this is a reasonable approximation rather than
+    /// an exact page, same tradeoff accepted elsewhere in this codebase
+    /// for things not worth that plumbing.
     pub fn page_down(&mut self) {
-        self.scroll = (self.scroll + PAGE_SIZE).min(self.lines.len().saturating_sub(1));
+        let page_size = crate::theming::config::limits().markdown_preview_page_size;
+        self.scroll = (self.scroll + page_size).min(self.lines.len().saturating_sub(1));
     }
 
     pub fn page_up(&mut self) {
-        self.scroll = self.scroll.saturating_sub(PAGE_SIZE);
+        let page_size = crate::theming::config::limits().markdown_preview_page_size;
+        self.scroll = self.scroll.saturating_sub(page_size);
     }
 
     /// Scrolls to and highlights the rendered line corresponding to the
@@ -225,14 +234,14 @@ impl MarkdownPreviewState {
     /// visible page -- `ui::draw` computes it from `Editor::cursor_row`/
     /// `viewport_top_row`, this method just places the matched preview
     /// line at the same fraction of `visible_height` (the preview's own
-    /// content row count). Requested directly, twice: first "сделать
-    /// одновременной... выделить строку", then, once a simpler always-
-    /// top-aligned version was actually seen in use, "можно их примерно
-    /// на одном уровне держать по странице, если редактирование в
-    /// середине страницы, то и превью в том же месте" -- top-aligning
-    /// technically kept them in sync but put the highlighted line at a
-    /// different *screen row* than the cursor's own, which is what
-    /// "held at the same level" actually meant.
+    /// content row count). Requested directly, twice: first to scroll
+    /// the two panes together and highlight the matching line, then --
+    /// once a simpler always-top-aligned version was actually seen in
+    /// use -- to keep them roughly at the same level on the page, so
+    /// editing in the middle of the page shows the preview at that same
+    /// middle. Top-aligning technically kept them in sync but put the
+    /// highlighted line at a different *screen row* than the cursor's
+    /// own, which is what "held at the same level" actually meant.
     pub fn sync_to_editor_cursor(&mut self, source_row: usize, relative_position: f64, visible_height: usize) {
         let Some(line_index) = self.line_for_source_row(source_row) else {
             return;

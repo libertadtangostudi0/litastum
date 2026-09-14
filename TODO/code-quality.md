@@ -4,6 +4,20 @@ Findings from a best-practices review of `src/` (duplicated logic,
 naming, error-handling consistency, dead code) — not urgent bugs, just
 backlog items to pick up opportunistically.
 
+- [x] **Scattered hardcoded tuning `const`s centralized into `config.json`**
+      -- found during a perf/weak-spot audit pass: five unrelated caps
+      (`command_line/history.rs::MAX_HISTORY`, `find_file/search.rs::
+      MAX_RESULTS`/`MAX_VISITED`, `ui/panel.rs::MIN_COLUMN_WIDTH`,
+      `markdown_preview.rs::PAGE_SIZE`, `logging.rs::MAX_LOG_BYTES`),
+      each only ever changeable by editing source and rebuilding. Moved
+      into a new `Limits` struct (`theming/config/limits.rs`), same
+      known-default-with-`config.json`-override shape every other
+      setting in that file already has -- see `.claude/rules/
+      litastum-config.md` for the full table and design. Also
+      documented this project's environment-variable convention
+      (`LITASTUM_` prefix, `RUST_LOG` the one deliberate exception)
+      in the same new rules file, prompted by the same audit noticing
+      there was nowhere written down.
 - [x] `ui/popup.rs` migration -- at review time, only `confirm.rs`'s
       delete popup, `theme_menu.rs`, and `editor_find.rs` used the
       shared `draw_frame`/`key_pill` chrome; `menu.rs`, `shell.rs`,

@@ -12,6 +12,9 @@ use super::popup_style::PopupStyle;
 use super::scheme::ColorScheme;
 use super::theme::Theme;
 
+mod limits;
+pub use limits::limits;
+
 
 /// Overrides `config_dir()`'s own OS-default location entirely when
 /// set, to any directory (not necessarily one named `litastum` at all).
@@ -138,6 +141,21 @@ struct Config {
     /// the enum's own serde representation rather than through
     /// `find_scheme`'s lookup machinery.
     popup_style: Option<PopupStyle>,
+    /// The six fields below back `Limits` (`limits.rs`) -- optional
+    /// overrides for app-wide tunable caps, each independent of the
+    /// others (an unset field keeps `Limits::default()`'s own value for
+    /// just that one field, same "missing/malformed falls back
+    /// per-half, never blocks the rest" rule every other setting in
+    /// this file follows). Not currently surfaced through any menu --
+    /// hand-edit `config.json` to set one, same as this project's very
+    /// first config keys (`interface_theme`/`editor_theme`) worked
+    /// before the F9 picker existed for those.
+    max_command_history: Option<usize>,
+    find_file_max_results: Option<usize>,
+    find_file_max_visited: Option<usize>,
+    panel_min_column_width: Option<u16>,
+    markdown_preview_page_size: Option<usize>,
+    max_log_bytes: Option<u64>,
 }
 
 
