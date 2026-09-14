@@ -218,6 +218,106 @@ mod markdown_preview_state_tests {
         assert_eq!(state.scroll(), 0);
     }
 
+    #[test]
+    fn page_down_advances_by_a_page_and_clamps_at_the_last_line() {
+        let dir = unique_scratch_dir("markdown-preview");
+        let path = dir.join("readme.md");
+        // One rendered line per paragraph -- enough blank-line-separated
+        // paragraphs that a single PAGE_SIZE (15) page_down doesn't
+        // already reach the end, so this actually exercises the "advance
+        // by a page" arithmetic and not just the clamp.
+        let content = (0..30).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n\n");
+        fs::write(&path, content).unwrap();
+        let mut state = MarkdownPreviewState::open(&path).unwrap();
+        let last = state.lines().len() - 1;
+        assert!(last > 15, "fixture should be taller than one page");
+
+        state.page_down();
+        assert_eq!(state.scroll(), 15, "should advance by exactly one page");
+
+        for _ in 0..10 {
+            state.page_down();
+        }
+        assert_eq!(state.scroll(), last, "repeated page_down should clamp at the last line, not overshoot");
+    }
+
+    #[test]
+    fn page_up_retreats_by_a_page_and_clamps_at_zero() {
+        let dir = unique_scratch_dir("markdown-preview");
+        let path = dir.join("readme.md");
+        let content = (0..30).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n\n");
+        fs::write(&path, content).unwrap();
+        let mut state = MarkdownPreviewState::open(&path).unwrap();
+        state.page_down();
+        state.page_down(); // scroll = 30
+
+        state.page_up();
+        assert_eq!(state.scroll(), 15, "should retreat by exactly one page");
+
+        state.page_up();
+        state.page_up();
+        assert_eq!(state.scroll(), 0, "repeated page_up should clamp at zero, not underflow");
+    }
+
+    /// The actual point of `reload`: re-reading the file after a save
+    /// picks up the new content instead of showing stale rendered
+    /// lines.
+    #[test]
+    fn reload_picks_up_the_files_new_content() {
+        let dir = unique_scratch_dir("markdown-preview");
+        let path = dir.join("readme.md");
+        fs::write(&path, "old\n").unwrap();
+        let mut state = MarkdownPreviewState::open(&path).unwrap();
+
+        fs::write(&path, "brand new content\n").unwrap();
+        state.reload();
+
+        let text: String = state.lines().iter().flatten().map(|span| span.text.as_str()).collect();
+        assert!(text.contains("brand new content"), "should reflect the file's new content: {text:?}");
+    }
+
+    /// Regression coverage for the actual point of clamping rather than
+    /// resetting to `0` on reload: editing near the end of a long
+    /// document and saving shouldn't jump the preview back to the top,
+    /// but a scroll position past a now-*shorter* document has to be
+    /// pulled back in bounds rather than left pointing past the end.
+    #[test]
+    fn reload_clamps_the_scroll_position_to_the_new_shorter_content() {
+        let dir = unique_scratch_dir("markdown-preview");
+        let path = dir.join("readme.md");
+        let long_content = (0..30).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n\n");
+        fs::write(&path, &long_content).unwrap();
+        let mut state = MarkdownPreviewState::open(&path).unwrap();
+        for _ in 0..40 {
+            state.scroll_down();
+        }
+        let scroll_before = state.scroll();
+        assert!(scroll_before > 2, "sanity: scrolled well past a 3-line document");
+
+        fs::write(&path, "a\n\nb\n\nc\n").unwrap(); // much shorter now
+        state.reload();
+
+        assert_eq!(state.scroll(), state.lines().len() - 1, "scroll should be pulled back in bounds, not left pointing past the new, shorter content");
+    }
+
+    /// `reload` on a file that's vanished (or otherwise fails to read)
+    /// must leave the previously-good preview untouched rather than
+    /// blanking it -- same "never blocks on this" convention the rest
+    /// of this module follows.
+    #[test]
+    fn reload_leaves_the_preview_untouched_on_a_read_failure() {
+        let dir = unique_scratch_dir("markdown-preview");
+        let path = dir.join("readme.md");
+        fs::write(&path, "still here\n").unwrap();
+        let mut state = MarkdownPreviewState::open(&path).unwrap();
+        let lines_before = state.lines().len();
+
+        fs::remove_file(&path).unwrap();
+        state.reload();
+
+        assert_eq!(state.lines().len(), lines_before, "should keep showing the last-good content, not blank out");
+    }
+
     /// The actual point of the whole click-a-link feature: a click
     /// landing on the rendered row holding the link finds its URL.
     /// `visible_row_links` is populated by hand here, matching what
