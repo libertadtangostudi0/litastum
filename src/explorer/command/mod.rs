@@ -60,6 +60,7 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
         Command::MarkMoveDown => app.active_panel().toggle_mark_move_down(),
         Command::MarkMoveLeft => app.active_panel().toggle_mark_move_left(),
         Command::MarkMoveRight => app.active_panel().toggle_mark_move_right(),
+        Command::SwapPanels => app.swap_panels(),
         Command::Quit => app.should_quit = true,
     }
     Ok(())

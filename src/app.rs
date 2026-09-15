@@ -446,4 +446,39 @@ impl App {
     pub fn toggle_active(&mut self) {
         self.active = 1 - self.active;
     }
+
+
+    /// Swaps the two panels' full contents (path, entries, cursor,
+    /// scroll, marks) in place -- `self.active` is left untouched, so
+    /// keyboard focus stays on the same screen *side*, only what's
+    /// displayed there changes. Distinct from `toggle_active`, which
+    /// moves focus without touching either panel's contents at all.
+    /// Matches real Far Manager's own Ctrl+U.
+    pub fn swap_panels(&mut self) {
+        self.panels.swap(0, 1);
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crate::test_support::test_app;
+
+    #[test]
+    fn swap_panels_exchanges_contents_but_keeps_focus_on_the_same_side() {
+        let dir = crate::test_support::unique_scratch_dir("app_swap_panels");
+        let mut app = test_app(dir.clone());
+        app.panels[0].selected = 3;
+        app.panels[1].path = dir.join("other");
+        app.panels[1].selected = 7;
+        app.active = 0;
+
+        app.swap_panels();
+
+        assert_eq!(app.panels[0].path, dir.join("other"));
+        assert_eq!(app.panels[0].selected, 7);
+        assert_eq!(app.panels[1].path, dir);
+        assert_eq!(app.panels[1].selected, 3);
+        assert_eq!(app.active, 0);
+    }
 }

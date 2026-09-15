@@ -21,6 +21,7 @@ pub use shell_exec::run_shell_command_lines;
 use shell_exec::{run_command_line, toggle_panels_hidden};
 
 /// Key handling in the browser: `Ctrl+P` opens the shell picker,
+/// `Ctrl+U` swaps the two panels' contents (`Command::SwapPanels`),
 /// `Shift+F6` opens the rename prompt, `Shift+Enter` (command line
 /// empty) opens a directory under the cursor in the OS's own file
 /// manager instead of navigating into it (a file opens in the built-in
@@ -64,6 +65,13 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
         app.mode = Mode::ShellMenu(ShellMenu { selected: app.active_shell });
         return Ok(());
+    }
+
+    // Ctrl+U -- real Far Manager's own "swap panels" binding
+    // (`Command::SwapPanels`'s own doc comment has the full reasoning).
+    // Needs the raw modifier, same reason as Ctrl+O/Ctrl+P above.
+    if key.code == KeyCode::Char('u') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return execute(Command::SwapPanels, app);
     }
 
     // Shift+F6 (rename) vs plain F6 (move) only differ by modifier --

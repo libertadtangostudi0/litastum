@@ -44,6 +44,21 @@ in more detail.
       to hand the terminal to in the first place. No "press any key"
       message either -- the whole point is showing exactly what's
       already there, not adding to it.
+- [x] **`Ctrl+U` -- swap panels**, real Far Manager's own binding,
+      requested directly. `App::swap_panels` (`app.rs`) swaps the two
+      `Panel` structs in place (`self.panels.swap(0, 1)`) -- this alone
+      carries over everything Far's own swap does (path, entries,
+      cursor, scroll, marks), since the whole struct moves at once;
+      `columns`/`visible_rows` come along too, but harmlessly, since
+      both are recomputed from the panel's on-screen position every
+      frame regardless of which panel index now holds which content.
+      `self.active` is deliberately left untouched, so keyboard focus
+      stays on the same screen *side* -- distinct from `toggle_active`
+      (`Tab`), which moves focus without touching either panel's
+      contents. Needs the raw `Ctrl` modifier, same reason as `Ctrl+O`/
+      `Ctrl+P` above -- `keymap::resolve`'s table only keys off
+      `KeyCode` -- so it's a new `Command::SwapPanels`, special-cased in
+      `handle_browsing_key` right alongside those two.
 - [x] Plain `Ctrl+Left`/`Right` (no `Shift`) moves the command-line
       cursor by a word with no selection — `text_field::move_word_left/
       right`, clearing any active selection rather than collapsing to

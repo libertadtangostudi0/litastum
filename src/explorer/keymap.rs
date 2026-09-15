@@ -92,6 +92,14 @@ pub enum Command {
     MarkMoveLeft,
     /// `Shift+Right` — mirror of `MarkMoveLeft`.
     MarkMoveRight,
+    /// `Ctrl+U` — swaps the two panels' full contents (path, entries,
+    /// cursor, scroll, marks — `App::swap_panels`), keeping keyboard
+    /// focus on the same screen *side*, exactly like real Far
+    /// Manager's own Ctrl+U. Modifier-specific, so it's resolved
+    /// directly in `command_line::handle_browsing_key` rather than
+    /// through this module's `resolve` table, same reason as
+    /// `RenameSelected` above.
+    SwapPanels,
     Quit,
 }
 
