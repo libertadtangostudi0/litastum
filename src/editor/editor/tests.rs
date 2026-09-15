@@ -14,6 +14,15 @@ fn open_test_editor(contents: &str) -> (Editor, PathBuf) {
     (editor, path)
 }
 
+/// Same as `open_test_editor`, but under a `.rs` name -- for tests that
+/// need real syntax highlighting to actually be active (`file.txt`
+/// above resolves to Plain Text, which colors nothing).
+fn open_test_rust_editor(contents: &str) -> Editor {
+    let path = unique_scratch_dir("editor").join("file.rs");
+    fs::write(&path, contents).expect("write test fixture file");
+    Editor::open(path, None).expect("open test fixture file")
+}
+
 #[test]
 fn open_starts_clean() {
     let (editor, _path) = open_test_editor("hello\n");
@@ -167,9 +176,12 @@ fn save_writes_file_and_clears_dirty() {
 
 #[test]
 fn undo_after_save_makes_it_dirty_again() {
-    // is_dirty compares against the saved snapshot rather than a
-    // hand-maintained flag, so this should "just work" -- worth
-    // pinning down as a test since it's the whole point of that design.
+    // `dirty` is recomputed by comparing against the saved snapshot on
+    // every key that could plausibly have mutated the buffer
+    // (`can_mutate_buffer`) -- Ctrl+Z is one of those, so this should
+    // "just work" even though `dirty` is now a cached field rather than
+    // a fresh comparison on every `is_dirty()` call (see `Editor::dirty`'s
+    // own doc comment for why that changed).
     let (mut editor, _path) = open_test_editor("hi\n");
     editor.input(key(KeyCode::Char('!')));
     editor.save().unwrap();
@@ -177,6 +189,35 @@ fn undo_after_save_makes_it_dirty_again() {
 
     editor.input(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
     assert!(editor.is_dirty(), "undoing past the saved state should be dirty again");
+}
+
+/// Regression test for the perf fix in `Editor::dirty`'s own doc
+/// comment: navigation keys (`can_mutate_buffer` returns `false` for
+/// them) must skip recomputing `dirty`, but the *cached* value from
+/// before the navigation still has to come through correctly in both
+/// directions -- a clean file must stay reported clean while merely
+/// moving the cursor around, and a dirty one must stay reported dirty,
+/// not accidentally reset by the skip.
+#[test]
+fn navigation_keys_never_change_the_cached_dirty_state() {
+    let (mut editor, _path) = open_test_editor("hello world\nsecond line");
+    assert!(!editor.is_dirty());
+
+    for _ in 0..5 {
+        editor.input(key(KeyCode::Right));
+    }
+    editor.input(key(KeyCode::Down));
+    editor.input(key(KeyCode::Home));
+    editor.input(key(KeyCode::End));
+    assert!(!editor.is_dirty(), "pure navigation must not mark a clean file dirty");
+
+    editor.input(key(KeyCode::Char('!')));
+    assert!(editor.is_dirty());
+
+    for _ in 0..5 {
+        editor.input(key(KeyCode::Left));
+    }
+    assert!(editor.is_dirty(), "pure navigation must not clear a genuinely dirty file's flag");
 }
 
 /// Regression test for a real bug: `edtui` paints the cursor's own
@@ -354,5 +395,78 @@ fn cursor_screen_position_is_not_shifted_for_a_backward_selection() {
     assert_eq!(
         with_selection_pos.x, cursor_on_l.x,
         "cursor screen x should land exactly on 'l', not one column past it, while retracting a backward selection"
+    );
+}
+
+/// Regression test for a real report: a file consisting of one
+/// enormous line (an escaped log/diff dump, no real line breaks) made
+/// the editor visibly sluggish -- `syntect` re-tokenizes a line's full
+/// text on every highlight pass regardless of viewport, so this cost
+/// was being paid fresh on every one of the app's per-event redraws.
+/// `Editor::view` now skips building a `SyntaxHighlighter` at all for
+/// such a file (`has_pathologically_long_line`) -- confirmed here by
+/// rendering a `.rs` file (which does get real keyword coloring, see
+/// the control case below) with one line padded well past
+/// `word_highlight::MAX_HIGHLIGHTED_LINE_LEN`, and checking that no
+/// rendered cell's foreground differs from the plain base text color.
+#[test]
+fn a_pathologically_long_line_disables_syntax_highlighting_for_the_whole_file() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let padding = "x".repeat(crate::editor::word_highlight::MAX_HIGHLIGHTED_LINE_LEN + 1);
+    let mut editor = open_test_rust_editor(&format!("fn main() {{}} // {padding}"));
+
+    let theme = Theme::dark();
+    let backend = TestBackend::new(200, 3);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| {
+            let view = editor.view(&theme);
+            frame.render_widget(view, frame.area());
+        })
+        .unwrap();
+
+    let buf = terminal.backend().buffer();
+    let base_foreground = theme.text;
+    assert!(
+        buf.content()
+            .iter()
+            .all(|cell| cell.fg == base_foreground || cell.fg == theme.accent || cell.fg == theme.text_dim),
+        "every cell should render in the plain base text color (border's own accent color, or \
+         the line-number gutter's text_dim) once syntax highlighting is disabled for a \
+         pathologically long line -- any other color means the syntax highlighter still ran"
+    );
+}
+
+/// Control case for the test above: the same Rust content, short
+/// enough to keep syntax highlighting active, genuinely does color at
+/// least one cell (the `fn` keyword) differently from plain base text
+/// -- confirms the assertion above is actually meaningful, not just
+/// trivially true because `.rs` never gets colored in a `TestBackend`.
+#[test]
+fn a_short_rust_file_does_get_real_syntax_coloring() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let mut editor = open_test_rust_editor("fn main() {}");
+
+    let theme = Theme::dark();
+    let backend = TestBackend::new(40, 3);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| {
+            let view = editor.view(&theme);
+            frame.render_widget(view, frame.area());
+        })
+        .unwrap();
+
+    let buf = terminal.backend().buffer();
+    let base_foreground = theme.text;
+    assert!(
+        buf.content()
+            .iter()
+            .any(|cell| cell.fg != base_foreground && cell.fg != theme.accent && cell.fg != theme.text_dim),
+        "the 'fn' keyword should be colored differently from plain base text/chrome"
     );
 }

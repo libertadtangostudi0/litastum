@@ -45,6 +45,31 @@ pub(super) fn word_occurrence_highlights(lines: &Lines, cursor: Index2, style: S
         .collect()
 }
 
+/// A line length past which this editor's own per-frame, un-indexed
+/// scans (this module's `word_occurrences` below, and syntax
+/// highlighting -- see `Editor::view`'s own use of this same constant)
+/// stop being "cheap enough," matching how mainstream editors (VS
+/// Code's own default tokenization cap is around 10,000 characters)
+/// already handle this exact case. Reported directly: a real file
+/// consisting of one enormous line (an escaped log/diff dump, `\n`/`\t`
+/// literally spelled out rather than real line breaks) made the editor
+/// visibly sluggish -- every keypress redraws (`main.rs::run`'s own
+/// per-event redraw architecture), and this module's word-occurrence
+/// scan runs unconditionally on every one of those frames whenever no
+/// selection is active, so an O(line length) cost was being paid dozens
+/// of times a second. 20,000 is double VS Code's own cap -- generous
+/// headroom for any real source line, while still well short of the
+/// multi-hundred-thousand-character line that was actually reported.
+pub(super) const MAX_HIGHLIGHTED_LINE_LEN: usize = 20_000;
+
+/// Whether any line in `lines` is long enough that this module's own
+/// per-frame scans (and syntax highlighting -- see
+/// `MAX_HIGHLIGHTED_LINE_LEN`'s own doc comment) should be skipped for
+/// this file entirely, rather than paying that cost on every redraw.
+pub(super) fn has_pathologically_long_line(lines: &Lines) -> bool {
+    (0..lines.len()).any(|row_index| lines.get(RowIndex::new(row_index)).is_some_and(|row| row.len() > MAX_HIGHLIGHTED_LINE_LEN))
+}
+
 fn is_word_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
@@ -123,6 +148,9 @@ fn word_occurrences(lines: &Lines, word: &str) -> Vec<(usize, usize, usize)> {
         let Some(row) = lines.get(RowIndex::new(row_index)) else {
             continue;
         };
+        if row.len() > MAX_HIGHLIGHTED_LINE_LEN {
+            continue;
+        }
         let mut col = 0;
         while col + word_len <= row.len() {
             let candidate_is_match = row[col..col + word_len] == word_chars[..];
@@ -232,5 +260,33 @@ mod tests {
         let highlights = word_occurrence_highlights(&lines, Index2::new(0, 0), style());
 
         assert_eq!(highlights, vec![Highlight::new(Index2::new(1, 6), Index2::new(1, 11), style())]);
+    }
+
+    /// Regression test for the real report: a file consisting of one
+    /// enormous line (an escaped log/diff dump) made the editor visibly
+    /// sluggish, since this module's per-frame scan is O(line length)
+    /// with no early exit. A pathologically long row must be skipped
+    /// entirely by `word_occurrences`, not just slow -- confirmed here
+    /// by putting a real match for the searched word on that long row
+    /// and asserting it's never returned, alongside a genuine match on
+    /// an ordinary-length row, which must still be found.
+    #[test]
+    fn a_pathologically_long_line_is_skipped_by_the_word_scan() {
+        let long_row = format!("needle {}", "x".repeat(MAX_HIGHLIGHTED_LINE_LEN + 1));
+        let lines = Lines::from(format!("{long_row}\nneedle"));
+
+        let highlights = word_occurrence_highlights(&lines, Index2::new(1, 0), style());
+
+        assert_eq!(highlights, Vec::new(), "the long row's own match must not be reported");
+    }
+
+    #[test]
+    fn has_pathologically_long_line_detects_and_ignores_short_files() {
+        let short = Lines::from("fn main() {}\nlet x = 1;");
+        assert!(!has_pathologically_long_line(&short));
+
+        let long_row = "x".repeat(MAX_HIGHLIGHTED_LINE_LEN + 1);
+        let long = Lines::from(long_row);
+        assert!(has_pathologically_long_line(&long));
     }
 }

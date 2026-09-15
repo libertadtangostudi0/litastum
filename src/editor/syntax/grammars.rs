@@ -140,7 +140,25 @@ const BUNDLED_GRAMMARS: &[&str] = &[
 /// `init.rc.sublime-syntax`) is Android's *init.rc* — an unrelated
 /// language that happens to share the extension, and would mis-
 /// highlight rather than not highlight.
-pub(super) const EXTENSION_ALIASES: &[(&str, &str)] = &[("rc", "cpp"), ("rc2", "cpp")];
+///
+/// The entries here aren't always a bare extension — `resolve_syntax_ref`
+/// matches this table against the same `candidates` (`[file_name,
+/// extension]`) as everything else, so a full dotfile name works too.
+/// `.clang-format`/`.clang-tidy` (both reported unhighlighted, the
+/// screenshot for the first showed a real project's config wall of
+/// plain text) have no extension at all by `Path::extension()`'s own
+/// rules (a leading dot with no further dot isn't an extension in
+/// Rust's eyes), and no grammar anywhere declares that literal name —
+/// but both formats genuinely *are* YAML (clang's own documented config
+/// syntax), so aliasing straight to `syntect`'s own bundled YAML grammar
+/// gives real, correct highlighting rather than a borrowed
+/// close-enough one like `.rc`'s C++ alias above.
+pub(super) const EXTENSION_ALIASES: &[(&str, &str)] = &[
+    ("rc", "cpp"),
+    ("rc2", "cpp"),
+    (".clang-format", "yaml"),
+    (".clang-tidy", "yaml"),
+];
 
 /// A `SyntaxSet` containing just `BUNDLED_GRAMMARS` (not `edtui`'s own
 /// shared default set — `syntect::parsing::SyntaxSet` isn't `Clone`, so

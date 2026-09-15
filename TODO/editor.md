@@ -14,6 +14,94 @@
       motion counts
 - [ ] Handle non-UTF-8 / binary files without just silently doing
       nothing on F4 — at least a status-bar message once one exists
+- [x] **A file with one pathologically long line made the editor
+      visibly sluggish** — reported directly (a real file, essentially
+      one enormous escaped log/diff dump with no real line breaks).
+      Two independent per-frame costs both scale with a single line's
+      length, and both run on *every* redraw (`main.rs::run`'s own
+      per-event, no-batching architecture): `word_highlight.rs`'s
+      "highlight every other occurrence of the word under the cursor"
+      does a plain, un-indexed scan across every line, and `syntect`
+      re-tokenizes a line's *full* text on every highlight pass
+      regardless of how much of it is actually visible on screen.
+      Fixed with one shared threshold,
+      `word_highlight::MAX_HIGHLIGHTED_LINE_LEN` (20,000 -- double VS
+      Code's own ~10,000-character tokenization cap, the same
+      mitigation mainstream editors already use for this exact case):
+      `word_occurrences` now skips any row past that length outright
+      instead of scanning it, and `Editor::view` skips building a
+      `SyntaxHighlighter` at all for the whole file if any line
+      exceeds it (`has_pathologically_long_line`) -- a giant line makes
+      syntax highlighting expensive on every frame regardless of which
+      line is on screen, so disabling it file-wide is the correct
+      scope, not just skipping the one offending line. Confirmed with
+      a real rendering test (`a_pathologically_long_line_disables_syntax_highlighting_for_the_whole_file`)
+      that no cell renders in a syntax color once the file has such a
+      line, alongside a control case
+      (`a_short_rust_file_does_get_real_syntax_coloring`) proving the
+      same assertion would actually catch a regression, not just be
+      trivially true.
+      **Reported still laggy after this landed** — the fix above only
+      addressed costs that scale with *syntax highlighting*; the actual
+      complaint was specifically cursor movement itself feeling slow
+      ("каретка ездит медленнее"), which pointed at a third, unrelated
+      O(line length) cost neither of the first two fixes touched:
+      `Editor::is_dirty` used to recompare `state.lines != saved_snapshot`
+      on every single call, and `ui/editor_pane.rs` calls it once per
+      render frame for the "[modified]" title marker. Rust's derived
+      `PartialEq` can only ever *disprove* equality early (the instant
+      two rows differ) — *proving* equality, which is exactly what
+      happens on every frame while the cursor is merely moving with no
+      real edit (buffer content is genuinely unchanged), requires
+      walking every character of every row. For an ordinary file this
+      is unnoticeable; for the one enormous line that prompted this
+      whole entry, it meant a full pass over hundreds of thousands of
+      characters on every single arrow-key redraw — completely
+      independent of syntax highlighting or word-occurrence scanning,
+      which is why disabling those didn't help. Fixed by caching the
+      comparison result (`Editor::dirty`) instead of redoing it on every
+      `is_dirty()` call, recomputed by `input()` only for keys that
+      could plausibly have mutated the buffer (`can_mutate_buffer`) —
+      pure navigation (arrows/Home/End/PageUp/PageDown, any modifiers)
+      now reuses whatever `dirty` already was rather than re-walking the
+      whole buffer to reconfirm nothing changed. `select_all`/
+      `extend_word_selection` bypass `input` entirely and never touch
+      content either, so they correctly need no equivalent update.
+      **Reported still laggy a second time even after this** — traced
+      the remaining cost to `edtui` itself, not anything left in our own
+      code. Generated real crate source with `cargo doc -p edtui
+      --no-deps` (lands under this project's own `target/doc/`, so
+      reading it doesn't cross the "stay inside the project folder"
+      rule the way reading the raw `~/.cargo/registry` checkout would)
+      and read `view.rs`/`view/internal.rs` directly: when there's no
+      syntax highlighter (our own case, after the fix directly above),
+      `EditorView::render` builds the line's display spans via
+      `line_into_spans_with_selections`, which does
+      `line.iter().skip(col_skips).enumerate()` -- iterating from the
+      current horizontal scroll offset all the way to the line's own
+      *end*, never clipped to the viewport's actual width. For an
+      ordinary line this is unnoticeable; for one enormous line, this is
+      an O(remaining line length) cost paid fresh on *every* redraw,
+      independent of syntax highlighting (already disabled) and
+      independent of `is_dirty` (already cached, see directly above) --
+      genuinely the crate's own rendering, not reachable from any fix
+      confined to this project's own source. (The syntax-highlighted
+      path, `line_into_highlighted_spans_with_selections`, is worse
+      still for the same file shape -- `line.iter().collect()`s the
+      *entire* line into a `String` and runs `syntect` over all of it
+      before cropping to the viewport only at the very end -- one more
+      confirmation that disabling syntax highlighting for such files,
+      above, was the right call and not merely cosmetic.)
+      **Accepted as a known upstream limitation, not fixed** — asked
+      directly, the options were: fork/vendor `edtui` and patch this one
+      function to clip by viewport width (a real fix, but taking on
+      ongoing patch-maintenance burden against future `edtui` upstream
+      updates), degrade to a read-only/truncated view for such files
+      (limits what the editor can actually do with them), or document
+      the limitation and stop here — the last was chosen. A file
+      containing one pathologically long line will still redraw slowly
+      while the cursor is on-screen near it; genuinely fixing this needs
+      an `edtui` change, not a litastum one.
 - [ ] **On the horizon, not scoped yet**: an F9 menu inside the editor
       itself (`Mode::Editing`'s own F9, distinct from the browser's
       `theming::MainMenu` — Far Manager keeps a separate per-context F9
@@ -138,6 +226,16 @@
       suffix itself is handled in `Editor::view`, not the grammar: it
       retries the same name/extension lookup with one trailing `.sdk`
       stripped, a general mechanism rather than a CMake-specific hack
+- [x] Syntax highlighting for `.clang-format`/`.clang-tidy` — reported
+      rendered as plain text. `Path::extension()` returns `None` for
+      both (a leading dot with no further dot, same dotfile gap
+      `.gitignore` hit before the name-first lookup tier existed), and
+      no grammar anywhere declares the literal file name either — but
+      both formats genuinely *are* YAML (clang's own documented config
+      syntax), so `EXTENSION_ALIASES` (`editor/syntax/grammars.rs`)
+      points them straight at `syntect`'s own bundled YAML grammar,
+      same alias mechanism `.rc`/`.rc2` already use for C++, just to an
+      exact-match rather than a close-enough grammar.
 - [ ] Rust (`.rs`) highlighting still uses `syntect`'s own bundled
       default grammar — tried swapping in github.com/rust-lang/
       rust-enhanced (a more detailed community `.sublime-syntax`) to get

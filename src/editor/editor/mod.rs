@@ -19,7 +19,7 @@ use super::bindings::{
 };
 use super::clipboard::OsClipboardBridge;
 use super::syntax::resolve_syntax_highlighter;
-use super::word_highlight::word_occurrence_highlights;
+use super::word_highlight::{has_pathologically_long_line, word_occurrence_highlights};
 
 mod search;
 mod word_select_touch;
@@ -28,15 +28,44 @@ use word_select_touch::WordSelectTouch;
 
 /// A single open-file editing session, backed by `edtui`. Owns the path
 /// it was loaded from (for `save`) and a snapshot of the content as of
-/// the last load/save (for `is_dirty`, computed by comparing the
-/// current buffer to it — simpler and more accurate than tracking a
-/// hand-maintained dirty flag, since it self-corrects if the user
-/// undoes their way back to a saved state).
+/// the last load/save (`is_dirty` used to compare the live buffer to
+/// this snapshot on every call, self-correcting if the user undoes
+/// their way back to a saved state -- see `dirty`'s own doc comment for
+/// why that comparison is now cached instead of redone on every call).
 pub struct Editor {
     path: PathBuf,
     state: EditorState,
     event_handler: EditorEventHandler,
     saved_snapshot: Lines,
+    /// Cached result of `state.lines != saved_snapshot`, kept in sync
+    /// by `input` rather than recomputed by `is_dirty` itself -- a real
+    /// report, made worse but not caused by the syntax-highlighting fix
+    /// right above this (`has_pathologically_long_line`'s own doc
+    /// comment): a file with one enormous line still felt laggy on
+    /// every arrow-key press. `is_dirty` is called once per render
+    /// frame (`ui/editor_pane.rs`'s "[modified]" title marker), and
+    /// `Lines`' derived `PartialEq` can only ever *disprove* equality
+    /// early (the moment two rows' lengths or characters differ) --
+    /// proving two buffers *are* equal, which is exactly what happens
+    /// on every frame while the cursor is merely moving with no actual
+    /// edit, requires walking every character of every row. For an
+    /// ordinary file this is unnoticeable; for the one enormous line
+    /// that prompted this, it meant a full pass over hundreds of
+    /// thousands of characters on every single arrow-key redraw.
+    /// `input` now only re-runs that comparison for keys that could
+    /// plausibly have mutated the buffer (`can_mutate_buffer`) --
+    /// pure navigation (`Left`/`Right`/`Up`/`Down`/`Home`/`End`/
+    /// `PageUp`/`PageDown`, with any modifiers -- confirmed from
+    /// `bindings/mod.rs`'s own table that `Shift` on these only ever
+    /// extends a selection and `Ctrl` only ever changes the jump
+    /// granularity, neither ever reaches an `Insert`/`Delete`/paste
+    /// action) reuses whatever `dirty` already was instead of paying
+    /// this cost again. `select_all`/`extend_word_selection` (`Ctrl+A`/
+    /// `Ctrl+Shift+Left`/`Right`) bypass `input` entirely
+    /// (`editor_keymap::handle_editor_key`) and never touch buffer
+    /// content either, so leaving `dirty` untouched on those paths is
+    /// correct too, not just unaddressed.
+    dirty: bool,
     /// Overrides `SYNTAX_THEME`'s named lookup when the user has a
     /// custom color scheme configured — see `config::load_active_theme`
     /// and `.claude/rules/litastum-theming.md`.
@@ -98,6 +127,23 @@ pub struct Editor {
 }
 
 
+/// Whether `code` could plausibly have changed `state.lines` --
+/// deliberately conservative (defaults to `true`, "might have
+/// mutated") for anything not on this short, confirmed-safe list.
+/// Checked regardless of modifiers: per `bindings/mod.rs`'s own key
+/// table, `Shift` on any of these only ever extends a selection and
+/// `Ctrl` only ever changes the jump granularity (word-wise, half-page)
+/// -- neither ever reaches an `Insert`/`Delete`/paste action on this
+/// list's own keys. See `Editor::dirty`'s own doc comment for why this
+/// distinction exists at all.
+fn can_mutate_buffer(code: KeyCode) -> bool {
+    !matches!(
+        code,
+        KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown
+    )
+}
+
+
 impl Editor {
     /// Loads `path`'s contents into a new editing session. Fails if the
     /// file can't be read as UTF-8 text (binary files aren't supported
@@ -118,6 +164,7 @@ impl Editor {
             state,
             event_handler: EditorEventHandler::new(standard_key_handler()),
             saved_snapshot: lines,
+            dirty: false,
             custom_syntax_theme,
             first_line,
             word_select_touch: WordSelectTouch::Untouched,
@@ -208,6 +255,10 @@ impl Editor {
         }
 
         close_selection_if_back_on_the_anchors_row(&mut self.state, key.code, &mut self.vertical_shift_anchor_col);
+
+        if can_mutate_buffer(key.code) {
+            self.dirty = self.state.lines != self.saved_snapshot;
+        }
     }
 
 
@@ -295,6 +346,7 @@ impl Editor {
         match fs::write(&self.path, &contents) {
             Ok(()) => {
                 self.saved_snapshot = self.state.lines.clone();
+                self.dirty = false;
                 debug!(path = %self.path.display(), "editor save: ok");
                 Ok(())
             }
@@ -306,9 +358,12 @@ impl Editor {
     }
 
 
-    /// Whether the buffer differs from the last loaded/saved snapshot.
+    /// Whether the buffer differs from the last loaded/saved snapshot --
+    /// an O(1) read of the cached `dirty` field (see its own doc
+    /// comment on `Editor` for why this used to recompare the whole
+    /// buffer on every call, and why that stopped being cheap enough).
     pub fn is_dirty(&self) -> bool {
-        self.state.lines != self.saved_snapshot
+        self.dirty
     }
 
 
@@ -349,7 +404,18 @@ impl Editor {
             }
         }
 
-        let syntax_highlighter = resolve_syntax_highlighter(&candidates, &self.first_line, custom_syntax_theme);
+        // Skip syntax highlighting entirely for a file with a
+        // pathologically long line (`has_pathologically_long_line`'s own
+        // doc comment) -- `syntect` tokenizes a line's *full* text on
+        // every highlight pass regardless of how much of it is actually
+        // visible on screen, so a single enormous line would otherwise
+        // pay that cost fresh on every one of this app's per-event
+        // redraws (`main.rs::run`).
+        let syntax_highlighter = if has_pathologically_long_line(&self.state.lines) {
+            None
+        } else {
+            resolve_syntax_highlighter(&candidates, &self.first_line, custom_syntax_theme)
+        };
 
         let selection_style = Style::default().fg(theme.selection_text.unwrap_or(theme.text)).bg(theme.current_row_bg);
 

@@ -118,6 +118,24 @@ fn rc_files_fall_back_to_the_cpp_grammar() {
     assert_eq!(syntax_ref.name, "C++");
 }
 
+/// A real report: `.clang-format` rendered with zero highlighting.
+/// `Path::extension()` returns `None` for it (a leading dot with no
+/// further dot isn't an "extension" in Rust's own eyes -- the same
+/// dotfile gap `.gitignore` hit before the name-first lookup tier was
+/// added), so the only candidate ever tried is the literal file name
+/// itself, and no grammar declares that name. `.clang-format`/
+/// `.clang-tidy` are both genuinely YAML (clang's own documented
+/// config syntax), so `EXTENSION_ALIASES` points them at `syntect`'s
+/// own bundled YAML grammar rather than a borrowed close-enough one.
+#[test]
+fn clang_format_files_fall_back_to_the_yaml_grammar() {
+    let (_, syntax_ref) = resolve_syntax_ref(&[".clang-format"], "").expect("should resolve via the extension alias");
+    assert_eq!(syntax_ref.name, "YAML");
+
+    let (_, syntax_ref) = resolve_syntax_ref(&[".clang-tidy"], "").expect("should resolve via the extension alias");
+    assert_eq!(syntax_ref.name, "YAML");
+}
+
 /// A real report: this project's own build system names CMake
 /// templates `CMakeLists.txt.sdk` (processed into a real
 /// `CMakeLists.txt` later) — `resolve_syntax_highlighter` itself
