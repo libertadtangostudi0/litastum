@@ -187,24 +187,41 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Resu
 }
 
 
+/// How often `wait_for_event` checks a background image decode
+/// (`explorer::is_image_decode_pending`/`poll_pending_image_decode`)
+/// while one is in flight -- `F3`'s image preview moved its own
+/// decode/resize off the main thread after both the very first open
+/// and every `Left`/`Right` switch were reported as blocking the whole
+/// UI for however long that took (`ImagePreviewState`'s own doc
+/// comment has the full story). Short enough that a finished decode
+/// appears essentially instantly once ready, without needing a real
+/// keyboard/mouse event to happen to wake the loop up and notice it.
+const IMAGE_DECODE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(30);
+
 /// Blocks until either a real terminal event arrives (dispatched via
-/// `handle_event`) or -- Windows only -- the physical `Alt` key's
-/// actual held state (`alt_key::is_physically_down`) changes, so the
-/// alt-labels F-key row can react to `Alt` genuinely being held down,
-/// not just to the next keypress that happens to carry the `Alt`
-/// modifier. See `alt_key.rs`'s own doc for why that distinction
-/// matters: `crossterm`'s Windows backend never emits an event for a
-/// bare modifier key on its own, so relying on keypress modifiers
-/// alone means the row only ever updates in the same frame an `Alt+`
-/// shortcut already fired -- too late to be a preview. Elsewhere
-/// (`cfg(not(windows))`), this just blocks on the next real event,
-/// same as before; the keystroke-modifier approximation in
+/// `handle_event`), a pending background image decode finishes
+/// (`IMAGE_DECODE_POLL_INTERVAL`, above), or -- Windows only -- the
+/// physical `Alt` key's actual held state (`alt_key::is_physically_down`)
+/// changes, so the alt-labels F-key row can react to `Alt` genuinely
+/// being held down, not just to the next keypress that happens to carry
+/// the `Alt` modifier. See `alt_key.rs`'s own doc for why that
+/// distinction matters: `crossterm`'s Windows backend never emits an
+/// event for a bare modifier key on its own, so relying on keypress
+/// modifiers alone means the row only ever updates in the same frame an
+/// `Alt+` shortcut already fired -- too late to be a preview. Elsewhere
+/// (`cfg(not(windows))`), this still just blocks on the next real event
+/// when nothing's pending, same as before either of these polling
+/// reasons existed; the keystroke-modifier approximation in
 /// `handle_event` below is what drives `alt_held` there.
 #[cfg(windows)]
 fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     loop {
-        if event::poll(alt_key::POLL_INTERVAL)? {
+        let poll_interval = if explorer::is_image_decode_pending(app) { IMAGE_DECODE_POLL_INTERVAL } else { alt_key::POLL_INTERVAL };
+        if event::poll(poll_interval)? {
             return handle_event(app, terminal);
+        }
+        if explorer::poll_pending_image_decode(app) {
+            return Ok(());
         }
         let alt_down = alt_key::is_physically_down();
         if alt_down != app.alt_held {
@@ -216,7 +233,17 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
 
 #[cfg(not(windows))]
 fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    handle_event(app, terminal)
+    if !explorer::is_image_decode_pending(app) {
+        return handle_event(app, terminal);
+    }
+    loop {
+        if event::poll(IMAGE_DECODE_POLL_INTERVAL)? {
+            return handle_event(app, terminal);
+        }
+        if explorer::poll_pending_image_decode(app) {
+            return Ok(());
+        }
+    }
 }
 
 

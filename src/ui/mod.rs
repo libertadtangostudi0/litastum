@@ -181,6 +181,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
     // intercepting every key), and the very next frame after closing it
     // recomputes real values again.
     let right_columns = if let Mode::ImagePreview(state) = &mut app.mode {
+        // Picks up a decode that finished in the brief window between
+        // `wait_for_event`'s own last poll and this draw -- without
+        // this, that result would sit ready-and-unused for one extra
+        // frame (until the *next* `wait_for_event` poll notices it).
+        state.poll();
         image_preview::draw_image_preview(frame, panels[1], state, &theme);
         (1, 1)
     } else if has_linked_preview && matches!(&app.mode, Mode::Editing(_) | Mode::ConfirmDiscard(_) | Mode::MarkdownLinkSearch(..)) {
@@ -247,7 +252,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
             }
         }
         Mode::CommandHistory(menu) => {
-            command_line::draw_command_history(frame, area, menu, &app.command_history, &app.command_line, &theme);
+            command_line::draw_command_history(frame, area, menu, &app.command_history, &app.command_line, &theme, popup_style);
         }
         Mode::ChangeDrive(menu) => drive_menu::draw_drive_menu(frame, area, menu, &theme, popup_style),
         Mode::UserMenu(menu) => user_menu::draw_user_menu(frame, area, menu, &theme, popup_style),

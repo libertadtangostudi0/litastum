@@ -98,6 +98,15 @@ assets/debug/
 # litastum
 # ======================================
 
+# The real per-user config.json (theming/config/mod.rs -- theme/shell/
+# popup-style choices, tunable Limits overrides) normally lives in the
+# real OS config directory (%APPDATA%\litastum\ or equivalent), never
+# here -- this entry only matters because `LITASTUM_CONFIG_DIR` (see
+# .claude/rules/litastum-config.md) is routinely pointed at this exact
+# checkout for local development/testing, which writes a real,
+# developer-machine-specific config.json straight into the repo root.
+/config.json
+
 # Command-line history (command_line/history.rs) -- a plain file next
 # to the binary/repo root for now (cwd-relative, not the OS config
 # dir), so it lands here during `cargo run`/`cargo test` from the repo

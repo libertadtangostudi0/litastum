@@ -49,6 +49,44 @@ app is otherwise following (`F3` view vs. `F4` edit).
       terminal that doesn't answer (legacy Windows Console/ConPTY)
       falls back to half-blocks, which `ratatui-image` itself already
       handles safely (2-second timeout, never blocks startup).
+- [x] **Decode/resize moved off the main thread** -- reported directly:
+      both the very first `F3` open and every `Left`/`Right` switch
+      felt slow, and it was real -- `image::ImageReader::decode()` +
+      `Picker::new_resize_protocol`'s own `FilterType::Lanczos3` resize
+      (deliberately the slow-but-good filter, see the rendering-quality
+      note above) used to run synchronously, inline in the key handler,
+      blocking the single-threaded event loop for however long that
+      took on an actual photo. `ImagePreviewState` now spawns that work
+      on a background thread (`spawn_decode`, a plain `std::thread` +
+      one-shot `mpsc` channel, no async runtime added) and starts in
+      `Display::Loading`; `Left`/`Right` moves `index`/the title bar
+      *immediately* and keeps showing the *previous* image's pixels
+      until the new decode actually finishes, so switching feels instant
+      even before the new picture is ready, rather than flashing a
+      blank/loading state on every press. `main.rs::wait_for_event`
+      (already a poll loop with a timeout on Windows, for the Alt-key
+      row) now also polls at `IMAGE_DECODE_POLL_INTERVAL` (30ms) while a
+      decode is in flight, on both platforms, so a background result
+      gets drawn within one short tick instead of sitting ready-but-
+      unseen until the next real keypress/mouse event happens to wake
+      the loop up anyway. A decode failure keeps showing the last-good
+      image if there was one (a corrupt neighbor doesn't blank a working
+      preview); `PreviewFrame::Failed` only actually shows for a corrupt
+      *first* image, with nothing earlier to fall back to.
+
+      **Known remaining gap, not addressed here**: whether
+      `Picker::new_resize_protocol` itself resizes/encodes eagerly (at
+      construction, now safely on the background thread) or lazily (at
+      first `render_stateful_widget` call, i.e. back on the main thread
+      regardless) couldn't be confirmed -- `ratatui-image`'s own source
+      lives outside this project's directory, off-limits to read
+      directly per this project's own hard rule. If switching still
+      feels slow after this fix specifically for the *first* frame a
+      new image is shown (not the decode itself), that's the remaining
+      suspect; forcing a throwaway `render` call against a standalone
+      `ratatui::buffer::Buffer` inside the background thread (no real
+      terminal needed for that) is the likely fix direction, guessing a
+      target size ahead of the real render area.
 - [x] **`.md`/`.markdown` preview** -- resolved the open design question
       in favor of an actually-rendered preview
       (`explorer/markdown_preview.rs`'s `render_markdown`, walking

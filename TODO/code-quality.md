@@ -29,6 +29,14 @@ backlog items to pick up opportunistically.
       `.claude/rules/litastum-popup-design.md` and this file's own git
       history for the design. `editor_find.rs`'s minimal search box was
       deliberately kept outside this (see its own doc comment).
+      **One popup was actually missed by this pass**, found later from
+      a direct report ("ui для окна rounded не работает"):
+      `ui/command_line.rs::draw_command_history` (Alt+F8) still
+      hand-rolled its own `Classic`-only `Block::borders(ALL)`, so
+      switching to `Rounded` visibly did nothing for it -- the one
+      popup `ui::draw`'s own match arm *didn't* pass `app.popup_style`
+      into. Migrated the same way the rest of this pass did, alongside
+      a real scroll fix for the same popup (see `TODO/history.md`).
 - [ ] Clamped-list-cursor logic (`selected = selected.saturating_sub(1)`
       / `if selected + 1 < len { selected += 1 }`) is duplicated ~5
       times, already in two different shapes: a method on the menu's
