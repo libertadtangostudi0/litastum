@@ -71,6 +71,7 @@ fn main() -> Result<()> {
     // -- loaded here, not in App::new, so tests via test_support::test_app
     // never touch the real config.json for this.
     app.popup_style = theming::config::load_active_popup_style();
+    app.editor_keymap_mode = theming::config::load_active_editor_keymap_mode();
     // Loaded here rather than in `App::new` itself so every test that
     // builds an `App` (nearly all of them, via `test_support::test_app`)
     // stays isolated from whatever real `command_history.txt` happens
@@ -441,6 +442,8 @@ fn dispatch_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: 
         Mode::Editing(_) if app.markdown_edit_preview.is_some() && app.active == 1 => explorer::handle_markdown_edit_preview_key(app, key),
         Mode::Editing(_) => editor::handle_editor_key(app, key),
         Mode::ConfirmDiscard(_) => editor::handle_confirm_discard_key(app, key),
+        Mode::EditorMenu(_, _) => editor::handle_editor_menu_key(app, key),
+        Mode::EditorKeymapMenu(_, _) => editor::handle_editor_keymap_menu_key(app, key),
         Mode::ConfirmDelete(_) => explorer::handle_confirm_delete_key(app, key),
         Mode::ConfirmTransfer(_) => explorer::handle_confirm_transfer_key(app, key),
         Mode::MainMenu(_) => theming::handle_main_menu_key(app, key),

@@ -75,7 +75,7 @@ pub(super) fn open_user_menu(app: &mut App) {
                 return;
             };
             let syntax_theme = app.syntax_theme.clone();
-            if let Ok(editor) = Editor::open(path, syntax_theme) {
+            if let Ok(editor) = Editor::open(path, syntax_theme, app.editor_keymap_mode) {
                 app.mode = Mode::Editing(editor);
             }
         }
@@ -113,7 +113,7 @@ pub(super) fn open_editor(app: &mut App) {
     }
 
     let syntax_theme = app.syntax_theme.clone();
-    if let Ok(editor) = Editor::open(path, syntax_theme) {
+    if let Ok(editor) = Editor::open(path, syntax_theme, app.editor_keymap_mode) {
         app.mode = Mode::Editing(editor);
     }
 }

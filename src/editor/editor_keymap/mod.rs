@@ -47,6 +47,14 @@ pub enum EditorCommand {
     /// `handle_search_key` below instead, so this variant is never
     /// reached a second time to mean "close" or "next match".
     Find,
+    /// `F9` -- opens the built-in editor's own settings menu
+    /// (`Mode::EditorKeymapMenu`, currently just the `EditorKeymapMode`
+    /// picker) over the editor, Far Manager-style. `F9` isn't among the
+    /// fourteen `crossterm::event::KeyCode` variants `edtui` itself
+    /// understands (`edtui_supports_key`'s own doc comment), so it was a
+    /// silent no-op before this variant existed -- free real estate for
+    /// a new binding, not a rebind of anything.
+    OpenMenu,
     /// Not one of the bindings above — forward the raw key event to
     /// `Editor::input`.
     Forward,
@@ -78,6 +86,7 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
         KeyCode::Char('a' | 'A') if ctrl => EditorCommand::SelectAll,
         KeyCode::Left if ctrl && shift => EditorCommand::WordSelect { forward: false },
         KeyCode::Right if ctrl && shift => EditorCommand::WordSelect { forward: true },
+        KeyCode::F(9) => EditorCommand::OpenMenu,
         _ if edtui_supports_key(key.code) => EditorCommand::Forward,
         _ => EditorCommand::Ignore,
     }
@@ -193,12 +202,36 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         return close_editor_or_confirm(app);
     }
 
+    // Only reachable from plain full-screen editing -- while a linked
+    // Markdown preview session is active (`App::markdown_edit_preview`),
+    // `F9` is silently swallowed instead (same as any other unbound key)
+    // rather than opening this menu over the split-view layout, which
+    // `ui::draw` has no rendering support for (`Mode::EditorMenu`'s own
+    // doc comment on `app.rs`). Not a real gap in practice: F9 while
+    // editing a linked preview's own source file is a narrow case with
+    // no reported need for it yet -- easy to add real split-view support
+    // for later if that changes.
+    if command == EditorCommand::OpenMenu {
+        if app.markdown_edit_preview.is_some() {
+            return Ok(());
+        }
+        let Mode::Editing(_) = &app.mode else {
+            return Ok(());
+        };
+        let Mode::Editing(editor) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+            unreachable!("just matched Mode::Editing above");
+        };
+        app.mode = Mode::EditorMenu(editor, super::menu::EditorMenu::open());
+        return Ok(());
+    }
+
     let Mode::Editing(active_editor) = &mut app.mode else {
         return Ok(());
     };
 
     match command {
         EditorCommand::Close => unreachable!("handled above"),
+        EditorCommand::OpenMenu => unreachable!("handled above"),
         EditorCommand::Save => {
             active_editor.save()?;
             // Keeps a linked embedded preview (`App::markdown_edit_preview`)

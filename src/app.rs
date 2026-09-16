@@ -5,7 +5,7 @@ use edtui::syntect::highlighting::Theme as SynTheme;
 use ratatui_image::picker::Picker;
 
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
-use crate::editor::Editor;
+use crate::editor::{Editor, EditorKeymapMenu, EditorKeymapMode, EditorMenu};
 use crate::explorer::{
     AddUserMenuItemState, DriveMenu, FindFileState, ImagePreviewState, MarkdownLinkSearchState, MarkdownPreviewState, Panel, UserMenuCommandEdit, UserMenuPromptState,
     UserMenuState,
@@ -35,6 +35,26 @@ pub enum Mode {
     /// Same split-vs-full-screen distinction as `Editing` above, driven
     /// by the same `App::markdown_edit_preview`.
     ConfirmDiscard(Editor),
+    /// The built-in editor's own **F9** menu (`editor::EditorMenu`,
+    /// distinct from the browsing screen's own F9 -> `MainMenu` below) --
+    /// currently just one item, `Keybindings`, leading to
+    /// `EditorKeymapMenu` right below. Holds the `Editor` this was
+    /// opened over, same `ConfirmDiscard(Editor)` shape directly above,
+    /// so `Esc`/`Enter` hand it straight back into `Mode::Editing` or
+    /// down into `EditorKeymapMenu` either way. Only ever reached from
+    /// plain full-screen editing (`Mode::Editing` with `App::markdown_edit_preview`
+    /// still `None`) -- `editor::handle_editor_key` doesn't open this
+    /// menu at all while a linked Markdown preview session is active, so
+    /// the split-view rendering path never needs to know about either
+    /// this or `EditorKeymapMenu`.
+    EditorMenu(Editor, EditorMenu),
+    /// `EditorMenu`'s own `Keybindings` item -- picking a key-binding
+    /// scheme (`editor::EditorKeymapMode`). Same `Editor`-holding shape
+    /// as `EditorMenu` right above; its own `Esc` closes straight back
+    /// to `Mode::Editing` rather than stepping back up to `EditorMenu`,
+    /// matching `theming::PopupStyleMenu`'s own "leaf `Esc` closes all
+    /// the way out" convention.
+    EditorKeymapMenu(Editor, EditorKeymapMenu),
     /// The F9 top menu (`menu.rs`) — currently `Settings` leading to
     /// `Color schemes` (below).
     MainMenu(MainMenu),
@@ -245,6 +265,14 @@ pub struct App {
     /// into every test built through `test_support::test_app`) and
     /// swappable at runtime through F9 → Options → UI.
     pub popup_style: PopupStyle,
+    /// Which key-binding scheme new editor sessions open with -- see
+    /// `editor::EditorKeymapMode`. Same loading/persistence shape as
+    /// `popup_style` right above (loaded once at startup in `main.rs`,
+    /// swappable at runtime through the built-in editor's own F9 menu),
+    /// and every `Editor::open` call site threads this through as its
+    /// own `keymap_mode` argument, the same way `syntax_theme` above is
+    /// threaded through as `custom_syntax_theme`.
+    pub editor_keymap_mode: EditorKeymapMode,
     /// The always-live command line at the bottom of the browser (Far
     /// Manager-style) — see `command_line.rs` for the editing logic
     /// and `.claude/rules/litastum-stack.md` for the design.
@@ -416,6 +444,7 @@ impl App {
             theme,
             syntax_theme,
             popup_style: PopupStyle::default(),
+            editor_keymap_mode: EditorKeymapMode::default(),
             command_line: String::new(),
             command_line_cursor: 0,
             command_line_selection_anchor: None,

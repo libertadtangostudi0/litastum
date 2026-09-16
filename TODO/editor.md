@@ -102,21 +102,74 @@
       containing one pathologically long line will still redraw slowly
       while the cursor is on-screen near it; genuinely fixing this needs
       an `edtui` change, not a litastum one.
-- [ ] **On the horizon, not scoped yet**: an F9 menu inside the editor
-      itself (`Mode::Editing`'s own F9, distinct from the browser's
+- [x] **An F9 menu inside the editor itself landed**
+      (`Mode::Editing`'s own F9, distinct from the browser's
       `theming::MainMenu` — Far Manager keeps a separate per-context F9
-      too). Raised as a home for a few possible settings, floated but
-      not committed to: re-interpreting the already-open buffer's bytes
-      under a different codepage (lighter-weight than a full save-in-
-      arbitrary-encoding pipeline — decode again from the bytes already
-      read, via `encoding_rs`, rather than a round-trip converter);
-      toggling visibility of line-ending/whitespace markers (exact scope
-      still undecided — CRLF/LF glyphs at end of line vs. VS Code-style
-      "render whitespace" for trailing spaces/tabs, or both); "possibly
-      something else," not yet named. Don't start implementation from
-      this bullet alone — needs its own scoping pass (new `Mode`, key
-      dispatch, menu rendering, and the actual encoding/whitespace logic
-      each item implies) before any of it is built.
+      too), scoped to exactly one setting, requested directly: switching
+      between this project's own non-modal keymap and real Vim
+      keybindings. `editor/keymap_mode.rs::EditorKeymapMode` (`Standard`/
+      `Vim`, config.json-persisted the same way `PopupStyle` already is
+      — `theming::config::{load_active_editor_keymap_mode,
+      set_editor_keymap_mode}`) and `editor/keymap_menu.rs::EditorKeymapMenu`
+      (a plain list picker, directly modeled on `popup_style_menu.rs`)
+      are the new pieces; `Mode::EditorKeymapMenu(Editor, EditorKeymapMenu)`
+      holds the editor being configured, same `ConfirmDiscard(Editor)`
+      shape already used elsewhere for "pop a prompt over the editor,
+      hand it straight back either way." `Vim` uses `edtui`'s own bundled
+      `EditorEventHandler::vim_mode()` unmodified -- implementing real
+      Vim bindings from scratch was never in scope, and `edtui` already
+      ships one (`.claude/rules/litastum-stack.md` already noted this
+      when picking `edtui` in the first place). Explicitly decided (asked
+      directly, both confirmed): this project's own hand-rolled
+      correction passes (`Editor::input`'s post-table block -- word-wise
+      selection touch-tracking, `Shift`-arrow anchor fixes, line-boundary
+      wrapping, ...) are specifically tuned against `Standard`'s own
+      declarative table and are skipped entirely while `Vim` is active,
+      rather than risking them running against Vim's own modal,
+      multi-key sequences unverified; and the choice persists across
+      restarts in `config.json`, matching `popup_style`'s own pattern
+      rather than resetting per-session like the shell-profile picker
+      does. `Editor::set_keymap_mode` live-switches an already-open
+      session (rebuilds `event_handler`, resets `state.mode` to each
+      keymap's own natural starting point -- `Standard` -> `Insert`,
+      `Vim` -> `Normal`, matching real Vim's own convention -- and drops
+      any active selection, since neither keymap's own selection
+      semantics carry over meaningfully to the other) so applying a
+      change from the menu needs no reopen. `F9` was previously a silent
+      no-op while editing (not among the fourteen `crossterm::event::
+      KeyCode` variants `edtui` itself understands, `edtui_supports_key`'s
+      own doc comment) -- free real estate, not a rebind. Deliberately
+      scoped to plain full-screen editing only: `F9` is a no-op while a
+      linked Markdown preview session (`App::markdown_edit_preview`) is
+      active, since `ui::draw` has no split-view rendering wired up for
+      this new `Mode` and threading that through would have meant
+      touching several more match arms for a case nobody asked for.
+      Re-interpreting the buffer under a different codepage and toggling
+      line-ending/whitespace markers were floated for this same menu
+      earlier and are still just floated, not built -- either would need
+      its own scoping pass, same as before.
+      **Follow-up, requested right after landing**: `F9` originally
+      jumped straight to the `Standard`/`Vim` picker -- restructured
+      into a real (if currently one-item) submenu instead, `Editor::open`'s
+      own new default confirmed unchanged at `Standard` (already the
+      case, per `EditorKeymapMode::default()`, for new users with no
+      `config.json` entry yet). New `editor/menu.rs::EditorMenu`
+      (`ITEMS = &["Keybindings"]`, directly modeled on `theming::menu.rs`'s
+      own `MainMenu`, just without its multi-level `MenuLevel` machinery
+      since there's only one level here so far) and `Mode::EditorMenu(Editor,
+      EditorMenu)` sit in front of `EditorKeymapMenu`: `F9` now opens
+      `EditorMenu`, and `Enter` on `Keybindings` opens `EditorKeymapMenu`
+      from there, unchanged in its own behavior otherwise. Both levels'
+      own `Esc` close straight back to `Mode::Editing` rather than
+      stepping back one level at a time -- matches `theming::PopupStyleMenu`'s
+      own "leaf `Esc` closes all the way out" convention (reached via
+      `MainMenu` -> `Options` -> `UI`, same shape), not `MainMenu`'s own
+      multi-level `back()`, so there's no reason for the two menus in
+      this app to disagree about it. Named `EditorMenu`/`" Menu "` (the
+      inner picker's own title stays `" Keybindings "`) rather than
+      something narrower, matching `theming::MainMenu`'s own naming and
+      leaving room for the codepage/whitespace-marker ideas above to
+      become a second item later without a rename.
 - [ ] Ctrl+V over an active selection doesn't replace it (clears the
       selection, then pastes at the cursor instead) — `edtui`'s real
       "paste over selection" action isn't publicly exported; see

@@ -69,7 +69,7 @@ mod tests {
     fn open_test_editor(contents: &str) -> Editor {
         let path = unique_scratch_dir("editor-find-popup").join("file.txt");
         std::fs::write(&path, contents).expect("write test fixture file");
-        Editor::open(path, None).expect("open test fixture file")
+        Editor::open(path, None, crate::editor::EditorKeymapMode::Standard).expect("open test fixture file")
     }
 
     #[test]

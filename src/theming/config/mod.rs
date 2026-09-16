@@ -11,6 +11,7 @@ use tracing::{debug, warn};
 use super::popup_style::PopupStyle;
 use super::scheme::ColorScheme;
 use super::theme::Theme;
+use crate::editor::EditorKeymapMode;
 
 mod limits;
 pub use limits::limits;
@@ -141,6 +142,11 @@ struct Config {
     /// the enum's own serde representation rather than through
     /// `find_scheme`'s lookup machinery.
     popup_style: Option<PopupStyle>,
+    /// The built-in editor's own F9 -> Keybindings choice
+    /// (`editor::EditorKeymapMode`) -- same "store the enum's own serde
+    /// representation directly, no external file lookup needed" shape
+    /// as `popup_style` right above.
+    editor_keymap_mode: Option<EditorKeymapMode>,
     /// The six fields below back `Limits` (`limits.rs`) -- optional
     /// overrides for app-wide tunable caps, each independent of the
     /// others (an unset field keeps `Limits::default()`'s own value for
@@ -394,6 +400,32 @@ pub fn load_active_popup_style() -> PopupStyle {
 pub fn set_popup_style(style: PopupStyle) {
     if let Some(config_dir) = config_dir() {
         persist(&config_dir, |config| config.popup_style = Some(style));
+    }
+}
+
+
+/// The built-in editor's own key-binding scheme, configured via its F9
+/// menu, or `EditorKeymapMode::default()` (`Standard`) if nothing's
+/// configured yet or the config dir/file itself is unavailable -- same
+/// "never blocks startup, degrade to a sensible default" rule as
+/// `load_active_popup_style`.
+pub fn load_active_editor_keymap_mode() -> EditorKeymapMode {
+    let Some(config_dir) = config_dir() else {
+        debug!("no config directory available on this platform; using default editor keymap mode");
+        return EditorKeymapMode::default();
+    };
+    read_config(&config_dir).editor_keymap_mode.unwrap_or_default()
+}
+
+
+/// Persists `mode` as the default key-binding scheme new editor sessions
+/// open with (best-effort, same as `set_popup_style` right above -- a
+/// write failure is logged but doesn't stop the live switch from
+/// applying, since the caller has already updated both `app.editor_keymap_mode`
+/// and the currently-open `Editor` regardless of whether this succeeds).
+pub fn set_editor_keymap_mode(mode: EditorKeymapMode) {
+    if let Some(config_dir) = config_dir() {
+        persist(&config_dir, |config| config.editor_keymap_mode = Some(mode));
     }
 }
 

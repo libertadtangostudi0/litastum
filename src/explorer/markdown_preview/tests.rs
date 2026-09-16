@@ -493,7 +493,7 @@ mod open_edit_preview_tests {
 
 mod handle_markdown_edit_preview_key_tests {
     use super::*;
-    use crate::editor::Editor;
+    use crate::editor::{Editor, EditorKeymapMode};
     use crate::test_support::{key, test_app};
 
     /// Builds a combined editor+preview session (`App::markdown_edit_preview`
@@ -506,7 +506,7 @@ mod handle_markdown_edit_preview_key_tests {
         fs::write(&path, content).unwrap();
         let mut app = test_app(dir);
         let preview = MarkdownPreviewState::open(&path).unwrap();
-        let editor = Editor::open(path, None).unwrap();
+        let editor = Editor::open(path, None, EditorKeymapMode::Standard).unwrap();
         app.markdown_edit_preview = Some(preview);
         app.mode = Mode::Editing(editor);
         app.active = 1;
@@ -551,7 +551,7 @@ mod handle_markdown_edit_preview_key_tests {
         let path = dir.join("readme.md");
         fs::write(&path, "hello\n").unwrap();
         let mut app = test_app(dir);
-        app.mode = Mode::Editing(Editor::open(path, None).unwrap());
+        app.mode = Mode::Editing(Editor::open(path, None, EditorKeymapMode::Standard).unwrap());
 
         handle_markdown_edit_preview_key(&mut app, key(KeyCode::Down)).unwrap();
 
@@ -658,7 +658,7 @@ mod markdown_link_search_state_tests {
 
 mod handle_markdown_link_search_key_tests {
     use super::*;
-    use crate::editor::Editor;
+    use crate::editor::{Editor, EditorKeymapMode};
     use crate::test_support::{key, test_app};
 
     /// `Mode::MarkdownLinkSearch` "parks" the `Editor` in its own tuple
@@ -672,7 +672,7 @@ mod handle_markdown_link_search_key_tests {
         let mut app = test_app(dir);
         let preview = MarkdownPreviewState::open(&path).unwrap();
         let links = preview.links();
-        let editor = Editor::open(path, None).unwrap();
+        let editor = Editor::open(path, None, EditorKeymapMode::Standard).unwrap();
         app.markdown_edit_preview = Some(preview);
         app.mode = Mode::MarkdownLinkSearch(editor, MarkdownLinkSearchState::new(links));
         app
@@ -794,7 +794,7 @@ mod resolve_link_target_tests {
 
 mod handle_markdown_preview_mouse_tests {
     use super::*;
-    use crate::editor::Editor;
+    use crate::editor::{Editor, EditorKeymapMode};
     use crate::test_support::test_app;
 
     /// A left click with no `Ctrl` (or `Ctrl`+click landing on a line
@@ -809,7 +809,7 @@ mod handle_markdown_preview_mouse_tests {
         let mut app = test_app(dir);
         let mut state = MarkdownPreviewState::open(&path).unwrap();
         state.set_content_area(0, 0, 80, 24);
-        let editor = Editor::open(path, None).unwrap();
+        let editor = Editor::open(path, None, EditorKeymapMode::Standard).unwrap();
         app.markdown_edit_preview = Some(state);
         app.mode = Mode::Editing(editor);
         app
@@ -852,7 +852,7 @@ mod handle_markdown_preview_mouse_tests {
         let mut state = MarkdownPreviewState::open(&path).unwrap();
         state.set_content_area(0, 0, 80, 24);
         state.set_visible_row_links(vec![vec![(0, "Jump".chars().count() as u16, "#section".to_string())]]);
-        let editor = Editor::open(path, None).unwrap();
+        let editor = Editor::open(path, None, EditorKeymapMode::Standard).unwrap();
         app.markdown_edit_preview = Some(state);
         app.mode = Mode::Editing(editor);
 
@@ -878,7 +878,7 @@ mod handle_markdown_preview_mouse_tests {
         let mut state = MarkdownPreviewState::open(&path).unwrap();
         state.set_content_area(0, 0, 80, 24);
         state.set_visible_row_links(vec![vec![(0, "Jump".chars().count() as u16, "#section".to_string())]]);
-        let editor = Editor::open(path, None).unwrap();
+        let editor = Editor::open(path, None, EditorKeymapMode::Standard).unwrap();
         app.markdown_edit_preview = Some(state);
         app.mode = Mode::Editing(editor);
 

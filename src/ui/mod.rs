@@ -9,6 +9,8 @@ mod command_line;
 mod confirm;
 mod drive_menu;
 mod editor_find;
+mod editor_keymap_menu;
+mod editor_menu;
 mod editor_pane;
 mod find_file;
 mod function_keys;
@@ -74,6 +76,26 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         Mode::ConfirmDiscard(editor) if !has_linked_preview => {
             draw_editor(frame, area, editor, &theme);
             draw_confirm_discard_popup(frame, area, &theme);
+            return [(1, 1), (1, 1)];
+        }
+        // Same "editor full-screen, popup on top" shape as
+        // `ConfirmDiscard` right above -- only ever reached while
+        // `!has_linked_preview` (`editor::handle_editor_key` won't open
+        // this menu at all otherwise, see `Mode::EditorMenu`'s own doc
+        // comment on `app.rs`), so there's no `if has_linked_preview`
+        // counterpart to also wire up in the split-view code below, the
+        // way `Mode::ConfirmDiscard`/`Mode::Editing` themselves have.
+        Mode::EditorMenu(editor, menu) => {
+            draw_editor(frame, area, editor, &theme);
+            editor_menu::draw_editor_menu(frame, area, menu, &theme, app.popup_style);
+            return [(1, 1), (1, 1)];
+        }
+        // `EditorMenu`'s own `Keybindings` item -- same shape and same
+        // reasoning as `EditorMenu` immediately above.
+        Mode::EditorKeymapMenu(editor, menu) => {
+            let current = editor.keymap_mode();
+            draw_editor(frame, area, editor, &theme);
+            editor_keymap_menu::draw_editor_keymap_menu(frame, area, menu, &theme, app.popup_style, current);
             return [(1, 1), (1, 1)];
         }
         Mode::Browsing

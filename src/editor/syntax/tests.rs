@@ -380,7 +380,7 @@ fn dcl_grammar_resolves_and_actually_colors_a_comment() {
 /// alone a successful one.
 #[test]
 fn opening_a_bundled_grammar_file_gets_a_working_syntax_highlighter() {
-    use crate::editor::Editor;
+    use crate::editor::{Editor, EditorKeymapMode};
 
     let fixtures = [
         ("script.ps1", "Write-Host 'hi'\n"),
@@ -407,7 +407,7 @@ fn opening_a_bundled_grammar_file_gets_a_working_syntax_highlighter() {
         let dir = unique_scratch_dir("editor-bundled");
         let path = dir.join(filename);
         std::fs::write(&path, contents).expect("write test fixture file");
-        let mut editor = Editor::open(path, None).expect("open test fixture");
+        let mut editor = Editor::open(path, None, EditorKeymapMode::Standard).expect("open test fixture");
 
         // EditorView doesn't expose whether a highlighter ended up
         // attached, so this only proves `view()` doesn't panic

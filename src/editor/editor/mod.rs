@@ -18,9 +18,10 @@ use super::bindings::{
     anchor_fresh_shift_selection, close_selection_if_back_on_the_anchors_row, exclude_landing_column_on_fresh_vertical_selection,
     is_selection_consuming_key, standard_key_handler, wrap_line_boundary_arrow_movement,
 };
-use super::clipboard::OsClipboardBridge;
-use super::syntax::resolve_syntax_highlighter;
 use super::bracket_match::{bracket_match_highlights, cursor_is_on_a_matched_bracket, matched_bracket_row_span};
+use super::clipboard::OsClipboardBridge;
+use super::keymap_mode::EditorKeymapMode;
+use super::syntax::resolve_syntax_highlighter;
 use super::word_highlight::{has_pathologically_long_line, word_occurrence_highlights};
 
 mod search;
@@ -126,6 +127,13 @@ pub struct Editor {
     /// `_pop_char`/`accept_search_suggestion` for why editing the query
     /// any other way resets this back to `None`.
     search_history_index: Option<usize>,
+    /// Which key-binding scheme this session currently uses -- see
+    /// `EditorKeymapMode`'s own doc comment. Drives both which
+    /// `event_handler` was built with (`Editor::open`/`set_keymap_mode`)
+    /// and whether `input`'s own post-table correction passes run at
+    /// all (`Standard`-only, per `EditorKeymapMode::Vim`'s own doc
+    /// comment on why).
+    keymap_mode: EditorKeymapMode,
 }
 
 
@@ -146,25 +154,59 @@ fn can_mutate_buffer(code: KeyCode) -> bool {
 }
 
 
+/// Builds the real `edtui` event handler for `mode` -- `Standard` keeps
+/// this project's own non-modal table (`bindings::standard_key_handler`),
+/// `Vim` uses `edtui`'s own bundled binding set unmodified
+/// (`EditorEventHandler::vim_mode`), per `EditorKeymapMode::Vim`'s own
+/// doc comment on why this project doesn't try to layer its own
+/// correction passes on top of it.
+fn event_handler_for(mode: EditorKeymapMode) -> EditorEventHandler {
+    match mode {
+        EditorKeymapMode::Standard => EditorEventHandler::new(standard_key_handler()),
+        EditorKeymapMode::Vim => EditorEventHandler::vim_mode(),
+    }
+}
+
+/// Each keymap's own natural starting `EditorMode` -- `Standard` always
+/// starts typing immediately (`Insert`, matching every non-modal editor
+/// this app is modeled on), `Vim` starts in `Normal`, matching real
+/// Vim's own convention (and `edtui`'s own `vim_mode()` binding table,
+/// which expects to begin there). The two `Insert` values these keymaps
+/// *do* share aren't the same concept -- this project's own `Insert` is
+/// "the only mode `Standard` ever uses," Vim's `Insert` is one of
+/// several modes reached and left via its own bindings (`i`, `Esc`,
+/// ...) -- so switching keymaps resets to each one's own starting point
+/// rather than trying to carry a mode across.
+fn starting_mode(mode: EditorKeymapMode) -> EditorMode {
+    match mode {
+        EditorKeymapMode::Standard => EditorMode::Insert,
+        EditorKeymapMode::Vim => EditorMode::Normal,
+    }
+}
+
+
 impl Editor {
     /// Loads `path`'s contents into a new editing session. Fails if the
     /// file can't be read as UTF-8 text (binary files aren't supported
     /// yet — see `TODO/editor.md`). `custom_syntax_theme` is `None` for the
     /// built-in named syntax theme, or a scheme-derived theme when the
-    /// user has a custom color scheme configured.
-    pub fn open(path: PathBuf, custom_syntax_theme: Option<SynTheme>) -> io::Result<Self> {
+    /// user has a custom color scheme configured. `keymap_mode` is
+    /// normally `App::editor_keymap_mode` (the session-wide default,
+    /// itself loaded from `config.json`) -- see `EditorKeymapMode`'s own
+    /// doc comment.
+    pub fn open(path: PathBuf, custom_syntax_theme: Option<SynTheme>, keymap_mode: EditorKeymapMode) -> io::Result<Self> {
         let contents = fs::read_to_string(&path)?;
         let lines = Lines::from(contents.as_str());
         let first_line = contents.lines().next().unwrap_or("").to_string();
 
         let mut state = EditorState::new(lines.clone());
-        state.mode = EditorMode::Insert;
+        state.mode = starting_mode(keymap_mode);
         state.set_clipboard(OsClipboardBridge);
 
         Ok(Self {
             path,
             state,
-            event_handler: EditorEventHandler::new(standard_key_handler()),
+            event_handler: event_handler_for(keymap_mode),
             saved_snapshot: lines,
             dirty: false,
             custom_syntax_theme,
@@ -173,7 +215,40 @@ impl Editor {
             vertical_shift_anchor_col: None,
             word_select_true_anchor: None,
             search_history_index: None,
+            keymap_mode,
         })
+    }
+
+
+    /// This session's currently active key-binding scheme -- read by
+    /// `keymap_menu.rs` to open its own picker already highlighting the
+    /// right entry.
+    pub fn keymap_mode(&self) -> EditorKeymapMode {
+        self.keymap_mode
+    }
+
+
+    /// Live-switches this already-open session's own keymap --
+    /// `keymap_menu.rs`'s own `Enter` handling, so a mode change applies
+    /// immediately without closing and reopening the file. Rebuilds
+    /// `event_handler` from scratch (there's no incremental way to swap
+    /// `edtui`'s own binding table) and resets `state.mode` to each
+    /// mode's own natural starting point (`starting_mode`'s own doc
+    /// comment) -- deliberately *not* preserved across the switch, since
+    /// `Standard`'s `Insert` and `Vim`'s `Normal` aren't the same concept
+    /// even though they share a variant name in `edtui`'s own
+    /// `EditorMode` enum, and leaving whichever one was active can leave
+    /// the editor in a state its own keymap doesn't expect (e.g. `Vim`
+    /// while still marked `Insert`, `Standard`'s own correction passes
+    /// running against a mode they were never tuned for). Any active
+    /// selection is intentionally dropped for the same reason -- neither
+    /// keymap's own selection semantics carry over meaningfully to the
+    /// other.
+    pub fn set_keymap_mode(&mut self, mode: EditorKeymapMode) {
+        self.keymap_mode = mode;
+        self.event_handler = event_handler_for(mode);
+        self.state.mode = starting_mode(mode);
+        self.state.selection = None;
     }
 
 
@@ -238,25 +313,34 @@ impl Editor {
         let mode_before = self.state.mode;
         self.event_handler.on_key_event(key, &mut self.state);
 
-        if mode_before == EditorMode::Visual && is_selection_consuming_key(&key) {
-            self.state.selection = None;
-            self.state.mode = EditorMode::Insert;
+        // Every correction pass below is specifically tuned against
+        // `Standard`'s own declarative table (`bindings::standard_key_handler`)
+        // -- see `EditorKeymapMode::Vim`'s own doc comment for why none
+        // of it runs against `edtui`'s own `vim_mode()` binding table
+        // instead: Vim's modal, multi-key sequences were never
+        // considered when these were written, and there's no reason to
+        // assume they'd interact safely.
+        if self.keymap_mode == EditorKeymapMode::Standard {
+            if mode_before == EditorMode::Visual && is_selection_consuming_key(&key) {
+                self.state.selection = None;
+                self.state.mode = EditorMode::Insert;
+            }
+
+            let freshly_entered_visual = mode_before != EditorMode::Visual && self.state.mode == EditorMode::Visual;
+            let anchored_on_a_real_character =
+                freshly_entered_visual && anchor_fresh_shift_selection(&mut self.state, key.code, cursor_before);
+
+            if !anchored_on_a_real_character {
+                wrap_line_boundary_arrow_movement(&mut self.state, key.code, key.modifiers, cursor_before);
+            }
+
+            if freshly_entered_visual && matches!(key.code, KeyCode::Up | KeyCode::Down) {
+                self.vertical_shift_anchor_col = Some(cursor_before.col);
+                exclude_landing_column_on_fresh_vertical_selection(&mut self.state, key.code);
+            }
+
+            close_selection_if_back_on_the_anchors_row(&mut self.state, key.code, &mut self.vertical_shift_anchor_col);
         }
-
-        let freshly_entered_visual = mode_before != EditorMode::Visual && self.state.mode == EditorMode::Visual;
-        let anchored_on_a_real_character =
-            freshly_entered_visual && anchor_fresh_shift_selection(&mut self.state, key.code, cursor_before);
-
-        if !anchored_on_a_real_character {
-            wrap_line_boundary_arrow_movement(&mut self.state, key.code, key.modifiers, cursor_before);
-        }
-
-        if freshly_entered_visual && matches!(key.code, KeyCode::Up | KeyCode::Down) {
-            self.vertical_shift_anchor_col = Some(cursor_before.col);
-            exclude_landing_column_on_fresh_vertical_selection(&mut self.state, key.code);
-        }
-
-        close_selection_if_back_on_the_anchors_row(&mut self.state, key.code, &mut self.vertical_shift_anchor_col);
 
         if can_mutate_buffer(key.code) {
             self.dirty = self.state.lines != self.saved_snapshot;

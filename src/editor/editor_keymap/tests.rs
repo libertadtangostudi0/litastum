@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::*;
-use crate::editor::Editor;
+use crate::editor::{Editor, EditorKeymapMode};
 use crate::test_support::{ctrl_key, key, shift_key, test_app, unique_scratch_dir};
 
 /// A real `App` (no terminal needed) in `Mode::Editing`, with the
@@ -14,7 +14,7 @@ fn open_editor_app(contents: &str) -> (App, PathBuf) {
     let file_path = dir.join("file.txt");
     fs::write(&file_path, contents).expect("write test fixture file");
 
-    let editor = Editor::open(file_path.clone(), None).expect("open test fixture file");
+    let editor = Editor::open(file_path.clone(), None, EditorKeymapMode::Standard).expect("open test fixture file");
     let mut app = test_app(dir);
     app.mode = Mode::Editing(editor);
     (app, file_path)
@@ -126,9 +126,18 @@ mod resolve_editor_key_tests {
     #[test]
     fn every_function_key_is_ignored_not_forwarded() {
         for n in 1..=12 {
+            if n == 9 {
+                continue; // F9 opens the editor's own settings menu -- see its own dedicated test below.
+            }
             let key = KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE);
             assert_eq!(resolve(key), EditorCommand::Ignore, "F{n} should be ignored, not forwarded to edtui");
         }
+    }
+
+    #[test]
+    fn f9_opens_the_editor_menu() {
+        let key = KeyEvent::new(KeyCode::F(9), KeyModifiers::NONE);
+        assert_eq!(resolve(key), EditorCommand::OpenMenu);
     }
 
     /// `Insert` is a real crossterm `KeyCode` variant `edtui`'s own
@@ -278,6 +287,34 @@ mod handle_editor_key_tests {
             panic!("Esc should cancel the selection, not close the editor");
         };
         assert!(!editor.has_selection());
+    }
+
+    #[test]
+    fn handle_editor_key_f9_opens_the_editor_menu_over_the_editor() {
+        let (mut app, _path) = open_editor_app("hi\n");
+
+        handle_editor_key(&mut app, key(KeyCode::F(9))).unwrap();
+
+        let Mode::EditorMenu(editor, menu) = &app.mode else { panic!("expected Mode::EditorMenu") };
+        assert_eq!(editor.keymap_mode(), EditorKeymapMode::Standard, "should carry the editor's own current mode over unchanged");
+        assert_eq!(menu.selected, 0, "should open at the first item (Keybindings)");
+    }
+
+    /// `F9` while editing a linked Markdown preview session (`App::
+    /// markdown_edit_preview`) is silently swallowed instead of opening
+    /// this menu -- `ui::draw` has no split-view rendering support for
+    /// `Mode::EditorKeymapMenu` (see its own doc comment on `app.rs`).
+    #[test]
+    fn handle_editor_key_f9_is_a_noop_while_a_linked_markdown_preview_is_active() {
+        let (mut app, dir_path) = open_editor_app("hi\n");
+        let md_path = dir_path.with_file_name("preview.md");
+        fs::write(&md_path, "# heading\n").expect("write markdown fixture");
+        app.markdown_edit_preview = crate::explorer::MarkdownPreviewState::open(&md_path);
+        assert!(app.markdown_edit_preview.is_some(), "precondition: the linked preview should have opened");
+
+        handle_editor_key(&mut app, key(KeyCode::F(9))).unwrap();
+
+        assert!(matches!(app.mode, Mode::Editing(_)), "F9 should not have opened the keymap menu");
     }
 }
 

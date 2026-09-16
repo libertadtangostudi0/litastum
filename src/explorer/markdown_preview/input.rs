@@ -43,7 +43,7 @@ pub fn open_edit_preview(app: &mut App) {
         return;
     };
     let syntax_theme = app.syntax_theme.clone();
-    let Ok(editor) = Editor::open(path, syntax_theme) else {
+    let Ok(editor) = Editor::open(path, syntax_theme, app.editor_keymap_mode) else {
         return;
     };
 

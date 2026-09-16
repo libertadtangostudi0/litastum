@@ -247,7 +247,7 @@ fn open_edit_selected_command(app: &mut App) {
 
     let Ok(temp_path) = state::create_command_edit_file(commands) else { return };
     let syntax_theme = app.syntax_theme.clone();
-    let Ok(editor) = Editor::open(temp_path.clone(), syntax_theme) else {
+    let Ok(editor) = Editor::open(temp_path.clone(), syntax_theme, app.editor_keymap_mode) else {
         return;
     };
 
