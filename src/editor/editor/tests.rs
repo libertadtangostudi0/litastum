@@ -305,6 +305,53 @@ fn navigation_keys_never_change_the_cached_dirty_state() {
     assert!(editor.is_dirty(), "pure navigation must not clear a genuinely dirty file's flag");
 }
 
+/// Regression test for a real gap found by hand while testing Vim mode
+/// against the same kind of file the fix above exists for: Vim's own
+/// `h`/`j`/`k`/`l` navigation (not arrows) must get the identical
+/// dirty-caching exemption, or a Vim user navigating a pathologically
+/// long line with `hjkl` gets none of the perf fix's benefit at all
+/// (`can_mutate_buffer`'s own doc comment has the full story, including
+/// why `w`/`b`/`e`/etc. are deliberately *not* also exempted).
+#[test]
+fn vim_hjkl_navigation_never_changes_the_cached_dirty_state() {
+    let path = unique_scratch_dir("editor").join("file.txt");
+    fs::write(&path, "hello world\nsecond line").expect("write test fixture file");
+    let mut editor = Editor::open(path, None, EditorKeymapMode::Vim).expect("open test fixture file");
+    assert!(!editor.is_dirty());
+
+    for _ in 0..5 {
+        editor.input(key(KeyCode::Char('l')));
+    }
+    editor.input(key(KeyCode::Char('j')));
+    editor.input(key(KeyCode::Char('h')));
+    editor.input(key(KeyCode::Char('k')));
+    assert!(!editor.is_dirty(), "pure hjkl navigation must not mark a clean file dirty");
+
+    editor.input(key(KeyCode::Char('x'))); // deletes the character under the cursor
+    assert!(editor.is_dirty(), "a genuine Vim edit must still be detected");
+
+    for _ in 0..5 {
+        editor.input(key(KeyCode::Char('l')));
+    }
+    assert!(editor.is_dirty(), "further hjkl navigation must not clear a genuinely dirty file's flag");
+}
+
+/// The exemption above must be Vim-specific -- under `Standard`, 'h'/
+/// 'j'/'k'/'l' are ordinary letters that insert text, and must still be
+/// correctly detected as edits (this pins down that the fix didn't
+/// accidentally make the exemption keymap-independent).
+#[test]
+fn hjkl_still_marks_standard_mode_dirty_as_ordinary_typed_characters() {
+    let (mut editor, _path) = open_test_editor("hello\n");
+    assert!(!editor.is_dirty());
+
+    for c in ['h', 'j', 'k', 'l'] {
+        editor.input(key(KeyCode::Char(c)));
+    }
+
+    assert!(editor.is_dirty(), "hjkl typed in Standard mode are literal characters, not navigation");
+}
+
 /// Regression test for a real bug: `edtui` paints the cursor's own
 /// cell *after* selection styling (`EditorView::render`),
 /// unconditionally overwriting whatever color was there — even under
@@ -878,3 +925,5 @@ fn vim_right_arrow_stops_at_the_last_character_of_a_line_not_a_bug() {
          Normal mode's own max_col clamp, not a bug"
     );
 }
+
+

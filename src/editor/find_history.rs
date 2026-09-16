@@ -60,8 +60,8 @@ pub fn record_history(history: &mut Vec<String>, query: &str) {
 /// (case-insensitive), if it's strictly longer than `query` — `None`
 /// for an empty query, no match, or an exact-length match with nothing
 /// left to suggest. Ghost-text ordinary suggestion for the search box,
-/// requested directly ("подсказываться", similar to the command line) —
-/// a *prefix* match, not `command_line::history::suggest_history`'s own
+/// requested directly (an inline suggestion, similar to the command
+/// line's own) — a *prefix* match, not `command_line::history::suggest_history`'s own
 /// substring-anywhere match, since only a prefix match can be shown as
 /// dimmed text appended after what's already typed.
 pub fn suggest<'a>(history: &'a [String], query: &str) -> Option<&'a str> {

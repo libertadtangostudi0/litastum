@@ -47,7 +47,7 @@ fn ctrl_shift_right_does_not_select_into_the_next_word() {
 /// `Ctrl+Shift+Right` press's own word-scan started from that same
 /// space -- crossing back to the same 'w' and then immediately
 /// stepping back again netted zero movement, so the second press
-/// was silently ignored ("иногда игнорится" -- reported directly).
+/// was silently ignored -- reported directly as "sometimes gets ignored."
 /// A real editor's word-selection must extend further on every
 /// press, never stall.
 #[test]
@@ -510,19 +510,19 @@ fn ctrl_shift_right_selects_over_an_em_dash_instead_of_getting_stuck() {
     assert!(state.cursor.col > after_default + 1, "should keep extending into \"commit\" after the em dash, not stay stuck there either");
 }
 
-/// Same root cause, a different non-ASCII character -- a Cyrillic run
-/// this time, to confirm the fix isn't specific to punctuation-shaped
-/// non-ASCII characters like an em dash.
+/// Same root cause, a different non-ASCII character -- a run of letters
+/// outside the Latin alphabet this time, to confirm the fix isn't
+/// specific to punctuation-shaped non-ASCII characters like an em dash.
 #[test]
-fn ctrl_shift_right_selects_over_a_cyrillic_word_instead_of_getting_stuck() {
-    let mut state = state_for("hello мир world", 0);
+fn ctrl_shift_right_selects_over_a_non_latin_word_instead_of_getting_stuck() {
+    let mut state = state_for("hello κόσμος world", 0);
 
     extend_word_selection(&mut state, true, false, &mut None); // "hello"
     let after_hello = state.cursor.col;
 
-    extend_word_selection(&mut state, true, false, &mut None); // "мир"
+    extend_word_selection(&mut state, true, false, &mut None); // "κόσμος"
 
-    assert!(state.cursor.col > after_hello, "should have advanced onto/through \"мир\", not stayed stuck on \"hello\"");
+    assert!(state.cursor.col > after_hello, "should have advanced onto/through \"κόσμος\", not stayed stuck on \"hello\"");
 }
 
 /// A selection that reaches a non-ASCII run and then retracts with

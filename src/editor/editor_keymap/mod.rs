@@ -7,6 +7,7 @@ use crate::app::{App, Mode};
 use crate::explorer;
 
 use super::find_history;
+use super::keymap_mode::EditorKeymapMode;
 
 
 /// A user-triggered action while a file is open in the built-in editor,
@@ -29,7 +30,12 @@ pub enum EditorCommand {
     /// give both "repeated presses keep progressing" and "`Left` undoes
     /// exactly what `Right` just did" -- see
     /// `bindings::extend_word_selection`'s own doc comment for the full
-    /// story of why.
+    /// story of why. `handle_editor_key`'s own match arm for this only
+    /// calls that method under `EditorKeymapMode::Standard` -- it's
+    /// exactly the kind of hand-rolled, Standard-tuned correction pass
+    /// that must never run under `Vim` (see that enum's own doc
+    /// comment), and this call site had no such gate until a real Vim-
+    /// mode test found it running anyway.
     WordSelect { forward: bool },
     /// `Ctrl+A` -- selects the entire buffer (`Editor::select_all`).
     /// Resolved here rather than left to `edtui`'s own dispatch: there's
@@ -235,8 +241,8 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         EditorCommand::Save => {
             active_editor.save()?;
             // Keeps a linked embedded preview (`App::markdown_edit_preview`)
-            // in sync with what was just written -- requested directly
-            // ("при сохранении смотреть что в правой (preview)"). A
+            // in sync with what was just written -- requested directly:
+            // saving should refresh the preview on the right. A
             // disjoint field borrow from `active_editor` above (both are
             // separate fields of `app`), not a re-borrow of `app.mode`.
             if let Some(preview) = &mut app.markdown_edit_preview {
@@ -245,7 +251,30 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         }
         EditorCommand::Find => active_editor.start_search(),
         EditorCommand::SelectAll => active_editor.select_all(),
-        EditorCommand::WordSelect { forward } => active_editor.extend_word_selection(forward),
+        // `Editor::extend_word_selection` is exactly the kind of
+        // hand-rolled, Standard-keymap-tuned logic `EditorKeymapMode::Vim`'s
+        // own doc comment says never runs while Vim is active (it
+        // manages `word_select_touch`/`word_select_true_anchor`, state
+        // machinery built specifically around this app's own Ctrl+Shift+
+        // Left/Right gesture -- see `WordSelect`'s own doc comment for
+        // why it couldn't be expressed as a plain `bindings.rs` table
+        // entry in the first place). Found by hand while testing Vim
+        // mode directly: unlike `input()`'s own post-table correction
+        // block (gated on `keymap_mode` already), this call site had no
+        // such gate at all, so Ctrl+Shift+Right silently ran this
+        // Standard-only logic even in Vim, forcing `state.mode` into
+        // `Visual` outside any of Vim's own bindings. Forwarded as a
+        // raw key instead while Vim is active -- `edtui`'s own
+        // `vim_mode()` table has no entry for this key combination
+        // either, so `Editor::input` correctly treats it as a no-op,
+        // the same as any other genuinely unbound Vim key.
+        EditorCommand::WordSelect { forward } => {
+            if active_editor.keymap_mode() == EditorKeymapMode::Vim {
+                active_editor.input(key);
+            } else {
+                active_editor.extend_word_selection(forward);
+            }
+        }
         EditorCommand::Forward => active_editor.input(key),
         EditorCommand::Ignore => {}
     }

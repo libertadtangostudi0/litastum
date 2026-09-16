@@ -415,9 +415,9 @@ pub struct App {
     /// (`editor_keymap::handle_editor_key`'s own `Save` arm) so editing
     /// the source and checking the rendered result stays a single
     /// side-by-side workflow rather than a separate preview-then-edit
-    /// round trip. Requested directly ("одновременно просматривать
-    /// .md, редактировать его в левой панели и при сохранении смотреть
-    /// что в правой"). Lives here rather than inside `Mode::Editing`'s
+    /// round trip. Requested directly: view a `.md` file and edit it in
+    /// the left panel at the same time, with the right panel showing
+    /// the rendered result on save. Lives here rather than inside `Mode::Editing`'s
     /// own tuple so every *other* `Mode::Editing`/`ConfirmDiscard` call
     /// site (plain `F4`, Find file's own edit-selected-result, the user
     /// menu's scratch-file command editor) doesn't need to thread a

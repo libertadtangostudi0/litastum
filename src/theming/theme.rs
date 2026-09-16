@@ -40,8 +40,8 @@ pub struct Theme {
     /// whatever color the text would already have," today's behavior
     /// exactly. Requested directly, after setting a theme's own
     /// `selectionBackground` to a vivid ANSI `green` swatch for a bolder
-    /// highlight than the theme's own real selection color: "внутри
-    /// чёрный текст" (black text inside it) -- reusing the whole-buffer
+    /// highlight than the theme's own real selection color, and asking
+    /// for black text inside it -- reusing the whole-buffer
     /// text or a file's own type color unmodified over a bright green
     /// background would be hard to read. See `ColorScheme::to_theme`/
     /// `ColorScheme::selection_foreground` for the optional,

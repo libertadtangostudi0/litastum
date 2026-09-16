@@ -146,11 +146,44 @@ pub struct Editor {
 /// -- neither ever reaches an `Insert`/`Delete`/paste action on this
 /// list's own keys. See `Editor::dirty`'s own doc comment for why this
 /// distinction exists at all.
-fn can_mutate_buffer(code: KeyCode) -> bool {
-    !matches!(
+///
+/// `keymap_mode`/`mode_before` (the mode this keypress was actually
+/// interpreted under -- captured *before* `event_handler.on_key_event`
+/// ran) extend the same exemption to Vim's own `h`/`j`/`k`/`l`, the
+/// exact Normal/Visual-mode equivalents of the arrow keys above
+/// (`edtui`'s own `vim_keybindings()` binds both to the identical
+/// `MoveBackward`/`MoveForward`/`MoveUp`/`MoveDown` actions -- confirmed
+/// directly from its source). Found by hand while testing Vim mode
+/// against the same pathologically-long-line file the arrow-key
+/// exemption above was originally built for: without this, a Vim user
+/// navigating with `hjkl` (Vim's own primary convention, not arrows)
+/// got none of that fix's benefit, since these are plain `Char` keys,
+/// not in the arrow-key list.
+///
+/// Deliberately doesn't extend this to Vim's other single-key motions
+/// (`w`/`b`/`e`/`0`/`$`/...) -- `w` in particular is reused as the
+/// *second* key of `dw`/`cw` (delete/change word forward), both of
+/// which genuinely mutate the buffer; a plain keycode check run one key
+/// at a time, with no visibility into `edtui`'s own pending multi-key
+/// lookup state, can't safely tell "bare `w` navigating" apart from "`w`
+/// completing `dw`". `h`/`j`/`k`/`l` were checked directly against the
+/// full `vim_keybindings()` table and confirmed to never appear as a
+/// component of any multi-key sequence at all, which is exactly why
+/// only these four are safe to add here.
+fn can_mutate_buffer(keymap_mode: EditorKeymapMode, mode_before: EditorMode, code: KeyCode) -> bool {
+    if matches!(
         code,
         KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown
-    )
+    ) {
+        return false;
+    }
+    if keymap_mode == EditorKeymapMode::Vim
+        && matches!(mode_before, EditorMode::Normal | EditorMode::Visual)
+        && matches!(code, KeyCode::Char('h' | 'j' | 'k' | 'l'))
+    {
+        return false;
+    }
+    true
 }
 
 
@@ -342,7 +375,7 @@ impl Editor {
             close_selection_if_back_on_the_anchors_row(&mut self.state, key.code, &mut self.vertical_shift_anchor_col);
         }
 
-        if can_mutate_buffer(key.code) {
+        if can_mutate_buffer(self.keymap_mode, mode_before, key.code) {
             self.dirty = self.state.lines != self.saved_snapshot;
         }
     }
@@ -395,13 +428,21 @@ impl Editor {
         self.state.cursor
     }
 
+    /// The editor's current `edtui` mode (`Insert`/`Normal`/`Visual`/
+    /// `Search`) -- same sibling-module accessor shape as `cursor`
+    /// right above, for the same reason.
+    #[cfg(test)]
+    pub fn mode(&self) -> EditorMode {
+        self.state.mode
+    }
+
     /// The cursor's current row (0-indexed) into the buffer -- used by
     /// `explorer::markdown_preview::state::MarkdownPreviewState::sync_to_editor_cursor`
     /// to keep a linked embedded preview (`App::markdown_edit_preview`)
     /// scrolled to roughly the same source line as whatever's being
-    /// edited, and to highlight it there. Requested directly
-    /// ("прокрутку текста надо сделать одновременной... выделить
-    /// строку на превью, которая редактируется в редакторе").
+    /// edited, and to highlight it there. Requested directly: the
+    /// preview's own scrolling should track the editor's cursor,
+    /// highlighting the line currently being edited.
     pub fn cursor_row(&self) -> usize {
         self.state.cursor.row
     }
@@ -417,9 +458,9 @@ impl Editor {
     /// requested directly, after a first, top-aligned version put the
     /// highlighted line at a visibly different screen row than the
     /// cursor whenever editing wasn't already at the very top of the
-    /// editor ("можно... держать примерно на одном уровне... если
-    /// редактирование в середине страницы, то и превью в том же
-    /// месте").
+    /// editor: the two should stay roughly level, so editing partway
+    /// down the page keeps the preview's own highlight at about the
+    /// same height.
     pub fn viewport_top_row(&self) -> usize {
         self.state.viewport_offset().1
     }

@@ -43,8 +43,8 @@
       trivially true.
       **Reported still laggy after this landed** — the fix above only
       addressed costs that scale with *syntax highlighting*; the actual
-      complaint was specifically cursor movement itself feeling slow
-      ("каретка ездит медленнее"), which pointed at a third, unrelated
+      complaint was specifically cursor movement itself feeling slower,
+      which pointed at a third, unrelated
       O(line length) cost neither of the first two fixes touched:
       `Editor::is_dirty` used to recompare `state.lines != saved_snapshot`
       on every single call, and `ui/editor_pane.rs` calls it once per
@@ -170,6 +170,62 @@
       something narrower, matching `theming::MainMenu`'s own naming and
       leaving room for the codepage/whitespace-marker ideas above to
       become a second item later without a rename.
+      **Two real bugs found by hand while actually testing Vim mode
+      afterward** (requested directly: test Vim behavior, find bugs),
+      both fixed:
+      1. `Ctrl+Shift+Left`/`Right` (`EditorCommand::WordSelect`) still
+         ran `Editor::extend_word_selection` -- this project's own
+         hand-rolled, `Standard`-keymap-tuned word-selection logic
+         (`word_select_touch` state machinery built specifically around
+         this app's own gesture, see that method's own doc comment) --
+         completely regardless of `keymap_mode`, contradicting
+         `EditorKeymapMode::Vim`'s own documented promise that none of
+         this project's correction passes run while Vim is active.
+         Unlike `Editor::input`'s own post-table block (already gated),
+         this call site in `editor_keymap::handle_editor_key` had no
+         gate at all. Fixed by forwarding the raw key through to
+         `Editor::input` instead while `Vim` is active -- `edtui`'s own
+         `vim_mode()` table has no entry for this key combination
+         either, so it correctly becomes a no-op, the same as any other
+         genuinely unbound Vim key, rather than forcing `state.mode`
+         into `Visual` outside any of Vim's own bindings.
+      2. The dirty-caching perf fix earlier in this file
+         (`can_mutate_buffer`, exempting `Left`/`Right`/`Up`/`Down`/
+         `Home`/`End`/`PageUp`/`PageDown` from the O(line length)
+         `is_dirty` recomputation) gave Vim users none of its own
+         benefit: Vim's primary navigation convention is `h`/`j`/`k`/`l`,
+         plain `Char` keys, not arrows, so a Vim user navigating the
+         exact pathologically-long-line file that fix exists for would
+         still pay the full cost on every keypress. Fixed by extending
+         the exemption to `h`/`j`/`k`/`l` specifically while
+         `keymap_mode == Vim` and the keypress was interpreted under
+         Vim's own `Normal`/`Visual` mode (`edtui`'s own
+         `vim_keybindings()` binds both keys and arrows to the identical
+         `MoveBackward`/`MoveForward`/`MoveUp`/`MoveDown` actions --
+         confirmed directly from its source). Deliberately *not*
+         extended to Vim's other single-key motions (`w`/`b`/`e`/`0`/
+         `$`/...): `w` in particular is reused as the *second* key of
+         `dw`/`cw` (delete/change word forward, both genuinely
+         mutating), and a per-keypress keycode check with no visibility
+         into `edtui`'s own pending multi-key lookup state can't safely
+         tell "bare `w` navigating" apart from "`w` completing `dw`" --
+         `h`/`j`/`k`/`l` were checked directly against the *entire*
+         `vim_keybindings()` table and confirmed to never appear as a
+         component of any multi-key sequence, which is exactly why only
+         these four are safe.
+
+      Confirmed working correctly (no bug, no fix needed) after direct
+      testing: `Editor::select_all` (Ctrl+A) and `Editor::start_search`
+      (Ctrl+F) both behave the same in either keymap, since neither
+      relies on `Standard`-specific touch-tracking, just plain chained
+      `edtui` motions or independent app-level state; closing with `Esc`
+      while a genuine Vim `Visual`-mode selection is active (opened with
+      real Vim `v`/motion keys, not `Shift`+arrow) correctly cancels the
+      selection instead of closing the editor, the same as it already
+      did for `Standard`'s own `Shift`-selection; Vim's own `x` (delete)
+      and `u` (Undo) both correctly update `is_dirty`, including
+      undoing back to exactly the saved content correctly clearing it
+      again.
 - [ ] Ctrl+V over an active selection doesn't replace it (clears the
       selection, then pastes at the cursor instead) — `edtui`'s real
       "paste over selection" action isn't publicly exported; see
@@ -358,8 +414,8 @@
       `[]`, `{}`, and `<>` (matching only within the same kind -- a `{`
       inside `(...)` is invisible to matching a `(`, the standard rule
       every mainstream bracket-matcher uses) -- `<>` added right after,
-      per an explicit follow-up request ("добавь ещё вариантов скобок,
-      вроде <>"). Documented as a deliberately accepted, known tradeoff
+      per an explicit follow-up request to add more bracket kinds, like
+      `<>`. Documented as a deliberately accepted, known tradeoff
       rather than a gap (`PAIRS`'s own doc comment, plus a dedicated
       test, `angle_brackets_can_mismatch_against_real_comparison_operators`,
       pinning down the exact failure shape): `<`/`>` are also comparison
@@ -434,9 +490,8 @@
       in the first place -- not fixable inside `bracket_match.rs`/
       `Editor::view`'s highlight logic alone, the cause was squarely in
       `edtui`'s own scroll targeting.
-      **Fixed**, per explicit follow-up ("попробовать расширить viewport
-      под обе скобки" -- try widening the viewport to fit both brackets),
-      by nudging the viewport ourselves rather than accepting the
+      **Fixed**, per explicit follow-up (try widening the viewport to
+      fit both brackets), by nudging the viewport ourselves rather than accepting the
       limitation: `Editor::view` now takes the render `area` (threaded
       in from `ui/editor_pane.rs`'s own call site, the only place that
       actually knows the real `Rect` about to be rendered into --

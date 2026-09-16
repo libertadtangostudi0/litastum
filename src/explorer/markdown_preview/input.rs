@@ -11,9 +11,9 @@ use super::state::MarkdownPreviewState;
 
 /// `F3` on a `.md`/`.markdown` file: opens the built-in editor
 /// (`Editor::open`, same as `F4`) for it *and* a live rendered preview
-/// side by side (`App::markdown_edit_preview`) -- requested directly
-/// ("одновременно просматривать .md, редактировать его в левой панели
-/// и при сохранении смотреть что в правой"). `app.active` starts at `0`
+/// side by side (`App::markdown_edit_preview`) -- requested directly:
+/// view and edit a `.md` file at the same time, in the left panel, with
+/// the rendered result shown on the right on save. `app.active` starts at `0`
 /// (the editor, ready to type into immediately); `Tab`
 /// (`main.rs::handle_key_event`) toggles it to `1` (the preview) for
 /// scrolling/`l`-searching/`Ctrl`+clicking it -- see
