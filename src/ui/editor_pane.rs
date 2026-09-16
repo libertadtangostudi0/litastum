@@ -22,7 +22,7 @@ pub(super) fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut Editor, th
 
     let dirty_marker = if editor.is_dirty() { " [modified]" } else { "" };
 
-    frame.render_widget(editor.view(theme), rows[0]);
+    frame.render_widget(editor.view(theme, rows[0]), rows[0]);
     if let Some(pos) = editor.cursor_screen_position() {
         frame.set_cursor_position(pos);
     }

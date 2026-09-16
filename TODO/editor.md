@@ -288,6 +288,125 @@
       no need to reach into the crate's `pub(crate)` `CharacterClass`
       for something this simple, unlike `bindings::word_select`'s own
       history.
+- [x] Bracket-pair matching, Far Manager/VS Code-style -- requested
+      directly, along with an explicit constraint: bracket matching must
+      stay fully independent of the word-occurrence highlighting above,
+      never feeding brackets into it or vice versa. New
+      `editor/bracket_match.rs`, a second, entirely separate pass over
+      the same `EditorState::highlights` field the word-occurrence
+      feature already rides -- not folded into `word_occurrence_highlights`
+      itself. In practice the two features could never actually collide
+      even without this separation (`word_highlight::is_word_char` only
+      ever matches ASCII alphanumerics/`_`, so a bracket is never a
+      candidate for it), but keeping bracket matching in its own
+      module/function with its own call in `Editor::view` makes that
+      guarantee structural rather than incidental -- see
+      `bracket_match_highlights`'s own doc comment. Understands `()`,
+      `[]`, `{}`, and `<>` (matching only within the same kind -- a `{`
+      inside `(...)` is invisible to matching a `(`, the standard rule
+      every mainstream bracket-matcher uses) -- `<>` added right after,
+      per an explicit follow-up request ("добавь ещё вариантов скобок,
+      вроде <>"). Documented as a deliberately accepted, known tradeoff
+      rather than a gap (`PAIRS`'s own doc comment, plus a dedicated
+      test, `angle_brackets_can_mismatch_against_real_comparison_operators`,
+      pinning down the exact failure shape): `<`/`>` are also comparison
+      operators in every C-like language this editor highlights, and
+      this module has no syntax awareness to tell "generic/tag
+      delimiter" from "comparison" apart -- a plain same-kind
+      nesting-depth scan, its whole strategy, can genuinely mismatch on
+      real code containing a bare `<`/`>` comparison. Accepted anyway,
+      since balanced angle brackets (`Vec<Option<T>>`, `<div>...</div>`)
+      are a far more common real-world shape than a mismatching bare
+      comparison, and this is the same tradeoff most mainstream editors
+      that support `<>` matching at all already make. A plain forward/backward
+      nesting-depth scan from the cursor's position (`find_forward`/
+      `find_backward`), same "touching" convention as `word_highlight::
+      word_at` for where the cursor counts as being "on" a bracket
+      (its own cell, or the cell immediately to its left).
+      **Follow-up, requested directly right after landing**: originally
+      colored `theme.bg` on `theme.accent` (a deliberately distinct look
+      from word highlighting) and only highlighted the bracket's
+      *matching partner*, not the one under the cursor -- both reversed.
+      Now shares the exact same `Style` as `word_highlight.rs`'s "same
+      word as the one under the cursor" feature (`theme.text` on
+      `theme.border`, one shared `highlight_style` value in
+      `Editor::view` passed to both passes) rather than a visually
+      distinct color, and highlights *both* brackets of the pair, not
+      just the far one -- `bracket_match_highlights` returns two
+      `Highlight`s again (`pos` and `match_pos`), matching real Far/VS
+      Code behavior where both sides of a matched pair read as "this
+      pair." This is now a deliberate *difference* from `word_highlight`'s
+      own choice to exclude the cursor's "home" occurrence from its own
+      highlight list -- the two features share a color but not that
+      particular behavior, and both choices are correct for their own
+      feature (a whole *pair* of brackets reads as one unit; a word
+      occurrence is just one of many, so a plainly "at the cursor" one
+      for it adds nothing). Skipped for a pathologically long line, same
+      reason and same shared `has_pathologically_long_line` check syntax
+      highlighting uses just above in `Editor::view` -- an unbounded
+      forward/backward scan across such a line would reintroduce the
+      exact class of per-frame cost that fix exists to avoid.
+      **Second follow-up, reported directly with a screenshot right
+      after the above landed**: the near bracket's own highlight still
+      wasn't actually visible while the cursor sat exactly on it --
+      `edtui` paints the cursor's own cell *after* any `Highlight`
+      (`EditorView::render`), so the near bracket's color was there in
+      the data but silently overwritten back to plain `base` on screen,
+      leaving only the far bracket visibly highlighted. Same fix shape
+      already used for an active text selection's own cursor cell
+      (`Editor::view`'s `cursor_style` decision): a new
+      `bracket_match::cursor_is_on_a_matched_bracket` check (true only
+      when the cursor sits *directly* on a bracket that's part of a real
+      matched pair, not merely "touching" one from the append position
+      one column to its right) now paints the cursor's own cell with
+      `highlight_style` too, instead of `hide_cursor()`'s plain `base`,
+      whenever it applies -- both brackets of a pair read as highlighted
+      together now, confirmed by a real rendering test comparing the
+      cursor's own cell color before and after moving onto a bracket
+      (`the_bracket_under_the_cursor_is_also_visibly_highlighted`).
+- [x] **Third follow-up, reported again with a screenshot -- investigated,
+      turned out not to be a highlighting bug**: with the cursor on a
+      bracket, sometimes only one side visibly colored. Reproduced
+      directly with a real `.json` file and a short `TestBackend`
+      viewport matching the reported screenshot's apparent window
+      height -- both brackets' *highlight data* was always correct
+      (confirmed across cursor-on-open, cursor-past-open via the append
+      position, cursor-on-close, and an adjacent same-line pair, all
+      with real syntax highlighting engaged), but when the matching
+      bracket's row fell outside the currently-scrolled-into-view rows,
+      it was never rendered at all -- `edtui`'s own vertical auto-scroll
+      only ever keeps the *cursor's* row in view, with no awareness of a
+      matched bracket possibly sitting well outside that range. There's
+      no cell to paint a color on if it was never drawn to the terminal
+      in the first place -- not fixable inside `bracket_match.rs`/
+      `Editor::view`'s highlight logic alone, the cause was squarely in
+      `edtui`'s own scroll targeting.
+      **Fixed**, per explicit follow-up ("попробовать расширить viewport
+      под обе скобки" -- try widening the viewport to fit both brackets),
+      by nudging the viewport ourselves rather than accepting the
+      limitation: `Editor::view` now takes the render `area` (threaded
+      in from `ui/editor_pane.rs`'s own call site, the only place that
+      actually knows the real `Rect` about to be rendered into --
+      `Editor` had no other way to learn the current size ahead of
+      time), and a new `bracket_match::matched_bracket_row_span` reports
+      the matched pair's own inclusive `(top_row, bottom_row)` span when
+      it crosses more than one line. If that span fits within the
+      approximate content height (`area.height - 2`, for the border --
+      no status line to also subtract, `.hide_status_line()` is always
+      on), `Editor::view` calls `EditorState::set_viewport_offset` to
+      top-align the pair before constructing the `EditorView`. This
+      doesn't fight `edtui`'s own auto-scroll-to-cursor
+      (`ViewOffset::update_viewport_vertical`, confirmed directly from
+      its source): that logic only *overrides* an offset if the cursor
+      would fall outside it, and since our chosen offset always includes
+      the cursor's own row (it's one of the two rows the span is built
+      from), it's left alone. When the pair doesn't fit at all, this
+      deliberately does nothing -- `edtui`'s own default (keep the
+      cursor's row visible) is the correct fallback, confirmed by a
+      dedicated test. Two real rendering tests
+      (`a_multi_line_bracket_pair_widens_the_viewport_to_show_both_when_it_fits`,
+      `a_bracket_pair_that_does_not_fit_leaves_the_viewport_showing_the_cursor`)
+      pin both halves down, including the "fits exactly" boundary case.
 - [ ] In-editor find (`Ctrl+F`/`F7`, Far Manager's own editor
       convention — not to be confused with the file-panel's own F7/
       Alt+F7 "find file[s]"/"find file *content*" above, an entirely

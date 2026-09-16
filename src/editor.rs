@@ -1,4 +1,5 @@
 mod bindings;
+mod bracket_match;
 mod clipboard;
 mod editor;
 mod editor_keymap;

@@ -7,6 +7,7 @@ use edtui::actions::motion::{MoveToFirstRow, MoveToLastRow};
 use edtui::actions::{Chainable, Execute, MoveToEndOfLine, MoveToStartOfLine, SwitchMode};
 use edtui::syntect::highlighting::Theme as SynTheme;
 use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Index2, LineNumbers, Lines};
+use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Block;
 use tracing::{debug, warn};
@@ -19,6 +20,7 @@ use super::bindings::{
 };
 use super::clipboard::OsClipboardBridge;
 use super::syntax::resolve_syntax_highlighter;
+use super::bracket_match::{bracket_match_highlights, cursor_is_on_a_matched_bracket, matched_bracket_row_span};
 use super::word_highlight::{has_pathologically_long_line, word_occurrence_highlights};
 
 mod search;
@@ -373,8 +375,14 @@ impl Editor {
     ///
     /// Takes `&mut self`, unlike a typical read-only render helper:
     /// `EditorView` tracks scroll position as part of rendering, so it
-    /// needs write access to `EditorState` even just to draw.
-    pub fn view(&mut self, theme: &Theme) -> EditorView<'_, '_> {
+    /// needs write access to `EditorState` even just to draw. `area` is
+    /// the exact `Rect` the caller is about to render into -- needed to
+    /// work out whether a matched bracket pair spanning multiple rows
+    /// can actually both fit on screen at once (see the viewport-nudge
+    /// block below); `Editor` has no other way to know the current
+    /// render size ahead of the `frame.render_widget` call that
+    /// actually consumes the returned `EditorView`.
+    pub fn view(&mut self, theme: &Theme, area: Rect) -> EditorView<'_, '_> {
         let custom_syntax_theme = &self.custom_syntax_theme;
 
         // Try the full file name first, then just the extension —
@@ -404,38 +412,90 @@ impl Editor {
             }
         }
 
+        // Computed once and reused below for the syntax highlighter and
+        // for `bracket_match_highlights` -- both would otherwise pay an
+        // O(remaining line length) cost against the same pathological
+        // line (`has_pathologically_long_line`'s own doc comment).
+        let pathologically_long_line = has_pathologically_long_line(&self.state.lines);
+
         // Skip syntax highlighting entirely for a file with a
-        // pathologically long line (`has_pathologically_long_line`'s own
-        // doc comment) -- `syntect` tokenizes a line's *full* text on
-        // every highlight pass regardless of how much of it is actually
-        // visible on screen, so a single enormous line would otherwise
-        // pay that cost fresh on every one of this app's per-event
-        // redraws (`main.rs::run`).
-        let syntax_highlighter = if has_pathologically_long_line(&self.state.lines) {
+        // pathologically long line -- `syntect` tokenizes a line's
+        // *full* text on every highlight pass regardless of how much of
+        // it is actually visible on screen, so a single enormous line
+        // would otherwise pay that cost fresh on every one of this
+        // app's per-event redraws (`main.rs::run`).
+        let syntax_highlighter = if pathologically_long_line {
             None
         } else {
             resolve_syntax_highlighter(&candidates, &self.first_line, custom_syntax_theme)
         };
 
+        // Widen the viewport to show a multi-line matched bracket pair
+        // in full, when it actually fits -- reported directly, with a
+        // screenshot: the far bracket only ever highlighted while its
+        // own row happened to already be scrolled into view, since
+        // `edtui`'s own vertical auto-scroll only ever keeps the
+        // *cursor's* row visible, with no notion of "and this other row
+        // too" (`matched_bracket_row_span`'s own doc comment). `area`'s
+        // height minus 2 approximates edtui's own content height (just
+        // the border -- `.hide_status_line()` below means there's no
+        // status line to also subtract). Setting `y` here only takes
+        // effect if it actually includes the cursor's own row -- `edtui`
+        // re-adjusts the offset during render whenever the cursor would
+        // otherwise fall outside it (`ViewOffset::update_viewport_vertical`'s
+        // own doc comment, confirmed directly from its source), so this
+        // can never leave the cursor scrolled out of view even if the
+        // math below is wrong. When the pair doesn't fit at all, this
+        // deliberately leaves the viewport alone -- keeping the cursor's
+        // own row visible (`edtui`'s own default behavior) is the
+        // correct fallback, not an error.
+        if !pathologically_long_line {
+            if let Some((top_row, bottom_row)) = matched_bracket_row_span(&self.state.lines, self.state.cursor) {
+                let content_height = area.height.saturating_sub(2) as usize;
+                if bottom_row - top_row + 1 <= content_height {
+                    let (offset_x, _) = self.state.viewport_offset();
+                    self.state.set_viewport_offset(offset_x, top_row);
+                }
+            }
+        }
+
         let selection_style = Style::default().fg(theme.selection_text.unwrap_or(theme.text)).bg(theme.current_row_bg);
 
         // VS Code-style "highlight every other occurrence of the word
-        // under the cursor" -- see `word_highlight`'s own doc comment
-        // for how this rides `edtui`'s own `state.highlights` field
-        // rather than a hand-rolled render pass. Recomputed fresh every
-        // frame directly from the cursor's current position -- cheap
-        // enough at the file sizes this editor targets (see
+        // under the cursor" plus Far Manager/VS Code-style bracket-pair
+        // matching -- see `word_highlight`'s own doc comment for how
+        // this rides `edtui`'s own `state.highlights` field rather than
+        // a hand-rolled render pass. Recomputed fresh every frame
+        // directly from the cursor's current position -- cheap enough
+        // at the file sizes this editor targets (see
         // `word_highlight::word_occurrences`'s own scope note), and
         // avoids tracking a separate "did the cursor move" dirty flag.
         // Skipped entirely while a selection is active, matching VS
-        // Code's own behavior -- "the word under the cursor" isn't a
-        // coherent concept mid-selection, and the highlights would just
-        // get overridden by the selection's own styling wherever they
-        // overlapped anyway (`edtui`'s own priority order: selection,
-        // then highlights, then base).
+        // Code's own behavior -- "the word/bracket under the cursor"
+        // isn't a coherent concept mid-selection, and the highlights
+        // would just get overridden by the selection's own styling
+        // wherever they overlapped anyway (`edtui`'s own priority
+        // order: selection, then highlights, then base). Bracket
+        // matching is also skipped for a pathologically long line, for
+        // the same reason syntax highlighting is above -- see
+        // `bracket_match_highlights`'s own doc comment for why it's a
+        // wholly separate pass from word-occurrence highlighting, never
+        // feeding brackets into "similar" word matches.
+        // Same style for word-occurrence and bracket-pair highlighting
+        // -- requested directly, after bracket matching first shipped
+        // with its own distinct `theme.bg`-on-`theme.accent` look:
+        // brackets should read as the same kind of "this matches
+        // something nearby" hint as word highlighting, not a visually
+        // different feature. Also referenced below, by `cursor_style`,
+        // for the same reason.
+        let highlight_style = Style::default().fg(theme.text).bg(theme.border);
+
         self.state.highlights = if self.state.selection.is_none() {
-            let word_highlight_style = Style::default().fg(theme.text).bg(theme.border);
-            word_occurrence_highlights(&self.state.lines, self.state.cursor, word_highlight_style)
+            let mut highlights = word_occurrence_highlights(&self.state.lines, self.state.cursor, highlight_style);
+            if !pathologically_long_line {
+                highlights.extend(bracket_match_highlights(&self.state.lines, self.state.cursor, highlight_style));
+            }
+            highlights
         } else {
             Vec::new()
         };
@@ -457,12 +517,12 @@ impl Editor {
             // with `dj`/`5k`-style motions.
             .line_numbers_style(Style::default().fg(theme.text_dim).bg(theme.bg));
 
-        // edtui paints the cursor's own cell *after* selection styling
-        // (`EditorView::render`), unconditionally overwriting whatever
-        // color was there -- `.hide_cursor()` only changes that overwrite
-        // to `base` instead of leaving it alone, it doesn't skip it. Since
-        // this keymap always keeps `state.cursor` exactly on the
-        // selection's live end (see `bindings::extend_word_selection`'s
+        // edtui paints the cursor's own cell *after* selection/highlight
+        // styling (`EditorView::render`), unconditionally overwriting
+        // whatever color was there -- `.hide_cursor()` only changes that
+        // overwrite to `base` instead of leaving it alone, it doesn't
+        // skip it. Since this keymap always keeps `state.cursor` exactly
+        // on the selection's live end (see `bindings::extend_word_selection`'s
         // doc comment), that one cell is the last character of an active
         // selection -- painting it `base` made it visually look
         // unselected even though it's genuinely included in what `Copy`
@@ -470,12 +530,29 @@ impl Editor {
         // character than what looked highlighted. Painting it
         // `selection_style` instead, only while a selection is actually
         // active, keeps the visible highlight and the real selection in
-        // agreement. With no selection, `hide_cursor()`'s usual `base` is
-        // right: the real terminal cursor (a thin bar — see
-        // `setup_terminal` in main.rs) is what should be visible there,
-        // not edtui's own solid reverse-video block.
+        // agreement.
+        //
+        // Same reasoning applies to bracket matching: once
+        // `bracket_match_highlights` started returning *both* brackets
+        // of a pair (not just the far one), the near one -- wherever the
+        // cursor itself sits -- was still invisibly overwritten back to
+        // plain `base`, reported directly with a screenshot -- the near
+        // bracket's own highlight wasn't visible at all, only the far
+        // one, even though both are meant to show at once. Painting the
+        // cursor cell with `highlight_style` instead, whenever
+        // `cursor_is_on_a_matched_bracket` says it's genuinely sitting
+        // on one side of a real pair, makes both brackets read as
+        // highlighted together the same way selection already does.
+        //
+        // With no selection and the cursor not on a matched bracket,
+        // `hide_cursor()`'s usual `base` is right: the real terminal
+        // cursor (a thin bar — see `setup_terminal` in main.rs) is what
+        // should be visible there, not edtui's own solid reverse-video
+        // block.
         editor_theme = if self.state.selection.is_some() {
             editor_theme.cursor_style(selection_style)
+        } else if !pathologically_long_line && cursor_is_on_a_matched_bracket(&self.state.lines, self.state.cursor) {
+            editor_theme.cursor_style(highlight_style)
         } else {
             editor_theme.hide_cursor()
         };

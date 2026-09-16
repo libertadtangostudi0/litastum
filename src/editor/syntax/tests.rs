@@ -413,6 +413,6 @@ fn opening_a_bundled_grammar_file_gets_a_working_syntax_highlighter() {
         // attached, so this only proves `view()` doesn't panic
         // building one -- `resolve_syntax_highlighter_covers_*`
         // above is what actually pins down that it resolves to `Some`.
-        let _ = editor.view(&Theme::dark());
+        let _ = editor.view(&Theme::dark(), ratatui::layout::Rect::new(0, 0, 40, 10));
     }
 }
