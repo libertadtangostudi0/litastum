@@ -1,10 +1,4 @@
-use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{List, ListItem},
-    Frame,
-};
+use ratatui::{layout::Rect, Frame};
 
 use crate::editor::{EditorKeymapMenu, EditorKeymapMode};
 use crate::theming::{PopupStyle, Theme};
@@ -20,42 +14,11 @@ use crate::ui::popup;
 /// own cursor position, same split popup_style_menu's own `style`
 /// parameter already keeps.
 pub fn draw_editor_keymap_menu(frame: &mut Frame, area: Rect, menu: &EditorKeymapMenu, theme: &Theme, style: PopupStyle, current: EditorKeymapMode) {
-    let modes = EditorKeymapMode::all();
-    let extra = popup::chrome_extra_rows(style);
-    let height = (modes.len() as u16 + 4 + extra).clamp(6 + extra, area.height);
-    let inner = popup::draw_frame(frame, area, theme, style, Line::from(Span::raw(" Keybindings ")), 30, height);
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner);
-
-    let items: Vec<ListItem> = modes
+    let labels: Vec<String> = EditorKeymapMode::all()
         .iter()
-        .enumerate()
-        .map(|(index, candidate)| {
-            let label = if *candidate == current {
-                format!("{} (current)", candidate.label())
-            } else {
-                candidate.label().to_string()
-            };
-            let item_style = if index == menu.selected {
-                popup::selected_row_style(theme)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            ListItem::new(Line::from(Span::styled(label, item_style)))
-        })
+        .map(|candidate| if *candidate == current { format!("{} (current)", candidate.label()) } else { candidate.label().to_string() })
         .collect();
-    frame.render_widget(List::new(items), rows[0]);
-
-    let hint = Line::from(vec![
-        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" apply  ", Style::default().fg(theme.text_dim)),
-        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" cancel", Style::default().fg(theme.text_dim)),
-    ]);
-    frame.render_widget(hint, rows[1]);
+    popup::draw_list_popup(frame, area, theme, style, " Keybindings ", 30, &labels, menu.selected, "apply", "cancel");
 }
 
 

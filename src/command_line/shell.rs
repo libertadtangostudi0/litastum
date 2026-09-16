@@ -70,12 +70,8 @@ pub fn handle_shell_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
     debug!(?key, selected = menu.selected, "shell menu key");
 
     match key.code {
-        KeyCode::Up => menu.selected = menu.selected.saturating_sub(1),
-        KeyCode::Down => {
-            if menu.selected + 1 < app.shell_profiles.len() {
-                menu.selected += 1;
-            }
-        }
+        KeyCode::Up => crate::list_cursor::move_up(&mut menu.selected),
+        KeyCode::Down => crate::list_cursor::move_down(&mut menu.selected, app.shell_profiles.len()),
         KeyCode::Enter => {
             app.active_shell = menu.selected;
             app.mode = Mode::Browsing;

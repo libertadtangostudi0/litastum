@@ -4,6 +4,7 @@ mod app;
 mod command_line;
 mod editor;
 mod explorer;
+mod list_cursor;
 mod logging;
 #[cfg(test)]
 mod test_support;

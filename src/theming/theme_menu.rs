@@ -59,14 +59,12 @@ impl ThemeMenu {
 
 
     pub fn move_up(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
+        crate::list_cursor::move_up(&mut self.selected);
     }
 
 
     pub fn move_down(&mut self) {
-        if self.selected + 1 < self.themes.len() {
-            self.selected += 1;
-        }
+        crate::list_cursor::move_down(&mut self.selected, self.themes.len());
     }
 
 

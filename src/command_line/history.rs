@@ -139,14 +139,12 @@ pub fn handle_history_key(app: &mut App, key: KeyEvent) -> Result<()> {
     match key.code {
         KeyCode::Up => {
             let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
-            menu.selected = menu.selected.saturating_sub(1);
+            crate::list_cursor::move_up(&mut menu.selected);
         }
         KeyCode::Down => {
             let count = matching_history(&app.command_history, &app.command_line).len();
             let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
-            if menu.selected + 1 < count {
-                menu.selected += 1;
-            }
+            crate::list_cursor::move_down(&mut menu.selected, count);
         }
         KeyCode::Enter => {
             let Mode::CommandHistory(menu) = &app.mode else { unreachable!() };

@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Padding},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Padding},
     Frame,
 };
 
@@ -29,12 +29,11 @@ const PADDING: Padding = Padding::uniform(2);
 /// How many *extra* rows of chrome `style` needs beyond `Classic`'s own
 /// (border top + bottom, title free -- baked into the border line) --
 /// for `Rounded`, that's `PADDING`'s own 2 rows top + 2 bottom, plus the
-/// one content row `draw_frame` reserves for the title itself. Popups
-/// with a simple, single-string title (`ui/menu.rs`, `ui/shell.rs`,
-/// `ui/drive_menu.rs`, `ui/popup_style_menu.rs`) size their own popup
-/// height off of this, so a height formula tuned for `Classic`'s
-/// tighter chrome doesn't leave `Rounded` with zero or negative room
-/// for its own content once the border/padding/title are subtracted.
+/// one content row `draw_frame` reserves for the title itself.
+/// `draw_list_popup` sizes its own popup height off of this, so a
+/// height formula tuned for `Classic`'s tighter chrome doesn't leave
+/// `Rounded` with zero or negative room for its own content once the
+/// border/padding/title are subtracted.
 pub fn chrome_extra_rows(style: PopupStyle) -> u16 {
     match style {
         PopupStyle::Classic => 0,
@@ -153,11 +152,104 @@ pub fn selected_text_style(theme: &Theme) -> Style {
 }
 
 
+/// Renders a plain, single-column list popup: title, a `List` with the
+/// highlighted row picked out, and an `Enter <label>  Esc <label>`
+/// footer hint -- the shape shared by `ui/menu.rs`, `ui/shell.rs`,
+/// `ui/drive_menu.rs`, `ui/popup_style_menu.rs`, and the built-in
+/// editor's own `ui/editor_menu.rs`/`ui/editor_keymap_menu.rs`, pulled
+/// out once six call sites had all copied the same ~25 lines with only
+/// the title, width, item labels, and the two hint descriptions
+/// actually differing. Each caller formats its own `labels` first (a
+/// bare `&str`, a `"(current)"` suffix, `drive_menu.rs`'s own
+/// multi-column layout, ...) rather than this function taking raw
+/// domain data -- what varies there differs enough per caller that
+/// trying to generalize it here would have meant more parameters than
+/// the duplication it replaces was worth.
+pub fn draw_list_popup(frame: &mut Frame, area: Rect, theme: &Theme, style: PopupStyle, title: &'static str, width: u16, labels: &[String], selected: usize, enter_label: &str, esc_label: &str) {
+    let extra = chrome_extra_rows(style);
+    let height = (labels.len().max(1) as u16 + 4 + extra).clamp(6 + extra, area.height);
+    let inner = draw_frame(frame, area, theme, style, Line::from(Span::raw(title)), width, height);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    let items: Vec<ListItem> = labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let item_style = if index == selected { selected_row_style(theme) } else { Style::default().fg(theme.text) };
+            ListItem::new(Line::from(Span::styled(label.clone(), item_style)))
+        })
+        .collect();
+    frame.render_widget(List::new(items), rows[0]);
+
+    let hint = Line::from(vec![
+        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {enter_label}  "), Style::default().fg(theme.text_dim)),
+        Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {esc_label}"), Style::default().fg(theme.text_dim)),
+    ]);
+    frame.render_widget(hint, rows[1]);
+}
+
+
 #[cfg(test)]
 mod tests {
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
+
+    fn rendered(labels: &[String], selected: usize, style: PopupStyle) -> String {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::dark();
+        terminal
+            .draw(|frame| {
+                draw_list_popup(frame, frame.area(), &theme, style, " Test ", 30, labels, selected, "pick", "cancel");
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn draw_list_popup_shows_every_label_and_both_hints() {
+        let labels = vec!["Alpha".to_string(), "Beta".to_string()];
+        let text = rendered(&labels, 0, PopupStyle::Rounded);
+        assert!(text.contains("Alpha"));
+        assert!(text.contains("Beta"));
+        assert!(text.contains("pick"));
+        assert!(text.contains("cancel"));
+    }
+
+    #[test]
+    fn draw_list_popup_highlights_the_selected_row() {
+        let labels = vec!["Alpha".to_string(), "Beta".to_string()];
+        let theme = Theme::dark();
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_list_popup(frame, frame.area(), &theme, PopupStyle::Rounded, " Test ", 30, &labels, 1, "pick", "cancel");
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let selected_bg = selected_row_style(&theme).bg;
+        let has_a_highlighted_row = (0..buffer.area.height).any(|y| (0..buffer.area.width).any(|x| buffer[(x, y)].bg == selected_bg.unwrap()));
+        assert!(has_a_highlighted_row, "the row at index 1 (\"Beta\") should render with the selected-row background");
+    }
+
+    #[test]
+    fn draw_list_popup_does_not_panic_on_an_empty_list() {
+        let labels: Vec<String> = Vec::new();
+        let text = rendered(&labels, 0, PopupStyle::Rounded);
+        assert!(text.contains("pick"));
+    }
 
     /// `selected_row_style`/`selected_text_style` both fall back to
     /// `theme.text` when a scheme sets no `selection_text` override --

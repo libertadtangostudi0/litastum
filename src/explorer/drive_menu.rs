@@ -135,13 +135,11 @@ pub fn handle_drive_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
     match key.code {
         KeyCode::Up => {
-            menu.selected = menu.selected.saturating_sub(1);
+            crate::list_cursor::move_up(&mut menu.selected);
             Ok(())
         }
         KeyCode::Down => {
-            if menu.selected + 1 < menu.drives.len() {
-                menu.selected += 1;
-            }
+            crate::list_cursor::move_down(&mut menu.selected, menu.drives.len());
             Ok(())
         }
         KeyCode::Enter => {
