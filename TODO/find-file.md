@@ -454,3 +454,86 @@ real Far.
       `content/scan.rs`'s own test module where it now belongs) —
       neither one is a visible feature, just less wasted work per
       candidate on a search with many name-matched files to content-check.
+- [x] **Two more follow-ups from the same "keep speeding this up"
+      review pass, both asked directly**:
+      1. **`matches_query` (`matching.rs`) no longer allocates a
+         lowered copy of every entry's own name just to check it.**
+         `walk.rs`'s two walk functions used to call
+         `entry.file_name().to_string_lossy().to_lowercase()` on *every
+         single entry visited*, not just on a match -- a fresh
+         short-lived `String` allocation per entry, on a walk that's
+         otherwise parallel and I/O-bound, for millions of entries on a
+         genuinely large tree. `matches_query` now owns the case-folding
+         decision itself: when both the entry's own name and the
+         (already-lowercased-once, per search, not per entry)
+         query/mask are plain ASCII -- the overwhelming majority of real
+         file names and masks -- it dispatches to a zero-allocation
+         byte-level path (`contains_ascii_case_insensitive` for a plain
+         substring, `glob_match_ascii` -- the same two-pointer algorithm
+         `glob_match` already used, just over bytes with per-byte
+         `to_ascii_lowercase()` folding instead of a `char` vector) --
+         `walk.rs` itself now just passes `entry.file_name().to_string_lossy()`
+         straight through, no `.to_lowercase()` call at all. A name or
+         query with any non-ASCII character still falls back to the
+         original, correct, allocating `to_lowercase()` + `char`-based
+         `glob_match` path, unchanged. `to_string_lossy()` itself
+         typically doesn't allocate either, on top of this -- it only
+         needs to when the raw OS name isn't already valid Unicode,
+         which a real file name virtually never is -- so the common case
+         now visits an entry with no allocation on this line at all.
+      2. **The directory walk's own thread count now scales with the
+         real machine, not a fixed ceiling.** `ignore::WalkBuilder`, left
+         at its own default, caps itself at
+         `available_parallelism().min(12)` internally -- a machine with
+         more than 12 real cores would never get to use all of them for
+         the walk. `walk.rs::build_walker` now calls
+         `.threads(available_parallelism())` explicitly, with the same
+         one-thread fallback `content_filter_in_parallel` already uses
+         if the OS won't report a core count -- making the walk's own
+         thread pool consistent with the content-check phase's, which
+         was already uncapped.
+      Both regression-tested (`matching.rs`'s own new test module
+      coverage for the ASCII fast path and its non-ASCII fallback;
+      the existing `walk.rs`/`search/mod.rs` test suites all still pass
+      unmodified, confirming neither change altered observable search
+      behavior, only how much work it costs to get there).
+      **Reported directly as no visible speedup after this landed** --
+      confirms the earlier hypothesis that these were CPU-side micro-
+      optimizations on a walk that's actually I/O-bound (syscall/disk
+      cost, not string-processing cost), for a real tree the size this
+      was already tested against. Followed up anyway, asked directly,
+      with the one further piece from that same review pass:
+      pre-parsing the glob pattern once per search instead of once per
+      entry (`matching.rs::ParsedQuery`) -- `glob_match_chars`
+      (formerly `glob_match`, the non-ASCII fallback the ASCII fast
+      path above doesn't cover) used to `pattern.chars().collect::<Vec<char>>()`
+      its own pattern fresh on every single entry it was reached for,
+      even though the pattern never changes across one whole search.
+      `ParsedQuery::new` builds that `Vec<char>` once, in
+      `matched_names`/`matched_files` themselves, before the walk
+      starts.
+      **Found and fixed a real bug while building this**: the first
+      version only built `pattern_chars` when the *query itself* was
+      non-ASCII, reasoning (wrongly) that an ASCII query would only
+      ever reach the already-covered ASCII fast path -- missed that
+      `matches_query`'s ASCII/non-ASCII dispatch is decided per entry,
+      by whether *that entry's own name* is ASCII too, so a perfectly
+      ASCII glob query (`"*.md"`) still reaches the char-based fallback
+      the moment it's checked against a non-ASCII file name, with an
+      empty `pattern_chars` it was never given -- caught immediately by
+      `matches_query_falls_back_correctly_for_non_ascii_names`'s own
+      existing `"*.md"`-against-a-non-ASCII-name case failing. Fixed by
+      building `pattern_chars` for any glob query, ASCII or not (still
+      one allocation per whole search either way, not per entry).
+      **Honest expectation for this specific fix**: for an ASCII query
+      (the reported real case, `"*.cpp"`) checked against ASCII names
+      (also the overwhelmingly common real case), `glob_match_chars` was
+      never reached at all -- the ASCII fast path already handled it
+      with zero pattern allocation, via a plain `&[u8]` slice, before
+      this fix even existed. This closes the same gap for the rarer
+      non-ASCII-name/non-ASCII-query cases only; it isn't expected to
+      move the needle for the workload that prompted this whole
+      "speed the search up" thread, which is very likely limited by
+      real filesystem I/O (the tree lives under `W:\WorkCopies\...`) at
+      this point, not by anything left to trim in the matching/glob
+      code itself.

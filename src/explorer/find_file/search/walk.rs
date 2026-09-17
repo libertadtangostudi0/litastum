@@ -6,7 +6,7 @@ use ignore::{WalkBuilder, WalkState};
 
 use crate::explorer::is_vcs_dir_name;
 
-use super::matching::matches_query;
+use super::matching::{matches_query, ParsedQuery};
 use super::SearchProgress;
 
 /// A `WalkBuilder` configured the way this app's own search has always
@@ -20,9 +20,23 @@ use super::SearchProgress;
 /// made — pruning VCS directories, not gitignore-aware filtering. A
 /// `.gitignore`'d file is still a real file on disk and should still be
 /// findable here, same as it always was.
+///
+/// `.threads(available_parallelism())` overrides `ignore`'s own default
+/// thread count -- requested directly (the thread count should scale
+/// with the real machine, not a fixed ceiling): left unset, `WalkParallel`
+/// caps itself at
+/// `available_parallelism().min(12)` (its own hardcoded ceiling, not
+/// this app's), so a machine with more than 12 real cores would never
+/// use all of them for the walk. `content_filter_in_parallel` already
+/// uses the same `available_parallelism()`, uncapped, for its own
+/// thread pool -- this just makes the walk consistent with it. Falls
+/// back to a single thread if the OS won't say (same fallback
+/// `content_filter_in_parallel` already uses).
 fn build_walker(root: &Path) -> WalkBuilder {
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).max(1);
     let mut builder = WalkBuilder::new(root);
     builder.standard_filters(false);
+    builder.threads(threads);
     builder.filter_entry(|entry| !(entry.file_type().is_some_and(|file_type| file_type.is_dir()) && is_vcs_dir_name(&entry.file_name().to_string_lossy())));
     builder
 }
@@ -55,6 +69,9 @@ fn build_walker(root: &Path) -> WalkBuilder {
 /// `cancel` in `content_filter_in_parallel`.
 pub(super) fn matched_names(root: &Path, query_lower: &str, progress: &SearchProgress, cancel: &AtomicBool, max_results: usize, max_visited: usize) -> Vec<PathBuf> {
     let results: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    // Parsed once for the whole walk, not once per entry -- see
+    // `ParsedQuery`'s own doc comment.
+    let query = ParsedQuery::new(query_lower);
 
     build_walker(root).build_parallel().run(|| {
         Box::new(|entry_result| {
@@ -74,8 +91,15 @@ pub(super) fn matched_names(root: &Path, query_lower: &str, progress: &SearchPro
                 return WalkState::Quit;
             }
 
-            let name = entry.file_name().to_string_lossy().to_lowercase();
-            if matches_query(&name, query_lower) {
+            // `matches_query` itself owns case-folding now (usually
+            // without allocating at all, for a plain ASCII name/query)
+            // -- see its own doc comment. `to_string_lossy()` alone
+            // typically borrows rather than allocates too (a real
+            // filename is virtually always already valid Unicode), so
+            // the common case now visits an entry with zero allocation
+            // on this line.
+            let name = entry.file_name().to_string_lossy();
+            if matches_query(&name, &query) {
                 let mut results = results.lock().unwrap();
                 if results.len() < max_results {
                     results.push(entry.into_path());
@@ -102,6 +126,9 @@ pub(super) fn matched_names(root: &Path, query_lower: &str, progress: &SearchPro
 /// runs as a separate, parallel pass in `content.rs::content_filter_in_parallel`.
 pub(super) fn matched_files(root: &Path, query_lower: &str, progress: &SearchProgress, cancel: &AtomicBool, max_visited: usize) -> Vec<PathBuf> {
     let candidates: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    // Parsed once for the whole walk, not once per entry -- see
+    // `ParsedQuery`'s own doc comment.
+    let query = ParsedQuery::new(query_lower);
 
     build_walker(root).build_parallel().run(|| {
         Box::new(|entry_result| {
@@ -123,8 +150,8 @@ pub(super) fn matched_files(root: &Path, query_lower: &str, progress: &SearchPro
 
             let is_dir = entry.file_type().is_some_and(|file_type| file_type.is_dir());
             if !is_dir {
-                let name = entry.file_name().to_string_lossy().to_lowercase();
-                if matches_query(&name, query_lower) {
+                let name = entry.file_name().to_string_lossy();
+                if matches_query(&name, &query) {
                     candidates.lock().unwrap().push(entry.into_path());
                 }
             }
