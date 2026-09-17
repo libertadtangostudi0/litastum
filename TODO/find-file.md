@@ -342,3 +342,72 @@ real Far.
       the former goes through a real, un-injectable OS path. Success or
       failure both show a message under the results list (no other
       status-bar surface exists yet)
+- [x] **Results are now sorted — reported directly, compared side by
+      side against real Far Manager's own results view on the same real
+      tree**: Far groups matches by directory (with both directories and
+      files sorted within each one); litastum's own results used to be
+      in whatever order the parallel walk/content-check workers happened
+      to finish in — genuinely unsorted (this is also the point at which
+      the older "content-query results are no longer in walk order...
+      nothing relied on that order" note earlier in this file, from
+      before the walk itself was parallelized, stopped being accurate
+      for the name-only path too — both are equally unordered post-
+      parallelization now, and both are fixed by this). Fixed with one
+      trailing sort in `search_cancelable` (`search/mod.rs`) — a plain
+      case-insensitive sort of each result's full path string
+      (`sort_by_cached_key`, so the lowercasing happens once per path,
+      not once per comparison) — rather than a real "group by directory"
+      structure: paths sharing a directory already share that
+      directory's own prefix, so a plain path sort clusters them
+      together and sorts files within each cluster, reproducing Far's
+      own grouped look for free. Runs once, after the walk/content-check
+      already finished, over however many results survived
+      `find_file_max_results` — bounded by that cap, not by how large
+      the searched tree was, so the extra cost is negligible next to the
+      walk itself (confirmed directly: real side-by-side numbers were
+      "Far — 14s, litastum — 9s" for 1291 results on the same tree,
+      before this sort was even added; sorting a few thousand short
+      strings afterward doesn't register against either number).
+      Regression-tested (`search_results_are_sorted_case_insensitively_grouping_by_directory`)
+      against directory names that differ only in case (`"Beta"` vs.
+      `"alpha"`), confirming both the case-insensitivity and the
+      directory-clustering side effect.
+- [x] **Real bug, found via a direct file-by-file comparison against
+      real Far Manager on the same tree**: `*.cpp` containing `"pragma"`
+      — litastum found 1778 results, Far found 1783, with no `+`
+      (`results_capped`) shown, so this wasn't the results cap either.
+      Traced by hand to a real, specific missing file: a
+      `#pragma managed(push, off)` line, in plain ASCII, inside a source
+      file that *also* has genuinely non-UTF-8 bytes elsewhere (a
+      legacy file with `Windows-1251`-encoded Cyrillic comments, not
+      uncommon in an older, internationally-authored C++ codebase
+      predating the project settling on UTF-8 throughout). Root cause:
+      `content.rs`'s content scan (`file_contains_with_chunk_size`, now
+      `file_contains_utf8_text`) decoded each chunk as UTF-8 and gave up
+      entirely — returned "not a match" — the instant it hit a
+      genuinely invalid UTF-8 byte sequence anywhere in the file, even
+      when the actual match had already appeared earlier in the very
+      same file, in a perfectly valid ASCII prefix. Fixed by splitting
+      the scan on whether the *needle itself* is ASCII
+      (`needle_lower.is_ascii()`, checked once in
+      `file_contains_with_chunk_size`): a plain ASCII needle (`"pragma"`,
+      a function name, `TODO`, the overwhelmingly common real case) now
+      goes through a new `file_contains_ascii_bytes` — a raw-byte,
+      case-folded (`to_ascii_lowercase`), sliding-window scan with no
+      UTF-8 validity requirement on the file at all, since an ASCII byte
+      sequence reads identically regardless of what encoding the *rest*
+      of the file happens to be in (true for virtually every real 8-bit
+      encoding used for source code — UTF-8, Windows-125x, ISO-8859-x,
+      ...; UTF-16 is the real exception, since its interleaved null
+      bytes break a contiguous ASCII match regardless of how it's
+      searched, and isn't what this fix targets). A non-ASCII needle
+      (searching for literal non-ASCII text) still goes through
+      `file_contains_utf8_text` unchanged — real case-folding of
+      non-ASCII text genuinely does need decoding, so that path's own
+      "only searches within the file's own valid-UTF-8 prefix"
+      limitation is accepted there, just no longer forced onto the
+      ASCII case that never needed it. Regression-tested with the
+      match both *before* and *after* simulated `Windows-1251` bytes in
+      the same file, confirming the fix is a real full-file byte scan,
+      not just "happens to work when the match sits before the first
+      bad byte."

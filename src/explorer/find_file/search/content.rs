@@ -151,14 +151,92 @@ fn looks_binary(path: &Path) -> bool {
 /// large file whose match sits early: the old whole-file
 /// `fs::read_to_string` + `.to_lowercase()` read every byte and
 /// allocated two full copies of it (the read buffer and the lowercased
-/// string) no matter where -- or whether -- a match actually was. A
-/// file that isn't valid UTF-8 text (binary, unreadable, ...) is still
-/// treated as not matching rather than erroring the whole search out
-/// over one candidate. `chunk_size` is a parameter only so tests can
-/// force cross-chunk-boundary matches deterministically with a tiny
-/// value; `file_contains` itself always calls this with
-/// `CONTENT_CHUNK_SIZE`.
+/// string) no matter where -- or whether -- a match actually was.
+/// `chunk_size` is a parameter only so tests can force cross-chunk-
+/// boundary matches deterministically with a tiny value; `file_contains`
+/// itself always calls this with `CONTENT_CHUNK_SIZE`.
 ///
+/// **Dispatches on whether `needle_lower` is itself ASCII** -- reported
+/// directly, compared file-by-file against real Far Manager on the same
+/// tree (litastum: 1778 results, Far: 1783 -- a handful of real files
+/// silently missing, not a cap: `find_file_max_results` wasn't hit).
+/// Root cause, confirmed by hand against one of the missing files: a
+/// `#pragma managed(push, off)` line sitting in plain ASCII, in a file
+/// that also has genuinely non-UTF-8 bytes elsewhere (a legacy source
+/// file with `Windows-1251`-encoded Cyrillic comments, common in an
+/// older, internationally-authored C++ codebase, saved before the
+/// project settled on UTF-8 throughout). The old, sole implementation
+/// here (now `file_contains_utf8_text`) decodes each chunk as UTF-8 and
+/// gives up the instant it hits a genuinely invalid byte sequence --
+/// correct for a needle that itself needs real Unicode case-folding,
+/// but far too strict for the overwhelmingly common case of a plain
+/// ASCII needle (`"pragma"`, a function name, `TODO`, ...): an ASCII
+/// byte sequence reads identically whether the *rest* of the file is
+/// UTF-8, Windows-125x, ISO-8859-x, or any other encoding that's
+/// ASCII-compatible in the 0–127 range, which covers virtually every
+/// real-world 8-bit encoding actually used for source code (UTF-16 is
+/// the real exception -- its interleaved null bytes break a contiguous
+/// ASCII match regardless of how it's searched, and isn't what this
+/// fix targets). `file_contains_ascii_bytes` below searches raw bytes
+/// directly for exactly this case, with no UTF-8 validity requirement
+/// on the file at all -- real Far Manager's own search is evidently
+/// doing something equivalent, which is why it kept finding matches
+/// litastum's old UTF-8-only scan gave up on partway through the file.
+/// A non-ASCII needle (searching for literal non-ASCII text) still goes
+/// through `file_contains_utf8_text`, unchanged -- proper case-folding
+/// of non-ASCII text genuinely does need real decoding, so that path's
+/// own "only works within a file's own valid-UTF-8 prefix" limitation
+/// is accepted as before, just no longer forced onto the ASCII case
+/// that didn't need it.
+fn file_contains_with_chunk_size(path: &Path, needle_lower: &str, chunk_size: usize) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if needle_lower.is_ascii() {
+        file_contains_ascii_bytes(path, needle_lower.as_bytes(), chunk_size)
+    } else {
+        file_contains_utf8_text(path, needle_lower, chunk_size)
+    }
+}
+
+/// Raw-byte, encoding-agnostic scan for an ASCII `needle_lower_bytes` --
+/// see `file_contains_with_chunk_size`'s own doc comment for why this
+/// exists at all. No UTF-8 validation anywhere: every byte is lowercased
+/// with `to_ascii_lowercase` (a pure byte-level operation, meaningless
+/// notion of "invalid" the way UTF-8 decoding has one) and matched with
+/// a plain sliding-window `windows(needle.len()).any(...)` scan.
+/// `carry` keeps the trailing `needle.len() - 1` bytes of the previous
+/// chunk so a match straddling a chunk boundary is still found, same
+/// role `file_contains_utf8_text`'s own `carry` plays, just over bytes
+/// instead of `char`s.
+fn file_contains_ascii_bytes(path: &Path, needle_lower_bytes: &[u8], chunk_size: usize) -> bool {
+    use std::io::Read;
+
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut reader = std::io::BufReader::new(file);
+    let mut raw = vec![0u8; chunk_size];
+    let mut carry: Vec<u8> = Vec::new();
+
+    loop {
+        let read = match reader.read(&mut raw) {
+            Ok(0) => return false, // EOF, no match found in any chunk
+            Ok(n) => n,
+            Err(_) => return false,
+        };
+        carry.extend(raw[..read].iter().map(u8::to_ascii_lowercase));
+
+        if carry.windows(needle_lower_bytes.len()).any(|window| window == needle_lower_bytes) {
+            return true;
+        }
+        let keep_from = carry.len().saturating_sub(needle_lower_bytes.len().saturating_sub(1));
+        if keep_from > 0 {
+            carry.drain(..keep_from);
+        }
+    }
+}
+
 /// Correctness across chunk boundaries -- both a multi-byte UTF-8
 /// character and the needle itself can straddle two reads:
 /// `pending_bytes` carries over any trailing byte sequence that didn't
@@ -168,12 +246,19 @@ fn looks_binary(path: &Path) -> bool {
 /// length after each check, so a match starting a few bytes before a
 /// chunk boundary is still seen once the next chunk arrives instead of
 /// being split across two independent, non-overlapping searches.
-fn file_contains_with_chunk_size(path: &Path, needle_lower: &str, chunk_size: usize) -> bool {
+///
+/// Only reached for a non-ASCII `needle_lower` now -- see
+/// `file_contains_with_chunk_size`'s own doc comment. Still gives up
+/// entirely (returns `false`) the moment it hits a genuinely invalid
+/// UTF-8 byte sequence anywhere in the file, even if a match was
+/// already found in the valid prefix before that point -- that
+/// limitation is unchanged from before this file's own encoding-aware
+/// split, and is now scoped to the narrower, less common case where a
+/// real fix would require actual encoding detection, not just an
+/// ASCII-bytes fast path.
+fn file_contains_utf8_text(path: &Path, needle_lower: &str, chunk_size: usize) -> bool {
     use std::io::Read;
 
-    if needle_lower.is_empty() {
-        return true;
-    }
     let Ok(file) = fs::File::open(path) else {
         return false;
     };
@@ -277,6 +362,44 @@ mod tests {
         fs::write(&path, b"xxxNEEDLExxx").unwrap();
 
         assert!(file_contains_with_chunk_size(&path, "needle", 4));
+    }
+
+    /// Regression coverage for the real report (compared side by side
+    /// against real Far Manager on the same tree, "1783 vs 1778" -- a
+    /// handful of real files silently missing): an ASCII needle
+    /// (`"pragma"`) must still be found even when the *rest* of the file
+    /// isn't valid UTF-8 -- a legacy source file with e.g.
+    /// `Windows-1251`-encoded Cyrillic comments mixed into otherwise
+    /// ASCII/UTF-8 content, confirmed by hand as the actual root cause
+    /// of one of the missing files (a `#pragma managed(push, off)` line
+    /// that used to be silently skipped).
+    #[test]
+    fn file_contains_finds_an_ascii_match_even_when_the_rest_of_the_file_is_not_valid_utf8() {
+        let dir = scratch_dir();
+        let path = dir.join("mixed_encoding.cpp");
+        let mut content = b"#pragma managed(push, off)\n".to_vec();
+        // Windows-1251 bytes for a Cyrillic word -- not valid UTF-8 on
+        // their own, simulating a legacy-encoded comment elsewhere in
+        // an otherwise-ASCII real source file.
+        content.extend_from_slice(&[0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2]);
+        fs::write(&path, content).unwrap();
+
+        assert!(file_contains(&path, "pragma"), "an ASCII needle should be found even if the rest of the file isn't valid UTF-8");
+    }
+
+    /// Same bug, but the invalid bytes come *before* the match instead
+    /// of after -- proves the ASCII byte scan genuinely continues past
+    /// non-UTF-8 content rather than happening to work only because the
+    /// match sat in the file's own valid-UTF-8 prefix.
+    #[test]
+    fn file_contains_finds_an_ascii_match_that_comes_after_invalid_utf8_bytes() {
+        let dir = scratch_dir();
+        let path = dir.join("mixed_encoding_reversed.cpp");
+        let mut content = vec![0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2];
+        content.extend_from_slice(b"\n#pragma managed(push, off)\n");
+        fs::write(&path, content).unwrap();
+
+        assert!(file_contains(&path, "pragma"), "an ASCII needle appearing after non-UTF-8 bytes should still be found");
     }
 
     #[test]

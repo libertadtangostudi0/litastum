@@ -126,12 +126,31 @@ pub fn search_cancelable(root: &Path, query: &str, content_query: &str, progress
     let query_lower = query.to_lowercase();
     let content_query_lower = content_query.to_lowercase();
 
-    if content_query_lower.is_empty() {
-        return walk::matched_names(root, &query_lower, progress, cancel, limits.find_file_max_results, limits.find_file_max_visited);
-    }
+    let mut results = if content_query_lower.is_empty() {
+        walk::matched_names(root, &query_lower, progress, cancel, limits.find_file_max_results, limits.find_file_max_visited)
+    } else {
+        let candidates = walk::matched_files(root, &query_lower, progress, cancel, limits.find_file_max_visited);
+        content::content_filter_in_parallel(candidates, &content_query_lower, limits.find_file_max_results, progress, cancel)
+    };
 
-    let candidates = walk::matched_files(root, &query_lower, progress, cancel, limits.find_file_max_visited);
-    content::content_filter_in_parallel(candidates, &content_query_lower, limits.find_file_max_results, progress, cancel)
+    // Both walk paths above are parallel now, so results arrive in
+    // whatever order worker threads happened to finish in, not a
+    // stable, predictable one -- requested directly, compared side by
+    // side against real Far Manager's own results view, which groups
+    // matches by directory with both directories and files sorted
+    // within it. A plain case-insensitive sort of the full path string
+    // gets the same effect for free: paths sharing a directory share
+    // that directory's own prefix, so they land next to each other,
+    // and files within a directory sort alphabetically the same way
+    // Far's own listing does -- no separate "group by directory" pass
+    // needed. `sort_by_cached_key` (not a plain `sort_by` with the
+    // lowering done inline in the comparator) computes each path's
+    // lowercased key once, not once per comparison -- this runs after
+    // the walk/content-check entirely, on however many results survived
+    // `find_file_max_results`, so it's bounded by that cap, not by how
+    // large the tree searched actually was.
+    results.sort_by_cached_key(|path| path.to_string_lossy().to_lowercase());
+    results
 }
 
 /// A thin wrapper around `search_cancelable` with a throwaway
@@ -195,6 +214,32 @@ mod tests {
         fs::create_dir_all(dir.join("target_dir")).unwrap();
 
         assert_eq!(search(&dir, "target", ""), vec![dir.join("target_dir")]);
+    }
+
+    /// Regression coverage for the real request: since both walk paths
+    /// run in parallel, results arrive in whatever order worker threads
+    /// happened to finish in -- reported directly, compared side by side
+    /// against real Far Manager's own results view, which groups matches
+    /// by directory with both directories and files sorted within it.
+    /// `search_cancelable`'s own trailing sort should reproduce that same
+    /// clustering-by-directory effect from a plain case-insensitive full-
+    /// path sort, with no separate "group by directory" pass needed.
+    #[test]
+    fn search_results_are_sorted_case_insensitively_grouping_by_directory() {
+        let dir = scratch_dir();
+        fs::create_dir_all(dir.join("Beta")).unwrap();
+        fs::create_dir_all(dir.join("alpha")).unwrap();
+        fs::write(dir.join("Beta").join("z_file.txt"), b"hi").unwrap();
+        fs::write(dir.join("Beta").join("a_file.txt"), b"hi").unwrap();
+        fs::write(dir.join("alpha").join("m_file.txt"), b"hi").unwrap();
+
+        let results = search(&dir, "file", "");
+
+        assert_eq!(
+            results,
+            vec![dir.join("alpha").join("m_file.txt"), dir.join("Beta").join("a_file.txt"), dir.join("Beta").join("z_file.txt")],
+            "should sort case-insensitively (\"alpha\" before \"Beta\") and group each directory's own files together, sorted within it"
+        );
     }
 
     /// Regression test for the actual reported bug: a file deep inside
