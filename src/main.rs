@@ -189,20 +189,45 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Resu
 }
 
 
-/// How often `wait_for_event` checks a background image decode
-/// (`explorer::is_image_decode_pending`/`poll_pending_image_decode`)
-/// while one is in flight -- `F3`'s image preview moved its own
+/// How often `wait_for_event` checks a background image decode or Find
+/// file search (`background_task_pending`/`poll_background_tasks`
+/// below) while one is in flight -- `F3`'s image preview moved its own
 /// decode/resize off the main thread after both the very first open
 /// and every `Left`/`Right` switch were reported as blocking the whole
 /// UI for however long that took (`ImagePreviewState`'s own doc
-/// comment has the full story). Short enough that a finished decode
-/// appears essentially instantly once ready, without needing a real
-/// keyboard/mouse event to happen to wake the loop up and notice it.
-const IMAGE_DECODE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(30);
+/// comment has the full story); the Find file search
+/// (`explorer::find_file::background`) joined it later for the same
+/// reason, once its own real result was starting to take long enough
+/// to matter. Short enough that a finished decode or search appears
+/// essentially instantly once ready, without needing a real keyboard/
+/// mouse event to happen to wake the loop up and notice it.
+const BACKGROUND_TASK_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(30);
+
+/// Whether any background task `wait_for_event` should be polling for
+/// is currently in flight -- an image decode, or a Find file search.
+/// Kept as one shared check (rather than two separate `if`s repeated at
+/// every call site below) since both `#[cfg]` variants of
+/// `wait_for_event` need the exact same OR of the two.
+fn background_task_pending(app: &App) -> bool {
+    explorer::is_image_decode_pending(app) || explorer::is_find_file_search_pending(app)
+}
+
+/// Polls every background task once, applying whichever one (if any)
+/// has actually finished -- `true` means something changed and the
+/// caller should redraw. Both polls always run (not short-circuited),
+/// since an image decode and a Find file search can't currently be in
+/// flight at the same time in this app anyway (`Mode` is one variant at
+/// once), but there's no reason to make that assumption load-bearing
+/// here.
+fn poll_background_tasks(app: &mut App) -> bool {
+    let image = explorer::poll_pending_image_decode(app);
+    let search = explorer::poll_pending_find_file_search(app);
+    image || search
+}
 
 /// Blocks until either a real terminal event arrives (dispatched via
-/// `handle_event`), a pending background image decode finishes
-/// (`IMAGE_DECODE_POLL_INTERVAL`, above), or -- Windows only -- the
+/// `handle_event`), a pending background task finishes
+/// (`BACKGROUND_TASK_POLL_INTERVAL`, above), or -- Windows only -- the
 /// physical `Alt` key's actual held state (`alt_key::is_physically_down`)
 /// changes, so the alt-labels F-key row can react to `Alt` genuinely
 /// being held down, not just to the next keypress that happens to carry
@@ -218,11 +243,11 @@ const IMAGE_DECODE_POLL_INTERVAL: std::time::Duration = std::time::Duration::fro
 #[cfg(windows)]
 fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     loop {
-        let poll_interval = if explorer::is_image_decode_pending(app) { IMAGE_DECODE_POLL_INTERVAL } else { alt_key::POLL_INTERVAL };
+        let poll_interval = if background_task_pending(app) { BACKGROUND_TASK_POLL_INTERVAL } else { alt_key::POLL_INTERVAL };
         if event::poll(poll_interval)? {
             return handle_event(app, terminal);
         }
-        if explorer::poll_pending_image_decode(app) {
+        if poll_background_tasks(app) {
             return Ok(());
         }
         let alt_down = alt_key::is_physically_down();
@@ -235,14 +260,14 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
 
 #[cfg(not(windows))]
 fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    if !explorer::is_image_decode_pending(app) {
+    if !background_task_pending(app) {
         return handle_event(app, terminal);
     }
     loop {
-        if event::poll(IMAGE_DECODE_POLL_INTERVAL)? {
+        if event::poll(BACKGROUND_TASK_POLL_INTERVAL)? {
             return handle_event(app, terminal);
         }
-        if explorer::poll_pending_image_decode(app) {
+        if poll_background_tasks(app) {
             return Ok(());
         }
     }

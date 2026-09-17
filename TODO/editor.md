@@ -230,6 +230,18 @@
       selection, then pastes at the cursor instead) — `edtui`'s real
       "paste over selection" action isn't publicly exported; see
       [[litastum-stack]]
+- [ ] **Typing over an active selection doesn't replace it either — same
+      class of bug as the Ctrl+V one above, but for plain character
+      input.** Reported directly: current behavior is select, delete,
+      *then* type; wanted behavior is select, type, and the typed
+      character(s) replace the selection in one step (standard
+      VSCode/Windows-editor convention this app's own `Standard` keymap
+      is otherwise built to match). Not yet investigated for root cause,
+      but likely the same underlying gap as Ctrl+V — plain character
+      insertion probably goes through `edtui`'s own table unmodified,
+      with no equivalent "clear selection first" correction pass the way
+      arrow-key/Shift-selection handling already gets in
+      `Editor::input`'s post-table correction block.
 - [ ] Undo is per-character (`capture_on_insert: true`), not grouped by
       typing burst like most editors — `EditorState::capture` being
       crate-private forecloses implementing our own grouping; see

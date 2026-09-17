@@ -8,18 +8,27 @@ use crate::app::{App, Mode};
 use crate::editor::Editor;
 use crate::text_field;
 
+use super::background::spawn_search;
 use super::export::export_results;
-use super::search::search;
-use super::state::FindFilePhase;
+use super::state::{FindFileField, FindFilePhase};
 
-/// Key handling for both phases of the popup: typing the query
+/// Key handling for all three phases of the popup: typing the query
 /// (full-cursor editing, `text_field.rs` — same reasoning as the F5/F6
 /// transfer prompt, this is a modal popup with no panel navigation
-/// happening under it) and, once `Enter` runs a search, picking a
-/// result with `Up`/`Down`/`Enter`/`Tab`/`F4`. `Esc` closes from either
-/// phase.
+/// happening under it), a search actually running in the background
+/// (`Searching`, see `background.rs`), and, once it finishes, picking a
+/// result with `Up`/`Down`/`Enter`/`Tab`/`F4`. `Esc` closes from any
+/// phase -- during `Searching`, it also cancels the background search
+/// first (`PendingSearch::cancel`), so the thread stops promptly
+/// instead of continuing to churn on a search nothing's listening to
+/// the result of anymore.
 pub fn handle_find_file_key(app: &mut App, key: KeyEvent) -> Result<()> {
     if key.code == KeyCode::Esc {
+        if let Mode::FindFile(state) = &app.mode {
+            if let Some(pending) = &state.pending {
+                pending.cancel();
+            }
+        }
         app.mode = Mode::Browsing;
         return Ok(());
     }
@@ -37,18 +46,34 @@ pub fn handle_find_file_key(app: &mut App, key: KeyEvent) -> Result<()> {
             let Mode::FindFile(state) = &mut app.mode else {
                 unreachable!("just matched Mode::FindFile above");
             };
+            if key.code == KeyCode::Tab {
+                state.active_field = match state.active_field {
+                    FindFileField::Name => FindFileField::Content,
+                    FindFileField::Content => FindFileField::Name,
+                };
+                return Ok(());
+            }
+            let (field, cursor) = match state.active_field {
+                FindFileField::Name => (&mut state.query, &mut state.cursor),
+                FindFileField::Content => (&mut state.content_query, &mut state.content_cursor),
+            };
             match key.code {
-                KeyCode::Backspace => text_field::backspace(&mut state.query, &mut state.cursor),
-                KeyCode::Left => text_field::move_left(&mut state.cursor),
-                KeyCode::Right => text_field::move_right(&state.query, &mut state.cursor),
-                KeyCode::Home => text_field::move_home(&mut state.cursor),
-                KeyCode::End => text_field::move_end(&state.query, &mut state.cursor),
+                KeyCode::Backspace => text_field::backspace(field, cursor),
+                KeyCode::Left => text_field::move_left(cursor),
+                KeyCode::Right => text_field::move_right(field, cursor),
+                KeyCode::Home => text_field::move_home(cursor),
+                KeyCode::End => text_field::move_end(field, cursor),
                 KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    text_field::insert_char(&mut state.query, &mut state.cursor, c);
+                    text_field::insert_char(field, cursor, c);
                 }
                 _ => {}
             }
         }
+        // Nothing bound here besides `Esc` (handled above, ahead of
+        // this match, since it also needs to cancel the background
+        // search) -- this is a passive "please wait" screen, not
+        // something to navigate.
+        FindFilePhase::Searching => {}
         FindFilePhase::Results => match key.code {
             KeyCode::Up => {
                 let Mode::FindFile(state) = &mut app.mode else {
@@ -103,28 +128,35 @@ fn run_export(app: &mut App) -> Result<()> {
     Ok(())
 }
 
-/// `Enter` while typing: runs `search` from the active panel's
-/// directory and switches to `FindFilePhase::Results`. A no-op on an
-/// empty query (nothing sensible to search for).
+/// `Enter` while typing: spawns `search::search_cancelable` on a
+/// background thread (`background::spawn_search`) and switches to
+/// `FindFilePhase::Searching` -- doesn't block waiting for it, and
+/// doesn't apply any results itself; `background::poll_pending_find_file_search`
+/// (driven from `main.rs::wait_for_event`) picks up the finished search
+/// and switches to `FindFilePhase::Results` once it's actually done. A
+/// no-op only if *both* fields are empty (nothing sensible to search
+/// for) -- either one alone is enough, matching Far Manager's own
+/// two-field dialog (a bare "Text to find", with the name mask left as
+/// its own implicit "match everything", is a legitimate search there
+/// too).
 fn run_search(app: &mut App) -> Result<()> {
     let Mode::FindFile(state) = &app.mode else {
         return Ok(());
     };
-    if state.query.is_empty() {
+    if state.query.is_empty() && state.content_query.is_empty() {
         return Ok(());
     }
     let query = state.query.clone();
+    let content_query = state.content_query.clone();
     let root = app.panels[app.active].path.clone();
-    debug!(query, root = %root.display(), "find file: searching");
-    let results = search(&root, &query);
-    debug!(count = results.len(), "find file: search finished");
+    debug!(query, content_query, root = %root.display(), "find file: searching");
+    let pending = spawn_search(root, query, content_query);
 
     let Mode::FindFile(state) = &mut app.mode else {
         unreachable!("just matched Mode::FindFile above");
     };
-    state.results = results;
-    state.selected = 0;
-    state.phase = FindFilePhase::Results;
+    state.pending = Some(pending);
+    state.phase = FindFilePhase::Searching;
     state.export_message = None; // a stale message from a previous search shouldn't linger
     Ok(())
 }
@@ -234,6 +266,28 @@ mod tests {
         app
     }
 
+    /// Polls `Mode::FindFile`'s pending background search
+    /// (`background::poll_pending_find_file_search`) until it leaves
+    /// `FindFilePhase::Searching` -- `run_search` (triggered by `Enter`)
+    /// only *starts* a search now, on a real background thread, rather
+    /// than blocking until it's done the way the old synchronous
+    /// version did; tests that care about the actual results need to
+    /// wait for it the same way `main.rs::wait_for_event` does in the
+    /// real app.
+    fn wait_for_search(app: &mut App) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let Mode::FindFile(state) = &app.mode else {
+                panic!("expected Mode::FindFile while waiting for a search");
+            };
+            if state.phase != FindFilePhase::Searching {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "search did not finish within the test timeout");
+            crate::explorer::poll_pending_find_file_search(app);
+        }
+    }
+
     #[test]
     fn typing_inserts_into_the_query() {
         let mut app = app_with_find_file(FindFileState::new());
@@ -255,6 +309,43 @@ mod tests {
         assert_eq!(state.phase, FindFilePhase::Typing);
     }
 
+    /// Regression coverage: `Tab` while typing switches which field
+    /// further typed characters and edits reach, rather than falling
+    /// through to some other binding (nothing else claims `Tab` during
+    /// `Typing`).
+    #[test]
+    fn tab_switches_the_active_field_and_typing_follows_it() {
+        let mut app = app_with_find_file(FindFileState::new());
+
+        handle_find_file_key(&mut app, key(KeyCode::Tab)).unwrap();
+        handle_find_file_key(&mut app, key(KeyCode::Char('x'))).unwrap();
+
+        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        assert_eq!(state.active_field, FindFileField::Content);
+        assert_eq!(state.content_query, "x");
+        assert!(state.query.is_empty(), "typing after Tab should not still reach the name field");
+    }
+
+    /// A bare "Text to find" with an empty name mask is still a
+    /// legitimate search -- Far Manager's own two-field dialog treats
+    /// an empty mask as "match every name."
+    #[test]
+    fn enter_with_only_a_content_query_still_searches() {
+        let mut state = FindFileState::new();
+        state.content_query = "needle".to_string();
+        state.active_field = FindFileField::Content;
+        let mut app = app_with_find_file(state);
+        fs::write(app.panels[0].path.join("a.txt"), b"needle here").unwrap();
+        fs::write(app.panels[0].path.join("b.txt"), b"nothing here").unwrap();
+
+        handle_find_file_key(&mut app, key(KeyCode::Enter)).unwrap();
+        wait_for_search(&mut app);
+
+        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        assert_eq!(state.phase, FindFilePhase::Results);
+        assert_eq!(state.results, vec![app.panels[0].path.join("a.txt")]);
+    }
+
     #[test]
     fn enter_on_a_real_query_runs_a_search_and_switches_to_results() {
         let mut state = FindFileState::new();
@@ -264,14 +355,55 @@ mod tests {
         fs::write(app.panels[0].path.join("source.txt"), b"hi").unwrap();
 
         handle_find_file_key(&mut app, key(KeyCode::Enter)).unwrap();
+        wait_for_search(&mut app);
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
         assert_eq!(state.phase, FindFilePhase::Results);
         assert_eq!(state.results, vec![app.panels[0].path.join("source.txt")]);
     }
 
+    /// Immediately after `Enter`, before the background search has had
+    /// a chance to finish, the popup should be showing
+    /// `FindFilePhase::Searching`, not still `Typing` and not already
+    /// `Results` -- confirms `run_search` itself never blocks.
     #[test]
-    fn esc_closes_from_either_phase() {
+    fn enter_on_a_real_query_switches_to_searching_before_the_background_thread_finishes() {
+        let mut state = FindFileState::new();
+        state.query = "sou".to_string();
+        let mut app = app_with_find_file(state);
+
+        handle_find_file_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        assert_eq!(state.phase, FindFilePhase::Searching);
+        assert!(state.pending.is_some());
+    }
+
+    /// `Esc` during `FindFilePhase::Searching` should cancel the
+    /// background search (not just close the popup) -- confirmed
+    /// indirectly, since there's no synchronous way to observe the
+    /// background thread noticing: the search is spawned over a large
+    /// enough tree that, if cancellation weren't actually wired up, it
+    /// would still be running (and would eventually try to send its
+    /// full results into a channel this test's own `app`/`state` no
+    /// longer owns, silently, per `PendingSearch`'s own doc comment).
+    #[test]
+    fn esc_during_searching_cancels_the_background_search() {
+        let mut state = FindFileState::new();
+        state.query = "file".to_string();
+        let mut app = app_with_find_file(state);
+        for i in 0..500 {
+            fs::write(app.panels[0].path.join(format!("file_{i}.txt")), b"hi").unwrap();
+        }
+
+        handle_find_file_key(&mut app, key(KeyCode::Enter)).unwrap();
+        handle_find_file_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing), "Esc should still close the popup, same as every other phase");
+    }
+
+    #[test]
+    fn esc_closes_from_any_phase() {
         let mut app = app_with_find_file(FindFileState::new());
         handle_find_file_key(&mut app, key(KeyCode::Esc)).unwrap();
         assert!(matches!(app.mode, Mode::Browsing));
