@@ -411,3 +411,46 @@ real Far.
       the same file, confirming the fix is a real full-file byte scan,
       not just "happens to work when the match sits before the first
       bad byte."
+- [x] **Follow-up refactor + two more speed wins, asked directly ("continue
+      refactoring and speeding up search as much as possible")**:
+      `search/content.rs` (539 lines, past this project's own ~500-line
+      decomposition threshold again after the ASCII-bytes/UTF-8-text
+      split above) became a `content/` submodule directory —
+      `content/mod.rs` (`content_filter_in_parallel`, the parallel
+      orchestration) and `content/scan.rs` (the actual byte-level
+      scanning: `file_contains`, `file_contains_with_chunk_size`, the
+      binary sniff, `scan_ascii_bytes`/`scan_utf8_text`), mirroring
+      `search/`'s own existing `walk.rs`/`matching.rs` split by concern.
+      Two real, measured-by-reasoning (not literally benchmarked) speed
+      fixes landed alongside the reorganization, both found by rereading
+      the hot paths with "what's this doing on every single iteration"
+      in mind:
+      1. **One file open instead of two.** `looks_binary` used to open
+         every candidate a second time, on its own, just to sniff its
+         first ~8000 bytes ahead of the real scan opening the same file
+         again right after. `file_contains_with_chunk_size` now opens
+         `path` exactly once, reads its own first chunk (the same
+         `CONTENT_CHUNK_SIZE`, 64 KiB, comfortably bigger than the old
+         dedicated sniff window), sniffs *that* for a null byte, and
+         then feeds it straight into the real scan as that scan's own
+         first iteration instead of re-reading it. Multiplied by every
+         name-matched candidate in a content-query search, this halves
+         the file-open/initial-read overhead of the whole content-check
+         phase.
+      2. **The parallel loop's own "still room for more?" check is a
+         plain atomic load now, not a `Mutex` lock.**
+         `content_filter_in_parallel`'s per-candidate loop used to call
+         `found.lock().unwrap().len() >= max_results` on *every single
+         iteration*, meaning every worker thread took the same lock just
+         to peek a length, even on the overwhelmingly common
+         "this candidate didn't match" path. Switched to reading
+         `progress.found` (already an `AtomicUsize`, already updated on
+         every real push) instead — the hot, no-match path never touches
+         the `Mutex` at all now; it's only locked on an actual match,
+         which is comparatively rare and where a lock's own cost is
+         negligible next to the file read that just happened.
+      Both fixes keep every existing behavior and test unchanged (all
+      pre-existing coverage still passes verbatim, just relocated to
+      `content/scan.rs`'s own test module where it now belongs) —
+      neither one is a visible feature, just less wasted work per
+      candidate on a search with many name-matched files to content-check.
