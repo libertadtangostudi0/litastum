@@ -117,6 +117,12 @@ assets/debug/
 # shortcut as command_history.txt above, separate file.
 /editor_search_history.txt
 
+# Find file (Alt+F7) history (explorer/find_file/history.rs) -- same
+# cwd-relative shortcut, two separate files (name mask vs. content
+# query -- see that module's own doc comment for why they're kept apart).
+/find_file_name_history.txt
+/find_file_content_history.txt
+
 # Debug scratch folder for manual explorer/panel testing -- purely
 # local, never committed (including generate_test_files.bat itself,
 # which creates 100 numbered files, 1.txt-100.txt, content matching
