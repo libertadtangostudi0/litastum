@@ -17,6 +17,7 @@ pub use drive_menu::{format_bytes, handle_drive_menu_key, DriveMenu};
 pub(crate) use entry::is_vcs_dir_name;
 pub use entry::{Entry, HighlightRole};
 pub use find_file::{handle_find_file_key, is_find_file_search_pending, poll_pending_find_file_search, FindFileField, FindFilePhase, FindFileState};
+pub use find_file::history as find_file_history;
 #[cfg(test)]
 pub use find_file::spawn_search;
 pub use image_preview::{handle_image_preview_key, is_image_decode_pending, poll_pending_image_decode, ImagePreviewState, PreviewFrame};

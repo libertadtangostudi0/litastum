@@ -330,6 +330,21 @@ pub struct App {
     /// its own file, separate from `command_history` above (see
     /// `editor::find_history::HISTORY_FILE`'s own doc comment).
     pub search_history: Vec<String>,
+    /// Every "File name to find" query actually run (via `Enter`) in the
+    /// Find file popup (`Alt+F7`), oldest first — recorded by
+    /// `explorer::find_file_history::record_history`, browsed with
+    /// `Up`/`Down` while that field is focused
+    /// (`FindFileState::name_history_up`/`_down`). Persisted to its own
+    /// file, separate from `content_history` below and from every other
+    /// history in this app — see
+    /// `explorer::find_file_history::NAME_HISTORY_FILE`'s own doc
+    /// comment for why a file name/glob mask and a content substring
+    /// each get their own history rather than sharing one.
+    pub find_file_name_history: Vec<String>,
+    /// Every "Text to find" (content) query actually run in the same
+    /// popup — see `find_file_name_history`'s own doc comment; the same
+    /// shape, just for the other field.
+    pub find_file_content_history: Vec<String>,
     /// Whether `Alt` is currently held down — drives which row
     /// `ui::draw_function_keys` shows, Far Manager-style.
     ///
@@ -455,6 +470,8 @@ impl App {
             active_shell: 0,
             command_history: Vec::new(),
             search_history: Vec::new(),
+            find_file_name_history: Vec::new(),
+            find_file_content_history: Vec::new(),
             alt_held: false,
             editor_return_to: None,
             user_menu_command_edit: None,

@@ -83,6 +83,11 @@ fn main() -> Result<()> {
     // not in App::new, so tests building an App via test_support::test_app
     // never touch a real editor_search_history.txt on disk.
     app.search_history = editor::find_history::load_history();
+    // Same isolation reasoning again -- two separate files, one per
+    // Find file field, see `explorer::find_file_history::NAME_HISTORY_FILE`/
+    // `CONTENT_HISTORY_FILE`'s own doc comments.
+    app.find_file_name_history = explorer::find_file_history::load_history(explorer::find_file_history::NAME_HISTORY_FILE);
+    app.find_file_content_history = explorer::find_file_history::load_history(explorer::find_file_history::CONTENT_HISTORY_FILE);
     // One-time startup check, requested directly: a FarMenu.ini sitting
     // in the directory litastum was launched from should be offered for
     // porting immediately, not only once the user happens to press F2
@@ -106,6 +111,9 @@ fn main() -> Result<()> {
     // tradeoff `command_history.txt` doesn't have to make, accepted for
     // keeping the key-handling tests filesystem-free.
     editor::find_history::save_history(&app.search_history);
+    // Same shape, same reasoning, for Find file's own two histories.
+    explorer::find_file_history::save_history(explorer::find_file_history::NAME_HISTORY_FILE, &app.find_file_name_history);
+    explorer::find_file_history::save_history(explorer::find_file_history::CONTENT_HISTORY_FILE, &app.find_file_content_history);
     result
 }
 

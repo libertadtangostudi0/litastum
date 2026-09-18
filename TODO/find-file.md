@@ -537,3 +537,84 @@ real Far.
       real filesystem I/O (the tree lives under `W:\WorkCopies\...`) at
       this point, not by anything left to trim in the matching/glob
       code itself.
+- [x] **Each of the two fields now has its own persisted history,
+      requested directly, matching the shape already established
+      elsewhere in the app -- mirroring the existing
+      `editor::find_history`/`command_line::history` shape**:
+      a new `explorer/find_file/history.rs` module (`load_history`/
+      `save_history`, parameterized by a `path: &str` since this one
+      module now serves *two* files rather than the sibling modules'
+      one each -- `NAME_HISTORY_FILE`/`CONTENT_HISTORY_FILE`, both
+      `.gitignore`d the same cwd-relative way `command_history.txt`/
+      `editor_search_history.txt` already are; `record_history`, a
+      no-op on an empty query and on an immediate repeat, same rules as
+      both sibling modules). `App` gained
+      `find_file_name_history`/`find_file_content_history: Vec<String>`,
+      loaded/saved in `main.rs` outside `App::new` (same test-isolation
+      reasoning the other two histories already established) and
+      persisted once at clean exit, not incrementally -- `run_search`'s
+      own extensive unit tests stay filesystem-free the same way
+      `handle_search_key`'s already do.
+
+      `FindFileState` gained `name_history_index`/`content_history_index:
+      Option<usize>` and `name_history_up`/`_down`/`content_history_up`/
+      `_down` methods -- the exact shell-`Up`-arrow mechanics
+      `Editor::search_history_up`/`_down` already established (first
+      press recalls the most recent past query, each further press
+      steps one entry further back, `Down` walks the other way and
+      clears the field once past the newest entry), just kept as two
+      independent per-field instances rather than the editor's single
+      shared index, since Find file already has two separate fields to
+      browse instead of one search box. `Up`/`Down` were unbound during
+      `Typing` before this (Find file's fields already use full
+      `text_field.rs` cursor editing, unlike the editor's simpler
+      append/backspace-only search box), so this is a pure addition, no
+      existing binding lost. Typing or backspacing in a field resets
+      *that* field's own history-browsing index, same "editing means
+      fresh typing again" rule `Editor::search_push_char`/`_pop_char`
+      already follow.
+
+      History is recorded on `Enter` (`run_search`), not on `Esc` the
+      way the editor's own search box does it -- Find file's `Enter` is
+      a real, explicit "submit" step (unlike the editor's live-as-you-
+      type box, which has no separate run to wait for), so recording
+      there is the closer analogue to the command line's own "record on
+      run" instead. Whichever field(s) are non-empty get recorded
+      independently, so a search using only "Text to find" doesn't
+      pollute the name mask's own history with an empty entry (and vice
+      versa).
+
+      **Deliberately left out, unlike the editor's own search box**: no
+      ghost-text history autosuggestion (`End`-to-accept) -- `End`
+      already has a real, different meaning on these fields (`text_field::move_end`,
+      jump the cursor to the end of the line), so reusing it the way the
+      editor's simpler append-only search box does would collide with
+      existing, established behavior rather than extend it. Not asked
+      for in this round either; `Up`/`Down` recall plus separate
+      persistence was the actual request.
+- [x] **`find_file/input.rs` (641 lines, past this project's own
+      ~500-line decomposition threshold once the history feature above
+      landed) became an `input/` submodule directory, requested
+      directly** — split along the same boundary that was already
+      structurally obvious in it: `typing.rs` (all of
+      `FindFilePhase::Typing`'s own key handling, plus `run_search`,
+      the one function it actually triggers) and `results.rs`
+      (`FindFilePhase::Results`'s own key handling and every helper it
+      calls — export, opening/navigating to a result, `F4`-to-edit).
+      `mod.rs` keeps only what's genuinely shared across every phase:
+      the top-level dispatch and the one truly cross-phase rule,
+      `Esc`'s own cancel-then-close behavior — handled once there
+      rather than duplicated into both `typing`/`results`, since every
+      phase's `Esc` is identical except for `Searching`'s own extra
+      `PendingSearch::cancel` step. A small test-only
+      `input/test_support.rs` (`app_with_find_file`/`wait_for_search`,
+      `pub(super)` so both sibling test modules can reach them) replaces
+      what used to be one shared private helper pair at the top of the
+      single flat file's own test module. Every existing test still
+      passes, just relocated to whichever of `typing`/`results` its own
+      phase now belongs to (and, in a few cases, calling
+      `handle_typing_key`/`handle_results_key` directly instead of the
+      top-level `handle_find_file_key`, now that those are real,
+      independently testable functions rather than match arms inside
+      one large one) — no observable behavior changed, only where the
+      code implementing it lives.

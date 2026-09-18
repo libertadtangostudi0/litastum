@@ -50,6 +50,17 @@ pub struct FindFileState {
     /// Which of `query`/`content_query` `Tab` and typed characters
     /// currently reach.
     pub active_field: FindFileField,
+    /// Which entry of `query`'s own history (`App::find_file_name_history`)
+    /// `Up`/`Down` is currently browsing -- `None` means not currently
+    /// browsing (fresh typing, or history browsing was left by an edit).
+    /// See `name_history_up`/`_down` below; mirrors
+    /// `Editor::search_history_index`'s own shell-`Up`-arrow shape,
+    /// just kept per-field here since `FindFileState` already has two
+    /// independent fields to browse rather than the editor's one.
+    pub name_history_index: Option<usize>,
+    /// Same as `name_history_index`, for `content_query`'s own history
+    /// (`App::find_file_content_history`).
+    pub content_history_index: Option<usize>,
     pub results: Vec<PathBuf>,
     pub selected: usize,
     /// The search currently running on a background thread --
@@ -102,6 +113,8 @@ impl FindFileState {
             content_query: String::new(),
             content_cursor: 0,
             active_field: FindFileField::Name,
+            name_history_index: None,
+            content_history_index: None,
             results: Vec::new(),
             selected: 0,
             pending: None,
@@ -109,5 +122,168 @@ impl FindFileState {
             results_capped: false,
             export_message: None,
         }
+    }
+
+    /// `Up` while the name field is active -- recalls the *previous*
+    /// entry in `history` (a shell's own `Up`-arrow convention: first
+    /// press shows the most recent past query, each further press steps
+    /// one entry further back). A no-op with nothing to recall (`history`
+    /// empty, or already at the oldest entry). Mirrors
+    /// `Editor::search_history_up` exactly, just against `query`/`cursor`/
+    /// `name_history_index` instead of the editor's own search box.
+    pub fn name_history_up(&mut self, history: &[String]) {
+        Self::history_up(history, &mut self.name_history_index, &mut self.query, &mut self.cursor);
+    }
+
+    /// `Down` -- the other half of `name_history_up`: steps back toward
+    /// the most recent entry, and past it clears the field entirely. A
+    /// no-op while not currently browsing history at all.
+    pub fn name_history_down(&mut self, history: &[String]) {
+        Self::history_down(history, &mut self.name_history_index, &mut self.query, &mut self.cursor);
+    }
+
+    /// Same as `name_history_up`, for `content_query`/`content_cursor`/
+    /// `content_history_index`.
+    pub fn content_history_up(&mut self, history: &[String]) {
+        Self::history_up(history, &mut self.content_history_index, &mut self.content_query, &mut self.content_cursor);
+    }
+
+    /// Same as `name_history_down`, for `content_query`/`content_cursor`/
+    /// `content_history_index`.
+    pub fn content_history_down(&mut self, history: &[String]) {
+        Self::history_down(history, &mut self.content_history_index, &mut self.content_query, &mut self.content_cursor);
+    }
+
+    /// Shared mechanics for `name_history_up`/`content_history_up`.
+    fn history_up(history: &[String], index: &mut Option<usize>, field: &mut String, cursor: &mut usize) {
+        if history.is_empty() {
+            return;
+        }
+        let next_index = match *index {
+            None => history.len() - 1,
+            Some(current) => current.saturating_sub(1),
+        };
+        *index = Some(next_index);
+        *field = history[next_index].clone();
+        *cursor = field.chars().count();
+    }
+
+    /// Shared mechanics for `name_history_down`/`content_history_down`.
+    fn history_down(history: &[String], index: &mut Option<usize>, field: &mut String, cursor: &mut usize) {
+        let Some(current) = *index else {
+            return;
+        };
+        if current + 1 < history.len() {
+            *index = Some(current + 1);
+            *field = history[current + 1].clone();
+        } else {
+            *index = None;
+            field.clear();
+        }
+        *cursor = field.chars().count();
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn name_history_up_recalls_the_most_recent_entry_first() {
+        let mut state = FindFileState::new();
+        let history = vec!["old.txt".to_string(), "recent.txt".to_string()];
+
+        state.name_history_up(&history);
+
+        assert_eq!(state.query, "recent.txt");
+        assert_eq!(state.cursor, "recent.txt".chars().count());
+    }
+
+    #[test]
+    fn name_history_up_steps_further_back_on_repeated_presses() {
+        let mut state = FindFileState::new();
+        let history = vec!["old.txt".to_string(), "recent.txt".to_string()];
+
+        state.name_history_up(&history);
+        state.name_history_up(&history);
+
+        assert_eq!(state.query, "old.txt");
+    }
+
+    #[test]
+    fn name_history_up_stops_at_the_oldest_entry() {
+        let mut state = FindFileState::new();
+        let history = vec!["only.txt".to_string()];
+
+        state.name_history_up(&history);
+        state.name_history_up(&history);
+
+        assert_eq!(state.query, "only.txt");
+    }
+
+    #[test]
+    fn name_history_up_is_a_noop_with_empty_history() {
+        let mut state = FindFileState::new();
+        state.query = "untouched".to_string();
+
+        state.name_history_up(&[]);
+
+        assert_eq!(state.query, "untouched");
+    }
+
+    #[test]
+    fn name_history_down_steps_back_toward_the_most_recent_entry() {
+        let mut state = FindFileState::new();
+        let history = vec!["old.txt".to_string(), "recent.txt".to_string()];
+        state.name_history_up(&history);
+        state.name_history_up(&history); // now on "old.txt"
+
+        state.name_history_down(&history);
+
+        assert_eq!(state.query, "recent.txt");
+    }
+
+    #[test]
+    fn name_history_down_past_the_newest_entry_clears_the_field() {
+        let mut state = FindFileState::new();
+        let history = vec!["recent.txt".to_string()];
+        state.name_history_up(&history);
+
+        state.name_history_down(&history);
+
+        assert_eq!(state.query, "");
+        assert_eq!(state.name_history_index, None);
+    }
+
+    #[test]
+    fn name_history_down_is_a_noop_when_not_currently_browsing() {
+        let mut state = FindFileState::new();
+        state.query = "still typing".to_string();
+
+        state.name_history_down(&["recalled.txt".to_string()]);
+
+        assert_eq!(state.query, "still typing");
+    }
+
+    /// `content_history_up`/`_down` are the same mechanics as
+    /// `name_history_up`/`_down`, just against the other field --
+    /// confirms they're wired to `content_query`/`content_cursor`/
+    /// `content_history_index`, not accidentally sharing the name
+    /// field's own state.
+    #[test]
+    fn content_history_up_and_down_operate_on_the_content_field_independently() {
+        let mut state = FindFileState::new();
+        state.query = "name field untouched".to_string();
+        let history = vec!["needle".to_string()];
+
+        state.content_history_up(&history);
+
+        assert_eq!(state.content_query, "needle");
+        assert_eq!(state.query, "name field untouched", "browsing the content field's history shouldn't touch the name field");
+
+        state.content_history_down(&history);
+
+        assert_eq!(state.content_query, "");
     }
 }
