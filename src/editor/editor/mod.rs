@@ -6,7 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use edtui::actions::motion::{MoveToFirstRow, MoveToLastRow};
 use edtui::actions::{Chainable, Execute, MoveToEndOfLine, MoveToStartOfLine, SwitchMode};
 use edtui::syntect::highlighting::Theme as SynTheme;
-use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Index2, LineNumbers, Lines};
+use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Highlight, Index2, LineNumbers, Lines};
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Block;
@@ -134,6 +134,23 @@ pub struct Editor {
     /// all (`Standard`-only, per `EditorKeymapMode::Vim`'s own doc
     /// comment on why).
     keymap_mode: EditorKeymapMode,
+    /// Extra `Highlight`s merged into `state.highlights` on top of
+    /// whatever `view()` already computes (word-occurrence/bracket-pair
+    /// matching) -- added for `compare::CompareState`, which needs to
+    /// paint GitHub-style red/green diff backgrounds over an otherwise
+    /// perfectly ordinary, fully editable `Editor`, without duplicating
+    /// `view()`'s own rendering logic. Empty and inert for every other
+    /// caller (plain `F4` editing never sets this).
+    extra_highlights: Vec<Highlight>,
+    /// Whether `view()` should resolve and apply syntax highlighting at
+    /// all -- `true` (matching every existing caller's own expectation)
+    /// unless `disable_syntax_highlighting` was called. Added for
+    /// `compare::CompareState`: requested directly, after real use
+    /// showed per-token syntax coloring fighting for attention with the
+    /// GitHub-style diff backgrounds this view already paints over
+    /// changed lines -- plain themed text keeps the diff coloring itself
+    /// the one thing drawing the eye. `F4` editing never touches this.
+    syntax_highlighting_enabled: bool,
 }
 
 
@@ -249,6 +266,8 @@ impl Editor {
             word_select_true_anchor: None,
             search_history_index: None,
             keymap_mode,
+            extra_highlights: Vec::new(),
+            syntax_highlighting_enabled: true,
         })
     }
 
@@ -413,19 +432,72 @@ impl Editor {
 
     /// The cursor's raw buffer position (row/column into `state.lines`,
     /// not a screen position -- see `cursor_screen_position` for that).
-    /// `editor_keymap.rs`'s own tests are a sibling module of
-    /// `editor::editor`, not a descendant, so they can't reach the
-    /// private `state` field directly the way `editor::tests` can --
-    /// this is the accessor those tests use instead. `#[cfg(test)]`
-    /// rather than a plain `pub fn`: this binary has no external
-    /// consumers, so with no non-test call site, a normal `cargo build`
-    /// (which doesn't see `#[cfg(test)]` code at all, tests included)
-    /// flagged it `dead_code` -- gating it the same way removes the
-    /// warning honestly instead of silencing it with `#[allow(dead_code)]`
-    /// on a method that's genuinely only ever called from tests.
-    #[cfg(test)]
+    /// Used to be `#[cfg(test)]`-only (a plain accessor with no non-test
+    /// caller flagged `dead_code`) until `compare::CompareState` needed
+    /// it for real, to save/restore a pane's true cursor position across
+    /// focus switches -- see `set_cursor`/`set_viewport_top_row` below.
     pub fn cursor(&self) -> Index2 {
         self.state.cursor
+    }
+
+    /// Moves the cursor directly, with no motion/selection semantics --
+    /// used by `compare::CompareState` to restore a pane's real cursor
+    /// position when it regains focus, after `set_viewport_top_row`
+    /// below temporarily repurposed `state.cursor.row` for viewport
+    /// syncing while this pane was the *other* (unfocused) one.
+    pub fn set_cursor(&mut self, pos: Index2) {
+        self.state.cursor = pos;
+    }
+
+    /// Forces this editor's viewport to start at `row`, keeping it there
+    /// through the next render -- for the currently *unfocused* Compare
+    /// pane, so its visible rows stay diff-aligned with whatever the
+    /// focused pane is showing (`compare::diff::map_real_row`).
+    ///
+    /// Also overwrites `state.cursor.row`, not just the viewport offset:
+    /// `edtui`'s own render pass recomputes the viewport from the cursor
+    /// on every frame to keep it visible (`EditorState::set_viewport_offset`'s
+    /// own doc comment; the exact mechanism a real report already traced
+    /// through once for the read-only phase-1 Compare view, see
+    /// `ui/compare.rs`'s own history) -- without this, a cursor left
+    /// behind at its last real edit position would just snap the
+    /// viewport straight back there on the very next render, undoing
+    /// this call entirely. Safe to do here specifically because this is
+    /// only ever called on the *unfocused* pane, which never receives
+    /// key input and so never needs `state.cursor` to mean anything else
+    /// while it's called -- `CompareState` caches the real cursor
+    /// position before overriding it, and `set_cursor` restores it the
+    /// moment focus returns.
+    pub fn set_viewport_top_row(&mut self, row: usize) {
+        let row = row.min(self.state.lines.len().saturating_sub(1));
+        let (offset_x, _) = self.state.viewport_offset();
+        self.state.cursor.row = row;
+        self.state.set_viewport_offset(offset_x, row);
+    }
+
+    /// The buffer's current content as plain text -- used by
+    /// `compare::CompareState` to recompute the live diff between both
+    /// panes on every frame, straight from what's actually being edited
+    /// rather than a stale on-open snapshot.
+    pub fn text(&self) -> String {
+        self.state.lines.to_string()
+    }
+
+    /// Extra `Highlight`s merged into this editor's own
+    /// word-occurrence/bracket-pair highlights on the next `view()` call
+    /// -- see `extra_highlights`'s own doc comment on the struct.
+    pub fn set_extra_highlights(&mut self, highlights: Vec<Highlight>) {
+        self.extra_highlights = highlights;
+    }
+
+    /// Turns off syntax highlighting for this session -- see
+    /// `syntax_highlighting_enabled`'s own doc comment on the struct.
+    /// One-way by design (no `enable_...` counterpart): every current
+    /// caller wants this either always on (`F4` editing) or always off
+    /// (`compare::CompareState`) for the lifetime of the session, never
+    /// toggled mid-way.
+    pub fn disable_syntax_highlighting(&mut self) {
+        self.syntax_highlighting_enabled = false;
     }
 
     /// The editor's current `edtui` mode (`Insert`/`Normal`/`Visual`/
@@ -549,7 +621,7 @@ impl Editor {
         // it is actually visible on screen, so a single enormous line
         // would otherwise pay that cost fresh on every one of this
         // app's per-event redraws (`main.rs::run`).
-        let syntax_highlighter = if pathologically_long_line {
+        let syntax_highlighter = if pathologically_long_line || !self.syntax_highlighting_enabled {
             None
         } else {
             resolve_syntax_highlighter(&candidates, &self.first_line, custom_syntax_theme)
@@ -624,6 +696,7 @@ impl Editor {
         } else {
             Vec::new()
         };
+        self.state.highlights.extend(self.extra_highlights.iter().cloned());
 
         let mut editor_theme = EditorTheme::default()
             .base(Style::default().fg(theme.text).bg(theme.bg))

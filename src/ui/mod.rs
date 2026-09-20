@@ -122,6 +122,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
             compare_line_ending_menu::draw_compare_line_ending_menu(frame, area, menu, &theme, app.popup_style, app.compare_line_ending_display);
             return [(1, 1), (1, 1)];
         }
+        // Reuses the built-in editor's own "Unsaved changes" popup
+        // (`draw_confirm_discard_popup`) unmodified -- it's already
+        // generic (just `theme`/`area`, no `Editor` reference), and
+        // Compare's own confirm-discard prompt needs exactly the same
+        // Y/N choice over whichever screen was showing before `Esc`.
+        Mode::CompareConfirmDiscard(state) => {
+            compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
+            draw_confirm_discard_popup(frame, area, &theme);
+            return [(1, 1), (1, 1)];
+        }
         Mode::Browsing
         | Mode::MainMenu(_)
         | Mode::ThemeMenu(_)

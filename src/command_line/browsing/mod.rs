@@ -146,7 +146,8 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         let Some(right_path) = app.panels[1 - app.active].selected_path() else {
             return Ok(());
         };
-        if let Ok(state) = crate::compare::CompareState::open(left_path, right_path) {
+        let syntax_theme = app.syntax_theme.clone();
+        if let Ok(state) = crate::compare::CompareState::open(left_path, right_path, syntax_theme, app.editor_keymap_mode) {
             app.mode = Mode::CompareFiles(state);
         }
         return Ok(());

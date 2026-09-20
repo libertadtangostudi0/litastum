@@ -1,48 +1,75 @@
-use edtui::{EditorState, EditorTheme, EditorView, Highlight, Index2, LineNumbers, Lines, RowIndex};
+use edtui::{Highlight, Index2};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::Block,
+    widgets::Paragraph,
     Frame,
 };
 
-use crate::compare::{ComparePane, CompareState, DiffLineKind, LineEndingDisplay};
+use crate::compare::{compute, map_real_row, CompareState, DiffLineKind, LineEnding, LineEndingDisplay, Side};
+use crate::editor::Editor;
 use crate::theming::Theme;
 
-/// Renders `Alt+F5`'s own full-screen comparer -- two files side by
-/// side, a shared vertical scroll (`CompareState::scroll_row`), and a
-/// one-line hint bar, mirroring `editor_pane.rs::draw_editor`'s own
-/// "Min(3) content / Length(1) hint" vertical split.
+/// Renders `Alt+F5`'s own full-screen comparer: two ordinary, fully
+/// editable `editor::Editor` panes side by side (real cursor, undo,
+/// syntax highlighting, save -- everything `F4` editing already has),
+/// with GitHub-style red/green diff backgrounds layered on top
+/// (`Editor::set_extra_highlights`) and a one-line hint bar, mirroring
+/// `editor_pane.rs::draw_editor`'s own "Min(3) content / Length(1)
+/// hint" vertical split.
 ///
-/// **Read-only, and rebuilt from scratch every frame** -- unlike
-/// `Editor::view`, which reuses one long-lived `edtui::EditorState`
-/// across frames (there's real cursor/undo/selection state to keep),
-/// each pane here builds a brand new `EditorState` on every single
-/// call, straight from `ComparePane::lines`. This is deliberate, not
-/// an oversight: nothing in `compare::input` ever forwards a key event
-/// into either `EditorState` (there's no cursor to move, no buffer to
-/// edit), so there's no state that would actually need to survive
-/// between frames except the scroll position, which lives on
-/// `CompareState` itself and gets reapplied
-/// (`EditorState::set_viewport_offset`) every time regardless. Building
-/// fresh also means the F9 -> Line endings toggle
-/// (`App::compare_line_ending_display`) just works by construction --
-/// the marker is baked into the very text handed to `Lines::from`,
-/// nothing to invalidate or rebuild on a toggle beyond the next redraw
-/// that was already about to happen anyway.
-pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) {
+/// The diff itself is recomputed fresh every single frame, straight
+/// from both panes' *live* text (`Editor::text`) -- there is no
+/// snapshot taken at `CompareState::open` time that could drift from
+/// what's actually being edited. Neither pane's real buffer is ever
+/// touched by this: unlike the phase-1 read-only version this replaced,
+/// no synthetic filler rows are inserted anywhere -- `compute`'s own
+/// row-aligned `Empty` padding rows exist purely to classify real rows
+/// and to drive `map_real_row` below, never to render as text.
+///
+/// Only the currently *focused* pane (`CompareState::focus`) scrolls
+/// under its own steam (`Editor::view`'s usual cursor-follow behavior,
+/// completely unmodified). The *other* pane's viewport is forced, every
+/// frame, to whatever real row `map_real_row` says corresponds to the
+/// focused pane's own current top row -- `Editor::set_viewport_top_row`,
+/// the same technique (and the same underlying `edtui` viewport-follows-
+/// cursor fact) already fixed a real scroll bug in the read-only
+/// version of this view; see that method's own doc comment.
+pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) {
     let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Min(3), Constraint::Length(1)]).split(area);
     let panes = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(50), Constraint::Percentage(50)]).split(rows[0]);
 
-    draw_pane(frame, panes[0], &state.left, state.scroll_row, theme, line_ending_display, theme.diff_removed_bg);
-    draw_pane(frame, panes[1], &state.right, state.scroll_row, theme, line_ending_display, theme.diff_added_bg);
+    let left_text = state.left.text();
+    let right_text = state.right.text();
+    let (left_diff, right_diff) = compute(&left_text, &right_text);
+
+    state.left.set_extra_highlights(row_highlights(&left_diff.kinds, &left_diff.source_index, &left_text, theme.diff_removed_bg, theme));
+    state.right.set_extra_highlights(row_highlights(&right_diff.kinds, &right_diff.source_index, &right_text, theme.diff_added_bg, theme));
+
+    match state.focus {
+        Side::Left => {
+            let target = map_real_row(&left_diff.source_index, &right_diff.source_index, state.left.viewport_top_row());
+            state.right.set_viewport_top_row(target);
+        }
+        Side::Right => {
+            let target = map_real_row(&right_diff.source_index, &left_diff.source_index, state.right.viewport_top_row());
+            state.left.set_viewport_top_row(target);
+        }
+    }
+
+    let left_line_endings = state.line_endings(Side::Left).to_vec();
+    let right_line_endings = state.line_endings(Side::Right).to_vec();
+    draw_pane(frame, panes[0], &mut state.left, theme, state.focus == Side::Left, line_ending_display, &left_line_endings);
+    draw_pane(frame, panes[1], &mut state.right, theme, state.focus == Side::Right, line_ending_display, &right_line_endings);
 
     let hint = Line::from(vec![
-        Span::styled("Up/Down ", Style::default().fg(theme.accent)),
-        Span::styled("Scroll   ", Style::default().fg(theme.text_dim)),
-        Span::styled("Tab/Shift+Tab ", Style::default().fg(theme.accent)),
+        Span::styled("Tab ", Style::default().fg(theme.accent)),
+        Span::styled("Switch pane   ", Style::default().fg(theme.text_dim)),
+        Span::styled("Ctrl+Up/Down ", Style::default().fg(theme.accent)),
         Span::styled("Next/prev diff   ", Style::default().fg(theme.text_dim)),
+        Span::styled("Ctrl+S ", Style::default().fg(theme.accent)),
+        Span::styled("Save   ", Style::default().fg(theme.text_dim)),
         Span::styled("F9 ", Style::default().fg(theme.accent)),
         Span::styled("Menu   ", Style::default().fg(theme.text_dim)),
         Span::styled("Esc ", Style::default().fg(theme.accent)),
@@ -51,63 +78,23 @@ pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &CompareState, 
     frame.render_widget(hint, rows[1]);
 }
 
-fn draw_pane(frame: &mut Frame, area: Rect, pane: &ComparePane, scroll_row: usize, theme: &Theme, line_ending_display: LineEndingDisplay, changed_bg: Color) {
-    let text = pane_text(pane, line_ending_display);
-    let mut edtui_state = EditorState::new(Lines::from(text.as_str()));
-    // `set_viewport_offset` alone isn't enough -- `edtui`'s own render
-    // pass (`EditorView::render`, `state/view.rs::update_viewport_vertical`)
-    // recomputes the viewport from `state.cursor` on *every* render to
-    // keep the cursor visible (documented directly on
-    // `set_viewport_offset` itself: "the viewport may be adjusted
-    // during the next render... depending on the cursor position"). A
-    // fresh `EditorState` always starts with `cursor` at row 0, so
-    // without this, `update_viewport_vertical` saw `cursor_row (0) <
-    // viewport.y (scroll_row)` on every single frame and snapped the
-    // offset straight back to 0 -- reported directly as "arrow-key
-    // scroll doesn't work at all". Parking the (hidden, via
-    // `.hide_cursor()`) cursor on the same row as the requested
-    // viewport offset keeps `update_viewport_vertical`'s own scroll-up/
-    // scroll-down checks both false, so it leaves the offset alone.
-    edtui_state.cursor = Index2::new(scroll_row, 0);
-    edtui_state.set_viewport_offset(0, scroll_row);
-    edtui_state.highlights = line_highlights(pane, &edtui_state.lines, changed_bg, theme);
-
-    let editor_theme = EditorTheme::default()
-        .base(Style::default().fg(theme.text).bg(theme.bg))
-        .block(Block::bordered().border_style(Style::default().fg(theme.accent)).title(pane.path.to_string_lossy().into_owned()))
-        .hide_status_line()
-        .hide_cursor()
-        .line_numbers_style(Style::default().fg(theme.text_dim).bg(theme.bg));
-
-    let view = EditorView::new(&mut edtui_state).theme(editor_theme).line_numbers(LineNumbers::Absolute);
-    frame.render_widget(view, area);
-}
-
-/// The literal text fed into `Lines::from` for one pane -- `pane.lines`
-/// as-is when line endings are hidden; with a per-line `" [CRLF]"`/
-/// `" [LF]"` marker (`LineEnding::marker`) appended when shown, looked
-/// up via `source_index` (an `Empty` padding row, `None`, gets no
-/// marker -- there's no real line to have an ending at all).
-fn pane_text(pane: &ComparePane, line_ending_display: LineEndingDisplay) -> String {
-    if line_ending_display == LineEndingDisplay::Hidden {
-        return pane.lines.join("\n");
+fn draw_pane(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme, is_focused: bool, line_ending_display: LineEndingDisplay, line_endings: &[Option<LineEnding>]) {
+    let viewport_top_row = editor.viewport_top_row();
+    frame.render_widget(editor.view(theme, area), area);
+    if is_focused {
+        if let Some(pos) = editor.cursor_screen_position() {
+            frame.set_cursor_position(pos);
+        }
     }
-    pane.lines
-        .iter()
-        .enumerate()
-        .map(|(row, line)| {
-            let marker = pane.source_index[row].and_then(|source_row| pane.line_endings.get(source_row).copied().flatten()).map(|ending| ending.marker()).unwrap_or("");
-            format!("{line}{marker}")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    if line_ending_display == LineEndingDisplay::Shown {
+        draw_line_ending_overlay(frame, area, line_endings, viewport_top_row, theme);
+    }
 }
 
-/// One whole-line `Highlight` per changed (`Removed`/`Added`) or
-/// padding (`Empty`) row -- `Unchanged` rows get none at all, rendering
-/// as plain, un-tinted text (this app's own file panel's ordinary
-/// coloring, not a syntax-highlighted one -- see this file's own top
-/// doc comment for why syntax highlighting isn't wired up here yet).
+/// One whole-line `Highlight` per changed (`Removed`/`Added`) real row
+/// -- an `Empty` (padding, no real row on this side) or `Unchanged` row
+/// gets none at all, rendering with `Editor::view`'s own ordinary
+/// syntax-highlighted styling.
 ///
 /// **A `Highlight`'s own style *replaces* whatever's under it
 /// outright** -- confirmed directly from `edtui`'s own rendering
@@ -115,21 +102,61 @@ fn pane_text(pane: &ComparePane, line_ending_display: LineEndingDisplay) -> Stri
 /// word-occurrence highlighting): there's no way to tint just the
 /// background while leaving per-token syntax coloring underneath, so a
 /// changed line renders in one flat foreground/background pair, the
-/// same tradeoff a text selection in the built-in editor already
-/// accepts.
-fn line_highlights(pane: &ComparePane, lines: &Lines, changed_bg: Color, theme: &Theme) -> Vec<Highlight> {
+/// same tradeoff an active text selection in the built-in editor
+/// already accepts.
+fn row_highlights(kinds: &[DiffLineKind], source_index: &[Option<usize>], text: &str, changed_bg: Color, theme: &Theme) -> Vec<Highlight> {
+    let real_lines: Vec<&str> = text.lines().collect();
+    let style = Style::default().fg(theme.text).bg(changed_bg);
     let mut highlights = Vec::new();
-    for (row, kind) in pane.kinds.iter().enumerate() {
-        let style = match kind {
-            DiffLineKind::Removed | DiffLineKind::Added => Style::default().fg(theme.text).bg(changed_bg),
-            DiffLineKind::Empty => Style::default().fg(theme.text_dim).bg(theme.border),
-            DiffLineKind::Unchanged => continue,
-        };
-        let Some(line) = lines.get(RowIndex::new(row)) else { continue };
-        let end_col = line.len().saturating_sub(1);
-        highlights.push(Highlight::new(Index2::new(row, 0), Index2::new(row, end_col), style));
+    for (row, kind) in kinds.iter().enumerate() {
+        if !matches!(kind, DiffLineKind::Removed | DiffLineKind::Added) {
+            continue;
+        }
+        let Some(real_row) = source_index[row] else { continue };
+        let Some(line) = real_lines.get(real_row) else { continue };
+        let end_col = line.chars().count().saturating_sub(1);
+        highlights.push(Highlight::new(Index2::new(real_row, 0), Index2::new(real_row, end_col), style));
     }
     highlights
+}
+
+/// Small right-aligned `[CRLF]`/`[LF]` markers over a pane's own
+/// visible rows, one per real line currently on screen -- `F9` -> Line
+/// endings' `Shown` setting. Drawn as a thin overlay *on top of* the
+/// already-rendered `EditorView` rather than baked into the buffer text
+/// the way the read-only phase-1 version did it: these panes are real,
+/// editable, saved-to-disk buffers now, and inserting extra characters
+/// into them to show a marker would corrupt the file the moment it's
+/// saved. `line_endings` is `CompareState`'s own fixed on-open snapshot
+/// (`CompareState::line_endings`'s own doc comment explains why it
+/// can't be redetected from the live buffer at all -- `edtui` itself
+/// throws the `\r` away on load). `inner` approximates `Editor::view`'s
+/// own bordered content area (`Block::bordered()` is always a uniform
+/// 1-cell frame) -- there's no direct hook into its internal layout to
+/// read this back exactly, but the approximation only has to be right
+/// along the right edge, which line numbers (drawn on the *left*)
+/// never affect.
+fn draw_line_ending_overlay(frame: &mut Frame, area: Rect, line_endings: &[Option<LineEnding>], viewport_top_row: usize, theme: &Theme) {
+    let inner = Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    for screen_row in 0..inner.height {
+        let real_row = viewport_top_row + screen_row as usize;
+        let Some(marker) = line_endings.get(real_row).copied().flatten().map(|ending| ending.marker().trim_start().to_string()) else { continue };
+        let width = marker.chars().count() as u16;
+        if width == 0 || width > inner.width {
+            continue;
+        }
+        let marker_area = Rect { x: inner.x + inner.width - width, y: inner.y + screen_row, width, height: 1 };
+        frame.render_widget(Paragraph::new(Line::from(Span::styled(marker, Style::default().fg(theme.text_dim)))), marker_area);
+    }
 }
 
 
@@ -138,7 +165,7 @@ mod tests {
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
-    use crate::compare::CompareState;
+    use crate::editor::EditorKeymapMode;
     use crate::test_support::unique_scratch_dir;
 
     fn open_pair(left_content: &str, right_content: &str) -> CompareState {
@@ -147,49 +174,107 @@ mod tests {
         let right_path = dir.join("right.txt");
         std::fs::write(&left_path, left_content).unwrap();
         std::fs::write(&right_path, right_content).unwrap();
-        CompareState::open(left_path, right_path).unwrap()
+        CompareState::open(left_path, right_path, None, EditorKeymapMode::Standard).unwrap()
     }
 
-    fn rendered(state: &CompareState, theme: &Theme) -> String {
-        let backend = TestBackend::new(80, 12);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                draw_compare(frame, frame.area(), state, theme, LineEndingDisplay::Hidden);
-            })
-            .unwrap();
-        let buffer = terminal.backend().buffer();
-        (0..buffer.area.height)
-            .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    /// Regression test for a real report: pressing Up/Down did nothing
-    /// visible at all. `edtui`'s own render pass recomputes the
-    /// viewport from `state.cursor` on every frame
-    /// (`update_viewport_vertical`) to keep the cursor visible -- a
-    /// fresh, per-frame `EditorState` always starts with `cursor` at
-    /// row 0, so without `draw_pane`'s own `edtui_state.cursor =
-    /// Index2::new(scroll_row, 0)` fix, the viewport snapped straight
-    /// back to the top on every single render, no matter what
-    /// `CompareState::scroll_row` said. A rendered-text assertion (not
-    /// just checking `scroll_row` itself, which was always updating
-    /// correctly -- the bug was purely in what got drawn) is the only
-    /// way this catches a real regression here.
+    /// Regression coverage: requested directly, syntax highlighting
+    /// competed for attention with the diff coloring, so
+    /// `CompareState::open` now calls `Editor::disable_syntax_highlighting`
+    /// on both panes. `.rs` content (which `syntect`'s bundled default
+    /// grammar set genuinely recognizes) is deliberately used here, not
+    /// `.txt` -- a `.txt` file would never get a syntax highlighter in
+    /// the first place, so it couldn't tell "disabled" apart from
+    /// "nothing recognized this file" at all.
     #[test]
-    fn scrolling_actually_moves_the_visible_window() {
-        let lines: Vec<String> = (0..30).map(|i| format!("line{i}")).collect();
-        let content = format!("{}\n", lines.join("\n"));
-        let mut state = open_pair(&content, &content);
+    fn syntax_highlighting_is_disabled_even_for_a_recognized_language() {
+        let dir = crate::test_support::unique_scratch_dir("ui-compare-no-syntax");
+        let left_path = dir.join("left.rs");
+        let right_path = dir.join("right.rs");
+        let content = "fn main() {\n    // a comment\n    let x = 1;\n}\n";
+        std::fs::write(&left_path, content).unwrap();
+        std::fs::write(&right_path, content).unwrap();
+        let mut state = CompareState::open(left_path, right_path, None, EditorKeymapMode::Standard).unwrap();
         let theme = Theme::dark();
 
-        let before = rendered(&state, &theme);
-        assert!(before.contains("line0"), "should start scrolled to the top");
+        let buffer = render(&mut state, &theme, LineEndingDisplay::Hidden);
 
-        state.scroll_row = 20;
-        let after = rendered(&state, &theme);
-        assert!(!after.contains("line0"), "top of the viewport should have scrolled past line0");
-        assert!(after.contains("line20"), "the row scrolled to should actually be visible");
+        // Every rendered cell in the left pane's content area (past the
+        // border and line-number gutter) should be plain `theme.text` --
+        // a real syntax highlighter would color "fn"/the comment/the
+        // numeric literal distinctly from this.
+        for y in 1..6u16 {
+            for x in 4..28u16 {
+                let cell = &buffer[(x, y)];
+                if cell.symbol() != " " {
+                    assert_eq!(cell.fg, theme.text, "cell ({x},{y}) = {:?} should be plain theme.text, not syntax-colored", cell.symbol());
+                }
+            }
+        }
+    }
+
+    fn render(state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) -> ratatui::buffer::Buffer {
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw_compare(frame, frame.area(), state, theme, line_ending_display)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    /// A changed row should carry the diff background on both panes;
+    /// an unchanged row should carry neither. Checks across each row's
+    /// full x range rather than one hand-picked column, since a
+    /// `Highlight` only ever covers a line's own real character span --
+    /// not the empty space past it -- and the exact column that lands
+    /// on depends on the line-number gutter's own width.
+    #[test]
+    fn changed_lines_get_a_diff_colored_background() {
+        let mut state = open_pair("aaaa\nbbbb\ncccc\n", "aaaa\nxxxx\ncccc\n");
+        let theme = Theme::dark();
+        let buffer = render(&mut state, &theme, LineEndingDisplay::Hidden);
+
+        let row_has_bg = |buffer: &ratatui::buffer::Buffer, x_range: std::ops::Range<u16>, y: u16, bg: ratatui::style::Color| x_range.clone().any(|x| buffer[(x, y)].bg == bg);
+
+        // Row 0 ("aaaa", unchanged) is at screen y = 1 (past the
+        // border); row 1 ("bbbb"/"xxxx", changed) is at y = 2.
+        assert!(!row_has_bg(&buffer, 0..30, 1, theme.diff_removed_bg), "unchanged row 0 shouldn't carry a diff background");
+        assert!(row_has_bg(&buffer, 0..30, 2, theme.diff_removed_bg), "left's changed row should be red somewhere");
+        assert!(row_has_bg(&buffer, 30..60, 2, theme.diff_added_bg), "right's changed row should be green somewhere");
+    }
+
+    /// Regression coverage for the same class of bug the read-only
+    /// phase-1 version had (`ui/compare.rs`'s own git history): the
+    /// *unfocused* pane's viewport must actually follow the focused
+    /// one every frame, not just report the right `viewport_top_row()`
+    /// internally while rendering something stale. Scrolls the focused
+    /// (left) pane down past an inserted line and checks the *rendered
+    /// text* of the unfocused (right) pane landed on the diff-mapped
+    /// row, not row 0.
+    #[test]
+    fn the_unfocused_panes_viewport_tracks_the_focused_one() {
+        let left = "a\nb\nc\nd\ne\nf\ng\nh\n";
+        let right = "a\nnew\nb\nc\nd\ne\nf\ng\nh\n";
+        let mut state = open_pair(left, right);
+        let theme = Theme::dark();
+
+        // Scroll the focused (left) pane so real row 3 ("d") is at the
+        // top of its viewport.
+        state.left.set_viewport_top_row(3);
+        let buffer = render(&mut state, &theme, LineEndingDisplay::Hidden);
+
+        let right_top_row_text: String = (30..60).map(|x| buffer[(x, 1)].symbol().to_string()).collect();
+        assert!(right_top_row_text.contains('d'), "right's own top row should have followed left's scroll to \"d\", not stayed at \"a\" (row 0)");
+    }
+
+    #[test]
+    fn line_ending_markers_show_up_only_when_shown() {
+        let mut state = open_pair("a\r\n", "a\n");
+        let theme = Theme::dark();
+
+        let hidden = render(&mut state, &theme, LineEndingDisplay::Hidden);
+        let hidden_text: String = (0..60).map(|x| hidden[(x, 1)].symbol().to_string()).collect();
+        assert!(!hidden_text.contains("CRLF"), "no marker at all while Hidden");
+
+        let shown = render(&mut state, &theme, LineEndingDisplay::Shown);
+        let shown_text: String = (0..60).map(|x| shown[(x, 1)].symbol().to_string()).collect();
+        assert!(shown_text.contains("CRLF"), "left's own CRLF-terminated line should show its marker while Shown");
     }
 }

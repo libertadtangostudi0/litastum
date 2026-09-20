@@ -313,3 +313,110 @@ Implemented as designed above, no scope changes from the four
 Not started: phase 2 (3-way conflict resolver) — deliberately, per this
 document's own scope note in the intro; revisit explicitly with the
 next request rather than continuing straight on from phase 1.
+
+## Landed (phase 1.5): both panes made fully editable
+
+Requested directly, right after phase 1 shipped: both panes should be
+editable, the way real Far `merge.exe` lets you edit either side of a
+two-file compare directly, not just look at it. Confirmed with the user
+up front on the one question that actually mattered here: **keep exact
+row alignment between the two panes while editing** (the harder of two
+options — the simpler one, letting the panes' own row counts drift
+independently like VS Code's diff editor does once you start typing,
+was the fallback if this turned out impractical).
+
+This superseded several of phase 1's own "Landed" claims above, which
+now describe a design this section replaces:
+
+- **`ComparePane` (`compare/state.rs`) no longer exists.**
+  `CompareState` now holds two ordinary, independent, fully live
+  `editor::Editor` sessions (`left`/`right`) plus `focus: Side` (which
+  one currently owns the real terminal cursor and receives typed
+  input, toggled by `Tab`) — real cursor movement, undo, syntax
+  highlighting, and `Ctrl+S` save, identical to `F4` editing, because
+  it *is* `F4` editing's own `Editor` type, reused rather than
+  reimplemented.
+- **The diff is recomputed fresh every single frame**
+  (`ui/compare.rs::draw_compare`, `diff::compute`), straight from both
+  panes' *live* text (`Editor::text`, a new accessor) — not a snapshot
+  taken once at `open`. Red/green highlighting tracks live edits on
+  either side, not just what was on disk when Compare was opened.
+- **Neither pane's real buffer ever has synthetic filler lines
+  injected into it** (a hard requirement once panes are genuinely
+  editable and saved back to disk — phase 1's own filler-padded display
+  buffer, safe only because it was thrown away every frame and never
+  written anywhere, would otherwise get saved as literal garbage lines
+  the moment `Ctrl+S` ran). `diff::compute`'s row-aligned `Empty`
+  padding rows still exist, but purely as a classification device now
+  — `DiffLines` dropped its own `lines: Vec<String>` field entirely,
+  keeping just `kinds`/`source_index`.
+- **Exact row alignment is kept anyway**, without touching either
+  buffer, through a different mechanism: only the *focused* pane
+  scrolls under its own steam (`Editor::view`'s completely unmodified
+  cursor-follow behavior); the *other* pane's viewport is forced, every
+  frame, to whatever real row corresponds to the focused pane's current
+  top row (`diff::map_real_row`, `Editor::set_viewport_top_row` — a new
+  method with the *exact* same "also overwrite `state.cursor.row`, not
+  just the viewport offset" fix phase 1's own real scroll bug needed,
+  see that method's own doc comment for why). A pane's true cursor
+  position is cached (`CompareState::left_saved_cursor`/
+  `right_saved_cursor`) the instant it loses focus and restored the
+  moment it regains it, since its own `Editor::cursor` gets hijacked for
+  viewport-sync purposes the whole time it's unfocused.
+- **Highlights are layered onto a real, editable `Editor` via a new,
+  general hook** (`Editor::extra_highlights`/`set_extra_highlights`,
+  merged into `view()`'s own computed `state.highlights` on top of
+  whatever word-occurrence/bracket-pair highlighting it already does)
+  rather than building a whole separate `EditorState` the way the
+  read-only version did — this is the one change to `editor::Editor`
+  itself this phase needed, and it's inert (empty, no-op) for every
+  other caller (plain `F4` editing never sets it).
+- **The line-ending marker's own rendering had to change shape
+  entirely.** Baking `" [CRLF]"`/`" [LF]"` directly into the text fed to
+  `Lines::from` (phase 1's approach) is no longer safe once that text
+  *is* the real, saved buffer — the marker would get written into the
+  file itself the next time `Ctrl+S` ran. Now drawn as a separate
+  right-aligned overlay `Paragraph` on top of the already-rendered
+  `EditorView` (`ui/compare.rs::draw_line_ending_overlay`), positioned
+  by approximating `Editor::view`'s own bordered content rect (no
+  direct hook into its real internal layout exists, but line numbers
+  only ever affect the *left* edge, so the approximation only needs to
+  be right along the right edge, which it is).
+- **A real, separate bug this surfaced**: detecting line endings from
+  `Editor::text()` at render time (the first attempt) can *never* find
+  a `CRLF` at all — `edtui::Lines::from` normalizes `\r\n` to `\n` on
+  load (`str::lines()`, confirmed directly from source, strips both
+  uniformly), so the distinction is destroyed before it ever reaches
+  application code, not merely hard to reach. Fixed by having
+  `CompareState::open` read each file's own raw bytes once, up front,
+  purely to capture `line_ending::detect`'s result before `Editor::open`
+  ever touches the same file a second time and loses it — a fixed
+  on-open snapshot (`CompareState::line_endings`), not something
+  re-derived from the live buffer. **Known, accepted limitation**: since
+  this snapshot is indexed by real line number and edits that insert or
+  remove lines shift every later line's index, the marker can drift out
+  of sync with which physical line is which the more a file is edited
+  after opening — still meaningfully useful for the actual common case
+  (spotting a mixed-line-ending file before or shortly after starting to
+  edit it) than not showing it at all.
+- **`Esc` with unsaved changes in either pane** now asks first
+  (`Mode::CompareConfirmDiscard`, reusing the built-in editor's own
+  "Unsaved changes" popup and `Y`/`N`/`Esc` resolver verbatim —
+  `editor::resolve_confirm_discard`/`ConfirmDiscardCommand`, exported
+  from `editor.rs` for exactly this reuse) rather than discarding
+  silently, matching `F4` editing's own `Mode::ConfirmDiscard`
+  convention. `Ctrl+S` saves whichever pane currently has focus — there
+  is no "save both at once" gesture, the same one-file-at-a-time
+  convention `F4` editing already has.
+- **Rebound bindings inside Compare, since `Tab` could no longer mean
+  "jump to next diff hunk"**: `Tab` now means "switch pane focus"
+  (this app's own convention for `Tab` everywhere else), so hunk
+  navigation moved to `Ctrl+Down`/`Ctrl+Up`.
+- **Visual focus indication is a known gap, not fixed here**: which
+  pane is "hot" is only conveyed by the real terminal cursor blinking
+  there (and by where typed characters land) — `Editor::view()` always
+  paints its own border in `theme.accent` regardless of focus, and
+  changing that would mean threading a border-color override through a
+  method every other `Editor` caller (`F4` editing included) uses
+  unconditionally. Left alone for this pass; revisit if it turns out to
+  matter in practice once tried for real.

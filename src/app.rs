@@ -129,8 +129,9 @@ pub enum Mode {
     MarkdownLinkSearch(Editor, MarkdownLinkSearchState),
     /// `Alt+F5`: the two-file side-by-side comparer
     /// (`compare::CompareState`) -- see `TODO/file-compare.md` for the
-    /// full design (phase 1: read-only, GitHub-diff-colored, both files
-    /// taken from the two panels directly).
+    /// full design. Both panes are fully editable, real `editor::Editor`
+    /// sessions, GitHub-diff-colored and kept row-aligned live; both
+    /// files are taken from the two panels directly.
     CompareFiles(CompareState),
     /// Compare's own F9 menu (`compare::CompareMenu`) -- same two-level
     /// shape as `Mode::EditorMenu`/`Mode::EditorKeymapMenu`, just for
@@ -140,6 +141,11 @@ pub enum Mode {
     /// `Mode::EditorKeymapMenu` -- picks between
     /// `compare::LineEndingDisplay::Hidden`/`Shown`.
     CompareLineEndingMenu(CompareState, CompareLineEndingMenu),
+    /// `Esc` on Compare with unsaved changes in either pane -- same
+    /// "hold the state so cancel hands it straight back with nothing
+    /// lost" shape as `Mode::ConfirmDiscard(Editor)` above, just for
+    /// both of Compare's panes at once (`CompareState::is_dirty`).
+    CompareConfirmDiscard(CompareState),
 }
 
 

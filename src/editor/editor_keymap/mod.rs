@@ -130,7 +130,7 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
 /// that starts supporting more keys just needs this list extended to
 /// match, rather than a blocklist that has to keep pace with every
 /// crossterm variant that exists.
-fn edtui_supports_key(code: KeyCode) -> bool {
+pub(crate) fn edtui_supports_key(code: KeyCode) -> bool {
     matches!(
         code,
         KeyCode::Char(_)
