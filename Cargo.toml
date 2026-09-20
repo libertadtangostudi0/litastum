@@ -22,6 +22,7 @@ image = { version = "0.25.10", default-features = false, features = ["jpeg", "pn
 ratatui-image = { version = "11.0.8", default-features = false, features = ["crossterm"] }
 pulldown-cmark = { version = "0.13.4", default-features = false }
 ignore = "0.4"
+similar = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

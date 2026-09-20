@@ -11,6 +11,7 @@ use tracing::{debug, warn};
 use super::popup_style::PopupStyle;
 use super::scheme::ColorScheme;
 use super::theme::Theme;
+use crate::compare::LineEndingDisplay;
 use crate::editor::EditorKeymapMode;
 
 mod limits;
@@ -147,6 +148,11 @@ struct Config {
     /// representation directly, no external file lookup needed" shape
     /// as `popup_style` right above.
     editor_keymap_mode: Option<EditorKeymapMode>,
+    /// `Alt+F5`'s own F9 -> Line endings choice
+    /// (`compare::LineEndingDisplay`) -- same "store the enum's own
+    /// serde representation directly" shape as `editor_keymap_mode`
+    /// right above.
+    compare_line_ending_display: Option<LineEndingDisplay>,
     /// The six fields below back `Limits` (`limits.rs`) -- optional
     /// overrides for app-wide tunable caps, each independent of the
     /// others (an unset field keeps `Limits::default()`'s own value for
@@ -426,6 +432,27 @@ pub fn load_active_editor_keymap_mode() -> EditorKeymapMode {
 pub fn set_editor_keymap_mode(mode: EditorKeymapMode) {
     if let Some(config_dir) = config_dir() {
         persist(&config_dir, |config| config.editor_keymap_mode = Some(mode));
+    }
+}
+
+
+/// Whether Compare's own per-line `CRLF`/`LF` marker is showing, per F9
+/// -> Line endings -- same "never blocks startup, degrade to a sensible
+/// default" rule as `load_active_editor_keymap_mode`.
+pub fn load_active_compare_line_ending_display() -> LineEndingDisplay {
+    let Some(config_dir) = config_dir() else {
+        debug!("no config directory available on this platform; using default line-ending display");
+        return LineEndingDisplay::default();
+    };
+    read_config(&config_dir).compare_line_ending_display.unwrap_or_default()
+}
+
+
+/// Persists `display` as Compare's own default -- best-effort, same
+/// shape as `set_editor_keymap_mode`.
+pub fn set_compare_line_ending_display(display: LineEndingDisplay) {
+    if let Some(config_dir) = config_dir() {
+        persist(&config_dir, |config| config.compare_line_ending_display = Some(display));
     }
 }
 

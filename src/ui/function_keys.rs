@@ -8,10 +8,11 @@ use ratatui::{
 use crate::theming::Theme;
 
 /// The default F-key row, and the row shown while `Alt` is held
-/// (`App::alt_held`). `F1`, `F2`, `F7`, and `F8` actually change
+/// (`App::alt_held`). `F1`, `F2`, `F5`, `F7`, and `F8` actually change
 /// binding (`Alt+F1`/`Alt+F2` open the left/right "change drive"
-/// popup, `Alt+F7` opens Find file, `Alt+F8` opens History — all four
-/// are `command_line/browsing.rs`'s own raw-modifier special cases,
+/// popup, `Alt+F5` opens Compare files, `Alt+F7` opens Find file,
+/// `Alt+F8` opens History — all five are
+/// `command_line/browsing/mod.rs`'s own raw-modifier special cases,
 /// same reasoning as `Shift+F6`) — the rest keep their default action
 /// and are just relabeled here to match, since Far Manager's real Alt
 /// row doesn't rebind them either.
@@ -56,7 +57,7 @@ pub(super) const DEFAULT_LABELS: [(&str, &str); 10] = [
 ];
 pub(super) const ALT_LABELS: [(&str, &str); 10] = [
     ("F1", "DscLft"), ("F2", "DscRht"), ("F3", "View"), ("F4", "Edit"),
-    ("F5", "Copy"), ("F6", "RenMov"), ("F7", "Find"), ("F8", "Histry"),
+    ("F5", "Compar"), ("F6", "RenMov"), ("F7", "Find"), ("F8", "Histry"),
     ("F9", "Menu"), ("F10", "Quit"),
 ];
 

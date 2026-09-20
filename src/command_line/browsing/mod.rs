@@ -27,9 +27,9 @@ use shell_exec::{run_command_line, toggle_panels_hidden};
 /// manager instead of navigating into it (a file opens in the built-in
 /// editor instead, same as plain `Enter` — see `explorer::keymap::
 /// Command::OpenInFileManager`'s own doc comment), `Alt+F1`/`Alt+F2`/
-/// `Alt+F7`/`Alt+F8` open their own popups (all need the raw modifier,
-/// which `keymap::resolve`'s table can't see since it only keys off
-/// `KeyCode`), `Shift+Left`/`Right` and `Ctrl+Shift+Left`/`Right`
+/// `Alt+F5`/`Alt+F7`/`Alt+F8` open their own popups (all need the raw
+/// modifier, which `keymap::resolve`'s table can't see since it only
+/// keys off `KeyCode`), `Shift+Left`/`Right` and `Ctrl+Shift+Left`/`Right`
 /// select within the command line (character- and word-wise), plain
 /// `Ctrl+Left`/`Right` moves the cursor by a word with no selection —
 /// all reusing `text_field.rs`'s cursor/selection functions against
@@ -121,6 +121,34 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     // Same raw-modifier reasoning as above.
     if key.code == KeyCode::F(8) && key.modifiers.contains(KeyModifiers::ALT) {
         app.mode = Mode::CommandHistory(CommandHistoryMenu::open());
+        return Ok(());
+    }
+
+    // Alt+F5 -- Compare files (`compare.rs`, `TODO/file-compare.md`),
+    // requested directly. Bare `F5` is Copy; `keymap::resolve`'s own
+    // `KeyCode::F(5) => Command::CopySelected` arm has no modifier
+    // awareness at all (confirmed directly against its source), so
+    // `Alt+F5` needs the same raw-modifier interception every other
+    // rebound `Alt+F<n>` above already gets, ahead of that table, or it
+    // would silently fall through to Copy instead. The active panel's
+    // own selected file becomes the left pane, the *other* (inactive)
+    // panel's own selected file the right one -- real Far Manager's own
+    // two-panel convention, no file picker in phase 1. A silent no-op
+    // if either panel has nothing selected, or the comparison can't be
+    // opened at all (e.g. a selected "file" is actually a directory) --
+    // same "couldn't act on this" convention the rest of this codebase
+    // already follows, not an error popup for what's usually just an
+    // empty/directory-only panel.
+    if key.code == KeyCode::F(5) && key.modifiers.contains(KeyModifiers::ALT) {
+        let Some(left_path) = app.panels[app.active].selected_path() else {
+            return Ok(());
+        };
+        let Some(right_path) = app.panels[1 - app.active].selected_path() else {
+            return Ok(());
+        };
+        if let Ok(state) = crate::compare::CompareState::open(left_path, right_path) {
+            app.mode = Mode::CompareFiles(state);
+        }
         return Ok(());
     }
 

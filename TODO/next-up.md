@@ -99,11 +99,16 @@
       enumeration; the Unix build gets a single `"/"` entry rather than
       real mount-point enumeration — same scope cut as `shell.rs`'s
       Unix shell-profile fallback, not attempted here either
-- [ ] **Diff view mode + conflict resolver** — placeholder, rules/scope
-      to be filled in later (not yet specified: whether this is a
-      standalone F-key-triggered mode, an editor overlay, how it hooks
-      into VCS state if at all, two-way vs. three-way, resolution UI).
-      Don't start implementation from this bullet alone. See
-      [git-integration.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/git-integration.md) — likely related (a
-      conflict resolver needs to know a file's conflicted-hunk
-      structure from somewhere, which is git-specific).
+- [ ] **Diff view mode + conflict resolver** — real spec now written up
+      in [file-compare.md](file-compare.md): a two-panel, two-file,
+      GitHub-diff-colored comparer (litastum's own editor themes, not a
+      fixed palette) modeled loosely on real Far Manager's `merge.exe`,
+      phase 1; a 3-way conflict resolver, phase 2, built on top once
+      phase 1 is proven, not designed in detail yet. Don't start
+      implementation until that document's own "Open questions" section
+      (rendering approach, keybinding, how the second file is chosen,
+      theming) is actually answered. See
+      [git-integration.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/git-integration.md)
+      too — likely related for phase 2 specifically (a conflict
+      resolver needs to know a file's conflicted-hunk structure from
+      somewhere, which is git-specific; phase 1 itself is VCS-agnostic).

@@ -6,6 +6,9 @@ use ratatui::{
 use crate::app::{App, Mode};
 
 mod command_line;
+mod compare;
+mod compare_line_ending_menu;
+mod compare_menu;
 mod confirm;
 mod drive_menu;
 mod editor_find;
@@ -96,6 +99,27 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
             let current = editor.keymap_mode();
             draw_editor(frame, area, editor, &theme);
             editor_keymap_menu::draw_editor_keymap_menu(frame, area, menu, &theme, app.popup_style, current);
+            return [(1, 1), (1, 1)];
+        }
+        // `Alt+F5`'s own full-screen comparer -- same "takes over the
+        // whole frame, `return` before the ordinary 2-panel layout runs
+        // at all" shape as `Mode::Editing` above, not the panel-slot
+        // shape `Mode::ImagePreview` uses below: a dedicated two-file
+        // comparison wants two full-width panes of its own, not one
+        // browser panel's worth of space (`TODO/file-compare.md`'s own
+        // "Rendering approach"/data-model sketch).
+        Mode::CompareFiles(state) => {
+            compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
+            return [(1, 1), (1, 1)];
+        }
+        Mode::CompareMenu(state, menu) => {
+            compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
+            compare_menu::draw_compare_menu(frame, area, menu, &theme, app.popup_style);
+            return [(1, 1), (1, 1)];
+        }
+        Mode::CompareLineEndingMenu(state, menu) => {
+            compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
+            compare_line_ending_menu::draw_compare_line_ending_menu(frame, area, menu, &theme, app.popup_style, app.compare_line_ending_display);
             return [(1, 1), (1, 1)];
         }
         Mode::Browsing

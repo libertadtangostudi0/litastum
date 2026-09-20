@@ -4,7 +4,7 @@ use edtui::syntect::highlighting::{
 use ratatui::style::Color;
 use serde::Deserialize;
 
-use super::theme::Theme;
+use super::theme::{blend_over_bg, Theme};
 
 
 /// A Windows Terminal-format color scheme — the exact JSON shape
@@ -101,19 +101,27 @@ impl ColorScheme {
         };
 
         let command_line_prefix = self.command_line_prefix.as_deref().map(rgb).unwrap_or(accent);
+        let bg = rgb(&self.background);
+        let danger = rgb(&self.red);
+        let success = rgb(&self.green);
 
         Theme {
-            bg: rgb(&self.background),
+            bg,
             border: rgb(&self.bright_black),
             text: rgb(&self.foreground),
             text_dim: rgb(&self.bright_black),
             accent,
-            danger: rgb(&self.red),
+            danger,
             warning: rgb(&self.yellow),
-            success: rgb(&self.green),
+            success,
             current_row_bg: rgb(&self.selection_background),
             selection_text: self.selection_foreground.as_deref().map(rgb),
             command_line_prefix,
+            // Same 30% blend `Theme::dark()` uses, computed here at
+            // runtime instead of by hand -- see `theme::blend_over_bg`'s
+            // own doc comment.
+            diff_removed_bg: blend_over_bg(danger, bg, 0.3),
+            diff_added_bg: blend_over_bg(success, bg, 0.3),
         }
     }
 

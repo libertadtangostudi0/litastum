@@ -2,6 +2,7 @@
 mod alt_key;
 mod app;
 mod command_line;
+mod compare;
 mod editor;
 mod explorer;
 mod list_cursor;
@@ -73,6 +74,7 @@ fn main() -> Result<()> {
     // never touch the real config.json for this.
     app.popup_style = theming::config::load_active_popup_style();
     app.editor_keymap_mode = theming::config::load_active_editor_keymap_mode();
+    app.compare_line_ending_display = theming::config::load_active_compare_line_ending_display();
     // Loaded here rather than in `App::new` itself so every test that
     // builds an `App` (nearly all of them, via `test_support::test_app`)
     // stays isolated from whatever real `command_history.txt` happens
@@ -478,6 +480,9 @@ fn dispatch_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: 
         Mode::ConfirmDiscard(_) => editor::handle_confirm_discard_key(app, key),
         Mode::EditorMenu(_, _) => editor::handle_editor_menu_key(app, key),
         Mode::EditorKeymapMenu(_, _) => editor::handle_editor_keymap_menu_key(app, key),
+        Mode::CompareFiles(_) => compare::handle_compare_key(app, key),
+        Mode::CompareMenu(_, _) => compare::handle_compare_menu_key(app, key),
+        Mode::CompareLineEndingMenu(_, _) => compare::handle_compare_line_ending_menu_key(app, key),
         Mode::ConfirmDelete(_) => explorer::handle_confirm_delete_key(app, key),
         Mode::ConfirmTransfer(_) => explorer::handle_confirm_transfer_key(app, key),
         Mode::MainMenu(_) => theming::handle_main_menu_key(app, key),

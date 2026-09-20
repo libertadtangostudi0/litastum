@@ -5,6 +5,7 @@ use edtui::syntect::highlighting::Theme as SynTheme;
 use ratatui_image::picker::Picker;
 
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
+use crate::compare::{CompareLineEndingMenu, CompareMenu, CompareState, LineEndingDisplay};
 use crate::editor::{Editor, EditorKeymapMenu, EditorKeymapMode, EditorMenu};
 use crate::explorer::{
     AddUserMenuItemState, DriveMenu, FindFileState, ImagePreviewState, MarkdownLinkSearchState, MarkdownPreviewState, Panel, UserMenuCommandEdit, UserMenuPromptState,
@@ -126,6 +127,19 @@ pub enum Mode {
     /// `App::markdown_edit_preview` throughout, never moved into `Mode`
     /// at all, since it's shared between this and `Mode::Editing`.
     MarkdownLinkSearch(Editor, MarkdownLinkSearchState),
+    /// `Alt+F5`: the two-file side-by-side comparer
+    /// (`compare::CompareState`) -- see `TODO/file-compare.md` for the
+    /// full design (phase 1: read-only, GitHub-diff-colored, both files
+    /// taken from the two panels directly).
+    CompareFiles(CompareState),
+    /// Compare's own F9 menu (`compare::CompareMenu`) -- same two-level
+    /// shape as `Mode::EditorMenu`/`Mode::EditorKeymapMenu`, just for
+    /// Compare instead of the editor.
+    CompareMenu(CompareState, CompareMenu),
+    /// F9 -> Line endings, Compare's own equivalent of
+    /// `Mode::EditorKeymapMenu` -- picks between
+    /// `compare::LineEndingDisplay::Hidden`/`Shown`.
+    CompareLineEndingMenu(CompareState, CompareLineEndingMenu),
 }
 
 
@@ -273,6 +287,10 @@ pub struct App {
     /// own `keymap_mode` argument, the same way `syntax_theme` above is
     /// threaded through as `custom_syntax_theme`.
     pub editor_keymap_mode: EditorKeymapMode,
+    /// Whether Compare's own per-line `CRLF`/`LF` marker is showing --
+    /// see `compare::LineEndingDisplay`. Same loading/persistence shape
+    /// as `editor_keymap_mode` right above.
+    pub compare_line_ending_display: LineEndingDisplay,
     /// The always-live command line at the bottom of the browser (Far
     /// Manager-style) — see `command_line.rs` for the editing logic
     /// and `.claude/rules/litastum-stack.md` for the design.
@@ -460,6 +478,7 @@ impl App {
             syntax_theme,
             popup_style: PopupStyle::default(),
             editor_keymap_mode: EditorKeymapMode::default(),
+            compare_line_ending_display: LineEndingDisplay::default(),
             command_line: String::new(),
             command_line_cursor: 0,
             command_line_selection_anchor: None,
