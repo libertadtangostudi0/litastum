@@ -107,21 +107,14 @@ assets/debug/
 # developer-machine-specific config.json straight into the repo root.
 /config.json
 
-# Command-line history (command_line/history.rs) -- a plain file next
-# to the binary/repo root for now (cwd-relative, not the OS config
-# dir), so it lands here during `cargo run`/`cargo test` from the repo
-# root and shouldn't be committed.
-/command_history.txt
-
-# Editor search history (editor/find_history.rs) -- same cwd-relative
-# shortcut as command_history.txt above, separate file.
-/editor_search_history.txt
-
-# Find file (Alt+F7) history (explorer/find_file/history.rs) -- same
-# cwd-relative shortcut, two separate files (name mask vs. content
-# query -- see that module's own doc comment for why they're kept apart).
-/find_file_name_history.txt
-/find_file_content_history.txt
+# Command-line/editor-search/Find-file history (command_line/history.rs,
+# editor/find_history.rs, explorer/find_file/history.rs) now lives in
+# `history/` directly under the repo root (`src/history_dir.rs`,
+# CARGO_MANIFEST_DIR-anchored) -- real, developer-machine-specific
+# history, never committed. Never the OS config dir either -- see
+# history_dir.rs's own doc comment for why (this app never reads/writes
+# anything outside its own directory tree).
+/history/
 
 # Debug scratch folder for manual explorer/panel testing -- purely
 # local, never committed (including generate_test_files.bat itself,
