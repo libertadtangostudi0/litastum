@@ -44,6 +44,32 @@ fn print_themed(theme: &crate::theming::Theme, args: std::fmt::Arguments) -> Res
 }
 
 
+/// Discards every input event already sitting in the console's queue,
+/// without blocking for one that isn't there yet.
+///
+/// Reported directly from a screenshot: after running one command, the
+/// prompt for the *next* one showed up printed three times in a row on
+/// the same line before the actually-typed command. Root cause: while
+/// a real subprocess has the console (raw mode off, its own stdin),
+/// any keys the user presses meanwhile -- an impatient extra `Enter`
+/// while `svn merge` is still working, say -- aren't lost, they queue
+/// up at the OS console level regardless of which process currently
+/// "owns" the terminal. The moment raw mode comes back on and this
+/// loop resumes reading events, each of those queued `Enter` presses
+/// gets treated as a real (empty) command line -- printing the prompt
+/// again with nothing typed, since nothing distinguishes a leftover
+/// keystroke from a fresh, intentional one. Called right after
+/// `enable_raw_mode()` in both places that suspend the console for a
+/// child process (`run_shell_command_lines`, `run_single_line_on_console`),
+/// before anything else reads a "real" event again.
+fn drain_stale_input() -> Result<()> {
+    while event::poll(std::time::Duration::from_secs(0))? {
+        event::read()?;
+    }
+    Ok(())
+}
+
+
 fn to_crossterm_color(color: ratatui::style::Color) -> CtColor {
     match color {
         ratatui::style::Color::Rgb(r, g, b) => CtColor::Rgb { r, g, b },
@@ -272,6 +298,7 @@ pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermB
         }
     }
     enable_raw_mode()?;
+    drain_stale_input()?;
     execute!(terminal.backend_mut(), EnterAlternateScreen)?;
     terminal.clear()?;
 
@@ -391,6 +418,7 @@ fn run_single_line_on_console(app: &mut App, line: &str) -> Result<()> {
     disable_raw_mode()?;
     let status = command.current_dir(&cwd).status();
     enable_raw_mode()?;
+    drain_stale_input()?;
 
     match status {
         Ok(status) if !status.success() => {
