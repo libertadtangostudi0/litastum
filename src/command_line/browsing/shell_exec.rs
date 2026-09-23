@@ -182,11 +182,47 @@ fn append_command_line(command: &mut std::process::Command, line: &str) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.raw_arg(line);
+        command.raw_arg(&wrap_leading_quote_for_cmd(line));
     }
     #[cfg(not(windows))]
     {
         command.arg(line);
+    }
+}
+
+
+/// Wraps `line` in one extra outer pair of quotes if it already starts
+/// with a `"` -- otherwise returns it unchanged.
+///
+/// Reported directly against `resolve_app_paths_command`'s own
+/// substitution: `svn status "RFI15.0"` became
+/// `"C:\Program Files\SlikSvn\bin\svn.exe" status "RFI15.0"` (`svn` is
+/// registered under App Paths *as well as* being on `PATH`), and
+/// `cmd.exe` came back with `'C:\Program' is not recognized...` --
+/// `cmd /?` documents the exact mechanism: `/C`'s own argument only
+/// keeps its quotes intact as literally written when it contains
+/// *exactly* two quote characters total; otherwise (four, here -- two
+/// around the resolved path, two around `"RFI15.0"`) `cmd.exe` falls
+/// back to unconditionally stripping just the first and last character
+/// of the whole string when the first one happens to be a quote --
+/// which are the quotes protecting the exe path's own spaces, not some
+/// outer wrapper we ever intended. Adding one more (deliberately
+/// redundant) outer quote pair makes that blind strip remove *those*
+/// instead, leaving the real, inner quoting -- around the exe path and
+/// around `"RFI15.0"` -- completely untouched.
+///
+/// Never triggers for an ordinary typed command (`svn status ...`,
+/// `cd ..`, ...) -- those never start with a quote in the first place,
+/// so `cmd.exe`'s own straightforward parsing already handles them
+/// (see `append_command_line`'s own doc comment, and its regression
+/// test, for the *other* cmd quoting quirk this project already works
+/// around).
+#[cfg(windows)]
+fn wrap_leading_quote_for_cmd(line: &str) -> String {
+    if line.starts_with('"') {
+        format!("\"{line}\"")
+    } else {
+        line.to_string()
     }
 }
 
@@ -475,6 +511,49 @@ mod tests {
             let output = command.output().unwrap();
             let stdout = String::from_utf8_lossy(&output.stdout);
             assert_eq!(stdout.trim(), "Project Alpha", "cmd should have tokenized the quoted argument itself, not received it pre-mangled");
+        }
+
+        /// The actual reported bug: `wrap_leading_quote_for_cmd`'s own
+        /// case, previously untested -- a quoted *program path* (what
+        /// `resolve_app_paths_command` produces) followed by a quoted
+        /// *argument*, so the whole line both starts and ends with a
+        /// quote and carries four quote characters total, not two.
+        /// Without the extra outer wrap, `cmd.exe`'s own "not exactly
+        /// two quotes" fallback blindly strips the first and last
+        /// character of the line -- exactly the quotes protecting the
+        /// script path's own spaces -- and `%~1` below would come back
+        /// having eaten part of the path instead of the real argument.
+        #[test]
+        fn a_quoted_program_path_followed_by_a_quoted_argument_survives_too() {
+            let dir = unique_scratch_dir("append-command-line leading quote");
+            let script = dir.join("echo_arg.bat");
+            fs::write(&script, "@echo %~1\r\n").unwrap();
+
+            let mut command = std::process::Command::new("cmd");
+            command.arg("/C");
+            let line = format!("\"{}\" \"Project Alpha\"", script.display());
+            append_command_line(&mut command, &line);
+
+            let output = command.output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert_eq!(stdout.trim(), "Project Alpha", "the script's own path must not be corrupted by cmd's leading-quote strip");
+        }
+    }
+
+    #[cfg(windows)]
+    mod wrap_leading_quote_for_cmd_tests {
+        use super::*;
+
+        #[test]
+        fn wraps_a_line_that_already_starts_with_a_quote() {
+            let line = r#""C:\Program Files\SlikSvn\bin\svn.exe" status "RFI15.0""#;
+            let expected = format!("\"{line}\"");
+            assert_eq!(wrap_leading_quote_for_cmd(line), expected);
+        }
+
+        #[test]
+        fn leaves_an_ordinary_unquoted_command_untouched() {
+            assert_eq!(wrap_leading_quote_for_cmd(r#"svn status "RFI15.0""#), r#"svn status "RFI15.0""#);
         }
     }
 }
