@@ -46,8 +46,8 @@ use shell_exec::{run_command_line, toggle_panels_hidden};
 /// fixed `keymap::resolve` table (arrows, Tab, F4/F9/F10, and `Enter`
 /// on an *empty* command line — `EnterSelected`, unchanged) takes
 /// over; anything that table doesn't bind — plain characters,
-/// `Backspace`, `Esc` — edits the always-live command line at the
-/// bottom of the browser. This is also why `q` no longer quits on its
+/// `Backspace`, `Delete`, `Esc` — edits the always-live command line at
+/// the bottom of the browser. This is also why `q` no longer quits on its
 /// own (`keymap.rs`) — a bare letter now types into the command line
 /// like any other.
 pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
@@ -130,20 +130,24 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     // awareness at all (confirmed directly against its source), so
     // `Alt+F5` needs the same raw-modifier interception every other
     // rebound `Alt+F<n>` above already gets, ahead of that table, or it
-    // would silently fall through to Copy instead. The active panel's
-    // own selected file becomes the left pane, the *other* (inactive)
-    // panel's own selected file the right one -- real Far Manager's own
-    // two-panel convention, no file picker in phase 1. A silent no-op
-    // if either panel has nothing selected, or the comparison can't be
-    // opened at all (e.g. a selected "file" is actually a directory) --
-    // same "couldn't act on this" convention the rest of this codebase
+    // would silently fall through to Copy instead.
+    //
+    // Two source conventions, checked in this order (requested directly
+    // as an addition on top of the original cross-panel behavior, not a
+    // replacement for it): if the *active* panel has exactly two entries
+    // marked (Far Manager-style multi-select, `Ins`/`Shift+Up`/`Down`/...),
+    // compare those two directly -- lets someone compare two files sitting
+    // side by side in the same directory without needing them split
+    // across both panels first. Otherwise, falls back to the original
+    // two-panel convention (`compare_targets`'s own doc comment).
+    //
+    // A silent no-op if either resolved path can't be opened as a
+    // comparison at all (e.g. a selected "file" is actually a directory)
+    // -- same "couldn't act on this" convention the rest of this codebase
     // already follows, not an error popup for what's usually just an
     // empty/directory-only panel.
     if key.code == KeyCode::F(5) && key.modifiers.contains(KeyModifiers::ALT) {
-        let Some(left_path) = app.panels[app.active].selected_path() else {
-            return Ok(());
-        };
-        let Some(right_path) = app.panels[1 - app.active].selected_path() else {
+        let Some((left_path, right_path)) = compare_targets(app) else {
             return Ok(());
         };
         let syntax_theme = app.syntax_theme.clone();
@@ -349,6 +353,18 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
             app.command_line_suggestion_selected = 0;
             app.command_line_suggestion_dismissed = false;
         }
+        // Forward delete -- reported missing directly. Same "consume a
+        // selection first, otherwise remove one character" shape as
+        // Backspace right above, just removing the character *at* the
+        // cursor instead of the one before it.
+        KeyCode::Delete => {
+            if !text_field::delete_selection(&mut app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor) {
+                text_field::delete_forward(&mut app.command_line, &mut app.command_line_cursor);
+            }
+            app.command_line_completion = None;
+            app.command_line_suggestion_selected = 0;
+            app.command_line_suggestion_dismissed = false;
+        }
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Typing over an active selection replaces it, same as any
             // normal text field -- delete it first, then insert at the
@@ -364,4 +380,77 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     }
 
     Ok(())
+}
+
+
+/// Which two files `Alt+F5` should compare -- pulled out of
+/// `handle_browsing_key` as its own pure function (no `Terminal`
+/// needed, unlike that function's other branches) so it's directly
+/// unit-testable. If the *active* panel has exactly two entries marked,
+/// compares those two. Otherwise, falls back to the original two-panel
+/// convention: the active panel's own selected file as the left pane,
+/// the *other* (inactive) panel's own selected file as the right one.
+/// Any other marked count (0, 1, or 3+) also falls back to the
+/// two-panel convention -- there's no sensible third pane to put a
+/// third marked file into, and silently picking "the first two" would
+/// be surprising rather than helpful. `None` if a fallback path has
+/// nothing selected.
+fn compare_targets(app: &App) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let marked_in_active_panel: Vec<std::path::PathBuf> = {
+        let panel = &app.panels[app.active];
+        panel.marked_entries().into_iter().map(|entry| panel.path.join(&entry.name)).collect()
+    };
+    if let [left, right] = marked_in_active_panel.as_slice() {
+        return Some((left.clone(), right.clone()));
+    }
+
+    let left_path = app.panels[app.active].selected_path()?;
+    let right_path = app.panels[1 - app.active].selected_path()?;
+    Some((left_path, right_path))
+}
+
+
+#[cfg(test)]
+mod compare_targets_tests {
+    use super::compare_targets;
+    use crate::test_support::{test_app, unique_scratch_dir};
+
+    #[test]
+    fn falls_back_to_the_two_panel_convention_when_nothing_is_marked() {
+        let dir = unique_scratch_dir("compare-targets");
+        std::fs::write(dir.join("only.txt"), "x").unwrap();
+        let mut app = test_app(dir.clone());
+        app.panels[0].move_down(); // off ".." and onto "only.txt", in both panels
+        app.panels[1].move_down();
+
+        let (left, right) = compare_targets(&app).expect("both panels have a selected file");
+        assert_eq!(left, dir.join("only.txt"));
+        assert_eq!(right, dir.join("only.txt"), "both panels start on the same directory/selection");
+    }
+
+    #[test]
+    fn compares_two_marked_entries_in_the_active_panel_instead() {
+        let dir = unique_scratch_dir("compare-targets");
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        std::fs::write(dir.join("b.txt"), "b").unwrap();
+        let mut app = test_app(dir.clone());
+        app.panels[app.active].select_all();
+
+        let (left, right) = compare_targets(&app).expect("exactly two marked entries");
+        assert_eq!(left, dir.join("a.txt"));
+        assert_eq!(right, dir.join("b.txt"));
+    }
+
+    #[test]
+    fn three_marked_entries_falls_back_to_the_two_panel_convention() {
+        let dir = unique_scratch_dir("compare-targets");
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        std::fs::write(dir.join("b.txt"), "b").unwrap();
+        std::fs::write(dir.join("c.txt"), "c").unwrap();
+        let mut app = test_app(dir.clone());
+        app.panels[app.active].select_all();
+
+        let (left, _right) = compare_targets(&app).expect("both panels have a selected file");
+        assert_eq!(left, app.panels[app.active].selected_path().unwrap(), "should have fallen back to the cursor's own selection, not picked two of the three marked entries");
+    }
 }

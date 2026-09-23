@@ -51,7 +51,38 @@ use panel::build_list_item;
 /// event is handled — both depend on terminal size, which only
 /// `ui::draw` computes, but `Panel` (not `ui`) owns the cursor/scroll
 /// state that navigation needs them for.
-pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
+///
+/// Also returns where the real terminal cursor should end up, if
+/// anywhere -- `None` means it should stay hidden. **Deliberately not
+/// applied via `frame.set_cursor_position` from within this function
+/// (or anything it calls) any more** -- every cursor-placing draw
+/// function in this app (`editor_pane::draw_editor`, `compare::draw_compare`,
+/// `find_file::draw_find_file`, `confirm::draw_confirm_transfer_popup`,
+/// ...) now *returns* the position instead, up to `main.rs::run`, which
+/// applies it once, itself, after `terminal.draw` has actually finished
+/// and the whole frame has reached the terminal.
+///
+/// This split exists to fix a real, reported flicker: `ratatui`'s own
+/// `Terminal::draw` (confirmed directly from its source,
+/// `ratatui-core::terminal::render`/`terminal::buffers`) applies
+/// `Frame::set_cursor_position` in two *separate* steps after the
+/// buffer diff is written -- `show_cursor()`, then `set_cursor_position()`
+/// -- and `ratatui-crossterm`'s own backend (also confirmed directly)
+/// implements each of those three cursor operations (`hide_cursor`/
+/// `show_cursor`/`set_cursor_position`) with `execute!`, which flushes
+/// immediately, on its own, rather than queuing alongside the diff the
+/// way cell writes themselves do (`queue!`). The result: `show_cursor()`
+/// flushes *before* the real target position is applied, briefly making
+/// the *real* OS cursor visible at wherever the diff-write's own last
+/// `MoveTo` happened to leave it (for an edit that shortens a line --
+/// `Delete` at the command line, reported directly -- that's the blank
+/// cells written to clear the now-empty tail, i.e. visually the *end*
+/// of the line) before the very next flush moves it to the actually
+/// intended spot. Applying `set_cursor_position` before `show_cursor`
+/// ourselves, once, after the whole frame is already on screen, means
+/// the cursor only ever becomes visible already sitting in the right
+/// place -- see `main.rs::run`'s own application of this return value.
+pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Position>) {
     let theme = app.theme; // Theme is Copy -- see theme.rs for why
     let area = frame.area();
     // Plain `F4` editing (no linked preview) and its own `ConfirmDiscard`
@@ -64,22 +95,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
     let has_linked_preview = app.markdown_edit_preview.is_some();
     match &mut app.mode {
         Mode::Editing(editor) if !has_linked_preview => {
-            draw_editor(frame, area, editor, &theme);
+            let mut cursor = draw_editor(frame, area, editor, &theme);
             if editor.is_searching() {
                 // Drawn on top, same "popup over a full-screen mode"
                 // shape as ConfirmDiscard below -- and takes over the
                 // real terminal cursor from draw_editor's own buffer-
                 // cursor placement, same reasoning as the command line's
                 // own cursor yielding to whichever popup is showing.
-                let cursor = editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme);
-                frame.set_cursor_position(cursor);
+                cursor = Some(editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme));
             }
-            return [(1, 1), (1, 1)];
+            return ([(1, 1), (1, 1)], cursor);
         }
         Mode::ConfirmDiscard(editor) if !has_linked_preview => {
-            draw_editor(frame, area, editor, &theme);
+            let cursor = draw_editor(frame, area, editor, &theme);
             draw_confirm_discard_popup(frame, area, &theme);
-            return [(1, 1), (1, 1)];
+            return ([(1, 1), (1, 1)], cursor);
         }
         // Same "editor full-screen, popup on top" shape as
         // `ConfirmDiscard` right above -- only ever reached while
@@ -89,17 +119,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         // counterpart to also wire up in the split-view code below, the
         // way `Mode::ConfirmDiscard`/`Mode::Editing` themselves have.
         Mode::EditorMenu(editor, menu) => {
-            draw_editor(frame, area, editor, &theme);
+            let cursor = draw_editor(frame, area, editor, &theme);
             editor_menu::draw_editor_menu(frame, area, menu, &theme, app.popup_style);
-            return [(1, 1), (1, 1)];
+            return ([(1, 1), (1, 1)], cursor);
         }
         // `EditorMenu`'s own `Keybindings` item -- same shape and same
         // reasoning as `EditorMenu` immediately above.
         Mode::EditorKeymapMenu(editor, menu) => {
             let current = editor.keymap_mode();
-            draw_editor(frame, area, editor, &theme);
+            let cursor = draw_editor(frame, area, editor, &theme);
             editor_keymap_menu::draw_editor_keymap_menu(frame, area, menu, &theme, app.popup_style, current);
-            return [(1, 1), (1, 1)];
+            return ([(1, 1), (1, 1)], cursor);
         }
         // `Alt+F5`'s own full-screen comparer -- same "takes over the
         // whole frame, `return` before the ordinary 2-panel layout runs
@@ -109,18 +139,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         // browser panel's worth of space (`TODO/file-compare.md`'s own
         // "Rendering approach"/data-model sketch).
         Mode::CompareFiles(state) => {
-            compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
-            return [(1, 1), (1, 1)];
+            let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
+            return ([(1, 1), (1, 1)], cursor);
         }
         Mode::CompareMenu(state, menu) => {
-            compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
+            let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
             compare_menu::draw_compare_menu(frame, area, menu, &theme, app.popup_style);
-            return [(1, 1), (1, 1)];
+            return ([(1, 1), (1, 1)], cursor);
         }
         Mode::CompareLineEndingMenu(state, menu) => {
-            compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
+            let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
             compare_line_ending_menu::draw_compare_line_ending_menu(frame, area, menu, &theme, app.popup_style, app.compare_line_ending_display);
-            return [(1, 1), (1, 1)];
+            return ([(1, 1), (1, 1)], cursor);
         }
         // Reuses the built-in editor's own "Unsaved changes" popup
         // (`draw_confirm_discard_popup`) unmodified -- it's already
@@ -128,9 +158,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         // Compare's own confirm-discard prompt needs exactly the same
         // Y/N choice over whichever screen was showing before `Esc`.
         Mode::CompareConfirmDiscard(state) => {
-            compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
+            let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
             draw_confirm_discard_popup(frame, area, &theme);
-            return [(1, 1), (1, 1)];
+            return ([(1, 1), (1, 1)], cursor);
         }
         Mode::Browsing
         | Mode::MainMenu(_)
@@ -281,12 +311,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
     // command line rather than owning a text field of its own (Far
     // Manager's own `Alt+F8` behaves the same way), so the cursor
     // still belongs down here, visible under the popup.
-    if matches!(app.mode, Mode::Browsing | Mode::CommandHistory(_)) {
-        frame.set_cursor_position(Position {
+    let mut cursor = if matches!(app.mode, Mode::Browsing | Mode::CommandHistory(_)) {
+        Some(Position {
             x: root[1].x + prefix_len + app.command_line_cursor as u16,
             y: root[1].y,
-        });
-    }
+        })
+    } else {
+        None
+    };
 
     // The F9/Ctrl+P popups show over the browser, like a Far Manager
     // menu, not in place of it -- unlike Editing/ConfirmDiscard above,
@@ -299,13 +331,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         Mode::PopupStyleMenu(menu) => popup_style_menu::draw_popup_style_menu(frame, area, menu, &theme, popup_style),
         Mode::ConfirmDelete(pending) => confirm::draw_confirm_delete_popup(frame, area, pending, &theme, popup_style),
         Mode::ConfirmTransfer(pending) => {
-            let cursor = confirm::draw_confirm_transfer_popup(frame, area, pending, &theme, popup_style);
-            frame.set_cursor_position(cursor);
+            cursor = Some(confirm::draw_confirm_transfer_popup(frame, area, pending, &theme, popup_style));
         }
         Mode::FindFile(state) => {
-            if let Some(cursor) = find_file::draw_find_file(frame, area, state, &theme, popup_style) {
-                frame.set_cursor_position(cursor);
-            }
+            cursor = find_file::draw_find_file(frame, area, state, &theme, popup_style);
         }
         Mode::CommandHistory(menu) => {
             command_line::draw_command_history(frame, area, menu, &app.command_history, &app.command_line, &theme, popup_style);
@@ -313,19 +342,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         Mode::ChangeDrive(menu) => drive_menu::draw_drive_menu(frame, area, menu, &theme, popup_style),
         Mode::UserMenu(menu) => user_menu::draw_user_menu(frame, area, menu, &theme, popup_style),
         Mode::UserMenuPrompt(prompt) => {
-            let cursor = user_menu::draw_user_menu_prompt(frame, area, prompt, &theme, popup_style);
-            frame.set_cursor_position(cursor);
+            cursor = Some(user_menu::draw_user_menu_prompt(frame, area, prompt, &theme, popup_style));
         }
         Mode::ConfirmPortFarMenu(far_path) => user_menu::draw_confirm_port_far_menu(frame, area, far_path, &theme, popup_style),
         Mode::AddUserMenuItem(menu, form) => {
             user_menu::draw_user_menu(frame, area, menu, &theme, popup_style);
-            let cursor = user_menu::draw_add_user_menu_item(frame, area, form, &theme, popup_style);
-            frame.set_cursor_position(cursor);
+            cursor = Some(user_menu::draw_add_user_menu_item(frame, area, form, &theme, popup_style));
         }
         Mode::Info(message) => draw_info_popup(frame, area, message, &theme, popup_style),
         Mode::MarkdownLinkSearch(_, search) => {
-            let cursor = markdown_preview::draw_markdown_link_search(frame, area, search, &theme, popup_style);
-            frame.set_cursor_position(cursor);
+            cursor = Some(markdown_preview::draw_markdown_link_search(frame, area, search, &theme, popup_style));
         }
         // Both mirror plain `F4`'s own popups (top of this function) --
         // reached here instead because a linked preview
@@ -334,13 +360,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> [(usize, usize); 2] {
         // early, full-screen return.
         Mode::ConfirmDiscard(_) if has_linked_preview => draw_confirm_discard_popup(frame, area, &theme),
         Mode::Editing(editor) if has_linked_preview && editor.is_searching() => {
-            let cursor = editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme);
-            frame.set_cursor_position(cursor);
+            cursor = Some(editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme));
         }
         _ => {}
     }
 
-    [left_columns, right_columns]
+    ([left_columns, right_columns], cursor)
 }
 
 

@@ -163,6 +163,40 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mouse_cap
 }
 
 
+/// Draws one frame and applies whatever real terminal cursor position
+/// `ui::draw` returned -- factored out since both the loop below and
+/// its own up-front priming draw (see its doc comment) need the exact
+/// same sequence.
+///
+/// Applies the cursor *after* `terminal.draw` has actually finished and
+/// flushed, in `set_cursor_position` then `show_cursor` order -- the
+/// reverse of what `ratatui::Terminal::draw` would have done on its own
+/// had `ui::draw` still called `Frame::set_cursor_position` internally.
+/// See `ui::draw`'s own doc comment for the full trace through
+/// `ratatui`'s and `ratatui-crossterm`'s source confirming why that
+/// order (`show_cursor` before the real target position is applied)
+/// is what caused a real, reported flicker -- moving to *this* order
+/// means the cursor only ever becomes visible already sitting in the
+/// right place, for every `Mode` that places one, not just the command
+/// line.
+fn draw_and_apply_cursor(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<[(usize, usize); 2]> {
+    let mut layout = [(1usize, 0usize); 2];
+    let mut cursor = None;
+    terminal.draw(|frame| {
+        let (drawn_layout, drawn_cursor) = ui::draw(frame, app);
+        layout = drawn_layout;
+        cursor = drawn_cursor;
+    })?;
+    match cursor {
+        Some(position) => {
+            terminal.set_cursor_position(position)?;
+            terminal.show_cursor()?;
+        }
+        None => terminal.hide_cursor()?,
+    }
+    Ok(layout)
+}
+
 fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
     // Seeds `app.panels`' own `columns`/`visible_rows` from the real
     // terminal size before the loop's *own* first frame ever reaches the
@@ -179,16 +213,14 @@ fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Resu
     // `wait_for_event` below blocks for input in between. This extra
     // draw+apply cycle up front means the loop's own first visible frame
     // already has correct, real values to render with.
-    let mut layout = [(1usize, 0usize); 2];
-    terminal.draw(|frame| layout = ui::draw(frame, app))?;
+    let layout = draw_and_apply_cursor(terminal, app)?;
     for (panel, (cols, rows)) in app.panels.iter_mut().zip(layout) {
         panel.set_columns(cols);
         panel.set_visible_rows(rows);
     }
 
     while !app.should_quit {
-        let mut layout = [(1usize, 0usize); 2];
-        terminal.draw(|frame| layout = ui::draw(frame, app))?;
+        let layout = draw_and_apply_cursor(terminal, app)?;
         for (panel, (cols, rows)) in app.panels.iter_mut().zip(layout) {
             panel.set_columns(cols);
             panel.set_visible_rows(rows);
@@ -255,7 +287,14 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
     loop {
         let poll_interval = if background_task_pending(app) { BACKGROUND_TASK_POLL_INTERVAL } else { alt_key::POLL_INTERVAL };
         if event::poll(poll_interval)? {
-            return handle_event(app, terminal);
+            // A key event `handle_event` never actually dispatched
+            // anything for (see `handle_key_event`'s own doc comment)
+            // keeps this loop going instead of returning -- there's
+            // nothing new on screen to justify `run()`'s own redraw.
+            if handle_event(app, terminal)? {
+                return Ok(());
+            }
+            continue;
         }
         if poll_background_tasks(app) {
             return Ok(());
@@ -270,12 +309,18 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
 
 #[cfg(not(windows))]
 fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    if !background_task_pending(app) {
-        return handle_event(app, terminal);
-    }
     loop {
+        if !background_task_pending(app) {
+            if handle_event(app, terminal)? {
+                return Ok(());
+            }
+            continue;
+        }
         if event::poll(BACKGROUND_TASK_POLL_INTERVAL)? {
-            return handle_event(app, terminal);
+            if handle_event(app, terminal)? {
+                return Ok(());
+            }
+            continue;
         }
         if poll_background_tasks(app) {
             return Ok(());
@@ -284,7 +329,11 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
 }
 
 
-fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+/// Returns whether the caller (`wait_for_event`) should actually redraw
+/// -- `false` only for a key event that `handle_key_event` itself never
+/// acted on at all (see its own doc comment), so `run()`'s own loop
+/// doesn't spend a full frame redrawing something nothing changed.
+fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
     match event::read()? {
         Event::Key(key) => handle_key_event(app, key, terminal),
         // Only ever arrives while `App::markdown_edit_preview` has
@@ -298,9 +347,10 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
         Event::Mouse(mouse) => {
             explorer::handle_markdown_preview_mouse(app, mouse);
             let last_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown).then_some(mouse.kind);
-            drain_pending_mouse_events(app, terminal, last_scroll)
+            drain_pending_mouse_events(app, terminal, last_scroll)?;
+            Ok(true)
         }
-        _ => Ok(()),
+        _ => Ok(true),
     }
 }
 
@@ -366,7 +416,10 @@ fn drain_pending_mouse_events(app: &mut App, terminal: &mut Terminal<CrosstermBa
                     last_scroll = Some(mouse.kind);
                 }
             }
-            Event::Key(key) => return handle_key_event(app, key, terminal),
+            Event::Key(key) => {
+                handle_key_event(app, key, terminal)?;
+                return Ok(());
+            }
             _ => {}
         }
     }
@@ -413,12 +466,30 @@ fn is_navigation_reversal(prev: KeyCode, next: KeyCode) -> bool {
 /// character/column, not a whole page, so a repeat backlog there is
 /// nowhere near long enough to notice, and coalescing typed characters
 /// would be actively wrong).
-fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+///
+/// Returns whether anything was actually dispatched -- `false` only for
+/// a bare `key.kind != KeyEventKind::Press` (`dispatch_key_event`'s own
+/// very first check no-ops on those unconditionally, for every mode).
+/// Windows' Console API reports a real key-up `KeyEventKind::Release`
+/// for every physical keypress, not just the down-stroke
+/// (`is_repeatable_navigation_key`'s own doc comment already covers the
+/// down-stroke's own repeat behavior) -- before this, `run()`'s own loop
+/// redrew once for *that* too, a real, reported symptom: the terminal's
+/// own real cursor briefly visits wherever `Release` leaves it during
+/// that spurious redraw (a screen redraw always ends by repositioning
+/// the terminal cursor for whatever `Mode` is now active) before the
+/// state genuinely settles, reading as a visible flicker/jump on
+/// certain terminals for keys whose own redraw is otherwise cheap
+/// enough to land inside one visible refresh window (`Delete`/`Backspace`
+/// on the command line, reported directly). Skipping the redraw
+/// entirely for a key `dispatch_key_event` never touched removes that
+/// spurious frame outright, for every key, not just the one reported.
+fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
     dispatch_key_event(app, key, terminal)?;
     if key.kind == KeyEventKind::Press && is_repeatable_navigation_key(key.code) {
         drain_pending_navigation_keys(app, terminal, key.code)?;
     }
-    Ok(())
+    Ok(key.kind == KeyEventKind::Press)
 }
 
 /// See `handle_key_event`'s own doc comment. A key found mid-burst that

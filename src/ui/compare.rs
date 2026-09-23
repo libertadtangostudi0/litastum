@@ -1,6 +1,6 @@
 use edtui::{Highlight, Index2};
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::Paragraph,
@@ -36,7 +36,7 @@ use crate::theming::Theme;
 /// the same technique (and the same underlying `edtui` viewport-follows-
 /// cursor fact) already fixed a real scroll bug in the read-only
 /// version of this view; see that method's own doc comment.
-pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) {
+pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) -> Option<Position> {
     let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Min(3), Constraint::Length(1)]).split(area);
     let panes = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(50), Constraint::Percentage(50)]).split(rows[0]);
 
@@ -60,8 +60,8 @@ pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &mut CompareSta
 
     let left_line_endings = state.line_endings(Side::Left).to_vec();
     let right_line_endings = state.line_endings(Side::Right).to_vec();
-    draw_pane(frame, panes[0], &mut state.left, theme, state.focus == Side::Left, line_ending_display, &left_line_endings);
-    draw_pane(frame, panes[1], &mut state.right, theme, state.focus == Side::Right, line_ending_display, &right_line_endings);
+    let left_cursor = draw_pane(frame, panes[0], &mut state.left, theme, state.focus == Side::Left, line_ending_display, &left_line_endings);
+    let right_cursor = draw_pane(frame, panes[1], &mut state.right, theme, state.focus == Side::Right, line_ending_display, &right_line_endings);
 
     let hint = Line::from(vec![
         Span::styled("Tab ", Style::default().fg(theme.accent)),
@@ -76,19 +76,17 @@ pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &mut CompareSta
         Span::styled("Close", Style::default().fg(theme.text_dim)),
     ]);
     frame.render_widget(hint, rows[1]);
+    left_cursor.or(right_cursor)
 }
 
-fn draw_pane(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme, is_focused: bool, line_ending_display: LineEndingDisplay, line_endings: &[Option<LineEnding>]) {
+fn draw_pane(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme, is_focused: bool, line_ending_display: LineEndingDisplay, line_endings: &[Option<LineEnding>]) -> Option<Position> {
     let viewport_top_row = editor.viewport_top_row();
     frame.render_widget(editor.view(theme, area), area);
-    if is_focused {
-        if let Some(pos) = editor.cursor_screen_position() {
-            frame.set_cursor_position(pos);
-        }
-    }
+    let cursor = if is_focused { editor.cursor_screen_position() } else { None };
     if line_ending_display == LineEndingDisplay::Shown {
         draw_line_ending_overlay(frame, area, line_endings, viewport_top_row, theme);
     }
+    cursor
 }
 
 /// One whole-line `Highlight` per changed (`Removed`/`Added`) real row
@@ -215,7 +213,7 @@ mod tests {
     fn render(state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) -> ratatui::buffer::Buffer {
         let backend = TestBackend::new(60, 12);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| draw_compare(frame, frame.area(), state, theme, line_ending_display)).unwrap();
+        terminal.draw(|frame| { draw_compare(frame, frame.area(), state, theme, line_ending_display); }).unwrap();
         terminal.backend().buffer().clone()
     }
 

@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::explorer::{FindFileField, FindFilePhase, FindFileState};
+use crate::text_field;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
@@ -88,7 +89,7 @@ fn draw_typing(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &The
         PopupStyle::Classic => Line::from(Span::raw(" Find file ")),
         PopupStyle::Rounded => Line::from(Span::styled("Find file", Style::default().fg(theme.text).add_modifier(Modifier::BOLD))),
     };
-    let inner = popup::draw_frame(frame, area, theme, style, title, 50, height);
+    let inner = popup::draw_frame(frame, area, theme, style, title, popup::percent_width(area, 80), height);
 
     let mut constraints = vec![Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)];
     if has_separator {
@@ -116,15 +117,13 @@ fn draw_typing(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &The
     frame.render_widget(name_label, rows[content_start]);
 
     let name_row = rows[content_start + 1];
-    let name_value = Line::from(Span::styled(state.query.clone(), Style::default().fg(theme.text)));
-    frame.render_widget(name_value, name_row);
+    frame.render_widget(selection_line(&state.query, state.cursor, state.selection_anchor, theme), name_row);
 
     let content_label = Line::from(Span::styled("Text to find:", label_style(FindFileField::Content)));
     frame.render_widget(content_label, rows[content_start + 2]);
 
     let content_row = rows[content_start + 3];
-    let content_value = Line::from(Span::styled(state.content_query.clone(), Style::default().fg(theme.text)));
-    frame.render_widget(content_value, content_row);
+    frame.render_widget(selection_line(&state.content_query, state.content_cursor, state.content_selection_anchor, theme), content_row);
 
     let hint = Line::from(vec![
         Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
@@ -141,6 +140,30 @@ fn draw_typing(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &The
         FindFileField::Content => (content_row, state.content_cursor),
     };
     Position { x: cursor_row.x + cursor as u16, y: cursor_row.y }
+}
+
+/// Renders `text` with its own active selection (`text_field::selection_range`),
+/// if any, picked out with the same background used for the active row
+/// in a panel (`popup::selected_text_style`) -- no selection just
+/// renders as plain text. Same shape as
+/// `ui/confirm.rs::destination_line`, generalized to either of Find
+/// file's two independent fields.
+fn selection_line(text: &str, cursor: usize, selection_anchor: Option<usize>, theme: &Theme) -> Line<'static> {
+    let Some(anchor) = selection_anchor else {
+        return Line::from(Span::styled(text.to_string(), Style::default().fg(theme.text)));
+    };
+
+    let (start, end) = text_field::selection_range(anchor, cursor);
+    let chars: Vec<char> = text.chars().collect();
+    let before: String = chars[..start].iter().collect();
+    let selected: String = chars[start..end].iter().collect();
+    let after: String = chars[end..].iter().collect();
+
+    Line::from(vec![
+        Span::styled(before, Style::default().fg(theme.text)),
+        Span::styled(selected, popup::selected_text_style(theme)),
+        Span::styled(after, Style::default().fg(theme.text)),
+    ])
 }
 
 /// `FindFilePhase::Searching`: a live "please wait" screen shown while
@@ -160,7 +183,7 @@ fn draw_searching(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &
         PopupStyle::Classic => Line::from(Span::raw(" Find file ")),
         PopupStyle::Rounded => Line::from(Span::styled("Find file", Style::default().fg(theme.text).add_modifier(Modifier::BOLD))),
     };
-    let inner = popup::draw_frame(frame, area, theme, style, title, 50, height);
+    let inner = popup::draw_frame(frame, area, theme, style, title, popup::percent_width(area, 80), height);
 
     let mut constraints = vec![Constraint::Length(1), Constraint::Length(1)];
     if has_separator {
@@ -235,7 +258,7 @@ fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Th
         PopupStyle::Classic => Line::from(Span::raw(format!(" {title_text} "))),
         PopupStyle::Rounded => Line::from(Span::styled(title_text, Style::default().fg(theme.text).add_modifier(Modifier::BOLD))),
     };
-    let inner = popup::draw_frame(frame, area, theme, style, title, 70, height);
+    let inner = popup::draw_frame(frame, area, theme, style, title, popup::percent_width(area, 80), height);
 
     // Two fixed rows for the export message (label + detail, e.g.
     // "Exported to:" / the actual path) even when there isn't one --
@@ -332,8 +355,10 @@ mod tests {
             phase: FindFilePhase::Results,
             query: "x".to_string(),
             cursor: 0,
+            selection_anchor: None,
             content_query: String::new(),
             content_cursor: 0,
+            content_selection_anchor: None,
             active_field: FindFileField::Name,
             name_history_index: None,
             content_history_index: None,
@@ -416,7 +441,7 @@ mod tests {
 
     #[test]
     fn rounded_style_typing_shows_a_separator_under_the_title() {
-        let state = FindFileState { phase: FindFilePhase::Typing, query: String::new(), cursor: 0, content_query: String::new(), content_cursor: 0, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, pending: None, search_duration: None, results_capped: false, export_message: None };
+        let state = FindFileState { phase: FindFilePhase::Typing, query: String::new(), cursor: 0, selection_anchor: None, content_query: String::new(), content_cursor: 0, content_selection_anchor: None, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, pending: None, search_duration: None, results_capped: false, export_message: None };
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let theme = Theme::dark();
@@ -443,7 +468,7 @@ mod tests {
     /// visible under either style.
     #[test]
     fn rounded_style_typing_phase_shows_the_label_and_hint_not_just_an_empty_box() {
-        let state = FindFileState { phase: FindFilePhase::Typing, query: "abc".to_string(), cursor: 3, content_query: String::new(), content_cursor: 0, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, pending: None, search_duration: None, results_capped: false, export_message: None };
+        let state = FindFileState { phase: FindFilePhase::Typing, query: "abc".to_string(), cursor: 3, selection_anchor: None, content_query: String::new(), content_cursor: 0, content_selection_anchor: None, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, pending: None, search_duration: None, results_capped: false, export_message: None };
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let theme = Theme::dark();
@@ -465,7 +490,7 @@ mod tests {
     /// and the cursor should follow whichever field is currently active.
     #[test]
     fn typing_phase_shows_both_fields_and_the_cursor_follows_the_active_one() {
-        let mut state = FindFileState { phase: FindFilePhase::Typing, query: "read".to_string(), cursor: 4, content_query: "todo".to_string(), content_cursor: 4, active_field: FindFileField::Content, name_history_index: None, content_history_index: None, results: vec![], selected: 0, pending: None, search_duration: None, results_capped: false, export_message: None };
+        let mut state = FindFileState { phase: FindFilePhase::Typing, query: "read".to_string(), cursor: 4, selection_anchor: None, content_query: "todo".to_string(), content_cursor: 4, content_selection_anchor: None, active_field: FindFileField::Content, name_history_index: None, content_history_index: None, results: vec![], selected: 0, pending: None, search_duration: None, results_capped: false, export_message: None };
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let theme = Theme::dark();
@@ -504,6 +529,82 @@ mod tests {
         assert_eq!(cursor_on_name.unwrap().y, name_label_y + 1, "cursor should follow active_field back to the name row");
     }
 
+    /// Regression coverage for a real report: the popup used a fixed
+    /// absolute width regardless of the real terminal size, reading as
+    /// too narrow on a wide window. `draw_frame` is given
+    /// `popup::percent_width(area, 80)` now -- confirms the rendered
+    /// popup's own border actually sits at roughly 80% of two very
+    /// different terminal widths, not the same fixed column count
+    /// either time.
+    #[test]
+    fn typing_popup_width_scales_with_the_terminal_not_a_fixed_column_count() {
+        let state = FindFileState { phase: FindFilePhase::Typing, query: String::new(), cursor: 0, selection_anchor: None, content_query: String::new(), content_cursor: 0, content_selection_anchor: None, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, pending: None, search_duration: None, results_capped: false, export_message: None };
+        let theme = Theme::dark();
+
+        // The popup's top border row is the one row that contains both
+        // rounded corner glyphs -- the gap between them is the popup's
+        // own real rendered width.
+        let popup_width = |terminal_width: u16| -> u16 {
+            let backend = TestBackend::new(terminal_width, 24);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|frame| { draw_find_file(frame, frame.area(), &state, &theme, PopupStyle::Rounded); }).unwrap();
+            let buffer = terminal.backend().buffer();
+            for y in 0..buffer.area.height {
+                let left = (0..buffer.area.width).find(|&x| buffer[(x, y)].symbol() == "╭");
+                let right = (0..buffer.area.width).rev().find(|&x| buffer[(x, y)].symbol() == "╮");
+                if let (Some(left), Some(right)) = (left, right) {
+                    return right - left + 1;
+                }
+            }
+            panic!("no top border row found");
+        };
+
+        let narrow = popup_width(80);
+        let wide = popup_width(160);
+        assert!(wide > narrow + 40, "a much wider terminal should give a visibly wider popup, not the same fixed width (narrow={narrow}, wide={wide})");
+    }
+
+    /// Regression coverage for a real report: neither field's own text
+    /// selection was ever rendered at all -- only plain text. A selected
+    /// run should carry `popup::selected_text_style`'s own background,
+    /// the rest of the field's text shouldn't.
+    #[test]
+    fn a_selection_in_the_name_field_is_rendered_with_the_selection_background() {
+        let state = FindFileState {
+            phase: FindFilePhase::Typing,
+            query: "abcdef".to_string(),
+            cursor: 4,
+            selection_anchor: Some(1),
+            content_query: String::new(),
+            content_cursor: 0,
+            content_selection_anchor: None,
+            active_field: FindFileField::Name,
+            name_history_index: None,
+            content_history_index: None,
+            results: vec![],
+            selected: 0,
+            pending: None,
+            search_duration: None,
+            results_capped: false,
+            export_message: None,
+        };
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::dark();
+        terminal.draw(|frame| { draw_find_file(frame, frame.area(), &state, &theme, PopupStyle::Rounded); }).unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let row_text = |y: u16| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol().to_string()).collect::<String>();
+        let value_row = (0..buffer.area.height).find(|&y| row_text(y).contains("abcdef")).expect("query value row should render");
+        let row_cells: Vec<String> = (0..buffer.area.width).map(|x| buffer[(x, value_row)].symbol().to_string()).collect();
+        let start_x = row_cells.windows(6).position(|w| w.join("") == "abcdef").unwrap();
+
+        let selection_style = popup::selected_text_style(&theme);
+        assert_eq!(buffer[((start_x + 1) as u16, value_row)].bg, selection_style.bg.unwrap(), "\"b\" (inside the selection, [1,4)) should carry the selection background");
+        assert_ne!(buffer[(start_x as u16, value_row)].bg, selection_style.bg.unwrap(), "\"a\" (before the selection) should not");
+        assert_ne!(buffer[((start_x + 4) as u16, value_row)].bg, selection_style.bg.unwrap(), "\"e\" (after the selection) should not");
+    }
+
     /// A non-empty content query should show up in the results title
     /// too, alongside the name query -- both are part of what the
     /// search actually ran with.
@@ -540,7 +641,7 @@ mod tests {
             std::fs::write(dir.join(format!("file_{i}.txt")), b"hi").unwrap();
         }
         let pending = crate::explorer::spawn_search(dir, "file".to_string(), String::new());
-        let state = FindFileState { phase: FindFilePhase::Searching, query: "file".to_string(), cursor: 4, content_query: String::new(), content_cursor: 0, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, pending: Some(pending), search_duration: None, results_capped: false, export_message: None };
+        let state = FindFileState { phase: FindFilePhase::Searching, query: "file".to_string(), cursor: 4, selection_anchor: None, content_query: String::new(), content_cursor: 0, content_selection_anchor: None, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, pending: Some(pending), search_duration: None, results_capped: false, export_message: None };
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let theme = Theme::dark();
@@ -562,7 +663,7 @@ mod tests {
     /// ever somehow broken -- degrades to a plain status line instead.
     #[test]
     fn searching_phase_does_not_panic_with_no_pending_search() {
-        let state = FindFileState { phase: FindFilePhase::Searching, query: String::new(), cursor: 0, content_query: String::new(), content_cursor: 0, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, pending: None, search_duration: None, results_capped: false, export_message: None };
+        let state = FindFileState { phase: FindFilePhase::Searching, query: String::new(), cursor: 0, selection_anchor: None, content_query: String::new(), content_cursor: 0, content_selection_anchor: None, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, pending: None, search_duration: None, results_capped: false, export_message: None };
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let theme = Theme::dark();

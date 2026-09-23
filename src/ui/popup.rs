@@ -105,6 +105,20 @@ pub fn draw_frame(frame: &mut Frame, area: Rect, theme: &Theme, style: PopupStyl
 }
 
 
+/// A popup width that's `percent` of `area`'s own width -- `draw_frame`
+/// itself still clamps to `area.width` as a hard ceiling, so this is
+/// purely for popups that should visibly scale with the real terminal
+/// window rather than sit at one fixed cell count regardless of how
+/// wide the app actually is. Added for Find file's own popup (both the
+/// typing form and its results list): reported directly as too narrow
+/// on a wide terminal, compared against most of this app's other
+/// popups, which stay a fixed width by design (a short list/prompt
+/// genuinely doesn't need to grow with the window).
+pub fn percent_width(area: Rect, percent: u16) -> u16 {
+    ((area.width as u32 * percent as u32) / 100) as u16
+}
+
+
 /// A dim horizontal rule the width of `area`, separating a popup's
 /// header/content/footer sections -- every popup in the reference
 /// mockup has one before its footer hint row.

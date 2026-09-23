@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
@@ -14,7 +14,13 @@ use super::centered_rect;
 /// Renders the built-in editor full-screen (border/title drawn by
 /// `Editor::view` itself), with a one-line hint bar below for its
 /// special bindings (everything else goes straight to `edtui`).
-pub(super) fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme) {
+///
+/// Returns the real terminal cursor's own desired position rather than
+/// calling `frame.set_cursor_position` itself -- see `ui/mod.rs::draw`'s
+/// own doc comment on why every cursor-placing draw function in this
+/// app returns it instead now, up to `main.rs::run`, which applies it
+/// once, after the whole frame has actually reached the terminal.
+pub(super) fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme) -> Option<Position> {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(1)])
@@ -23,9 +29,7 @@ pub(super) fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut Editor, th
     let dirty_marker = if editor.is_dirty() { " [modified]" } else { "" };
 
     frame.render_widget(editor.view(theme, rows[0]), rows[0]);
-    if let Some(pos) = editor.cursor_screen_position() {
-        frame.set_cursor_position(pos);
-    }
+    let cursor = editor.cursor_screen_position();
 
     let hint = Line::from(vec![
         Span::styled("Ctrl+S ", Style::default().fg(theme.accent)),
@@ -39,6 +43,7 @@ pub(super) fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut Editor, th
         Span::styled(dirty_marker, Style::default().fg(theme.danger)),
     ]);
     frame.render_widget(hint, rows[1]);
+    cursor
 }
 
 

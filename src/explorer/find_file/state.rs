@@ -36,6 +36,12 @@ pub struct FindFileState {
     pub query: String,
     /// Character index into `query` — see `text_field.rs`.
     pub cursor: usize,
+    /// `query`'s own active text selection, if any — see
+    /// `text_field.rs`'s own selection functions and
+    /// `PendingTransfer::selection_anchor`'s doc comment for the
+    /// convention this follows (`None` = no selection, `Some(anchor)` =
+    /// selecting between `anchor` and `cursor`).
+    pub selection_anchor: Option<usize>,
     /// Far Manager's own "Text to find" — an optional substring
     /// (case-insensitive, plain substring only, no glob/regex) a
     /// matching file's own *content* must also contain, on top of
@@ -47,6 +53,11 @@ pub struct FindFileState {
     pub content_query: String,
     /// Character index into `content_query` — see `text_field.rs`.
     pub content_cursor: usize,
+    /// `content_query`'s own active text selection -- same shape as
+    /// `selection_anchor` above, independent of it (each field owns its
+    /// own selection, same as each field already owns its own cursor
+    /// and history).
+    pub content_selection_anchor: Option<usize>,
     /// Which of `query`/`content_query` `Tab` and typed characters
     /// currently reach.
     pub active_field: FindFileField,
@@ -110,8 +121,10 @@ impl FindFileState {
             phase: FindFilePhase::Typing,
             query: String::new(),
             cursor: 0,
+            selection_anchor: None,
             content_query: String::new(),
             content_cursor: 0,
+            content_selection_anchor: None,
             active_field: FindFileField::Name,
             name_history_index: None,
             content_history_index: None,
@@ -132,30 +145,35 @@ impl FindFileState {
     /// `Editor::search_history_up` exactly, just against `query`/`cursor`/
     /// `name_history_index` instead of the editor's own search box.
     pub fn name_history_up(&mut self, history: &[String]) {
-        Self::history_up(history, &mut self.name_history_index, &mut self.query, &mut self.cursor);
+        Self::history_up(history, &mut self.name_history_index, &mut self.query, &mut self.cursor, &mut self.selection_anchor);
     }
 
     /// `Down` -- the other half of `name_history_up`: steps back toward
     /// the most recent entry, and past it clears the field entirely. A
     /// no-op while not currently browsing history at all.
     pub fn name_history_down(&mut self, history: &[String]) {
-        Self::history_down(history, &mut self.name_history_index, &mut self.query, &mut self.cursor);
+        Self::history_down(history, &mut self.name_history_index, &mut self.query, &mut self.cursor, &mut self.selection_anchor);
     }
 
     /// Same as `name_history_up`, for `content_query`/`content_cursor`/
     /// `content_history_index`.
     pub fn content_history_up(&mut self, history: &[String]) {
-        Self::history_up(history, &mut self.content_history_index, &mut self.content_query, &mut self.content_cursor);
+        Self::history_up(history, &mut self.content_history_index, &mut self.content_query, &mut self.content_cursor, &mut self.content_selection_anchor);
     }
 
     /// Same as `name_history_down`, for `content_query`/`content_cursor`/
     /// `content_history_index`.
     pub fn content_history_down(&mut self, history: &[String]) {
-        Self::history_down(history, &mut self.content_history_index, &mut self.content_query, &mut self.content_cursor);
+        Self::history_down(history, &mut self.content_history_index, &mut self.content_query, &mut self.content_cursor, &mut self.content_selection_anchor);
     }
 
-    /// Shared mechanics for `name_history_up`/`content_history_up`.
-    fn history_up(history: &[String], index: &mut Option<usize>, field: &mut String, cursor: &mut usize) {
+    /// Shared mechanics for `name_history_up`/`content_history_up` --
+    /// also clears `selection_anchor` (added alongside real cursor/
+    /// selection editing for this field): a stale selection from before
+    /// recalling a history entry could otherwise point past the end of
+    /// the newly recalled (possibly shorter) text.
+    fn history_up(history: &[String], index: &mut Option<usize>, field: &mut String, cursor: &mut usize, selection_anchor: &mut Option<usize>) {
+        *selection_anchor = None;
         if history.is_empty() {
             return;
         }
@@ -168,8 +186,11 @@ impl FindFileState {
         *cursor = field.chars().count();
     }
 
-    /// Shared mechanics for `name_history_down`/`content_history_down`.
-    fn history_down(history: &[String], index: &mut Option<usize>, field: &mut String, cursor: &mut usize) {
+    /// Shared mechanics for `name_history_down`/`content_history_down`
+    /// -- see `history_up`'s own doc comment for why this also clears
+    /// `selection_anchor`.
+    fn history_down(history: &[String], index: &mut Option<usize>, field: &mut String, cursor: &mut usize, selection_anchor: &mut Option<usize>) {
+        *selection_anchor = None;
         let Some(current) = *index else {
             return;
         };

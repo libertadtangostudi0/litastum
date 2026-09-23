@@ -51,20 +51,65 @@ pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<()> {
         }
         return Ok(());
     }
-    let (field, cursor, history_index) = match state.active_field {
-        FindFileField::Name => (&mut state.query, &mut state.cursor, &mut state.name_history_index),
-        FindFileField::Content => (&mut state.content_query, &mut state.content_cursor, &mut state.content_history_index),
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    let (field, cursor, selection_anchor, history_index) = match state.active_field {
+        FindFileField::Name => (&mut state.query, &mut state.cursor, &mut state.selection_anchor, &mut state.name_history_index),
+        FindFileField::Content => (&mut state.content_query, &mut state.content_cursor, &mut state.content_selection_anchor, &mut state.content_history_index),
     };
     match key.code {
+        // Backspace/Delete remove the active selection instead of one
+        // character, if there is one -- `text_field::delete_selection`
+        // reports whether it did anything, so the single-character path
+        // only runs when there wasn't a selection to consume instead.
+        // Same shape as `explorer::confirm::handle_confirm_transfer_key`'s
+        // own destination field, reported missing here directly.
         KeyCode::Backspace => {
-            text_field::backspace(field, cursor);
+            let removed_selection = text_field::delete_selection(field, cursor, selection_anchor);
+            if !removed_selection {
+                text_field::backspace(field, cursor);
+            }
             *history_index = None; // editing means fresh typing, not still showing a recalled entry
         }
-        KeyCode::Left => text_field::move_left(cursor),
-        KeyCode::Right => text_field::move_right(field, cursor),
-        KeyCode::Home => text_field::move_home(cursor),
-        KeyCode::End => text_field::move_end(field, cursor),
-        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Delete => {
+            let removed_selection = text_field::delete_selection(field, cursor, selection_anchor);
+            if !removed_selection {
+                text_field::delete_forward(field, cursor);
+            }
+            *history_index = None;
+        }
+        // Shift+Left/Right (selection) is checked ahead of Ctrl+Left/
+        // Right and plain Left/Right below -- `KeyCode::Left` alone
+        // can't distinguish "extend selection" from "move" or "jump a
+        // word".
+        KeyCode::Left if shift => text_field::extend_selection_left(cursor, selection_anchor),
+        KeyCode::Right if shift => text_field::extend_selection_right(field, cursor, selection_anchor),
+        KeyCode::Left if ctrl => {
+            *selection_anchor = None;
+            text_field::move_word_left(field, cursor);
+        }
+        KeyCode::Right if ctrl => {
+            *selection_anchor = None;
+            text_field::move_word_right(field, cursor);
+        }
+        // Plain Left/Right with a selection active collapses to that
+        // selection's near edge (standard editor behavior) rather than
+        // moving one further character past it.
+        KeyCode::Left => text_field::collapse_selection_left(cursor, selection_anchor),
+        KeyCode::Right => text_field::collapse_selection_right(field, cursor, selection_anchor),
+        KeyCode::Home => {
+            *selection_anchor = None;
+            text_field::move_home(cursor);
+        }
+        KeyCode::End => {
+            *selection_anchor = None;
+            text_field::move_end(field, cursor);
+        }
+        // Typing over an active selection replaces it, like any normal
+        // text field -- delete it first, then insert at the (now
+        // collapsed) cursor.
+        KeyCode::Char(c) if !ctrl => {
+            text_field::delete_selection(field, cursor, selection_anchor);
             text_field::insert_char(field, cursor, c);
             *history_index = None; // same reasoning as Backspace above
         }
@@ -138,6 +183,75 @@ mod tests {
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
         assert_eq!(state.query, "ab");
+    }
+
+    /// Regression coverage for a real report: neither field supported
+    /// text selection at all -- only plain cursor movement and
+    /// character-at-a-time editing. `Shift+Left` should open a
+    /// selection, matching `explorer::confirm::handle_confirm_transfer_key`'s
+    /// own destination field.
+    #[test]
+    fn shift_left_selects_the_character_before_the_cursor() {
+        let mut state = FindFileState::new();
+        state.query = "abc".to_string();
+        state.cursor = 3;
+        let mut app = app_with_find_file(state);
+
+        handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap();
+
+        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        assert_eq!(state.selection_anchor, Some(3));
+        assert_eq!(state.cursor, 2);
+    }
+
+    #[test]
+    fn backspace_with_a_selection_deletes_the_whole_selection_not_one_character() {
+        let mut state = FindFileState::new();
+        state.query = "abc".to_string();
+        state.cursor = 3;
+        state.selection_anchor = Some(1);
+        let mut app = app_with_find_file(state);
+
+        handle_typing_key(&mut app, key(KeyCode::Backspace)).unwrap();
+
+        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        assert_eq!(state.query, "a", "should have removed \"bc\" (the whole selection), not just \"c\"");
+        assert_eq!(state.selection_anchor, None);
+    }
+
+    #[test]
+    fn typing_over_a_selection_replaces_it() {
+        let mut state = FindFileState::new();
+        state.query = "abc".to_string();
+        state.cursor = 3;
+        state.selection_anchor = Some(0);
+        let mut app = app_with_find_file(state);
+
+        handle_typing_key(&mut app, key(KeyCode::Char('x'))).unwrap();
+
+        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        assert_eq!(state.query, "x");
+    }
+
+    /// The content field's own selection is entirely independent of the
+    /// name field's -- same "each field owns its own state" convention
+    /// this popup already has for cursor position and history.
+    #[test]
+    fn the_content_fields_selection_is_independent_of_the_name_fields() {
+        let mut state = FindFileState::new();
+        state.query = "name".to_string();
+        state.cursor = 4;
+        state.selection_anchor = Some(0);
+        state.content_query = "content".to_string();
+        state.content_cursor = 7;
+        state.active_field = FindFileField::Content;
+        let mut app = app_with_find_file(state);
+
+        handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap();
+
+        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        assert_eq!(state.content_selection_anchor, Some(7));
+        assert_eq!(state.selection_anchor, Some(0), "the name field's own selection shouldn't be touched");
     }
 
     #[test]
