@@ -144,7 +144,11 @@ pub fn draw_command_history(frame: &mut Frame, area: Rect, menu: &CommandHistory
 
     let hint = Line::from(vec![
         Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" select  ", Style::default().fg(theme.text_dim)),
+        Span::styled(" run  ", Style::default().fg(theme.text_dim)),
+        Span::styled("Tab", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" edit  ", Style::default().fg(theme.text_dim)),
+        Span::styled("F8", Style::default().fg(theme.danger).add_modifier(Modifier::BOLD)),
+        Span::styled(" delete  ", Style::default().fg(theme.text_dim)),
         Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
         Span::styled(" cancel", Style::default().fg(theme.text_dim)),
     ]);
@@ -288,7 +292,7 @@ mod tests {
         let text = rendered(&menu, &history, PopupStyle::Rounded);
 
         assert!(text.contains('╰'), "should use Rounded's own corner glyph, not Classic's square one: {text}");
-        let hint_line_index = text.lines().position(|line| line.contains("select")).expect("hint row should render");
+        let hint_line_index = text.lines().position(|line| line.contains("run")).expect("hint row should render");
         let line_above = text.lines().nth(hint_line_index - 1).unwrap();
         assert!(line_above.contains('─'), "a separator should sit right above the footer hints: {line_above:?}");
     }
@@ -303,7 +307,7 @@ mod tests {
         let text = rendered(&menu, &history, PopupStyle::Classic);
 
         assert!(text.contains("command_0000"), "history entries should be visible: {text}");
-        assert!(text.contains("select"), "hint row should be visible: {text}");
+        assert!(text.contains("run"), "hint row should be visible: {text}");
         assert!(text.contains('└'), "should use Classic's own square corner: {text}");
     }
 }

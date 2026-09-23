@@ -5,6 +5,7 @@ mod command_line;
 mod compare;
 mod editor;
 mod explorer;
+mod history_dir;
 mod list_cursor;
 mod logging;
 #[cfg(test)]
@@ -601,7 +602,7 @@ fn dispatch_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: 
         Mode::ShellMenu(_) => command_line::handle_shell_menu_key(app, key),
         Mode::PopupStyleMenu(_) => theming::handle_popup_style_menu_key(app, key),
         Mode::FindFile(_) => explorer::handle_find_file_key(app, key),
-        Mode::CommandHistory(_) => command_line::handle_history_key(app, key),
+        Mode::CommandHistory(_) => command_line::handle_history_key(app, key, terminal),
         Mode::ChangeDrive(_) => explorer::handle_drive_menu_key(app, key),
         Mode::UserMenu(_) => explorer::handle_user_menu_key(app, key, terminal),
         Mode::UserMenuPrompt(_) => explorer::handle_user_menu_prompt_key(app, key, terminal),

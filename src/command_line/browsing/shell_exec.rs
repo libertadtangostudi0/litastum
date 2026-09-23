@@ -87,7 +87,7 @@ fn to_crossterm_color(color: ratatui::style::Color) -> CtColor {
 /// to the configured shell profile (`app.shell_profiles[app.active_shell]`),
 /// inheriting stdio so interactive programs (an editor, a REPL, ...)
 /// work too, not just one-shot commands.
-pub(super) fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+pub(crate) fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     let input = app.command_line.trim().to_string();
     app.command_line.clear();
     app.command_line_cursor = 0;

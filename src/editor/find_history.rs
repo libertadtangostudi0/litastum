@@ -2,27 +2,30 @@ use std::fs;
 
 use tracing::{debug, warn};
 
+use crate::history_dir::history_dir;
+
 /// Longest the in-memory search history is allowed to grow — oldest
 /// entries drop off the front once exceeded. Same cap as
 /// `command_line::history::MAX_HISTORY`, no particular reason to differ.
 const MAX_HISTORY: usize = 50;
 
-/// Where persisted search history lives — a plain file in the current
-/// working directory, same deliberately-simple-for-now choice
-/// `command_line::history::HISTORY_FILE` already made (see its own doc
-/// comment for the reasoning and the `directories`-based alternative to
-/// revisit later). A separate file from `command_history.txt`, not a
-/// shared one — editor search queries and shell commands are different
-/// enough kinds of "history" that mixing them would make both harder to
-/// browse.
+/// The file name persisted search history is stored under, inside
+/// `history_dir()`'s own directory. A separate file from
+/// `command_history.txt`, not a shared one — editor search queries and
+/// shell commands are different enough kinds of "history" that mixing
+/// them would make both harder to browse.
 const HISTORY_FILE: &str = "editor_search_history.txt";
 
 /// Loads persisted search history, one query per line, oldest first —
-/// same shape as `command_line::history::load_history`. A missing file
-/// or any read error just means "no history yet", not a startup
-/// failure.
+/// same shape as `command_line::history::load_history`. A missing/
+/// unreachable `history_dir()`, a missing file, or any read error just
+/// means "no history yet", not a startup failure.
 pub fn load_history() -> Vec<String> {
-    match fs::read_to_string(HISTORY_FILE) {
+    let Some(dir) = history_dir() else {
+        debug!("search history: no history directory available, starting empty");
+        return Vec::new();
+    };
+    match fs::read_to_string(dir.join(HISTORY_FILE)) {
         Ok(contents) => contents.lines().map(str::to_string).collect(),
         Err(err) => {
             debug!(%err, "search history: no persisted history to load");
@@ -35,7 +38,15 @@ pub fn load_history() -> Vec<String> {
 /// `command_line::history::save_history`; a failed save shouldn't block
 /// closing the search box.
 pub fn save_history(history: &[String]) {
-    if let Err(err) = fs::write(HISTORY_FILE, history.join("\n")) {
+    let Some(dir) = history_dir() else {
+        warn!("search history: no history directory available, not persisted");
+        return;
+    };
+    if let Err(err) = fs::create_dir_all(&dir) {
+        warn!(%err, "search history: failed to create the history directory");
+        return;
+    }
+    if let Err(err) = fs::write(dir.join(HISTORY_FILE), history.join("\n")) {
         warn!(%err, "search history: failed to persist");
     }
 }

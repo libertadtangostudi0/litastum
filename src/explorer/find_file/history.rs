@@ -2,41 +2,46 @@ use std::fs;
 
 use tracing::{debug, warn};
 
+use crate::history_dir::history_dir;
+
 /// Longest either in-memory history is allowed to grow — oldest entries
 /// drop off the front once exceeded. Same cap as
 /// `command_line::history::MAX_HISTORY`/`editor::find_history::MAX_HISTORY`,
 /// no particular reason to differ.
 const MAX_HISTORY: usize = 50;
 
-/// Where the "File name to find" field's own persisted history lives —
-/// a plain file in the current working directory, same deliberately-
-/// simple-for-now choice `command_line::history::HISTORY_FILE`/
-/// `editor::find_history::HISTORY_FILE` already made. A separate file
-/// from the content-query history below -- requested directly, asking
-/// for the two histories to be kept separate: the two fields are
-/// different enough
-/// kinds of query (a file name/glob mask vs. a substring to find inside
-/// a file) that mixing their history would make recalling either one
-/// harder, the same reasoning that already kept editor search history
-/// and command history in two separate files instead of one shared one.
+/// The file name the "File name to find" field's own persisted history
+/// is stored under, inside `history_dir()`'s own directory. A separate
+/// file from the content-query history below -- requested directly,
+/// asking for the two histories to be kept separate: the two fields are
+/// different enough kinds of query (a file name/glob mask vs. a
+/// substring to find inside a file) that mixing their history would
+/// make recalling either one harder, the same reasoning that already
+/// kept editor search history and command history in two separate
+/// files instead of one shared one.
 pub const NAME_HISTORY_FILE: &str = "find_file_name_history.txt";
 
-/// Where the "Text to find" field's own persisted history lives — see
-/// `NAME_HISTORY_FILE`'s own doc comment for why this is a distinct
-/// file rather than a shared one.
+/// The file name the "Text to find" field's own persisted history is
+/// stored under — see `NAME_HISTORY_FILE`'s own doc comment for why
+/// this is a distinct file rather than a shared one.
 pub const CONTENT_HISTORY_FILE: &str = "find_file_content_history.txt";
 
-/// Loads persisted history from `path`, one query per line, oldest
+/// Loads persisted history for `file_name`, one query per line, oldest
 /// first — same shape as `editor::find_history::load_history`. A
-/// missing file or any read error just means "no history yet," not a
-/// startup failure. Parameterized by `path` (rather than a single
-/// hardcoded filename, the way the two sibling history modules do it)
-/// since this one module serves both of Find file's own histories.
-pub fn load_history(path: &str) -> Vec<String> {
-    match fs::read_to_string(path) {
+/// missing/unreachable `history_dir()`, a missing file, or any read
+/// error just means "no history yet," not a startup failure.
+/// Parameterized by `file_name` (rather than a single hardcoded
+/// filename, the way the two sibling history modules do it) since this
+/// one module serves both of Find file's own histories.
+pub fn load_history(file_name: &str) -> Vec<String> {
+    let Some(dir) = history_dir() else {
+        debug!(file_name, "find file: no history directory available, starting empty");
+        return Vec::new();
+    };
+    match fs::read_to_string(dir.join(file_name)) {
         Ok(contents) => contents.lines().map(str::to_string).collect(),
         Err(err) => {
-            debug!(%err, path, "find file: no persisted history to load");
+            debug!(%err, file_name, "find file: no persisted history to load");
             Vec::new()
         }
     }
@@ -45,9 +50,17 @@ pub fn load_history(path: &str) -> Vec<String> {
 /// Best-effort — logged and otherwise ignored on failure, same as the
 /// two sibling history modules; a failed save shouldn't block closing
 /// the popup.
-pub fn save_history(path: &str, history: &[String]) {
-    if let Err(err) = fs::write(path, history.join("\n")) {
-        warn!(%err, path, "find file: failed to persist history");
+pub fn save_history(file_name: &str, history: &[String]) {
+    let Some(dir) = history_dir() else {
+        warn!(file_name, "find file: no history directory available, not persisted");
+        return;
+    };
+    if let Err(err) = fs::create_dir_all(&dir) {
+        warn!(%err, file_name, "find file: failed to create the history directory");
+        return;
+    }
+    if let Err(err) = fs::write(dir.join(file_name), history.join("\n")) {
+        warn!(%err, file_name, "find file: failed to persist history");
     }
 }
 
