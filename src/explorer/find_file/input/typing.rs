@@ -78,10 +78,22 @@ pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<()> {
             }
             *history_index = None;
         }
-        // Shift+Left/Right (selection) is checked ahead of Ctrl+Left/
-        // Right and plain Left/Right below -- `KeyCode::Left` alone
-        // can't distinguish "extend selection" from "move" or "jump a
-        // word".
+        // Ctrl+Shift+Left/Right (word-wise selection) is checked ahead
+        // of plain Shift+Left/Right below -- `shift` alone is `true` for
+        // both, so without this the word-wise combination would silently
+        // fall into character-wise selection instead of extending by a
+        // whole word (reported directly: it "didn't work" in the sense
+        // of doing the wrong thing, not nothing at all). Mirrors
+        // `command_line/browsing/mod.rs`'s own
+        // `extend_selection_word_left`/`_right` wiring, the one thing
+        // this popup's otherwise-`explorer::confirm`-shaped selection
+        // handling didn't already have.
+        KeyCode::Left if ctrl && shift => text_field::extend_selection_word_left(field, cursor, selection_anchor),
+        KeyCode::Right if ctrl && shift => text_field::extend_selection_word_right(field, cursor, selection_anchor),
+        // Shift+Left/Right (character-wise selection) is checked ahead
+        // of Ctrl+Left/Right and plain Left/Right below -- `KeyCode::Left`
+        // alone can't distinguish "extend selection" from "move" or
+        // "jump a word".
         KeyCode::Left if shift => text_field::extend_selection_left(cursor, selection_anchor),
         KeyCode::Right if shift => text_field::extend_selection_right(field, cursor, selection_anchor),
         KeyCode::Left if ctrl => {
@@ -202,6 +214,57 @@ mod tests {
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
         assert_eq!(state.selection_anchor, Some(3));
         assert_eq!(state.cursor, 2);
+    }
+
+    /// Regression coverage for a real report: `Ctrl+Shift+Left` used to
+    /// silently fall into the plain `Shift+Left` (character-wise) arm
+    /// instead, since a guard checking `shift` alone doesn't rule out
+    /// `ctrl` also being held -- it "didn't work" in the sense of doing
+    /// the wrong thing (one character), not nothing at all.
+    #[test]
+    fn ctrl_shift_left_selects_by_a_whole_word_not_one_character() {
+        let mut state = FindFileState::new();
+        state.query = "one two".to_string();
+        state.cursor = 7;
+        let mut app = app_with_find_file(state);
+
+        handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT)).unwrap();
+
+        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        assert_eq!(state.selection_anchor, Some(7));
+        assert_eq!(state.cursor, 4, "should have jumped back a whole word (\"two\"), not just one character");
+    }
+
+    #[test]
+    fn ctrl_shift_right_selects_by_a_whole_word() {
+        let mut state = FindFileState::new();
+        state.query = "one two".to_string();
+        state.cursor = 0;
+        let mut app = app_with_find_file(state);
+
+        handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)).unwrap();
+
+        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        assert_eq!(state.selection_anchor, Some(0));
+        assert_eq!(state.cursor, 3, "should have jumped forward a whole word (\"one\")");
+    }
+
+    /// The content field's own Ctrl+Shift selection is independent of
+    /// the name field's, same as plain Shift already is.
+    #[test]
+    fn ctrl_shift_left_on_the_content_field_does_not_touch_the_name_field() {
+        let mut state = FindFileState::new();
+        state.content_query = "one two".to_string();
+        state.content_cursor = 7;
+        state.active_field = FindFileField::Content;
+        let mut app = app_with_find_file(state);
+
+        handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT)).unwrap();
+
+        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        assert_eq!(state.content_selection_anchor, Some(7));
+        assert_eq!(state.content_cursor, 4);
+        assert_eq!(state.selection_anchor, None, "the name field's own selection shouldn't be touched");
     }
 
     #[test]
