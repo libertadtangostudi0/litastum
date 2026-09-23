@@ -4,7 +4,7 @@ use color_eyre::eyre::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
-    style::{Color as CtColor, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+    style::{Color as CtColor, Print, ResetColor, SetForegroundColor},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{prelude::CrosstermBackend, Terminal};
@@ -13,28 +13,33 @@ use tracing::debug;
 use crate::app::App;
 use crate::command_line::history::{record_history, save_history};
 
-/// Prints one line to the real (TUI-suspended) console using
-/// `theme.text` on `theme.bg` -- as close as this project's "inherit
-/// stdio, don't capture it" design (see
-/// `.claude/rules/litastum-command-line.md`) can get to real Far
-/// Manager's own `CommandLine.UserScreen` color group. This only
-/// colors litastum's *own* printed lines (the echoed `"{cwd}> "`
-/// prompt and the "Press any key..." pause) -- the shelled-out
-/// command's own output is never touched, since it's real inherited
-/// stdio, not something rendered through our own buffer the way Far's
-/// full-screen text-mode architecture lets it recolor everything
-/// (including a child process's output). Reproducing that would need
-/// a PTY-based capture-and-recolor layer -- a much bigger redesign
-/// than this project's current "suspend the TUI and hand off stdio
-/// directly" approach.
+mod app_paths;
+
+/// Prints one line to the real (TUI-suspended) console in `theme.text`
+/// -- as close as this project's "inherit stdio, don't capture it"
+/// design (see `.claude/rules/litastum-command-line.md`) can get to
+/// real Far Manager's own `CommandLine.UserScreen` color group. This
+/// only colors litastum's *own* printed lines (the echoed `"{cwd}> "`
+/// prompt) -- the shelled-out command's own output is never touched,
+/// since it's real inherited stdio, not something rendered through our
+/// own buffer the way Far's full-screen text-mode architecture lets it
+/// recolor everything (including a child process's output).
+/// Reproducing that would need a PTY-based capture-and-recolor layer --
+/// a much bigger redesign than this project's current "suspend the TUI
+/// and hand off stdio directly" approach.
+///
+/// **Foreground only, no explicit background** -- reported directly
+/// from a screenshot: painting `theme.bg` behind these lines made them
+/// stand out as a highlighted-looking rectangle, since a real
+/// terminal's own default background is whatever the user has it set
+/// to, not necessarily `theme.bg` (the same reason
+/// `.claude/rules/litastum-popup-design.md`'s own popup-fill saga
+/// eventually gave up trying to match an untouched default by painting
+/// a guessed color over it). Leaving the background alone lets these
+/// lines blend into the same real background every other line on this
+/// suspended console already sits on.
 fn print_themed(theme: &crate::theming::Theme, args: std::fmt::Arguments) -> Result<()> {
-    execute!(
-        std::io::stdout(),
-        SetForegroundColor(to_crossterm_color(theme.text)),
-        SetBackgroundColor(to_crossterm_color(theme.bg)),
-        Print(args),
-        ResetColor,
-    )?;
+    execute!(std::io::stdout(), SetForegroundColor(to_crossterm_color(theme.text)), Print(args), ResetColor)?;
     Ok(())
 }
 
@@ -142,6 +147,37 @@ pub(super) fn parse_cd_target(input: &str) -> Option<&str> {
 /// `.arg(line)` is correct (and `raw_arg` isn't available at all) on
 /// Unix: `sh -c` receives `line` as one real `argv` element with no
 /// re-escaping in between, no reparsing-child mismatch to correct for.
+/// Rewrites `line`'s first word to an absolute path if it's a bare
+/// executable name (no `\`, `/`, or `:` — i.e. not already a path of
+/// some kind) that only resolves through `app_paths::resolve`, not
+/// `cmd.exe`'s own `PATH` search. Leaves `line` untouched for the
+/// overwhelming majority of typed commands (a real word-in-`PATH` like
+/// `svn`/`git`, or nothing registered under that name at all) — this
+/// is meant to catch the narrow "GUI app registered via App Paths
+/// instead of `PATH`" case (`devenv`, and the same mechanism most other
+/// installed IDEs/editors use), not to replace `PATH` resolution.
+///
+/// Doesn't try to handle a first word that's itself quoted (e.g.
+/// `"my program" arg`) — a quoted first word already implies the user
+/// typed an actual path (quoting only ever exists to protect spaces in
+/// one), not the bare unadorned name this registry key is keyed by, so
+/// there's nothing this lookup could usefully add there.
+fn resolve_app_paths_command(line: &str) -> String {
+    let trimmed = line.trim_start();
+    let leading_ws = &line[..line.len() - trimmed.len()];
+    let (word, rest) = trimmed.split_at(trimmed.find(char::is_whitespace).unwrap_or(trimmed.len()));
+
+    if word.is_empty() || word.contains(['\\', '/', ':']) {
+        return line.to_string();
+    }
+
+    match app_paths::resolve(word) {
+        Some(resolved) => format!("{leading_ws}\"{}\"{rest}", resolved.display()),
+        None => line.to_string(),
+    }
+}
+
+
 fn append_command_line(command: &mut std::process::Command, line: &str) {
     #[cfg(windows)]
     {
@@ -156,15 +192,23 @@ fn append_command_line(command: &mut std::process::Command, line: &str) {
 
 /// Suspends the TUI and runs each of `lines` in sequence through the
 /// active shell profile, inheriting stdio (so interactive programs
-/// still work), pausing once at the end for a keypress before
-/// redrawing -- shared by the command line's own `Enter` (a single
-/// line, `run_command_line` above) and the user menu's own item
-/// execution (`explorer::user_menu`, one or more lines run back to
-/// back, matching real Far Manager's own multi-line user-menu items —
-/// e.g. `git pull` followed by `git remote update ...`). A spawn
-/// failure for one line is printed to the suspended console and
-/// doesn't stop the remaining lines from still running, same as a
-/// plain sequence of typed commands would behave.
+/// still work), then returns straight to the panels -- shared by the
+/// command line's own `Enter` (a single line, `run_command_line` above)
+/// and the user menu's own item execution (`explorer::user_menu`, one
+/// or more lines run back to back, matching real Far Manager's own
+/// multi-line user-menu items — e.g. `git pull` followed by `git remote
+/// update ...`). A spawn failure for one line is printed to the
+/// suspended console and doesn't stop the remaining lines from still
+/// running, same as a plain sequence of typed commands would behave.
+///
+/// **No "press any key" pause** -- reported directly as an unwanted
+/// extra keypress every single time, on top of the command's own
+/// `Enter`. An earlier version paused here so fast-scrolling output
+/// wouldn't vanish the instant the panels redrew over it; dropped
+/// anyway, per that report -- `Ctrl+O` (`toggle_panels_hidden`) already
+/// covers "I want to actually look at what a command printed" as its
+/// own dedicated, non-transient view, so this pause was only ever
+/// protecting against losing output nobody asked to look at again.
 pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, lines: &[String]) -> Result<()> {
     if lines.is_empty() {
         return Ok(());
@@ -181,7 +225,7 @@ pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermB
         print_themed(&app.theme, format_args!("{}> {line}\n", cwd.display()))?;
         let mut command = std::process::Command::new(&profile.program);
         command.args(&profile.args_prefix);
-        append_command_line(&mut command, line);
+        append_command_line(&mut command, &resolve_app_paths_command(line));
         let status = command.current_dir(&cwd).status();
         match status {
             Ok(status) if !status.success() => {
@@ -191,23 +235,6 @@ pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermB
             Ok(_) => {}
         }
     }
-    // Just a blank line, not a "Press any key to continue..." message --
-    // reported directly as unwanted, constant chrome on every single
-    // command. The wait below still exists (fast-scrolling output would
-    // otherwise vanish the instant the panels repaint), only the printed
-    // text was the complaint.
-    print_themed(&app.theme, format_args!("\n"))?;
-
-    // Wait for one real keypress before redrawing -- otherwise output
-    // that scrolled by fast is gone the instant the panels repaint.
-    loop {
-        if let Event::Key(k) = event::read()? {
-            if k.kind == KeyEventKind::Press {
-                break;
-            }
-        }
-    }
-
     enable_raw_mode()?;
     execute!(terminal.backend_mut(), EnterAlternateScreen)?;
     terminal.clear()?;
@@ -323,7 +350,7 @@ fn run_single_line_on_console(app: &mut App, line: &str) -> Result<()> {
     let cwd = app.active_panel().path.clone();
     let mut command = std::process::Command::new(&profile.program);
     command.args(&profile.args_prefix);
-    append_command_line(&mut command, line);
+    append_command_line(&mut command, &resolve_app_paths_command(line));
 
     disable_raw_mode()?;
     let status = command.current_dir(&cwd).status();
@@ -343,6 +370,31 @@ fn run_single_line_on_console(app: &mut App, line: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `app_paths::resolve` itself depends on real, per-machine registry
+    /// state, so these only cover the deterministic short-circuits --
+    /// the cases `resolve_app_paths_command` must never even query the
+    /// registry for.
+    mod resolve_app_paths_command_tests {
+        use super::*;
+
+        #[test]
+        fn leaves_an_already_pathlike_first_word_untouched() {
+            assert_eq!(resolve_app_paths_command(r"C:\tools\devenv.exe /build"), r"C:\tools\devenv.exe /build");
+            assert_eq!(resolve_app_paths_command("./run.sh --flag"), "./run.sh --flag");
+            assert_eq!(resolve_app_paths_command("git:status"), "git:status");
+        }
+
+        #[test]
+        fn leaves_a_bare_name_with_nothing_registered_untouched() {
+            assert_eq!(resolve_app_paths_command("definitely-not-a-real-command-xyz123 --version"), "definitely-not-a-real-command-xyz123 --version");
+        }
+
+        #[test]
+        fn preserves_leading_whitespace_and_the_rest_of_the_line() {
+            assert_eq!(resolve_app_paths_command("  definitely-not-a-real-command-xyz123 arg1 arg2"), "  definitely-not-a-real-command-xyz123 arg1 arg2");
+        }
+    }
 
     mod parse_cd_target_tests {
         use super::*;

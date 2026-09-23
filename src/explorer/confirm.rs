@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::app::{App, Mode, TransferOp};
 use crate::text_field;
@@ -71,7 +71,8 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
 /// this popup gets one and the always-live command line doesn't) —
 /// `Left`/`Right` move a character, `Ctrl+Left`/`Ctrl+Right` a word,
 /// `Home`/`End` to the edges, `Backspace`/`Delete` remove around the
-/// cursor. `Enter` performs the transfer (`fs_ops::copy_entry`/
+/// cursor, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` copy/cut/paste the active
+/// selection against the real OS clipboard. `Enter` performs the transfer (`fs_ops::copy_entry`/
 /// `move_entry`) and reloads *both* panels (the destination side
 /// always needs it, and a move also changes the source side); `Esc`
 /// cancels with nothing touched. A failed transfer is only logged, same
@@ -149,6 +150,18 @@ pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<()> {
             pending.selection_anchor = None;
             text_field::move_end(&pending.destination, &mut pending.cursor);
         }
+        // Ctrl+C/X/V against the real OS clipboard -- reported directly
+        // as a real gap: this field has a selection (Shift+Left/Right
+        // above) but no way to actually get part of a long path out of
+        // it. Same `arboard` dependency `editor::clipboard` already
+        // bridges into `edtui` with, used directly here instead since
+        // this popup isn't an `edtui` buffer at all.
+        KeyCode::Char('c') if ctrl => copy_selection_to_clipboard(&pending.destination, pending.cursor, pending.selection_anchor),
+        KeyCode::Char('x') if ctrl => {
+            copy_selection_to_clipboard(&pending.destination, pending.cursor, pending.selection_anchor);
+            text_field::delete_selection(&mut pending.destination, &mut pending.cursor, &mut pending.selection_anchor);
+        }
+        KeyCode::Char('v') if ctrl => paste_from_clipboard(&mut pending.destination, &mut pending.cursor, &mut pending.selection_anchor),
         // Typing over an active selection replaces it, like any normal
         // text field -- delete it first, then insert at the (now
         // collapsed) cursor.
@@ -160,6 +173,67 @@ pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<()> {
     }
 
     Ok(())
+}
+
+
+/// The active selection's own text, if there is one and it's non-empty
+/// -- split out of `copy_selection_to_clipboard` as a pure function so
+/// the actual substring arithmetic has real unit coverage without
+/// touching the real OS clipboard (this codebase deliberately avoids
+/// that elsewhere too -- `editor::clipboard`'s own tests never call a
+/// real `Clipboard::new()` either, since it isn't guaranteed to be
+/// available wherever the test suite happens to run).
+fn selected_text(text: &str, cursor: usize, selection_anchor: Option<usize>) -> Option<String> {
+    let anchor = selection_anchor?;
+    let (start, end) = text_field::selection_range(anchor, cursor);
+    let selected: String = text.chars().skip(start).take(end - start).collect();
+    (!selected.is_empty()).then_some(selected)
+}
+
+
+/// Copies the destination field's own active selection (nothing, if
+/// there isn't one) to the real OS clipboard -- a failure (no clipboard
+/// available in this environment, or the OS call itself failing) is
+/// only logged, same "don't fail the keystroke over it" rule
+/// `editor::clipboard::OsClipboardBridge` already follows.
+fn copy_selection_to_clipboard(text: &str, cursor: usize, selection_anchor: Option<usize>) {
+    let Some(selected) = selected_text(text, cursor, selection_anchor) else {
+        return;
+    };
+    match arboard::Clipboard::new() {
+        Ok(mut clipboard) => {
+            if let Err(err) = clipboard.set_text(selected) {
+                warn!(%err, "confirm transfer: clipboard set_text failed");
+            }
+        }
+        Err(err) => warn!(%err, "confirm transfer: clipboard unavailable"),
+    }
+}
+
+
+/// Pastes the real OS clipboard's text into the destination field,
+/// replacing the active selection first if there is one -- same
+/// "replace on type" convention the plain `KeyCode::Char` arm below
+/// already follows. A missing/unavailable clipboard or non-text
+/// contents is only logged, same as `copy_selection_to_clipboard`.
+fn paste_from_clipboard(text: &mut String, cursor: &mut usize, selection_anchor: &mut Option<usize>) {
+    let pasted = match arboard::Clipboard::new() {
+        Ok(mut clipboard) => match clipboard.get_text() {
+            Ok(pasted) => pasted,
+            Err(err) => {
+                warn!(%err, "confirm transfer: clipboard get_text failed");
+                return;
+            }
+        },
+        Err(err) => {
+            warn!(%err, "confirm transfer: clipboard unavailable");
+            return;
+        }
+    };
+    text_field::delete_selection(text, cursor, selection_anchor);
+    for c in pasted.chars().filter(|c| !c.is_control()) {
+        text_field::insert_char(text, cursor, c);
+    }
 }
 
 
@@ -305,6 +379,29 @@ mod tests {
 
         assert!(file.exists());
         assert!(matches!(app.mode, Mode::ConfirmDelete(_)));
+    }
+
+    mod selected_text_tests {
+        use super::*;
+
+        #[test]
+        fn no_anchor_means_no_selection() {
+            assert_eq!(selected_text("W:\\path\\to\\file.txt", 3, None), None);
+        }
+
+        #[test]
+        fn a_collapsed_selection_is_treated_as_none() {
+            assert_eq!(selected_text("W:\\path\\to\\file.txt", 5, Some(5)), None);
+        }
+
+        #[test]
+        fn extracts_the_selected_span_regardless_of_anchor_cursor_order() {
+            // "W:\path\to\file.txt" -- selecting just "path" (indices 3..7).
+            assert_eq!(selected_text("W:\\path\\to\\file.txt", 7, Some(3)), Some("path".to_string()));
+            // Same span, cursor and anchor swapped -- selection_range
+            // normalizes either order, this should too.
+            assert_eq!(selected_text("W:\\path\\to\\file.txt", 3, Some(7)), Some("path".to_string()));
+        }
     }
 
     fn pending_transfer(operation: TransferOp, source: PathBuf, destination: String) -> PendingTransfer {
