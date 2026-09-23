@@ -23,6 +23,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{prelude::CrosstermBackend, Terminal};
+use tracing::debug;
 
 use app::{App, Mode};
 
@@ -30,6 +31,7 @@ use app::{App, Mode};
 fn main() -> Result<()> {
     color_eyre::install()?;
     logging::init()?;
+    install_ctrl_c_handler()?;
     let start_dir = std::env::current_dir()?;
 
     let mut terminal = setup_terminal()?;
@@ -117,6 +119,43 @@ fn main() -> Result<()> {
     explorer::find_file_history::save_history(explorer::find_file_history::NAME_HISTORY_FILE, &app.find_file_name_history);
     explorer::find_file_history::save_history(explorer::find_file_history::CONTENT_HISTORY_FILE, &app.find_file_content_history);
     result
+}
+
+
+/// Reported directly: `Ctrl+C` pressed while a shelled-out command was
+/// running (`command_line::run_shell_command_lines` /
+/// `toggle_panels_hidden`'s own console loop -- both leave raw mode and
+/// hand the console to a real child process) took the whole litastum
+/// process down with it, not just the child. Root cause: raw mode is
+/// what normally keeps `Ctrl+C` from ever becoming an OS-level signal
+/// at all -- `enable_raw_mode` clears `ENABLE_PROCESSED_INPUT` on
+/// Windows / `ISIG` on Unix, so while the TUI itself has raw mode on,
+/// `Ctrl+C` arrives as an ordinary `KeyEvent` like any other key, never
+/// a signal. The moment raw mode is turned back off to run a real
+/// subprocess with inherited stdio, that protection goes away too --
+/// `Ctrl+C` becomes a real `CTRL_C_EVENT`/`SIGINT` again, delivered to
+/// *every* process still attached to the same console/process group,
+/// our own included. With no handler of our own installed, the
+/// platform's default action for that signal is to terminate the
+/// process -- so litastum died right along with the child it was
+/// waiting on.
+///
+/// Installing an otherwise-empty handler here doesn't suppress the
+/// signal for the *child* -- it's delivered to that process
+/// independently, and an ordinary CLI tool's own default disposition
+/// (interrupt/exit) still applies to it exactly as if it had been run
+/// directly in a real shell. It only stops *our* process from dying
+/// alongside it: the child gets interrupted, `Command::status()`
+/// returns once it exits, and control comes back to whichever of our
+/// own wrapper functions was waiting on it -- the same "Ctrl+C
+/// interrupts the foreground command, not the shell itself" behavior
+/// every real shell already has. `ctrlc` (rather than hand-rolling
+/// `SetConsoleCtrlHandler`/`sigaction` behind `#[cfg(windows)]`/
+/// `#[cfg(unix)]` ourselves) covers both platforms' actual mechanism
+/// with one call.
+fn install_ctrl_c_handler() -> Result<()> {
+    ctrlc::set_handler(|| debug!("Ctrl+C received; ignored at the litastum process level"))?;
+    Ok(())
 }
 
 

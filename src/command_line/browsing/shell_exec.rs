@@ -191,7 +191,12 @@ pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermB
             Ok(_) => {}
         }
     }
-    print_themed(&app.theme, format_args!("\nPress any key to continue...\n"))?;
+    // Just a blank line, not a "Press any key to continue..." message --
+    // reported directly as unwanted, constant chrome on every single
+    // command. The wait below still exists (fast-scrolling output would
+    // otherwise vanish the instant the panels repaint), only the printed
+    // text was the complaint.
+    print_themed(&app.theme, format_args!("\n"))?;
 
     // Wait for one real keypress before redrawing -- otherwise output
     // that scrolled by fast is gone the instant the panels repaint.
@@ -213,41 +218,124 @@ pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermB
 
 
 /// `Ctrl+O` -- real Far Manager's own "show/hide panels" toggle.
-/// Blocking and stateless, the same shape as `run_shell_command_lines`
-/// itself: no `App` field records "panels are currently hidden"
-/// anywhere -- this simply doesn't return control to the main loop's
-/// own `terminal.draw()` call until the panels should reappear, the
-/// same way `run_shell_command_lines` doesn't return until its own
-/// "press any key to continue" pause ends.
+/// Blocking, the same shape as `run_shell_command_lines` itself: this
+/// simply doesn't return control to the main loop's own `terminal.draw()`
+/// call until the panels should reappear.
 ///
-/// Deliberately *doesn't* touch raw mode at all (unlike
-/// `run_shell_command_lines`, which disables it so a real subprocess
-/// gets normal line-buffered input) -- there's no subprocess here to
-/// hand the terminal to, and staying in raw mode means a stray
-/// keypress other than `Ctrl+O` is silently swallowed rather than
-/// echoed as literal text onto the very console output the user is
-/// trying to look at cleanly.
+/// **Also a real command line now, not just a viewer** -- requested
+/// directly, since real Far Manager's own hidden-panels view lets you
+/// keep typing commands right there rather than only being able to look
+/// and then bring the panels straight back. Typed characters are echoed
+/// (raw mode suppresses the console's own echo, so this loop has to do
+/// it manually) and `Enter` runs the line through the same `cd`/`cls`/
+/// shell-out handling `run_command_line` uses -- but, unlike that path,
+/// stays right here afterward instead of restoring the panels: the
+/// point of this mode is to keep working directly against the real
+/// console, and forcing a return to the TUI after every command would
+/// defeat that. Only `Ctrl+O` itself brings the panels back.
 ///
-/// No "press any key" pause, no message printed at all, unlike
-/// `run_shell_command_lines`'s own post-command pause -- the entire
-/// point is to reveal whatever's *already* on the real terminal
-/// exactly as it is, not add anything on top of it. Only `Ctrl+O`
-/// itself brings the panels back; every other key (and mouse event) is
-/// silently ignored while hidden, matching real Far Manager's own
-/// behavior for this toggle.
-pub(super) fn toggle_panels_hidden(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+/// Raw mode stays enabled for the interactive typing loop itself (same
+/// as the rest of the app -- an OS-level line discipline would swallow
+/// keystrokes until its own `Enter`, and crossterm needs raw mode to
+/// deliver them one at a time for this loop to echo itself). It's
+/// toggled off only for the moment a real subprocess actually runs
+/// (`run_single_line_on_console`), same bracketing
+/// `run_shell_command_lines` uses, so an interactive child (an editor,
+/// a REPL, ...) still gets normal line-buffered input.
+pub(super) fn toggle_panels_hidden(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
+    let mut input = String::new();
+    print_prompt(app)?;
+
     loop {
-        if let Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                break;
+        let Event::Key(key) = event::read()? else { continue };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            break;
+        }
+
+        match key.code {
+            KeyCode::Enter => {
+                execute!(std::io::stdout(), Print("\n"))?;
+                let line = input.trim().to_string();
+                input.clear();
+                if !line.is_empty() {
+                    record_history(app, &line);
+                    save_history(&app.command_history);
+                    run_single_line_on_console(app, &line)?;
+                }
+                print_prompt(app)?;
             }
+            KeyCode::Backspace => {
+                if input.pop().is_some() {
+                    execute!(std::io::stdout(), Print("\u{8} \u{8}"))?;
+                }
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                input.push(c);
+                execute!(std::io::stdout(), Print(c))?;
+            }
+            _ => {}
         }
     }
 
     execute!(terminal.backend_mut(), EnterAlternateScreen)?;
     terminal.clear()?;
+    app.active_panel().reload()?;
+    Ok(())
+}
+
+
+/// Echoes `"{cwd}> "` onto the real console, same prefix
+/// `run_shell_command_lines` prints before each line it runs -- kept as
+/// its own function since `toggle_panels_hidden`'s loop prints it again
+/// after every command (the `cwd` may have just changed via `cd`).
+fn print_prompt(app: &mut App) -> Result<()> {
+    let cwd = app.active_panel().path.clone();
+    print_themed(&app.theme, format_args!("{}> ", cwd.display()))
+}
+
+
+/// Runs one already-trimmed, non-empty line directly against the real
+/// console `toggle_panels_hidden`'s loop is already sitting on -- no
+/// alternate-screen or panel-redraw dance around it, since that loop
+/// never left the real console in the first place. Shares `cd`/`cls`
+/// handling and the actual shell-out with `run_command_line`, just
+/// without that function's own leave/re-enter-alternate-screen and
+/// "press any key" pause, which only make sense when returning to the
+/// TUI is the point.
+fn run_single_line_on_console(app: &mut App, line: &str) -> Result<()> {
+    if let Some(target) = parse_cd_target(line) {
+        debug!(target, "hidden console: cd");
+        app.active_panel().change_dir(target)?;
+        return Ok(());
+    }
+
+    if line == "cls" || line == "clear" {
+        execute!(std::io::stdout(), crossterm::terminal::Clear(crossterm::terminal::ClearType::All), crossterm::cursor::MoveTo(0, 0))?;
+        return Ok(());
+    }
+
+    let profile = app.shell_profiles[app.active_shell].clone();
+    let cwd = app.active_panel().path.clone();
+    let mut command = std::process::Command::new(&profile.program);
+    command.args(&profile.args_prefix);
+    append_command_line(&mut command, line);
+
+    disable_raw_mode()?;
+    let status = command.current_dir(&cwd).status();
+    enable_raw_mode()?;
+
+    match status {
+        Ok(status) if !status.success() => {
+            debug!(?status, "command exited non-zero");
+        }
+        Err(err) => print_themed(&app.theme, format_args!("failed to launch '{}': {err}\n", profile.program))?,
+        Ok(_) => {}
+    }
     Ok(())
 }
 

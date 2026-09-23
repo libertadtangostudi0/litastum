@@ -57,9 +57,11 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     // requested directly so real output already sitting on the actual
     // terminal (a command run through `run_shell_command_lines`, or
     // anything printed before litastum itself even started) can be
-    // looked at again without re-running whatever produced it.
+    // looked at again without re-running whatever produced it. Also a
+    // real command line of its own while hidden -- see
+    // `shell_exec::toggle_panels_hidden`'s own doc comment.
     if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        return toggle_panels_hidden(terminal);
+        return toggle_panels_hidden(app, terminal);
     }
 
     if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {

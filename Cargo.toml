@@ -23,6 +23,7 @@ ratatui-image = { version = "11.0.8", default-features = false, features = ["cro
 pulldown-cmark = { version = "0.13.4", default-features = false }
 ignore = "0.4"
 similar = "2"
+ctrlc = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
