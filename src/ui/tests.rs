@@ -69,6 +69,49 @@ fn labels_stay_within_the_six_character_budget() {
     }
 }
 
+/// The actual reported bug: closing the built-in editor showed a
+/// single entry crammed into one narrow column for one whole extra
+/// frame. Root cause was `draw`'s own early-return branches (the
+/// editor, Compare, ...) reporting a hardcoded `(1, 1)` layout instead
+/// of each panel's own already-known `(columns, visible_rows)` --
+/// `main.rs::run`'s loop applies whatever this function returns
+/// straight onto both panels via `Panel::set_columns`/`set_visible_rows`
+/// on *every* frame, including every frame the editor stays open, so a
+/// hardcoded placeholder was clobbering the real values down to a
+/// forced single column/row the whole time, not just leaving them
+/// stale for one frame. This drives `draw` itself while in
+/// `Mode::Editing`, with the panels pre-seeded to real, multi-column
+/// values, and checks the returned layout still reports those same
+/// values back -- not `(1, 1)`.
+#[test]
+fn editing_mode_reports_each_panels_own_unchanged_layout_not_a_placeholder() {
+    use crate::app::Mode;
+    use crate::editor::{Editor, EditorKeymapMode};
+    use crate::test_support::{test_app, unique_scratch_dir};
+
+    let dir = unique_scratch_dir("ui-editing-layout");
+    let file = dir.join("shell.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+
+    let mut app = test_app(dir);
+    app.panels[0].set_columns(3);
+    app.panels[0].set_visible_rows(7);
+    app.panels[1].set_columns(2);
+    app.panels[1].set_visible_rows(5);
+    app.mode = Mode::Editing(Editor::open(file, None, EditorKeymapMode::Standard).expect("open test fixture file"));
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut layout = [(0usize, 0usize); 2];
+    terminal
+        .draw(|frame| {
+            layout = draw(frame, &mut app).0;
+        })
+        .unwrap();
+
+    assert_eq!(layout, [(3, 7), (2, 5)], "editing shouldn't report a placeholder layout that would clobber the panels' real columns/rows");
+}
+
 #[test]
 fn draw_info_popup_shows_the_message_and_the_dismiss_hint() {
     let backend = TestBackend::new(80, 24);

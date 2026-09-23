@@ -207,6 +207,17 @@ impl Panel {
     }
 
 
+    /// The row count last reported by the renderer (`set_visible_rows`)
+    /// -- `main.rs::run`'s own doc comment covers why a full-screen mode
+    /// (the built-in editor, Compare) needs to read this back rather
+    /// than just handing `set_visible_rows` a fresh value every frame:
+    /// there's nothing fresh to report while a panel isn't actually
+    /// being drawn at all.
+    pub fn visible_rows(&self) -> usize {
+        self.visible_rows
+    }
+
+
     /// Sets the display column count — recomputed by the renderer each
     /// frame from the panel's on-screen width — and re-clamps the
     /// cursor in case a resize shrank the entry it pointed at.

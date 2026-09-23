@@ -93,6 +93,27 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     // draws the editor into the *left* panel's own slot and the live
     // preview into the *right* one -- see `left_columns`/`right_columns`.
     let has_linked_preview = app.markdown_edit_preview.is_some();
+    // What every early-return branch below hands back in place of a
+    // real, freshly-rendered `(columns, visible_rows)` pair -- one of
+    // these modes (the built-in editor, Compare) doesn't draw either
+    // panel at all, so there's nothing new to report. Reported directly
+    // as a real, persistent glitch, not just a one-frame flash: closing
+    // the editor showed a single entry crammed into one narrow column
+    // for one whole extra frame, the same shape `main.rs::run`'s own
+    // priming-draw comment already describes for startup. Root cause
+    // here was the same "one frame stale" timing, just recurring on
+    // every full-screen-mode exit instead of only at startup: this
+    // function used to return the *placeholder* `[(1, 1), (1, 1)]`
+    // itself, which `main.rs::run`'s loop then applied to *both* panels
+    // via `Panel::set_columns`/`set_visible_rows` on *every single
+    // frame* the editor/Compare stayed open -- clobbering their real
+    // values down to a forced single column/row the whole time, not
+    // just leaving them stale. Reporting each panel's own
+    // already-known values instead (nothing panel-specific actually
+    // changed just because this frame drew something else) makes that
+    // blind apply a harmless no-op until a real panel frame is drawn
+    // again.
+    let unchanged_layout = [(app.panels[0].columns, app.panels[0].visible_rows()), (app.panels[1].columns, app.panels[1].visible_rows())];
     match &mut app.mode {
         Mode::Editing(editor) if !has_linked_preview => {
             let mut cursor = draw_editor(frame, area, editor, &theme);
@@ -104,12 +125,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
                 // own cursor yielding to whichever popup is showing.
                 cursor = Some(editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme));
             }
-            return ([(1, 1), (1, 1)], cursor);
+            return (unchanged_layout, cursor);
         }
         Mode::ConfirmDiscard(editor) if !has_linked_preview => {
             let cursor = draw_editor(frame, area, editor, &theme);
             draw_confirm_discard_popup(frame, area, &theme);
-            return ([(1, 1), (1, 1)], cursor);
+            return (unchanged_layout, cursor);
         }
         // Same "editor full-screen, popup on top" shape as
         // `ConfirmDiscard` right above -- only ever reached while
@@ -121,7 +142,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         Mode::EditorMenu(editor, menu) => {
             let cursor = draw_editor(frame, area, editor, &theme);
             editor_menu::draw_editor_menu(frame, area, menu, &theme, app.popup_style);
-            return ([(1, 1), (1, 1)], cursor);
+            return (unchanged_layout, cursor);
         }
         // `EditorMenu`'s own `Keybindings` item -- same shape and same
         // reasoning as `EditorMenu` immediately above.
@@ -129,7 +150,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
             let current = editor.keymap_mode();
             let cursor = draw_editor(frame, area, editor, &theme);
             editor_keymap_menu::draw_editor_keymap_menu(frame, area, menu, &theme, app.popup_style, current);
-            return ([(1, 1), (1, 1)], cursor);
+            return (unchanged_layout, cursor);
         }
         // `Alt+F5`'s own full-screen comparer -- same "takes over the
         // whole frame, `return` before the ordinary 2-panel layout runs
@@ -140,17 +161,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         // "Rendering approach"/data-model sketch).
         Mode::CompareFiles(state) => {
             let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
-            return ([(1, 1), (1, 1)], cursor);
+            return (unchanged_layout, cursor);
         }
         Mode::CompareMenu(state, menu) => {
             let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
             compare_menu::draw_compare_menu(frame, area, menu, &theme, app.popup_style);
-            return ([(1, 1), (1, 1)], cursor);
+            return (unchanged_layout, cursor);
         }
         Mode::CompareLineEndingMenu(state, menu) => {
             let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
             compare_line_ending_menu::draw_compare_line_ending_menu(frame, area, menu, &theme, app.popup_style, app.compare_line_ending_display);
-            return ([(1, 1), (1, 1)], cursor);
+            return (unchanged_layout, cursor);
         }
         // Reuses the built-in editor's own "Unsaved changes" popup
         // (`draw_confirm_discard_popup`) unmodified -- it's already
@@ -160,7 +181,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         Mode::CompareConfirmDiscard(state) => {
             let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
             draw_confirm_discard_popup(frame, area, &theme);
-            return ([(1, 1), (1, 1)], cursor);
+            return (unchanged_layout, cursor);
         }
         Mode::Browsing
         | Mode::MainMenu(_)
