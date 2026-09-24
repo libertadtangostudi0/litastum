@@ -2,7 +2,7 @@ use std::path::Path;
 
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::app::{App, Mode};
 use crate::editor::Editor;
@@ -12,9 +12,12 @@ use super::super::export::export_results;
 /// Key handling for `FindFilePhase::Results` -- `Up`/`Down` move the
 /// selection, `Enter` opens the selected result and closes the popup,
 /// `Tab` does the same navigation but leaves the popup open, `F4` opens
-/// it in the built-in editor, `Ctrl+S` exports the full list. `Esc` is
-/// handled one level up, in `handle_find_file_key`, ahead of this
-/// dispatch entirely.
+/// it in the built-in editor, `Ctrl+S` exports the full list, `Ctrl+C`
+/// copies the highlighted result's own full path to the real OS
+/// clipboard -- reported directly as a real gap: there was no way to
+/// get a result's path out of this popup at all short of exporting the
+/// *entire* list to a file. `Esc` is handled one level up, in
+/// `handle_find_file_key`, ahead of this dispatch entirely.
 pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<()> {
     match key.code {
         KeyCode::Up => {
@@ -37,10 +40,46 @@ pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char('s' | 'S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             return run_export(app);
         }
+        KeyCode::Char('c' | 'C') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            copy_selected_result_path(app);
+        }
         _ => {}
     }
 
     Ok(())
+}
+
+/// `Ctrl+C` on a result: copies its own full path (not just the
+/// directory `Tab`/`Enter` navigate to) to the real OS clipboard --
+/// same `arboard` dependency `editor::clipboard` and
+/// `explorer::confirm`'s own transfer-field copy already use. A missing
+/// clipboard or a failed OS call is only logged, same "don't fail the
+/// keystroke over it" rule those two already follow.
+fn copy_selected_result_path(app: &mut App) {
+    let Mode::FindFile(state) = &app.mode else {
+        return;
+    };
+    let Some(path) = selected_result_path(state) else {
+        return;
+    };
+
+    match arboard::Clipboard::new() {
+        Ok(mut clipboard) => {
+            if let Err(err) = clipboard.set_text(path) {
+                warn!(%err, "find file: clipboard set_text failed");
+            }
+        }
+        Err(err) => warn!(%err, "find file: clipboard unavailable"),
+    }
+}
+
+/// The highlighted result's own full path, formatted for the clipboard
+/// -- split out as a pure function so this has real unit coverage
+/// without touching the real OS clipboard (this codebase deliberately
+/// avoids that elsewhere too, see `explorer::confirm::selected_text`'s
+/// own doc comment).
+fn selected_result_path(state: &crate::explorer::FindFileState) -> Option<String> {
+    state.results.get(state.selected).map(|path| path.display().to_string())
 }
 
 /// `Ctrl+S` on the results popup: writes `export_results` and records
@@ -294,5 +333,24 @@ mod tests {
         handle_results_key(&mut app, KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE)).unwrap();
 
         assert!(matches!(app.mode, Mode::FindFile(_)));
+    }
+
+    mod selected_result_path_tests {
+        use super::*;
+
+        #[test]
+        fn returns_the_highlighted_results_own_full_path() {
+            let mut state = FindFileState::new();
+            state.results = vec![PathBuf::from(r"W:\WorkCopies\trunk\a.cpp"), PathBuf::from(r"W:\WorkCopies\trunk\b.cpp")];
+            state.selected = 1;
+
+            assert_eq!(selected_result_path(&state), Some(r"W:\WorkCopies\trunk\b.cpp".to_string()));
+        }
+
+        #[test]
+        fn no_results_means_nothing_to_copy() {
+            let state = FindFileState::new();
+            assert_eq!(selected_result_path(&state), None);
+        }
     }
 }

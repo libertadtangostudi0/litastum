@@ -335,6 +335,8 @@ fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Th
         Span::styled(" edit  ", Style::default().fg(theme.text_dim)),
         Span::styled("Ctrl+S", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
         Span::styled(" export  ", Style::default().fg(theme.text_dim)),
+        Span::styled("Ctrl+C", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" copy path  ", Style::default().fg(theme.text_dim)),
         Span::styled("Esc", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
         Span::styled(" cancel", Style::default().fg(theme.text_dim)),
     ]);
