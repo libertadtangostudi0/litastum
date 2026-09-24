@@ -343,6 +343,11 @@ pub(super) fn toggle_panels_hidden(app: &mut App, terminal: &mut Terminal<Crosst
         if key.kind != KeyEventKind::Press {
             continue;
         }
+        // See `keyboard_layout::normalize_ctrl_shortcut`'s own doc
+        // comment -- this loop reads raw events directly, bypassing
+        // `main.rs::dispatch_key_event`'s own normalization entirely,
+        // so `Ctrl+O` under a non-Latin layout needs it applied here too.
+        let key = crate::keyboard_layout::normalize_ctrl_shortcut(key);
         if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
             break;
         }

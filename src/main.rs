@@ -6,6 +6,7 @@ mod compare;
 mod editor;
 mod explorer;
 mod history_dir;
+mod keyboard_layout;
 mod list_cursor;
 mod logging;
 #[cfg(test)]
@@ -564,6 +565,15 @@ fn dispatch_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: 
     if key.kind != KeyEventKind::Press {
         return Ok(());
     }
+
+    // See `keyboard_layout::normalize_ctrl_shortcut`'s own doc comment
+    // -- a `Ctrl+<letter>` chord typed under a non-Latin layout (a real
+    // report: `Ctrl+C` in the editor did nothing at all under a Russian
+    // layout) arrives with a layout-translated `char`, not the Latin
+    // one every binding in this app is written against. Normalized once
+    // here, ahead of every mode's own key handling, rather than in each
+    // of them separately.
+    let key = keyboard_layout::normalize_ctrl_shortcut(key);
 
     // Drives the alternate F-key row (`ui::draw_function_keys`). On
     // Windows this is mostly redundant with `wait_for_event`'s own
