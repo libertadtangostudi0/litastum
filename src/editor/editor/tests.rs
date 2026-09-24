@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use edtui::Index2;
 
 use super::*;
-use crate::test_support::{key, shift_key, unique_scratch_dir};
+use crate::test_support::{ctrl_key, key, shift_key, unique_scratch_dir};
 
 /// Writes `contents` to a scratch file and opens it, so tests can
 /// exercise `Editor` without a fixture directory. Returns the path
@@ -927,3 +927,106 @@ fn vim_right_arrow_stops_at_the_last_character_of_a_line_not_a_bug() {
 }
 
 
+
+/// Regression coverage for the real request: `Ctrl+Z` right after a
+/// fast paste (`fast_paste_from_clipboard`) should undo exactly that
+/// paste in one press -- seeded directly (`editor.paste_undo`,
+/// `editor.state.lines`) rather than through a real `Ctrl+V`, since
+/// that would mean touching the real OS clipboard in a test (this
+/// codebase deliberately avoids that elsewhere too).
+#[test]
+fn ctrl_z_restores_the_fast_paste_snapshot_in_one_press() {
+    let (mut editor, _path) = open_test_editor("hello\n");
+    let pre_paste_lines = editor.state.lines.clone();
+    let pre_paste_cursor = editor.state.cursor;
+
+    // Simulate what fast_paste_from_clipboard itself would have just
+    // done: save the snapshot, then mutate the live buffer.
+    editor.paste_undo = Some(PasteUndo { lines: pre_paste_lines.clone(), cursor: pre_paste_cursor });
+    editor.state.lines = Lines::from("hello pasted stuff\n");
+    editor.state.cursor = Index2::new(0, 18);
+    editor.dirty = true;
+
+    editor.input(ctrl_key('z'));
+
+    assert_eq!(editor.state.lines, pre_paste_lines, "the buffer should be back to exactly its pre-paste content");
+    assert_eq!(editor.state.cursor, pre_paste_cursor);
+    assert!(editor.paste_undo.is_none(), "the one-shot snapshot should be consumed, not reusable by a second Ctrl+Z");
+}
+
+/// Real requested behavior: the paste-undo snapshot is *one-shot* --
+/// once any other key happens, `Ctrl+Z` must fall through to `edtui`'s
+/// own real undo stack instead of resurrecting a stale paste snapshot.
+#[test]
+fn any_other_key_after_a_fast_paste_invalidates_its_undo_snapshot() {
+    let (mut editor, _path) = open_test_editor("hello\n");
+    editor.paste_undo = Some(PasteUndo { lines: editor.state.lines.clone(), cursor: editor.state.cursor });
+
+    editor.input(key(KeyCode::Right));
+
+    assert!(editor.paste_undo.is_none(), "an unrelated key should clear the pending paste-undo snapshot");
+}
+
+/// `Ctrl+Z` with no pending fast-paste snapshot must not panic or do
+/// anything paste-undo-specific -- `input` should just fall through to
+/// `edtui`'s own real `Undo` action, unaffected by this feature
+/// existing at all.
+#[test]
+fn ctrl_z_with_no_pending_paste_falls_through_to_the_real_undo_action() {
+    let (mut editor, _path) = open_test_editor("hello\n");
+    assert!(editor.paste_undo.is_none(), "sanity");
+
+    editor.input(ctrl_key('z')); // should not panic
+
+    assert!(editor.paste_undo.is_none());
+}
+
+
+/// `Editor::paste_text` (the shared core `fast_paste_from_clipboard`
+/// and `main.rs::handle_paste_event`'s real bracketed paste both use)
+/// -- exercised directly here since it takes the text as a plain
+/// argument, no real clipboard needed.
+#[test]
+fn paste_text_splices_and_records_an_undo_snapshot() {
+    let (mut editor, _path) = open_test_editor("held\n");
+    editor.state.cursor = Index2::new(0, 2);
+    let pre_paste_lines = editor.state.lines.clone();
+
+    editor.paste_text("llo wor");
+
+    assert_eq!(editor.state.lines, Lines::from("hello world\n"));
+    assert!(editor.is_dirty());
+    assert!(editor.paste_undo.is_some(), "should have recorded an undo snapshot");
+
+    editor.input(ctrl_key('z'));
+    assert_eq!(editor.state.lines, pre_paste_lines, "Ctrl+Z should restore exactly the pre-paste content");
+}
+
+/// A bracketed paste while text is selected should clear the selection
+/// and drop back to typing mode -- same simplification `Ctrl+V` itself
+/// already has (see `paste_text`'s own doc comment), replicated by hand
+/// here since it bypasses `edtui`'s own dispatch.
+#[test]
+fn paste_text_over_an_active_selection_clears_it_and_returns_to_insert_mode() {
+    let (mut editor, _path) = open_test_editor("hello world");
+    editor.input(shift_key(KeyCode::Right)); // opens a selection
+    assert!(editor.has_selection(), "precondition");
+
+    editor.paste_text("X");
+
+    assert!(!editor.has_selection());
+    assert_eq!(editor.state.mode, EditorMode::Insert);
+}
+
+/// Empty text is a real no-op, not just "nothing visible changes" --
+/// no undo snapshot should be recorded either, or a stray `Ctrl+Z`
+/// right after would undo something that never actually happened.
+#[test]
+fn paste_text_with_empty_text_records_no_undo_snapshot() {
+    let (mut editor, _path) = open_test_editor("hello\n");
+
+    editor.paste_text("");
+
+    assert!(!editor.is_dirty());
+    assert!(editor.paste_undo.is_none());
+}

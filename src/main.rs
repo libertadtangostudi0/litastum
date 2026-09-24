@@ -9,6 +9,8 @@ mod history_dir;
 mod keyboard_layout;
 mod list_cursor;
 mod logging;
+#[cfg(windows)]
+mod paste_hotkey;
 #[cfg(test)]
 mod test_support;
 mod text_field;
@@ -20,7 +22,7 @@ use std::io::{self, Stdout};
 use color_eyre::eyre::Result;
 use crossterm::{
     cursor::SetCursorStyle,
-    event::{self, DisableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind},
+    event::{self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -167,7 +169,29 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     // A thin bar matches a normal text caret; edtui's own cursor
     // highlight is turned off in editor.rs so this is what's visible
     // while editing (blinking, so it's still findable at a glance).
-    execute!(stdout, EnterAlternateScreen, SetCursorStyle::BlinkingBar)?;
+    //
+    // `EnableBracketedPaste` -- reported directly as a real, severe
+    // performance problem: pasting a multi-hundred-line file into the
+    // built-in editor "felt like watching it render line by line" and
+    // took well over a minute, even after `editor::fast_paste_from_clipboard`
+    // made the actual splice itself sub-millisecond
+    // (`editor/editor/fast_paste.rs`). Root cause was one level further
+    // out than the buffer-insert algorithm: without bracketed-paste
+    // mode, the terminal has no way to tell this app "this whole block
+    // arrived from a paste, not a human typing" -- it just feeds every
+    // character of the pasted text through as its own separate
+    // `Event::Key` press. Each one is a real keystroke as far as this
+    // app is concerned, hitting the *normal* per-character `InsertChar`
+    // path (never `fast_paste_from_clipboard`'s own `Ctrl+V` interception
+    // at all, since there's no `Ctrl+V` keypress anywhere in this
+    // stream to intercept) and triggering `main.rs::run`'s own full
+    // per-event redraw every single time -- thousands of characters,
+    // thousands of redraws, is exactly what "line by line" rendering
+    // looks like from the outside. `EnableBracketedPaste` asks the
+    // terminal to instead wrap a paste in `ESC[200~.../ESC[201~` and
+    // hand it to `crossterm` as one single `Event::Paste(String)` --
+    // handled in `handle_event`, below.
+    execute!(stdout, EnterAlternateScreen, SetCursorStyle::BlinkingBar, EnableBracketedPaste)?;
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
 }
 
@@ -197,6 +221,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mouse_cap
     }
     execute!(
         terminal.backend_mut(),
+        DisableBracketedPaste,
         LeaveAlternateScreen,
         SetCursorStyle::DefaultUserShape
     )?;
@@ -326,6 +351,16 @@ fn poll_background_tasks(app: &mut App) -> bool {
 #[cfg(windows)]
 fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     loop {
+        // Checked every iteration, not just once per call the way the
+        // idle-only `alt_down` check below works -- during an active
+        // Windows-Terminal-injected paste flood, this loop keeps
+        // finding a real `crossterm` event (one flooded character)
+        // almost every time, so an idle-only check would never run
+        // until the flood was already over. See `paste_hotkey.rs`'s own
+        // module doc comment for the full story.
+        if try_intercept_paste_hotkey(app)? {
+            return Ok(());
+        }
         let poll_interval = if background_task_pending(app) { BACKGROUND_TASK_POLL_INTERVAL } else { alt_key::POLL_INTERVAL };
         if event::poll(poll_interval)? {
             // A key event `handle_event` never actually dispatched
@@ -346,6 +381,81 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
             return Ok(());
         }
     }
+}
+
+/// Edge-triggered: fires the fast paste path once per distinct real
+/// physical `Ctrl+V` press (`app.ctrl_v_physically_held` tracks the
+/// previous poll's state, same pattern `wait_for_event`'s own
+/// `alt_held` tracking already uses), never repeatedly while the combo
+/// stays held. Returns `true` (asking `wait_for_event` to return and
+/// let `run()` redraw) only when something actually happened --a fresh
+/// press outside the one context this has a fast path for (the
+/// built-in editor, in ordinary typing mode -- `Editor::is_plain_standard_typing`)
+/// is deliberately left completely alone, no swallow armed, so
+/// `crossterm`'s normal (slow) event flow handles it exactly as before
+/// anywhere else -- extending this to the command line/other popups is
+/// real future work, not something this fix reaches for speculatively.
+///
+/// See `paste_hotkey.rs`'s own module doc comment for why a real
+/// terminal `Ctrl+V` needs this bypass in the first place, and for how
+/// the mismatch between "read the clipboard right now" and "Windows
+/// Terminal's own flood is still coming, one keystroke at a time" is
+/// resolved: `app.pending_paste_swallow` is armed here (to the pasted
+/// text's own keystroke-equivalent length) so `handle_key_event` can
+/// silently discard that flood once it actually arrives, instead of
+/// typing the same text a second time right after this already pasted
+/// it once, instantly.
+#[cfg(windows)]
+fn try_intercept_paste_hotkey(app: &mut App) -> Result<bool> {
+    let held = paste_hotkey::ctrl_v_physically_down();
+    let just_pressed = held && !app.ctrl_v_physically_held;
+    app.ctrl_v_physically_held = held;
+    if !just_pressed {
+        return Ok(false);
+    }
+
+    let Mode::Editing(editor) = &mut app.mode else {
+        return Ok(false);
+    };
+    if !editor.is_plain_standard_typing() {
+        return Ok(false);
+    }
+    let text = match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
+        Ok(text) => text,
+        Err(_) => return Ok(false),
+    };
+    if text.is_empty() {
+        return Ok(false);
+    }
+
+    editor.paste_text(&text);
+    arm_paste_swallow(app, &text);
+    Ok(true)
+}
+
+/// Sets up `app.pending_paste_swallow`/`_deadline` right after a fast
+/// paste (`try_intercept_paste_hotkey`) so `handle_key_event` knows how
+/// much of Windows Terminal's own still-incoming keystroke flood to
+/// silently discard -- see `App::pending_paste_swallow`'s own doc
+/// comment for why the deadline exists (a safety valve against the
+/// keystroke-count estimate being wrong, not the primary stop
+/// condition).
+///
+/// Counts `\r`-stripped characters -- a `\n` in the pasted text becomes
+/// one `Enter` keystroke, everything else becomes one `Char` keystroke,
+/// but a `\r` immediately before a `\n` (Windows-style line endings)
+/// never becomes a keystroke of its own at all, matching
+/// `editor::fast_paste::splice_paste`'s own normalization.
+#[cfg(windows)]
+fn arm_paste_swallow(app: &mut App, text: &str) {
+    let keystrokes = text.chars().filter(|&c| c != '\r').count();
+    app.pending_paste_swallow = keystrokes;
+    // Generous relative to the ~7-8ms/char rate this was actually
+    // measured at (`logs/litastum.log`, see `paste_hotkey.rs`'s own
+    // doc comment) -- this only exists to eventually give up if the
+    // flood never arrives or undercounts, not to race it.
+    let budget_ms = (keystrokes as u64).saturating_mul(100).max(2000);
+    app.pending_paste_swallow_deadline = Some(std::time::Instant::now() + std::time::Duration::from_millis(budget_ms));
 }
 
 #[cfg(not(windows))]
@@ -391,8 +501,49 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
             drain_pending_mouse_events(app, terminal, last_scroll)?;
             Ok(true)
         }
+        Event::Paste(text) => {
+            handle_paste_event(app, terminal, &text)?;
+            Ok(true)
+        }
         _ => Ok(true),
     }
+}
+
+/// A bracketed paste (`EnableBracketedPaste` in `setup_terminal`) --
+/// see its own doc comment for the real reported bug this exists to
+/// fix. While the built-in editor is open, hands `text` straight to
+/// `Editor::paste_text` -- the same fast, O(text length) splice
+/// `Ctrl+V` itself uses (`editor::fast_paste_from_clipboard`), just fed
+/// from this event's own text instead of a fresh clipboard read (the
+/// terminal already handed it to us; reading the clipboard again would
+/// just be redundant, and could even race a clipboard change between
+/// the copy and this paste actually arriving).
+///
+/// Every other mode has no equivalent fast path of its own (the
+/// always-live command line, Find file's fields, the transfer popup,
+/// ...) -- replayed as ordinary per-character key presses through the
+/// exact same `dispatch_key_event` a real keystroke would take, just
+/// looped here with no redraw in between rather than arriving one at a
+/// time over the wire with a full redraw after each (which is what
+/// "no bracketed paste" looked like before this existed, for *every*
+/// mode, not just the editor). A newline in the pasted text is skipped
+/// rather than replayed as `Enter` -- these fields are single-line, and
+/// forwarding it could submit a command/form the user never meant to
+/// trigger this instant, the same "may execute unexpected commands"
+/// concern Windows Terminal's own multi-line-paste warning is about.
+fn handle_paste_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, text: &str) -> Result<()> {
+    if let Mode::Editing(editor) = &mut app.mode {
+        editor.paste_text(text);
+        return Ok(());
+    }
+
+    for ch in text.chars() {
+        if ch == '\n' || ch == '\r' {
+            continue;
+        }
+        dispatch_key_event(app, crossterm::event::KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE), terminal)?;
+    }
+    Ok(())
 }
 
 /// Processes every further event already sitting in `crossterm`'s own
@@ -526,11 +677,151 @@ fn is_navigation_reversal(prev: KeyCode, next: KeyCode) -> bool {
 /// entirely for a key `dispatch_key_event` never touched removes that
 /// spurious frame outright, for every key, not just the one reported.
 fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
+    if key.kind == KeyEventKind::Press && should_swallow_paste_tail(app, key.code) {
+        return Ok(false);
+    }
+
     dispatch_key_event(app, key, terminal)?;
-    if key.kind == KeyEventKind::Press && is_repeatable_navigation_key(key.code) {
-        drain_pending_navigation_keys(app, terminal, key.code)?;
+    if key.kind == KeyEventKind::Press {
+        if is_repeatable_navigation_key(key.code) {
+            drain_pending_navigation_keys(app, terminal, key.code)?;
+        } else if is_plain_typed_char(key.code, key.modifiers) && editor_accepting_plain_typing(app) {
+            drain_pending_editor_typing(app, terminal)?;
+        }
     }
     Ok(key.kind == KeyEventKind::Press)
+}
+
+/// See `App::pending_paste_swallow`'s own doc comment -- `true` means
+/// "this key is part of Windows Terminal's own still-incoming paste
+/// flood, already applied instantly by `try_intercept_paste_hotkey`;
+/// discard it rather than typing the same text a second time."
+/// Decrements the counter on every swallow, and expires it (without
+/// swallowing this particular key) once either the counter reaches `0`
+/// naturally or `pending_paste_swallow_deadline` has passed -- the
+/// deadline is a safety valve, not the primary stop condition, see
+/// that field's own doc comment for why it exists at all. A key that
+/// isn't a plain character or `Enter` arriving mid-flood also ends the
+/// swallow immediately (without discarding that key) -- the count
+/// estimate was wrong, or the user started doing something else before
+/// the flood actually finished, and eating a real, different keystroke
+/// would be a worse failure than leaving a few stray tail characters
+/// from the flood to be typed normally.
+fn should_swallow_paste_tail(app: &mut App, code: KeyCode) -> bool {
+    if app.pending_paste_swallow == 0 {
+        return false;
+    }
+    let expired = app.pending_paste_swallow_deadline.is_some_and(|deadline| std::time::Instant::now() > deadline);
+    if expired || !matches!(code, KeyCode::Char(_) | KeyCode::Enter) {
+        app.pending_paste_swallow = 0;
+        app.pending_paste_swallow_deadline = None;
+        return false;
+    }
+    app.pending_paste_swallow -= 1;
+    if app.pending_paste_swallow == 0 {
+        app.pending_paste_swallow_deadline = None;
+    }
+    true
+}
+
+/// A `Char` key with no `Ctrl`/`Alt` held -- ordinary typed text
+/// (`Shift` included, for an uppercase letter), never a shortcut.
+/// `drain_pending_editor_typing`'s own gate for what's safe to fold
+/// into one batched insert.
+fn is_plain_typed_char(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    matches!(code, KeyCode::Char(_)) && !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+}
+
+/// Whether the built-in editor is the thing that would actually receive
+/// a plain typed character right now -- mirrors `dispatch_key_event`'s
+/// own `Mode::Editing` guard exactly, including the embedded-Markdown-
+/// preview carve-out (while the *preview* half has focus, plain
+/// characters go to `explorer::handle_markdown_edit_preview_key`
+/// instead, never the editor), plus `Editor::is_plain_standard_typing`'s
+/// own keymap/mode check.
+fn editor_accepting_plain_typing(app: &App) -> bool {
+    let Mode::Editing(editor) = &app.mode else {
+        return false;
+    };
+    if app.markdown_edit_preview.is_some() && app.active == 1 {
+        return false;
+    }
+    editor.is_plain_standard_typing()
+}
+
+/// Reported directly, traced through the real symptom ("I can literally
+/// watch it insert line by line"): pasting a real file (`ARCHITECTURE.md`,
+/// 338 lines / 20KB) into the built-in editor took well over a minute
+/// -- confirmed *not* to be `editor::fast_paste::splice_paste`'s own
+/// cost (benchmarked directly against the real file: under 1ms) or
+/// `EnableBracketedPaste` (`setup_terminal`'s own doc comment covers
+/// that attempt) -- `crossterm` 0.29's own Windows backend
+/// (`crossterm::event::sys::windows`) has no code path that ever
+/// produces `Event::Paste` at all, confirmed directly from its source;
+/// bracketed paste there is Unix-only, gated on parsing raw ANSI escape
+/// bytes from stdin, which the Windows Console API backend (structured
+/// `KEY_EVENT_RECORD`s via `ReadConsoleInputW`, not a raw byte stream)
+/// never does. On Windows, an OS paste is genuinely indistinguishable
+/// from very fast typing -- the terminal just injects the clipboard
+/// text as a flood of ordinary simulated keystrokes, one at a time, and
+/// `run()`'s own loop redraws once per key -- thousands of characters,
+/// thousands of redraws, is exactly what "line by line" looks like from
+/// the outside.
+///
+/// Mirrors `drain_pending_navigation_keys`'s own "coalesce a burst,
+/// redraw once" shape: drains every already-queued plain character key
+/// (`is_plain_typed_char`) for as long as the editor would still accept
+/// one as plain typing (`editor_accepting_plain_typing` -- re-checked on
+/// every iteration, not just once, in case some other queued event
+/// changes mode mid-burst), and applies the whole batch in one
+/// `Editor::paste_text` call -- the same fast, from-scratch splice
+/// `Ctrl+V`/a real bracketed paste already use
+/// (`editor::fast_paste_from_clipboard`'s own doc comment has the full
+/// algorithmic story), rather than one `InsertChar` per character. A
+/// key found mid-burst that isn't a plain character (or that arrives
+/// once the editor would no longer treat one as plain typing) is never
+/// silently dropped, same rule every sibling drain function in this
+/// file already follows -- the batch collected so far is flushed first,
+/// then that key/event is dispatched normally before this returns.
+fn drain_pending_editor_typing(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    let mut batch = String::new();
+    while event::poll(std::time::Duration::from_secs(0))? {
+        match event::read()? {
+            Event::Key(key) if key.kind == KeyEventKind::Press && is_plain_typed_char(key.code, key.modifiers) && editor_accepting_plain_typing(app) => {
+                if let KeyCode::Char(c) = key.code {
+                    batch.push(c);
+                }
+            }
+            Event::Key(key) => {
+                flush_editor_typing_batch(app, &mut batch);
+                return dispatch_key_event(app, key, terminal);
+            }
+            Event::Mouse(mouse) => {
+                flush_editor_typing_batch(app, &mut batch);
+                explorer::handle_markdown_preview_mouse(app, mouse);
+                let last_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown).then_some(mouse.kind);
+                return drain_pending_mouse_events(app, terminal, last_scroll);
+            }
+            _ => {}
+        }
+    }
+    flush_editor_typing_batch(app, &mut batch);
+    Ok(())
+}
+
+/// Applies `batch` (if non-empty) to the editor via `Editor::paste_text`
+/// and clears it -- shared by every early-return branch in
+/// `drain_pending_editor_typing` above, so a batch collected so far is
+/// never silently lost just because the drain is about to end for a
+/// different reason.
+fn flush_editor_typing_batch(app: &mut App, batch: &mut String) {
+    if batch.is_empty() {
+        return;
+    }
+    if let Mode::Editing(editor) = &mut app.mode {
+        editor.paste_text(batch);
+    }
+    batch.clear();
 }
 
 /// See `handle_key_event`'s own doc comment. A key found mid-burst that
@@ -633,5 +924,61 @@ fn dispatch_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: 
             Ok(())
         }
         Mode::Browsing => command_line::handle_browsing_key(app, key, terminal),
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{test_app, unique_scratch_dir};
+
+    mod should_swallow_paste_tail_tests {
+        use super::*;
+
+        #[test]
+        fn nothing_pending_never_swallows() {
+            let mut app = test_app(unique_scratch_dir("main-paste-swallow"));
+            assert!(!should_swallow_paste_tail(&mut app, KeyCode::Char('x')));
+        }
+
+        #[test]
+        fn swallows_plain_chars_and_enter_until_the_counter_hits_zero() {
+            let mut app = test_app(unique_scratch_dir("main-paste-swallow"));
+            app.pending_paste_swallow = 2;
+            app.pending_paste_swallow_deadline = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+
+            assert!(should_swallow_paste_tail(&mut app, KeyCode::Char('a')));
+            assert_eq!(app.pending_paste_swallow, 1);
+            assert!(should_swallow_paste_tail(&mut app, KeyCode::Enter));
+            assert_eq!(app.pending_paste_swallow, 0);
+            assert!(app.pending_paste_swallow_deadline.is_none(), "should clear its own deadline once the counter naturally reaches 0");
+
+            assert!(!should_swallow_paste_tail(&mut app, KeyCode::Char('z')), "a real keystroke after the count is exhausted must not be swallowed");
+        }
+
+        #[test]
+        fn a_key_that_is_not_a_char_or_enter_ends_the_swallow_without_eating_it() {
+            let mut app = test_app(unique_scratch_dir("main-paste-swallow"));
+            app.pending_paste_swallow = 5;
+            app.pending_paste_swallow_deadline = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+
+            let swallowed = should_swallow_paste_tail(&mut app, KeyCode::Left);
+
+            assert!(!swallowed, "an unrelated key must never be silently discarded");
+            assert_eq!(app.pending_paste_swallow, 0, "the mismatch should end the whole swallow window, not just skip this one key");
+        }
+
+        #[test]
+        fn an_expired_deadline_ends_the_swallow_even_for_a_matching_key() {
+            let mut app = test_app(unique_scratch_dir("main-paste-swallow"));
+            app.pending_paste_swallow = 5;
+            app.pending_paste_swallow_deadline = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+
+            let swallowed = should_swallow_paste_tail(&mut app, KeyCode::Char('a'));
+
+            assert!(!swallowed, "past the safety-valve deadline, real typing should never be eaten even if it happens to match");
+            assert_eq!(app.pending_paste_swallow, 0);
+        }
     }
 }

@@ -389,6 +389,33 @@ pub struct App {
     /// reverts on the *next* key press without `Alt`, not the instant
     /// `Alt` itself is released.
     pub alt_held: bool,
+    /// Real physical `Ctrl+V` state, tracked the same way `alt_held`
+    /// is (`main.rs::paste_hotkey`, `GetAsyncKeyState` -- Windows only,
+    /// always `false` elsewhere) -- an edge-triggered "was it *just*
+    /// pressed" flag, not "is it held," used only to detect a fresh
+    /// press. See `main.rs::try_intercept_paste_hotkey`'s own doc
+    /// comment for why a real terminal `Ctrl+V` keystroke needs its own
+    /// bypass at all.
+    pub ctrl_v_physically_held: bool,
+    /// How many more incoming plain-character/`Enter` key events should
+    /// be silently discarded instead of typed -- set once, right after
+    /// `try_intercept_paste_hotkey` fast-pastes the real OS clipboard's
+    /// text directly, to the number of keystrokes Windows Terminal's
+    /// own (much slower) keystroke-simulated paste is expected to
+    /// inject for that same text right afterward. Ticks down to `0` in
+    /// `main.rs::handle_key_event`; `0` means "nothing pending," the
+    /// normal, overwhelmingly common state.
+    pub pending_paste_swallow: usize,
+    /// Wall-clock deadline for `pending_paste_swallow` -- a safety
+    /// valve, not the primary stop condition (that's the counter
+    /// reaching `0`). Guards against a keystroke-count estimate that
+    /// turns out to be wrong (a `\r\n` normalization mismatch, a
+    /// surrogate pair, ...): without this, swallowing more keys than
+    /// Windows Terminal actually sends would silently eat the user's
+    /// own *next* real keystrokes after the paste, which is a much
+    /// worse failure mode than the swallow ending a little early and
+    /// leaving a few stray characters from the tail of the flood.
+    pub pending_paste_swallow_deadline: Option<std::time::Instant>,
     /// Where the built-in editor (F4) should hand control back once it
     /// closes, if that's somewhere other than the ordinary browser --
     /// `None` (the common case: F4 pressed from `Mode::Browsing`)
@@ -498,6 +525,9 @@ impl App {
             find_file_name_history: Vec::new(),
             find_file_content_history: Vec::new(),
             alt_held: false,
+            ctrl_v_physically_held: false,
+            pending_paste_swallow: 0,
+            pending_paste_swallow_deadline: None,
             editor_return_to: None,
             user_menu_command_edit: None,
             image_picker: Picker::halfblocks(),

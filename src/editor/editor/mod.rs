@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use edtui::actions::motion::{MoveToFirstRow, MoveToLastRow};
 use edtui::actions::{Chainable, Execute, MoveToEndOfLine, MoveToStartOfLine, SwitchMode};
 use edtui::syntect::highlighting::Theme as SynTheme;
@@ -24,9 +24,11 @@ use super::keymap_mode::EditorKeymapMode;
 use super::syntax::resolve_syntax_highlighter;
 use super::word_highlight::{has_pathologically_long_line, word_occurrence_highlights};
 
+mod fast_paste;
 mod search;
 mod word_select_touch;
 
+use fast_paste::splice_paste;
 use word_select_touch::WordSelectTouch;
 
 /// A single open-file editing session, backed by `edtui`. Owns the path
@@ -151,6 +153,21 @@ pub struct Editor {
     /// changed lines -- plain themed text keeps the diff coloring itself
     /// the one thing drawing the eye. `F4` editing never touches this.
     syntax_highlighting_enabled: bool,
+    /// One-shot undo snapshot for `fast_paste_from_clipboard` --
+    /// `Some` only in the window between a fast paste and the very next
+    /// keystroke, `None` otherwise. See `fast_paste_from_clipboard`'s
+    /// own doc comment for why pasting needs its own undo mechanism at
+    /// all, separate from `edtui`'s own.
+    paste_undo: Option<PasteUndo>,
+}
+
+
+/// `fast_paste_from_clipboard`'s own saved state, restorable by exactly
+/// one `Ctrl+Z` (`input`, below) -- a full `Lines` clone plus the
+/// cursor position from immediately before that paste ran.
+struct PasteUndo {
+    lines: Lines,
+    cursor: Index2,
 }
 
 
@@ -268,6 +285,7 @@ impl Editor {
             keymap_mode,
             extra_highlights: Vec::new(),
             syntax_highlighting_enabled: true,
+            paste_undo: None,
         })
     }
 
@@ -277,6 +295,21 @@ impl Editor {
     /// right entry.
     pub fn keymap_mode(&self) -> EditorKeymapMode {
         self.keymap_mode
+    }
+
+    /// Whether this editor is in ordinary `Standard`-keymap typing mode
+    /// right now -- `main.rs::drain_pending_editor_typing`'s own gate
+    /// for safely batch-fast-pathing a burst of already-queued plain
+    /// character keys (see that function's own doc comment for the real
+    /// reported bug this exists to fix). `Vim`'s `Normal` mode treats a
+    /// bare letter as a command, not text, and `Standard`'s own
+    /// `Visual` mode has its own selection-aware typing behavior
+    /// (`is_selection_consuming_key`) -- batching either of those as if
+    /// every queued character were literal paste content would silently
+    /// run/misinterpret whatever was actually queued instead of typing
+    /// it.
+    pub(crate) fn is_plain_standard_typing(&self) -> bool {
+        self.keymap_mode == EditorKeymapMode::Standard && self.state.mode == EditorMode::Insert
     }
 
 
@@ -361,6 +394,33 @@ impl Editor {
     /// Every other key (and every already-working press these don't
     /// apply to) passes through completely unaffected.
     pub fn input(&mut self, key: KeyEvent) {
+        // `Ctrl+V`/`Ctrl+Z` are intercepted here, ahead of `edtui`'s own
+        // dispatch entirely -- see `fast_paste_from_clipboard`'s own doc
+        // comment for why plain `PasteBefore` isn't used any more.
+        // `Vim` keeps `edtui`'s own (unmodified) handling, same "no
+        // correction pass runs for Vim" rule every other block in this
+        // function already follows -- Vim's own table doesn't bind
+        // `Ctrl+V` to paste at all (it's a real vim binding for visual-
+        // block mode instead), so hijacking it there would be a genuine
+        // behavior change, not just a performance fix.
+        if self.keymap_mode == EditorKeymapMode::Standard {
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            if ctrl && key.code == KeyCode::Char('v') {
+                self.fast_paste_from_clipboard();
+                return;
+            }
+            if ctrl && key.code == KeyCode::Char('z') {
+                if self.undo_fast_paste() {
+                    return;
+                }
+            } else {
+                // Any other key invalidates the one-shot paste-undo --
+                // it only ever means "undo the paste that *just*
+                // happened," never a stale snapshot from further back.
+                self.paste_undo = None;
+            }
+        }
+
         let cursor_before = self.state.cursor;
         let mode_before = self.state.mode;
         self.event_handler.on_key_event(key, &mut self.state);
@@ -397,6 +457,107 @@ impl Editor {
         if can_mutate_buffer(self.keymap_mode, mode_before, key.code) {
             self.dirty = self.state.lines != self.saved_snapshot;
         }
+    }
+
+
+    /// `Ctrl+V`: pastes the real OS clipboard's text at the cursor,
+    /// bypassing `edtui`'s own `PasteBefore` action entirely.
+    ///
+    /// Reported directly as unusably slow for a long pasted line --
+    /// confirmed straight from source (`edtui` 0.11.7's
+    /// `actions/cpaste.rs::paste` -> `helper::insert_str` ->
+    /// `insert_char`, once *per character*) that this is a real O(n²)
+    /// cost: each of the N pasted characters does its own single-element
+    /// `Vec::insert` at a column that keeps growing, an O(current line
+    /// length) shift, every single time. `edtui-jagged`'s own `Jagged`
+    /// type (`state.lines`'s real type) has no bulk "splice N elements
+    /// into a row" API to have used instead -- only a single-element
+    /// insert (`JaggedSlice<T> for T`) or a whole-new-row insert
+    /// (`JaggedSlice<T> for Vec<T>`, keyed by `RowIndex`, not a
+    /// column). This isn't something to patch in `edtui`/`edtui-jagged`
+    /// themselves -- handing an AI-assisted fix to a third-party crate
+    /// without real review isn't something to do lightly -- so this
+    /// stays local: `state.lines` is a public field and
+    /// `Jagged::get_mut`/`insert` are both public, so
+    /// `fast_paste::splice_paste` can splice the row's own backing
+    /// `Vec<char>` directly (`std::vec::Vec::splice`, one O(line length)
+    /// pass total for the common single-line-paste case) without
+    /// needing anything crate-private from `edtui` at all.
+    ///
+    /// **Loses `edtui`'s own undo integration** -- `EditorState::capture()`
+    /// (what actually records an undo checkpoint) is `pub(crate)` inside
+    /// `edtui`, unreachable from here, and every public `Execute`-able
+    /// action that mutates the buffer calls it internally as part of
+    /// its own `execute()`, with no way to trigger just the checkpoint
+    /// on its own through any public entry point either. Since "`Ctrl+Z`
+    /// undoes exactly the paste, and both have to be fast" was the
+    /// explicit ask, this keeps its own one-shot snapshot (`paste_undo`)
+    /// instead of going through `edtui`'s stack at all -- `input` checks
+    /// it first on the very next `Ctrl+Z` and restores from it directly,
+    /// before ever reaching `edtui`'s own `Undo` action, and clears it
+    /// on any other key so a `Ctrl+Z` two edits later falls straight
+    /// through to `edtui`'s real stack instead of resurrecting a stale
+    /// snapshot.
+    fn fast_paste_from_clipboard(&mut self) {
+        let text = match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
+            Ok(text) => text,
+            Err(err) => {
+                warn!(%err, "editor: clipboard unavailable for paste");
+                return;
+            }
+        };
+        self.paste_text(&text);
+    }
+
+    /// The actual splice + undo-snapshot + selection bookkeeping
+    /// `fast_paste_from_clipboard` (`Ctrl+V`) uses, factored out so
+    /// `main.rs::handle_paste_event` (a real terminal bracketed paste,
+    /// `Event::Paste`) can feed it text the terminal already handed
+    /// over directly, without a redundant clipboard read of its own --
+    /// see `fast_paste_from_clipboard`'s own doc comment for the full
+    /// story on why this exists as a from-scratch splice instead of
+    /// `edtui`'s own `PasteBefore`, and why it needs its own one-shot
+    /// `Ctrl+Z` handling. A no-op for empty `text` -- also what makes
+    /// this safe to call for every keystroke `main.rs` might ever route
+    /// here, not just a real paste.
+    pub(crate) fn paste_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+
+        self.paste_undo = Some(PasteUndo { lines: self.state.lines.clone(), cursor: self.state.cursor });
+
+        self.state.cursor = splice_paste(&mut self.state.lines, self.state.cursor, text);
+
+        // Matches the pre-existing simplification for `Ctrl+V` over an
+        // active selection (see `bindings.rs`'s own module doc comment):
+        // clears the selection and lands in typing mode rather than
+        // replacing the selected text -- unchanged behavior, just
+        // reached without going through `edtui`'s own dispatch this
+        // time, so it has to be replicated here by hand.
+        if self.state.mode == EditorMode::Visual {
+            self.state.selection = None;
+            self.state.mode = EditorMode::Insert;
+        }
+
+        self.dirty = self.state.lines != self.saved_snapshot;
+    }
+
+    /// `Ctrl+Z` immediately after `fast_paste_from_clipboard`: restores
+    /// the pre-paste snapshot directly and reports `true`, so `input`
+    /// skips `edtui`'s own `Undo` action entirely for this one press.
+    /// `false` (no effect) once anything else has happened since the
+    /// paste, or if there was never a fast paste to undo in the first
+    /// place -- `input` then falls through to the normal table dispatch,
+    /// so a plain `Ctrl+Z` otherwise behaves exactly as it always has.
+    fn undo_fast_paste(&mut self) -> bool {
+        let Some(snapshot) = self.paste_undo.take() else {
+            return false;
+        };
+        self.state.lines = snapshot.lines;
+        self.state.cursor = snapshot.cursor;
+        self.dirty = self.state.lines != self.saved_snapshot;
+        true
     }
 
 
