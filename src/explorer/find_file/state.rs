@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -74,6 +75,20 @@ pub struct FindFileState {
     pub content_history_index: Option<usize>,
     pub results: Vec<PathBuf>,
     pub selected: usize,
+    /// Which results are marked (Far Manager-style multi-select, same
+    /// convention as `explorer::panel::marks.rs`), by index into
+    /// `results` -- requested directly so two results found in
+    /// unrelated directories (a search doesn't stay confined to one
+    /// folder the way a panel's own marks do) can be picked out and
+    /// compared without first navigating both of them into the two
+    /// panels by hand. Indexed by position, not by path/name the way a
+    /// panel's own `marked: HashSet<String>` is -- `results` never
+    /// reorders once a search finishes (no live directory it needs to
+    /// stay in sync with), so an index is stable for as long as this
+    /// popup stays open, and two results can easily share the same file
+    /// name in different directories, which a name-keyed set couldn't
+    /// tell apart.
+    pub marked: HashSet<usize>,
     /// The search currently running on a background thread --
     /// `Some` only during `FindFilePhase::Searching`, `None` in every
     /// other phase (set by `run_search`, cleared by
@@ -130,6 +145,7 @@ impl FindFileState {
             content_history_index: None,
             results: Vec::new(),
             selected: 0,
+            marked: HashSet::new(),
             pending: None,
             search_duration: None,
             results_capped: false,
@@ -202,6 +218,52 @@ impl FindFileState {
             field.clear();
         }
         *cursor = field.chars().count();
+    }
+
+    /// `Shift+Down` on the results list -- toggles the mark on the
+    /// current row, then moves down, same "paint a block one row at a
+    /// time on repeated presses" convention `Panel::toggle_mark_move_down`
+    /// already uses.
+    pub fn toggle_mark_move_down(&mut self) {
+        self.toggle_mark_at(self.selected);
+        if self.selected + 1 < self.results.len() {
+            self.selected += 1;
+        }
+    }
+
+    /// `Shift+Up` -- mirror of `toggle_mark_move_down`.
+    pub fn toggle_mark_move_up(&mut self) {
+        self.toggle_mark_at(self.selected);
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    /// Toggles the mark on `results[index]` -- a no-op for an
+    /// out-of-range index (an empty results list), unlike
+    /// `Panel::toggle_mark_at` there's no synthetic `..` entry here that
+    /// needs its own separate exclusion.
+    fn toggle_mark_at(&mut self, index: usize) {
+        if index >= self.results.len() {
+            return;
+        }
+        if !self.marked.remove(&index) {
+            self.marked.insert(index);
+        }
+    }
+
+    /// The two marked results, in ascending index order -- `None` unless
+    /// *exactly* two are marked, matching
+    /// `command_line::browsing::compare_targets`'s own "two marked
+    /// entries or nothing" convention for the same Alt+F5 compare
+    /// action. Ascending order (rather than mark/unmark order) keeps
+    /// which side is "left" and which is "right" predictable regardless
+    /// of which of the two the user happened to mark first.
+    pub fn two_marked_results(&self) -> Option<(PathBuf, PathBuf)> {
+        let mut indices: Vec<usize> = self.marked.iter().copied().collect();
+        indices.sort_unstable();
+        let [left, right] = indices.as_slice() else {
+            return None;
+        };
+        Some((self.results.get(*left)?.clone(), self.results.get(*right)?.clone()))
     }
 }
 
@@ -306,5 +368,94 @@ mod tests {
         state.content_history_down(&history);
 
         assert_eq!(state.content_query, "");
+    }
+
+    mod marking_tests {
+        use std::path::PathBuf;
+
+        use super::*;
+
+        fn state_with_results(count: usize) -> FindFileState {
+            let mut state = FindFileState::new();
+            state.results = (0..count).map(|i| PathBuf::from(format!("file_{i}.txt"))).collect();
+            state
+        }
+
+        #[test]
+        fn shift_down_marks_the_current_row_then_moves_down() {
+            let mut state = state_with_results(3);
+
+            state.toggle_mark_move_down();
+
+            assert_eq!(state.marked, HashSet::from([0]));
+            assert_eq!(state.selected, 1);
+        }
+
+        #[test]
+        fn shift_up_marks_the_current_row_then_moves_up() {
+            let mut state = state_with_results(3);
+            state.selected = 2;
+
+            state.toggle_mark_move_up();
+
+            assert_eq!(state.marked, HashSet::from([2]));
+            assert_eq!(state.selected, 1);
+        }
+
+        #[test]
+        fn repeated_shift_down_paints_a_block_and_stops_at_the_last_row() {
+            let mut state = state_with_results(3);
+
+            state.toggle_mark_move_down();
+            state.toggle_mark_move_down();
+            state.toggle_mark_move_down();
+
+            assert_eq!(state.marked, HashSet::from([0, 1, 2]), "the last row should still get marked even though there's nowhere further to move");
+            assert_eq!(state.selected, 2, "selection shouldn't run off the end of the list");
+        }
+
+        #[test]
+        fn marking_the_same_row_twice_unmarks_it() {
+            let mut state = state_with_results(3);
+
+            state.toggle_mark_move_down();
+            state.selected = 0;
+            state.toggle_mark_move_down();
+
+            assert!(state.marked.is_empty(), "toggling the same row again should unmark it");
+        }
+
+        #[test]
+        fn two_marked_results_returns_none_unless_exactly_two_are_marked() {
+            let mut state = state_with_results(3);
+            assert_eq!(state.two_marked_results(), None, "nothing marked yet");
+
+            state.toggle_mark_move_down(); // marks row 0
+            assert_eq!(state.two_marked_results(), None, "only one marked");
+
+            state.toggle_mark_move_down(); // marks row 1
+            assert_eq!(
+                state.two_marked_results(),
+                Some((PathBuf::from("file_0.txt"), PathBuf::from("file_1.txt")))
+            );
+
+            state.selected = 2;
+            state.toggle_mark_move_down(); // marks row 2, now three marked
+            assert_eq!(state.two_marked_results(), None, "three marked is no longer exactly two");
+        }
+
+        #[test]
+        fn two_marked_results_are_returned_in_ascending_index_order_regardless_of_mark_order() {
+            let mut state = state_with_results(3);
+            state.selected = 2;
+            state.toggle_mark_move_up(); // marks row 2 first, moves to row 1
+            state.toggle_mark_move_up(); // marks row 1, moves to row 0
+
+            assert_eq!(
+                state.two_marked_results(),
+                Some((PathBuf::from("file_1.txt"), PathBuf::from("file_2.txt"))),
+                "ascending by index, not by which one was marked first"
+            );
+        }
     }
 }

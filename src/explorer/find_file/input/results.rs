@@ -10,16 +10,33 @@ use crate::editor::Editor;
 use super::super::export::export_results;
 
 /// Key handling for `FindFilePhase::Results` -- `Up`/`Down` move the
-/// selection, `Enter` opens the selected result and closes the popup,
-/// `Tab` does the same navigation but leaves the popup open, `F4` opens
-/// it in the built-in editor, `Ctrl+S` exports the full list, `Ctrl+C`
-/// copies the highlighted result's own full path to the real OS
-/// clipboard -- reported directly as a real gap: there was no way to
-/// get a result's path out of this popup at all short of exporting the
-/// *entire* list to a file. `Esc` is handled one level up, in
-/// `handle_find_file_key`, ahead of this dispatch entirely.
+/// selection, `Shift+Up`/`Down` mark the current row and move (same
+/// `Panel::toggle_mark_move_up`/`_down` convention, see
+/// `FindFileState::toggle_mark_move_down`'s own doc comment for why
+/// marks here are indexed rather than name-keyed), `Alt+F5` compares
+/// exactly two marked results, `Enter` opens the selected result and
+/// closes the popup, `Tab` does the same navigation but leaves the
+/// popup open, `F4` opens it in the built-in editor, `Ctrl+S` exports
+/// the full list, `Ctrl+C` copies the highlighted result's own full
+/// path to the real OS clipboard -- reported directly as a real gap:
+/// there was no way to get a result's path out of this popup at all
+/// short of exporting the *entire* list to a file. `Esc` is handled one
+/// level up, in `handle_find_file_key`, ahead of this dispatch
+/// entirely.
 pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<()> {
     match key.code {
+        KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            let Mode::FindFile(state) = &mut app.mode else {
+                unreachable!("handle_find_file_key only dispatches here while Mode::FindFile(_) is active");
+            };
+            state.toggle_mark_move_up();
+        }
+        KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            let Mode::FindFile(state) = &mut app.mode else {
+                unreachable!("handle_find_file_key only dispatches here while Mode::FindFile(_) is active");
+            };
+            state.toggle_mark_move_down();
+        }
         KeyCode::Up => {
             let Mode::FindFile(state) = &mut app.mode else {
                 unreachable!("handle_find_file_key only dispatches here while Mode::FindFile(_) is active");
@@ -37,6 +54,9 @@ pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Enter => return open_selected_result(app),
         KeyCode::Tab => return goto_selected_result_directory(app),
         KeyCode::F(4) => return edit_selected_result(app),
+        KeyCode::F(5) if key.modifiers.contains(KeyModifiers::ALT) => {
+            return compare_marked_results(app);
+        }
         KeyCode::Char('s' | 'S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             return run_export(app);
         }
@@ -46,6 +66,34 @@ pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<()> {
         _ => {}
     }
 
+    Ok(())
+}
+
+/// `Alt+F5` on the results popup: compares the two marked results,
+/// same `compare::CompareState` this app's own panel-to-panel `Alt+F5`
+/// (`command_line::browsing::handle_browsing_key`) already opens --
+/// requested directly, since results found by a search can easily live
+/// in two unrelated directories with no convenient way to get both of
+/// them into the two panels first. A silent no-op unless exactly two
+/// results are marked, or either resolved path can't actually be
+/// compared (a directory result, or a read failure) -- same convention
+/// `compare_targets` already follows for the panel version of this
+/// action.
+fn compare_marked_results(app: &mut App) -> Result<()> {
+    let Mode::FindFile(state) = &app.mode else {
+        return Ok(());
+    };
+    let Some((left_path, right_path)) = state.two_marked_results() else {
+        return Ok(());
+    };
+    if left_path.is_dir() || right_path.is_dir() {
+        return Ok(());
+    }
+
+    let syntax_theme = app.syntax_theme.clone();
+    if let Ok(compare_state) = crate::compare::CompareState::open(left_path, right_path, syntax_theme, app.editor_keymap_mode) {
+        app.mode = Mode::CompareFiles(compare_state);
+    }
     Ok(())
 }
 
@@ -241,6 +289,69 @@ mod tests {
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
         assert_eq!(state.selected, 1);
+    }
+
+    /// Regression coverage for the real request: `Shift+Down`/`Up`
+    /// should mark the current result and move, the same way
+    /// `Panel`'s own multi-select already works, rather than plain
+    /// `Up`/`Down`'s unmarked navigation.
+    #[test]
+    fn shift_down_marks_the_current_result_and_moves() {
+        use crate::test_support::shift_key;
+
+        let mut results_state = FindFileState::new();
+        results_state.phase = FindFilePhase::Results;
+        results_state.results = vec![PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")];
+        let mut app = app_with_find_file(results_state);
+
+        handle_results_key(&mut app, shift_key(KeyCode::Down)).unwrap();
+
+        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        assert_eq!(state.marked, std::collections::HashSet::from([0]));
+        assert_eq!(state.selected, 1);
+    }
+
+    /// Requested directly: select two results found by a search (which,
+    /// unlike a panel's own marks, can easily live in unrelated
+    /// directories) with `Shift+Up`/`Down`, then compare them with
+    /// `Alt+F5`, the same compare feature the panel-to-panel binding
+    /// already opens.
+    #[test]
+    fn alt_f5_compares_the_two_marked_results() {
+        use crate::test_support::shift_key;
+
+        let mut app = app_with_find_file(FindFileState::new());
+        let left = app.panels[0].path.join("left.rs");
+        let right = app.panels[0].path.join("right.rs");
+        fs::write(&left, "fn left() {}\n").unwrap();
+        fs::write(&right, "fn right() {}\n").unwrap();
+
+        let mut results_state = FindFileState::new();
+        results_state.phase = FindFilePhase::Results;
+        results_state.results = vec![left, right];
+        app.mode = Mode::FindFile(results_state);
+
+        handle_results_key(&mut app, shift_key(KeyCode::Down)).unwrap(); // marks index 0, moves to 1
+        handle_results_key(&mut app, shift_key(KeyCode::Down)).unwrap(); // marks index 1
+
+        handle_results_key(&mut app, KeyEvent::new(KeyCode::F(5), KeyModifiers::ALT)).unwrap();
+
+        assert!(matches!(app.mode, Mode::CompareFiles(_)), "Alt+F5 with exactly two results marked should open the compare view");
+    }
+
+    /// A silent no-op, matching `compare_targets`'s own convention --
+    /// with fewer (or more) than exactly two results marked there's
+    /// nothing well-defined to compare.
+    #[test]
+    fn alt_f5_does_nothing_unless_exactly_two_results_are_marked() {
+        let mut results_state = FindFileState::new();
+        results_state.phase = FindFilePhase::Results;
+        results_state.results = vec![PathBuf::from("a"), PathBuf::from("b")];
+        let mut app = app_with_find_file(results_state);
+
+        handle_results_key(&mut app, KeyEvent::new(KeyCode::F(5), KeyModifiers::ALT)).unwrap();
+
+        assert!(matches!(app.mode, Mode::FindFile(_)), "nothing marked yet, so Alt+F5 should do nothing");
     }
 
     /// Regression coverage for the real request: `Tab` should perform
