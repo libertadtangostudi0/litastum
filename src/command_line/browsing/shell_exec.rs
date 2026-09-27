@@ -45,7 +45,11 @@ fn print_themed(theme: &crate::theming::Theme, args: std::fmt::Arguments) -> Res
 
 
 /// Discards every input event already sitting in the console's queue,
-/// without blocking for one that isn't there yet.
+/// without blocking for one that isn't there yet. Returns `true` if a
+/// genuine `Ctrl+O` (`toggle_panels_hidden`'s own "return to panels"
+/// key) was among what got discarded -- unlike an ordinary stray
+/// keystroke, that one can't just be thrown away silently; see
+/// `run_single_line_on_console`'s own doc comment for why.
 ///
 /// Reported directly from a screenshot: after running one command, the
 /// prompt for the *next* one showed up printed three times in a row on
@@ -62,11 +66,32 @@ fn print_themed(theme: &crate::theming::Theme, args: std::fmt::Arguments) -> Res
 /// `enable_raw_mode()` in both places that suspend the console for a
 /// child process (`run_shell_command_lines`, `run_single_line_on_console`),
 /// before anything else reads a "real" event again.
-fn drain_stale_input() -> Result<()> {
+fn drain_stale_input() -> Result<bool> {
+    let mut saw_ctrl_o = false;
     while event::poll(std::time::Duration::from_secs(0))? {
-        event::read()?;
+        let Event::Key(key) = event::read()? else { continue };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        // Same normalization `toggle_panels_hidden`'s own loop applies
+        // to a live-read event -- a queued Ctrl+O typed under a
+        // non-Latin layout would otherwise never match here either.
+        let key = crate::keyboard_layout::normalize_ctrl_shortcut(key);
+        if is_ctrl_o(key) {
+            saw_ctrl_o = true;
+        }
     }
-    Ok(())
+    Ok(saw_ctrl_o)
+}
+
+/// Whether an already-normalized `key` is the raw `Ctrl+O` chord --
+/// pulled out into its own function so `toggle_panels_hidden`'s own
+/// live event loop and `drain_stale_input`'s queued-event scan can't
+/// drift out of sync on what counts as "the user asked to leave this
+/// mode," and so the check has a name testable on its own without a
+/// real console.
+fn is_ctrl_o(key: crossterm::event::KeyEvent) -> bool {
+    key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
 
@@ -298,7 +323,11 @@ pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermB
         }
     }
     enable_raw_mode()?;
-    drain_stale_input()?;
+    // A queued Ctrl+O is moot here -- this path already returns
+    // straight to the panels below regardless, so there's nothing
+    // extra to honor it with (unlike `run_single_line_on_console`'s
+    // own use of this same return value).
+    let _ = drain_stale_input()?;
     execute!(terminal.backend_mut(), EnterAlternateScreen)?;
     terminal.clear()?;
 
@@ -332,6 +361,45 @@ pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermB
 /// (`run_single_line_on_console`), same bracketing
 /// `run_shell_command_lines` uses, so an interactive child (an editor,
 /// a REPL, ...) still gets normal line-buffered input.
+///
+/// **Two bugs reported together against a real, slow-running `svn`
+/// command** (a merge/update reporting conflicts, `"Summary of
+/// conflicts: Text conflicts: 2"`):
+///
+/// 1. Pressing `Ctrl+O` to return to the panels sometimes silently did
+///    nothing. Root cause: while `run_single_line_on_console`'s own
+///    subprocess has the console (raw mode off), a `Ctrl+O` pressed
+///    meanwhile doesn't reach this loop's own `event::read()` at all --
+///    it just queues up at the OS console level like any other
+///    keystroke, same mechanism `drain_stale_input`'s own doc comment
+///    already covers for a stray `Enter`. But unlike a stray `Enter`
+///    (safe to discard -- it only ever means "run an empty command," a
+///    no-op either way), throwing away a genuine `Ctrl+O` the same way
+///    discards the user's actual intent to leave this mode.
+///    `run_single_line_on_console` now reports whether it saw one, and
+///    this loop honors it immediately below (`ctrl_o_queued`) instead
+///    of printing another prompt and waiting.
+///
+/// 2. The `"{cwd}> "` prompt itself printed twice in a row on what
+///    looked like one line, with nothing typed in between. **Fully
+///    deterministic, not a flaky double-press** -- `print_prompt`
+///    deliberately never prints a trailing newline (the whole point is
+///    leaving the cursor right after it, ready for the user's own
+///    typing on that same line). Leaving this mode via `Ctrl+O`
+///    *without ever pressing `Enter`* -- an entirely ordinary "peek at
+///    the console, then close it" use of this toggle, no repeated
+///    keypress required -- returns to the panels with that `"path> "`
+///    still dangling, unterminated, on the real console buffer. The
+///    very next thing written to that same real buffer -- another
+///    `Ctrl+O` peek, or the regular always-live command line's own next
+///    command via `run_shell_command_lines`'s `"{cwd}> {line}\n"` echo
+///    -- picks up writing right where that dangling prompt left off,
+///    with no newline separating them: exactly `"path> path> svn st"`,
+///    which a real terminal then soft-wraps into what looks like two
+///    lines. Fixed below: this function always emits one trailing
+///    newline before leaving, whichever way it exits, so the real
+///    buffer's cursor is never left mid-line for whatever gets printed
+///    there next.
 pub(super) fn toggle_panels_hidden(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
@@ -348,7 +416,7 @@ pub(super) fn toggle_panels_hidden(app: &mut App, terminal: &mut Terminal<Crosst
         // `main.rs::dispatch_key_event`'s own normalization entirely,
         // so `Ctrl+O` under a non-Latin layout needs it applied here too.
         let key = crate::keyboard_layout::normalize_ctrl_shortcut(key);
-        if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        if is_ctrl_o(key) {
             break;
         }
 
@@ -357,10 +425,14 @@ pub(super) fn toggle_panels_hidden(app: &mut App, terminal: &mut Terminal<Crosst
                 execute!(std::io::stdout(), Print("\n"))?;
                 let line = input.trim().to_string();
                 input.clear();
+                let mut ctrl_o_queued = false;
                 if !line.is_empty() {
                     record_history(app, &line);
                     save_history(&app.command_history);
-                    run_single_line_on_console(app, &line)?;
+                    ctrl_o_queued = run_single_line_on_console(app, &line)?;
+                }
+                if ctrl_o_queued {
+                    break;
                 }
                 print_prompt(app)?;
             }
@@ -376,6 +448,22 @@ pub(super) fn toggle_panels_hidden(app: &mut App, terminal: &mut Terminal<Crosst
             _ => {}
         }
     }
+
+    // See this function's own doc comment, bug 2 -- whichever way the
+    // loop above exited, `print_prompt`'s own "{cwd}> " may still be
+    // sitting unterminated on the real console (never printed a
+    // trailing newline, by design, so typed input lands on the same
+    // line). Terminating it here, unconditionally, guarantees the next
+    // thing written to this same real buffer -- another peek, or the
+    // regular command line's own next echoed prompt -- always starts
+    // on a fresh line, rather than concatenating onto this one.
+    execute!(std::io::stdout(), Print("\n"))?;
+
+    // Belt-and-suspenders alongside the newline above: also drop any
+    // further queued Ctrl+O so a genuinely repeated keypress can't
+    // immediately re-trigger this same function from `main.rs`'s own
+    // dispatch with nothing else having happened in between.
+    let _ = drain_stale_input()?;
 
     execute!(terminal.backend_mut(), EnterAlternateScreen)?;
     terminal.clear()?;
@@ -402,16 +490,23 @@ fn print_prompt(app: &mut App) -> Result<()> {
 /// without that function's own leave/re-enter-alternate-screen and
 /// "press any key" pause, which only make sense when returning to the
 /// TUI is the point.
-fn run_single_line_on_console(app: &mut App, line: &str) -> Result<()> {
+///
+/// Returns whether a `Ctrl+O` was seen among the input drained after a
+/// real subprocess ran -- `false` unconditionally for the `cd`/`cls`
+/// branches, which never suspend raw mode at all and so can't have
+/// left anything queued behind them. See `toggle_panels_hidden`'s own
+/// doc comment for why the caller can't just ignore this the way it
+/// ignores every *other* kind of drained input.
+fn run_single_line_on_console(app: &mut App, line: &str) -> Result<bool> {
     if let Some(target) = parse_cd_target(line) {
         debug!(target, "hidden console: cd");
         app.active_panel().change_dir(target)?;
-        return Ok(());
+        return Ok(false);
     }
 
     if line == "cls" || line == "clear" {
         execute!(std::io::stdout(), crossterm::terminal::Clear(crossterm::terminal::ClearType::All), crossterm::cursor::MoveTo(0, 0))?;
-        return Ok(());
+        return Ok(false);
     }
 
     let profile = app.shell_profiles[app.active_shell].clone();
@@ -423,7 +518,7 @@ fn run_single_line_on_console(app: &mut App, line: &str) -> Result<()> {
     disable_raw_mode()?;
     let status = command.current_dir(&cwd).status();
     enable_raw_mode()?;
-    drain_stale_input()?;
+    let ctrl_o_queued = drain_stale_input()?;
 
     match status {
         Ok(status) if !status.success() => {
@@ -432,13 +527,42 @@ fn run_single_line_on_console(app: &mut App, line: &str) -> Result<()> {
         Err(err) => print_themed(&app.theme, format_args!("failed to launch '{}': {err}\n", profile.program))?,
         Ok(_) => {}
     }
-    Ok(())
+    Ok(ctrl_o_queued)
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `is_ctrl_o` is the one piece of the two-bugs-in-one fix
+    /// (`toggle_panels_hidden`'s own doc comment has the full story)
+    /// that doesn't need a real console to exercise -- `drain_stale_input`
+    /// and `toggle_panels_hidden` themselves read genuine OS input
+    /// events and have no test coverage for the same reason `main.rs`'s
+    /// own `handle_event`/`handle_browsing_key` don't either.
+    mod is_ctrl_o_tests {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        use super::*;
+
+        #[test]
+        fn matches_ctrl_o_regardless_of_other_held_modifiers() {
+            assert!(is_ctrl_o(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)));
+            assert!(is_ctrl_o(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)));
+        }
+
+        #[test]
+        fn rejects_o_without_control() {
+            assert!(!is_ctrl_o(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE)));
+            assert!(!is_ctrl_o(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::SHIFT)));
+        }
+
+        #[test]
+        fn rejects_a_different_ctrl_letter() {
+            assert!(!is_ctrl_o(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)));
+        }
+    }
 
     /// `app_paths::resolve` itself depends on real, per-machine registry
     /// state, so these only cover the deterministic short-circuits --
