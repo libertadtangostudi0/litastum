@@ -66,8 +66,8 @@ pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &mut CompareSta
     let hint = Line::from(vec![
         Span::styled("Tab ", Style::default().fg(theme.accent)),
         Span::styled("Switch pane   ", Style::default().fg(theme.text_dim)),
-        Span::styled("Ctrl+Up/Down ", Style::default().fg(theme.accent)),
-        Span::styled("Next/prev diff   ", Style::default().fg(theme.text_dim)),
+        Span::styled("F7/F8 ", Style::default().fg(theme.accent)),
+        Span::styled("Prev/next diff   ", Style::default().fg(theme.text_dim)),
         Span::styled("Ctrl+S ", Style::default().fg(theme.accent)),
         Span::styled("Save   ", Style::default().fg(theme.text_dim)),
         Span::styled("F9 ", Style::default().fg(theme.accent)),

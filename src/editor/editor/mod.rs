@@ -1049,15 +1049,32 @@ impl Editor {
         // highlighted) rest of the match right after the cursor read as
         // a visually separate block because of it.
         //
-        // With no selection, no active search, and the cursor not on a
-        // matched bracket, `hide_cursor()`'s usual `base` is right: the
-        // real terminal cursor (a thin bar — see `setup_terminal` in
-        // main.rs) is what should be visible there, not edtui's own
-        // solid reverse-video block.
+        // Same reasoning a third time for `extra_highlights`
+        // (`Compare`'s own red/green diff row backgrounds,
+        // `ui/compare.rs::row_highlights`) -- reported directly with a
+        // screenshot: the cursor's own cell on an otherwise fully
+        // diff-colored line rendered as a visibly different, plain
+        // patch cut out of the middle of it. Ordinary `F4` editing never
+        // sets `extra_highlights` at all, so this branch is a no-op
+        // there -- this is purely a Compare-mode fix. Unlike selection/
+        // search/bracket, which each always paint the cursor with one
+        // fixed color, this reuses whichever *specific* highlight the
+        // cursor's row actually carries (`Highlight::contains`) -- a
+        // diff row can be either the removed or the added color, and
+        // hardcoding one would just trade one wrong color for another.
+        let cursor_diff_style = self.extra_highlights.iter().find(|highlight| highlight.contains(&self.state.cursor)).map(|highlight| highlight.style);
+        // With no selection, no active search, the cursor not on a
+        // matched bracket, and no diff highlight covering its row,
+        // `hide_cursor()`'s usual `base` is right: the real terminal
+        // cursor (a thin bar — see `setup_terminal` in main.rs) is what
+        // should be visible there, not edtui's own solid reverse-video
+        // block.
         editor_theme = if self.state.selection.is_some() || self.is_searching() {
             editor_theme.cursor_style(selection_style)
         } else if !pathologically_long_line && cursor_is_on_a_matched_bracket(&self.state.lines, self.state.cursor) {
             editor_theme.cursor_style(highlight_style)
+        } else if let Some(diff_style) = cursor_diff_style {
+            editor_theme.cursor_style(diff_style)
         } else {
             editor_theme.hide_cursor()
         };

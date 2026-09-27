@@ -457,6 +457,48 @@ fn search_match_first_cell_renders_with_selection_color_not_base() {
     );
 }
 
+/// Same bug a third time, for `Compare`'s own diff row backgrounds
+/// (`ui/compare.rs::row_highlights`, applied via
+/// `Editor::set_extra_highlights`): reported directly with a
+/// screenshot -- the cursor's own cell on an otherwise fully
+/// diff-colored line rendered as a visibly different, plain patch cut
+/// out of the middle of it, since neither selection, search, nor
+/// bracket-matching covered this case and the cell fell through to
+/// plain `base`.
+#[test]
+fn cursor_cell_on_a_diff_highlighted_row_keeps_the_diff_color_not_base() {
+    use edtui::Highlight;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::{Color, Style};
+    use ratatui::Terminal;
+
+    let (mut editor, _path) = open_test_editor("unchanged\nremoved line\n");
+    editor.set_cursor(Index2::new(1, 0));
+    let diff_style = Style::default().fg(Color::White).bg(Color::Red);
+    editor.set_extra_highlights(vec![Highlight::new(Index2::new(1, 0), Index2::new(1, 11), diff_style)]);
+
+    let theme = Theme::dark();
+    let backend = TestBackend::new(40, 3);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| {
+            let view = editor.view(&theme, frame.area());
+            frame.render_widget(view, frame.area());
+        })
+        .unwrap();
+
+    let cursor_pos = editor.cursor_screen_position().expect("cursor should be visible after rendering");
+    let buf = terminal.backend().buffer();
+    let cell_bg = buf[(cursor_pos.x, cursor_pos.y)].bg;
+
+    assert_eq!(
+        cell_bg,
+        diff_style.bg.unwrap(),
+        "the cursor's own cell on a diff-highlighted row must keep that row's diff color, not be \
+         reset to the base background by edtui's cursor-cell paint"
+    );
+}
+
 /// `Theme::selection_text`, when a scheme sets it (requested directly,
 /// to keep text readable over a deliberately bright selection
 /// background), overrides the selected text's own foreground -- plain

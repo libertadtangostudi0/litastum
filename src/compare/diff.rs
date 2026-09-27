@@ -105,9 +105,11 @@ pub fn compute(left_text: &str, right_text: &str) -> (DiffLines, DiffLines) {
 
 /// The row of the next changed line with real content on *this* side
 /// (`Removed`/`Added`, never `Empty` padding -- there's nothing to jump
-/// the cursor onto there) at or after `from`. Drives "jump to next diff
-/// hunk" (`state.rs::CompareState::jump_to_next_hunk`) against whichever
-/// side is currently focused.
+/// the cursor onto there) at or after `from`. A building block for
+/// `next_hunk_start`/`previous_hunk_start` below, not used directly for
+/// hunk navigation any more -- see those functions' own doc comments
+/// for why "the next changed row" and "the next *hunk*" aren't the same
+/// thing once a hunk spans more than one line.
 pub fn next_changed_row(kinds: &[DiffLineKind], from: usize) -> Option<usize> {
     kinds.iter().enumerate().skip(from).find(|(_, kind)| matches!(kind, DiffLineKind::Removed | DiffLineKind::Added)).map(|(row, _)| row)
 }
@@ -121,6 +123,61 @@ pub fn previous_changed_row(kinds: &[DiffLineKind], from: usize) -> Option<usize
         .rev()
         .find(|(_, kind)| matches!(kind, DiffLineKind::Removed | DiffLineKind::Added))
         .map(|(row, _)| row)
+}
+
+/// The first row of the contiguous changed run (`Removed`/`Added`) that
+/// `row` itself sits inside -- walks backward while the row right
+/// before it is still part of the same run. `row` is assumed to already
+/// be a changed row; callers only ever reach this after checking that.
+fn hunk_start_at(kinds: &[DiffLineKind], row: usize) -> usize {
+    let mut start = row;
+    while start > 0 && matches!(kinds[start - 1], DiffLineKind::Removed | DiffLineKind::Added) {
+        start -= 1;
+    }
+    start
+}
+
+/// The first row of the next diff *hunk* -- a whole contiguous block of
+/// changed lines, not just the next individual changed line -- at or
+/// after `from`. Drives `F7`/`F8`/`Ctrl+Down` ("jump to next diff hunk",
+/// `state.rs::CompareState::jump_to_next_hunk`).
+///
+/// Reported directly: a multi-line hunk (several consecutive
+/// `Removed`/`Added` rows) made `F8` stop on every single line inside
+/// it before finally moving on to the next real hunk, since the
+/// original implementation called `next_changed_row` straight from
+/// `cursor.row + 1` -- the row right after the cursor is still part of
+/// the *same* hunk for anything longer than one line, so that was
+/// always "the next changed row," never "the next hunk." Fixed by
+/// skipping past `from`'s own hunk first (if it's sitting inside one)
+/// before searching for the next changed row at all -- what's found
+/// after that skip is guaranteed to belong to a different, later hunk.
+pub fn next_hunk_start(kinds: &[DiffLineKind], from: usize) -> Option<usize> {
+    let mut i = from;
+    while i < kinds.len() && matches!(kinds[i], DiffLineKind::Removed | DiffLineKind::Added) {
+        i += 1;
+    }
+    next_changed_row(kinds, i)
+}
+
+/// The first row of the previous diff hunk, strictly before whichever
+/// hunk `from` itself sits inside (or before `from` outright, if it
+/// isn't currently inside one) -- the other half of `next_hunk_start`,
+/// same "skip the whole current block, not just one line of it" fix.
+/// Lands on that previous hunk's own *first* row, not merely the
+/// nearest changed line before `from` (which would land on its *last*
+/// row instead, backward through a multi-line hunk one line at a time
+/// -- the same bug `next_hunk_start` fixes, mirrored for this
+/// direction): finds the nearest changed row before the current hunk,
+/// then walks that row's own run back to where it starts.
+pub fn previous_hunk_start(kinds: &[DiffLineKind], from: usize) -> Option<usize> {
+    let boundary = if from < kinds.len() && matches!(kinds[from], DiffLineKind::Removed | DiffLineKind::Added) {
+        hunk_start_at(kinds, from)
+    } else {
+        from
+    };
+    let last_row_of_previous_hunk = previous_changed_row(kinds, boundary)?;
+    Some(hunk_start_at(kinds, last_row_of_previous_hunk))
 }
 
 /// Given the real row `from_real_row` currently at the top of the
@@ -220,6 +277,45 @@ mod tests {
         assert_eq!(previous_changed_row(&kinds, 3), Some(1), "should not include `from` itself");
         assert_eq!(previous_changed_row(&kinds, 1), None);
         assert_eq!(previous_changed_row(&kinds, 0), None);
+    }
+
+    /// Regression coverage for the real report: from inside a two-row
+    /// hunk (rows 1-2), `next_hunk_start` should skip straight to the
+    /// next hunk's own first row (5), not stop at row 2 first the way
+    /// plain `next_changed_row(kinds, from + 1)` used to.
+    #[test]
+    fn next_hunk_start_skips_the_rest_of_a_multi_line_hunk() {
+        let kinds = vec![
+            DiffLineKind::Unchanged,
+            DiffLineKind::Removed,
+            DiffLineKind::Removed,
+            DiffLineKind::Unchanged,
+            DiffLineKind::Unchanged,
+            DiffLineKind::Added,
+        ];
+        assert_eq!(next_hunk_start(&kinds, 0), Some(1), "from before any hunk, lands on the first hunk's own start");
+        assert_eq!(next_hunk_start(&kinds, 1), Some(5), "from the first row of the current hunk, skips past row 2 to the next hunk");
+        assert_eq!(next_hunk_start(&kinds, 2), Some(5), "from the last row of the current hunk, same destination");
+        assert_eq!(next_hunk_start(&kinds, 5), None, "no further hunk past the last one");
+    }
+
+    /// The other direction: from inside the second (one-row) hunk,
+    /// `previous_hunk_start` should land on the earlier hunk's own
+    /// *first* row (1), not its last row (2) the way plain
+    /// `previous_changed_row` would.
+    #[test]
+    fn previous_hunk_start_lands_on_the_earlier_hunks_own_first_row() {
+        let kinds = vec![
+            DiffLineKind::Unchanged,
+            DiffLineKind::Removed,
+            DiffLineKind::Removed,
+            DiffLineKind::Unchanged,
+            DiffLineKind::Unchanged,
+            DiffLineKind::Added,
+        ];
+        assert_eq!(previous_hunk_start(&kinds, 5), Some(1), "from the only row of the second hunk");
+        assert_eq!(previous_hunk_start(&kinds, 2), None, "already inside the first hunk -- nothing earlier to find");
+        assert_eq!(previous_hunk_start(&kinds, 1), None, "already on the first hunk's own start -- same no-op");
     }
 
     #[test]

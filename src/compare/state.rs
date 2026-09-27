@@ -6,7 +6,7 @@ use edtui::Index2;
 
 use crate::editor::{Editor, EditorKeymapMode};
 
-use super::diff::{compute, next_changed_row, previous_changed_row};
+use super::diff::{compute, next_hunk_start, previous_hunk_start};
 use super::line_ending::{self, LineEnding};
 
 /// Which pane currently owns the real terminal cursor and receives
@@ -144,25 +144,34 @@ impl CompareState {
         self.focused_mut().save()
     }
 
-    /// `Tab`-equivalent "jump to next diff hunk" (bound to `Ctrl+Down`
-    /// in `input.rs`, since `Tab` itself now means "switch pane focus" —
-    /// see this module's own top doc comment): moves the *focused*
-    /// pane's real cursor to the next row with real content that
-    /// differs from the other side, diffed live against the other
-    /// pane's current text. A no-op past the last hunk.
+    /// `Tab`-equivalent "jump to next diff hunk" (bound to `F8`/
+    /// `Ctrl+Down` in `input.rs`, since `Tab` itself now means "switch
+    /// pane focus" — see this module's own top doc comment): moves the
+    /// *focused* pane's real cursor to the first row of the next
+    /// *hunk* -- a whole contiguous block of changed lines -- diffed
+    /// live against the other pane's current text. A no-op past the
+    /// last hunk.
+    ///
+    /// Passes the cursor's own current row, not `row + 1`, to
+    /// `next_hunk_start` -- see that function's own doc comment for why
+    /// the fixed `+ 1` version used to stop on every line of a
+    /// multi-line hunk instead of skipping straight to the next one.
     pub fn jump_to_next_hunk(&mut self) {
         let focused_kinds = self.live_focused_kinds();
-        let from = self.focused().cursor().row + 1;
-        if let Some(row) = next_changed_row(&focused_kinds, from) {
+        let from = self.focused().cursor().row;
+        if let Some(row) = next_hunk_start(&focused_kinds, from) {
             self.focused_mut().set_cursor(Index2::new(row, 0));
         }
     }
 
-    /// `Ctrl+Up` -- the other half of `jump_to_next_hunk`.
+    /// `F7`/`Ctrl+Up` -- the other half of `jump_to_next_hunk`, landing
+    /// on the previous hunk's own first row (see `previous_hunk_start`'s
+    /// own doc comment for why that's not simply the nearest changed
+    /// line behind the cursor).
     pub fn jump_to_previous_hunk(&mut self) {
         let focused_kinds = self.live_focused_kinds();
         let from = self.focused().cursor().row;
-        if let Some(row) = previous_changed_row(&focused_kinds, from) {
+        if let Some(row) = previous_hunk_start(&focused_kinds, from) {
             self.focused_mut().set_cursor(Index2::new(row, 0));
         }
     }
@@ -260,6 +269,51 @@ mod tests {
         assert_eq!(state.left.cursor().row, 1);
         state.jump_to_previous_hunk();
         assert_eq!(state.left.cursor().row, 1, "no earlier hunk before the first one -- no-op");
+    }
+
+    /// Regression coverage for the real report: a multi-line hunk used
+    /// to stop `F8`/`jump_to_next_hunk` on every single changed line
+    /// inside it before finally moving to the next real hunk -- here,
+    /// rows 1-2 on the left are one hunk (both changed), row 4 is a
+    /// second, separate one-line hunk. A single press from row 0 should
+    /// skip straight past the *entire* first hunk to the second one,
+    /// not stop at row 2 first.
+    #[test]
+    fn jump_to_next_hunk_skips_the_whole_current_hunk_not_one_line_at_a_time() {
+        let mut state = open_pair("a\nb\nc\nd\ne\n", "a\nx\ny\nd\nz\n");
+
+        state.jump_to_next_hunk();
+        assert_eq!(state.left.cursor().row, 1, "should land on the first row of the first (two-line) hunk");
+
+        state.jump_to_next_hunk();
+        assert_eq!(state.left.cursor().row, 4, "should skip straight past row 2 (still the same hunk) to the second hunk");
+    }
+
+    /// The other direction of the same fix: retreating from inside a
+    /// multi-line hunk should land on that *previous* hunk's own first
+    /// row in one press, not step back through it one line at a time.
+    #[test]
+    fn jump_to_previous_hunk_skips_the_whole_current_hunk_not_one_line_at_a_time() {
+        let mut state = open_pair("a\nb\nc\nd\ne\n", "a\nx\ny\nd\nz\n");
+        state.left.set_cursor(Index2::new(4, 0));
+
+        state.jump_to_previous_hunk();
+        assert_eq!(state.left.cursor().row, 1, "should land on the first row of the earlier two-line hunk, not row 2 (its last row)");
+    }
+
+    /// Pressing "previous" while sitting *inside* the first hunk in the
+    /// file (not just on its first row) has nowhere earlier to go --
+    /// same "no-op past the boundary" contract
+    /// `jump_to_previous_hunk_moves_the_focused_panes_cursor_backward`
+    /// already covers for landing exactly on a hunk's own start, just
+    /// confirmed here from a row mid-hunk too.
+    #[test]
+    fn jump_to_previous_hunk_from_mid_first_hunk_is_a_noop() {
+        let mut state = open_pair("a\nb\nc\nd\ne\n", "a\nx\ny\nd\nz\n");
+        state.left.set_cursor(Index2::new(2, 0)); // second row of the first (rows 1-2) hunk
+
+        state.jump_to_previous_hunk();
+        assert_eq!(state.left.cursor().row, 2, "no hunk earlier than the file's own first one -- the cursor shouldn't move at all");
     }
 
     #[test]

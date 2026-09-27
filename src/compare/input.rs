@@ -17,7 +17,13 @@ use super::menu::CompareMenu;
 /// literal tab character has no obvious use in either pane's own
 /// content) and `NextHunk`/`PreviousHunk` (bound to `Ctrl+Down`/`Ctrl+Up`
 /// specifically because `Tab`, this app's usual "next thing" key, is
-/// already taken by `ToggleFocus` here).
+/// already taken by `ToggleFocus` here -- **and also to `F8`/`F7`**,
+/// requested directly to match TortoiseMerge/`merge.exe`'s own
+/// next/previous-difference convention for quickly scanning where a
+/// file actually changed. Both bindings do the exact same thing; `F7`/
+/// `F8` are neither taken by anything else in this mode nor by
+/// `keymap::resolve`'s own global F-key row, which this mode's dispatch
+/// never falls through to in the first place).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CompareCommand {
     Close,
@@ -39,6 +45,8 @@ fn resolve(key: KeyEvent) -> CompareCommand {
         KeyCode::Tab => CompareCommand::ToggleFocus,
         KeyCode::Down if ctrl => CompareCommand::NextHunk,
         KeyCode::Up if ctrl => CompareCommand::PreviousHunk,
+        KeyCode::F(8) => CompareCommand::NextHunk,
+        KeyCode::F(7) => CompareCommand::PreviousHunk,
         KeyCode::F(9) => CompareCommand::OpenMenu,
         _ if edtui_supports_key(key.code) => CompareCommand::Forward,
         _ => CompareCommand::Ignore,
@@ -217,6 +225,32 @@ mod tests {
 
         let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
         assert_eq!(state.left.cursor().row, 1);
+    }
+
+    /// `F7`/`F8` are the same `NextHunk`/`PreviousHunk` commands
+    /// `Ctrl+Down`/`Ctrl+Up` already drive -- requested directly to
+    /// match TortoiseMerge/`merge.exe`'s own next/previous-difference
+    /// convention, not a replacement for the existing binding.
+    #[test]
+    fn f8_jumps_to_the_next_hunk_same_as_ctrl_down() {
+        let mut app = app_with_compare("a\nb\nc\n", "a\nx\nc\n");
+
+        handle_compare_key(&mut app, key(KeyCode::F(8))).unwrap();
+
+        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
+        assert_eq!(state.left.cursor().row, 1);
+    }
+
+    #[test]
+    fn f7_jumps_to_the_previous_hunk_same_as_ctrl_up() {
+        let mut app = app_with_compare("a\nb\nc\nd\n", "a\nx\nc\ny\n");
+        handle_compare_key(&mut app, key(KeyCode::F(8))).unwrap();
+        handle_compare_key(&mut app, key(KeyCode::F(8))).unwrap();
+
+        handle_compare_key(&mut app, key(KeyCode::F(7))).unwrap();
+
+        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
+        assert_eq!(state.left.cursor().row, 1, "should land back on the first hunk, not stay on the second");
     }
 
     #[test]
