@@ -10,7 +10,7 @@ use crate::theming::{PopupStyle, Theme};
 use super::popup;
 
 /// Renders `Mode::Info`'s one-line notification -- dismissed by any
-/// key (`main.rs::handle_event`). Currently the only caller is
+/// key (`event_loop::handle_event`). Currently the only caller is
 /// `explorer::user_menu::input::handle_confirm_port_far_menu_key`
 /// telling the user where a declined `FarMenu.ini` got backed up to,
 /// but the mode itself carries a plain `String` rather than anything

@@ -53,7 +53,7 @@ pub struct Panel {
     scroll_offset: usize,
     /// How many rows of each column actually fit on screen — written by
     /// the renderer each frame from the panel's own inner height, same
-    /// pattern as `columns` above (`ui::draw_panel`/`main.rs::run`).
+    /// pattern as `columns` above (`ui::draw_panel`/`event_loop::run`).
     /// `0` means "not yet known" (before the first real frame) and
     /// disables scroll adjustment entirely rather than dividing by
     /// zero or scrolling based on a stale guess.
@@ -208,7 +208,7 @@ impl Panel {
 
 
     /// The row count last reported by the renderer (`set_visible_rows`)
-    /// -- `main.rs::run`'s own doc comment covers why a full-screen mode
+    /// -- `event_loop::run`'s own doc comment covers why a full-screen mode
     /// (the built-in editor, Compare) needs to read this back rather
     /// than just handing `set_visible_rows` a fresh value every frame:
     /// there's nothing fresh to report while a panel isn't actually

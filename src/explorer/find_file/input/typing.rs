@@ -134,7 +134,7 @@ pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<()> {
 /// background thread (`background::spawn_search`) and switches to
 /// `FindFilePhase::Searching` -- doesn't block waiting for it, and
 /// doesn't apply any results itself; `background::poll_pending_find_file_search`
-/// (driven from `main.rs::wait_for_event`) picks up the finished search
+/// (driven from `event_loop::wait_for_event`) picks up the finished search
 /// and switches to `FindFilePhase::Results` once it's actually done. A
 /// no-op only if *both* fields are empty (nothing sensible to search
 /// for) -- either one alone is enough, matching Far Manager's own

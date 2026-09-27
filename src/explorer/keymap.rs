@@ -65,7 +65,7 @@ pub enum Command {
     /// defaulting the destination to the entry's *own* directory
     /// (rather than the other panel's) so editing just the trailing
     /// name renames it in place. Modifier-specific, so it's resolved
-    /// directly in `main.rs::handle_browsing_key` rather than through
+    /// directly in `command_line::browsing::handle_browsing_key` rather than through
     /// this module's `resolve` table (which only keys off `KeyCode`,
     /// not modifiers).
     RenameSelected,
@@ -121,7 +121,7 @@ pub fn resolve(key: KeyCode) -> Option<Command> {
         KeyCode::F(8) => Some(Command::DeleteSelected),
         KeyCode::F(9) => Some(Command::OpenMenu),
         // Only F10 quits, matching real Far Manager -- bare letters
-        // now type into the always-live command line (main.rs), so a
+        // now type into the always-live command line (`command_line::browsing`), so a
         // lone 'q' shortcut would swallow the start of typed commands.
         KeyCode::F(10) => Some(Command::Quit),
         _ => None,
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn bare_q_no_longer_quits() {
         // Regression guard: 'q' used to be a quick-quit shortcut, but
-        // now types into the always-live command line (main.rs) like
+        // now types into the always-live command line (`command_line::browsing`) like
         // any other letter -- only F10 quits, matching real Far
         // Manager. See ARCHITECTURE.md / the plan for this feature.
         assert_eq!(resolve(KeyCode::Char('q')), None);

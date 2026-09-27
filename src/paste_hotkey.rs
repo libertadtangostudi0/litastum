@@ -25,7 +25,7 @@
 //!    so `editor::fast_paste_from_clipboard`'s own interception
 //!    (`Editor::input`) never fires for a real user paste, only for a
 //!    synthetic one built in a test.
-//! 2. Even `main.rs::drain_pending_editor_typing`'s own "batch whatever
+//! 2. Even `event_loop::keys::drain_pending_editor_typing`'s own "batch whatever
 //!    the queue already has" fix (built for the *previous* theory --
 //!    kept for genuine fast typing/other bursts, and harmless here)
 //!    can't help either: characters simply aren't queued up in advance
@@ -38,14 +38,14 @@
 //! key combo directly from the OS -- `GetAsyncKeyState`, exactly
 //! `alt_key.rs`'s own approach -- read the clipboard ourselves the
 //! instant it's detected, and apply the same fast splice `Ctrl+V`
-//! itself would have (`Editor::paste_text`). `main.rs::wait_for_event`
+//! itself would have (`Editor::paste_text`). `event_loop::wait_for_event`
 //! checks this on every loop iteration (not just once per call, the
 //! way `alt_key`'s own idle-only check works) -- during an active
 //! keystroke flood this app is still processing individual characters
 //! constantly, so an idle-only check would never run until the flood
 //! is already over. Windows Terminal's own injected flood keeps
 //! arriving right afterward regardless (there's no way to tell it to
-//! stop) -- `main.rs::try_intercept_paste_hotkey`'s own doc comment
+//! stop) -- `event_loop::paste::try_intercept_paste_hotkey`'s own doc comment
 //! covers how that tail gets silently discarded instead of typed a
 //! second time.
 

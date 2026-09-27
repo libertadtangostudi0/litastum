@@ -375,7 +375,7 @@ pub struct App {
     /// True hold/release tracking on Windows: `crossterm`'s Windows
     /// Console backend never delivers a standalone press/release event
     /// for a bare modifier key on its own (only modifier flags riding
-    /// along with an actual keypress), so `main.rs::wait_for_event`
+    /// along with an actual keypress), so `event_loop::wait_for_event`
     /// polls the OS directly (`alt_key::is_physically_down`,
     /// `GetAsyncKeyState`) while otherwise idle and updates this the
     /// instant the physical key state changes — see `alt_key.rs`'s own
@@ -383,17 +383,17 @@ pub struct App {
     ///
     /// On other platforms there's no equivalent poll, so this falls
     /// back to the same approximation as before: set fresh in
-    /// `main.rs::handle_event` from whether the *last processed key
+    /// `event_loop::handle_event` from whether the *last processed key
     /// event* carried the `Alt` modifier. The alternate row appears the
     /// instant an `Alt+`-something is pressed (correct) but only
     /// reverts on the *next* key press without `Alt`, not the instant
     /// `Alt` itself is released.
     pub alt_held: bool,
     /// Real physical `Ctrl+V` state, tracked the same way `alt_held`
-    /// is (`main.rs::paste_hotkey`, `GetAsyncKeyState` -- Windows only,
+    /// is (`paste_hotkey.rs`, `GetAsyncKeyState` -- Windows only,
     /// always `false` elsewhere) -- an edge-triggered "was it *just*
     /// pressed" flag, not "is it held," used only to detect a fresh
-    /// press. See `main.rs::try_intercept_paste_hotkey`'s own doc
+    /// press. See `event_loop::paste::try_intercept_paste_hotkey`'s own doc
     /// comment for why a real terminal `Ctrl+V` keystroke needs its own
     /// bypass at all.
     pub ctrl_v_physically_held: bool,
@@ -401,7 +401,7 @@ pub struct App {
     /// paste expects Windows Terminal's own (much slower) keystroke-
     /// simulated paste to inject right afterward, front = next expected
     /// -- `'\n'` means the next expected key is a bare `Enter`, anything
-    /// else means that exact `Char`. `main.rs::should_swallow_paste_tail`
+    /// else means that exact `Char`. `event_loop::paste::should_swallow_paste_tail`
     /// discards an incoming key only when it actually *matches* the
     /// front of this queue, popping it off; a real keystroke that
     /// doesn't match (most of the time, if it happens at all -- see its
@@ -466,7 +466,7 @@ pub struct App {
     /// set by `explorer::markdown_preview::open_preview` right after it
     /// actually succeeds, cleared by `handle_markdown_preview_key`'s own
     /// `Esc`/`F3` close path right after `DisableMouseCapture` succeeds.
-    /// Exists specifically so `main.rs::restore_terminal` knows whether
+    /// Exists specifically so `terminal_setup::restore_terminal` knows whether
     /// it's safe to send `DisableMouseCapture` at all when the app
     /// exits -- reported as a real crash on Windows
     /// (`Error: 0: Initial console modes not set`, `crossterm`'s own
@@ -493,7 +493,7 @@ pub struct App {
     /// second, almost-always-`None` field through -- `None` there is
     /// just this field never having been set. `app.active` (`0` =
     /// editor, `1` = preview) decides which side keyboard input reaches
-    /// while this is `Some`; `Tab` toggles it (`main.rs::handle_key_event`).
+    /// while this is `Some`; `Tab` toggles it (`event_loop::keys::handle_key_event`).
     /// Cleared by `editor_keymap::return_from_editor` the moment the
     /// editor actually closes for good.
     pub markdown_edit_preview: Option<MarkdownPreviewState>,

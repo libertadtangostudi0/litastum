@@ -210,7 +210,7 @@ output the user is trying to look at cleanly. No "press any key"
 message either, unlike that same function's own pause — the entire
 point is showing exactly what's already there, not adding to it.
 
-No unit test coverage, same reason `main.rs::handle_event`/
+No unit test coverage, same reason `event_loop::handle_event`/
 `handle_browsing_key` itself already has none: this needs a real
 `Terminal`, and its own inner loop reads real `crossterm` events
 directly rather than going through anything test-fakeable.

@@ -58,7 +58,7 @@ use panel::build_list_item;
 /// (or anything it calls) any more** -- every cursor-placing draw
 /// function in this app (`editor_pane::draw_editor`, `compare::draw_compare`,
 /// `find_file::draw_find_file`, `confirm::draw_confirm_transfer_popup`,
-/// ...) now *returns* the position instead, up to `main.rs::run`, which
+/// ...) now *returns* the position instead, up to `event_loop::run`, which
 /// applies it once, itself, after `terminal.draw` has actually finished
 /// and the whole frame has reached the terminal.
 ///
@@ -81,7 +81,7 @@ use panel::build_list_item;
 /// intended spot. Applying `set_cursor_position` before `show_cursor`
 /// ourselves, once, after the whole frame is already on screen, means
 /// the cursor only ever becomes visible already sitting in the right
-/// place -- see `main.rs::run`'s own application of this return value.
+/// place -- see `event_loop::run`'s own application of this return value.
 pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Position>) {
     let theme = app.theme; // Theme is Copy -- see theme.rs for why
     let area = frame.area();
@@ -99,12 +99,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     // panel at all, so there's nothing new to report. Reported directly
     // as a real, persistent glitch, not just a one-frame flash: closing
     // the editor showed a single entry crammed into one narrow column
-    // for one whole extra frame, the same shape `main.rs::run`'s own
+    // for one whole extra frame, the same shape `event_loop::run`'s own
     // priming-draw comment already describes for startup. Root cause
     // here was the same "one frame stale" timing, just recurring on
     // every full-screen-mode exit instead of only at startup: this
     // function used to return the *placeholder* `[(1, 1), (1, 1)]`
-    // itself, which `main.rs::run`'s loop then applied to *both* panels
+    // itself, which `event_loop::run`'s loop then applied to *both* panels
     // via `Panel::set_columns`/`set_visible_rows` on *every single
     // frame* the editor/Compare stayed open -- clobbering their real
     // values down to a forced single column/row the whole time, not

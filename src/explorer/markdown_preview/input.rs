@@ -15,7 +15,7 @@ use super::state::MarkdownPreviewState;
 /// view and edit a `.md` file at the same time, in the left panel, with
 /// the rendered result shown on the right on save. `app.active` starts at `0`
 /// (the editor, ready to type into immediately); `Tab`
-/// (`main.rs::handle_key_event`) toggles it to `1` (the preview) for
+/// (`event_loop::keys::handle_key_event`) toggles it to `1` (the preview) for
 /// scrolling/`l`-searching/`Ctrl`+clicking it -- see
 /// `handle_markdown_edit_preview_key`. A silent no-op if either half
 /// fails to open (a corrupt/unreadable file, or one that's not valid
@@ -48,7 +48,7 @@ pub fn open_edit_preview(app: &mut App) {
     };
 
     match execute!(std::io::stdout(), EnableMouseCapture) {
-        // `app.mouse_capture_enabled` is what tells `main.rs::restore_terminal`
+        // `app.mouse_capture_enabled` is what tells `terminal_setup::restore_terminal`
         // it's safe to send `DisableMouseCapture` at all when the app
         // exits -- only set once this actually succeeded, never
         // unconditionally (see its own doc comment for the crash that
@@ -66,7 +66,7 @@ pub fn open_edit_preview(app: &mut App) {
 /// Key handling while `App::active == 1` -- the embedded preview has
 /// focus, not the editor -- during a `Mode::Editing`/`ConfirmDiscard`
 /// session that has a linked `App::markdown_edit_preview`
-/// (`main.rs::handle_key_event` is what routes here instead of
+/// (`event_loop::keys::handle_key_event` is what routes here instead of
 /// `editor::handle_editor_key`, based on `app.active`). `Up`/`Down`
 /// scroll one line, `PageUp`/`PageDown` a fixed chunk (`PAGE_SIZE`);
 /// `l` opens the keyboard-driven link search (`Mode::MarkdownLinkSearch`,

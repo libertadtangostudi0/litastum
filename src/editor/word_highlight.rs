@@ -53,7 +53,7 @@ pub(super) fn word_occurrence_highlights(lines: &Lines, cursor: Index2, style: S
 /// already handle this exact case. Reported directly: a real file
 /// consisting of one enormous line (an escaped log/diff dump, `\n`/`\t`
 /// literally spelled out rather than real line breaks) made the editor
-/// visibly sluggish -- every keypress redraws (`main.rs::run`'s own
+/// visibly sluggish -- every keypress redraws (`event_loop::run`'s own
 /// per-event redraw architecture), and this module's word-occurrence
 /// scan runs unconditionally on every one of those frames whenever no
 /// selection is active, so an O(line length) cost was being paid dozens

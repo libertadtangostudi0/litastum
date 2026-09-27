@@ -24,7 +24,7 @@ pub(super) fn app_with_find_file(state: FindFileState) -> App {
 /// only *starts* a search now, on a real background thread, rather
 /// than blocking until it's done the way the old synchronous version
 /// did; tests that care about the actual results need to wait for it
-/// the same way `main.rs::wait_for_event` does in the real app.
+/// the same way `event_loop::wait_for_event` does in the real app.
 pub(super) fn wait_for_search(app: &mut App) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {

@@ -14,7 +14,7 @@ pub(super) struct LayoutTable {
 /// below (lowercase-only pairs, one per physical letter key actually
 /// used by a real binding in this app is enough -- no need to map
 /// punctuation-row keys no shortcut ever uses) and list it here; nothing
-/// else in this module or either call site (`main.rs::dispatch_key_event`,
+/// else in this module or either call site (`event_loop::keys::dispatch_key_event`,
 /// `command_line::browsing::shell_exec::toggle_panels_hidden`) needs to
 /// change. Order only matters if two layouts ever mapped the *same*
 /// character to two *different* Latin letters (none do today) -- the

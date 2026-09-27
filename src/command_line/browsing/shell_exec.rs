@@ -413,7 +413,7 @@ pub(super) fn toggle_panels_hidden(app: &mut App, terminal: &mut Terminal<Crosst
         }
         // See `keyboard_layout::normalize_ctrl_shortcut`'s own doc
         // comment -- this loop reads raw events directly, bypassing
-        // `main.rs::dispatch_key_event`'s own normalization entirely,
+        // `event_loop::keys::dispatch_key_event`'s own normalization entirely,
         // so `Ctrl+O` under a non-Latin layout needs it applied here too.
         let key = crate::keyboard_layout::normalize_ctrl_shortcut(key);
         if is_ctrl_o(key) {
@@ -461,7 +461,7 @@ pub(super) fn toggle_panels_hidden(app: &mut App, terminal: &mut Terminal<Crosst
 
     // Belt-and-suspenders alongside the newline above: also drop any
     // further queued Ctrl+O so a genuinely repeated keypress can't
-    // immediately re-trigger this same function from `main.rs`'s own
+    // immediately re-trigger this same function from `event_loop`'s own
     // dispatch with nothing else having happened in between.
     let _ = drain_stale_input()?;
 
@@ -539,8 +539,8 @@ mod tests {
     /// (`toggle_panels_hidden`'s own doc comment has the full story)
     /// that doesn't need a real console to exercise -- `drain_stale_input`
     /// and `toggle_panels_hidden` themselves read genuine OS input
-    /// events and have no test coverage for the same reason `main.rs`'s
-    /// own `handle_event`/`handle_browsing_key` don't either.
+    /// events and have no test coverage for the same reason `event_loop::handle_event`/
+    /// `command_line::browsing::handle_browsing_key` don't either.
     mod is_ctrl_o_tests {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

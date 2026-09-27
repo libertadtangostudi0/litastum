@@ -11,8 +11,21 @@ data-flow level.
 ## Module map
 
 ```
-main.rs              — terminal setup/teardown, event loop, dispatches
-                        by Mode to each area's own handle_*_key
+main.rs              — startup: load config/history, run the event loop,
+                        save history on exit
+terminal_setup.rs     — raw mode/alternate screen/bracketed paste on and
+                        off, the Ctrl+C handler
+event_loop/           — run(), wait_for_event (background-task polling,
+                        Windows Alt/Ctrl+V physical-key polling),
+                        handle_event, mouse-burst draining
+  event_loop/keys.rs   —   handle_key_event/dispatch_key_event (by Mode to
+                            each area's own handle_*_key), key-burst
+                            draining (held navigation, queued typing)
+  event_loop/paste.rs  —   bracketed paste, Windows Ctrl+V bypass, the
+                            swallow queue for Windows Terminal's own
+                            redundant keystroke flood
+paste_hotkey.rs       — Windows-only: GetAsyncKeyState for a real
+                        physical Ctrl+V (see event_loop/paste.rs)
 app.rs                — App: panels, active index, Mode, theme,
                         popup_style, command/search history, ...
 test_support.rs       — shared test fixtures (test_app, key(), scratch dirs)
@@ -151,8 +164,12 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             command_line::run_shell_command_lines)
 
 editor.rs               — F4 built-in editor, backed by `edtui`
-  editor/editor/         —   Editor: open/save/view, search (search.rs),
-                              word-select-touch (word_select_touch.rs)
+  editor/editor/         —   Editor: open/save/accessors (mod.rs), key input
+                              + correction passes (input.rs), own undo/redo
+                              stack (undo.rs), rendering + cursor-cell
+                              styling (view.rs), fast paste (fast_paste.rs),
+                              search (search.rs), word-select-touch
+                              (word_select_touch.rs)
   editor/editor_keymap/  —   KeyEvent -> edtui action table + our own
                               intercepts (search box, word-select)
   editor/bindings/       —   hand-rolled motions edtui's own action
@@ -238,7 +255,7 @@ already does.
 crossterm::event::read()
         |
         v
-   main.rs::handle_event()  -- dispatches on app.mode to one of:
+   event_loop::handle_event()  -- dispatches on app.mode to one of:
         explorer::{handle_confirm_delete_key, handle_confirm_transfer_key,
                    handle_find_file_key, handle_drive_menu_key}
         theming::{handle_main_menu_key, handle_theme_menu_key,

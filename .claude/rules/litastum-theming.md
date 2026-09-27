@@ -471,6 +471,6 @@ resolver, tried on every file open:
 - No hot-reload of an edited theme file — roadmap stage 5 territory
   (`notify` crate), requires restarting the app to pick up changes.
 - Real terminal cursor *color* (as opposed to shape, already themed via
-  `crossterm::cursor::SetCursorStyle` in `main.rs`) isn't set from
+  `crossterm::cursor::SetCursorStyle` in `terminal_setup.rs`) isn't set from
   `cursorColor` — would need an OSC 12 escape sequence crossterm
   doesn't wrap.

@@ -498,7 +498,7 @@ mod handle_markdown_edit_preview_key_tests {
 
     /// Builds a combined editor+preview session (`App::markdown_edit_preview`
     /// linked to `Mode::Editing`), focused on the preview half
-    /// (`app.active = 1`) -- the state `main.rs::handle_key_event`
+    /// (`app.active = 1`) -- the state `event_loop::keys::handle_key_event`
     /// routes to `handle_markdown_edit_preview_key` in the first place.
     fn app_in_preview(content: &str) -> App {
         let dir = unique_scratch_dir("markdown-preview-keys");

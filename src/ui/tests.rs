@@ -74,7 +74,7 @@ fn labels_stay_within_the_six_character_budget() {
 /// frame. Root cause was `draw`'s own early-return branches (the
 /// editor, Compare, ...) reporting a hardcoded `(1, 1)` layout instead
 /// of each panel's own already-known `(columns, visible_rows)` --
-/// `main.rs::run`'s loop applies whatever this function returns
+/// `event_loop::run`'s loop applies whatever this function returns
 /// straight onto both panels via `Panel::set_columns`/`set_visible_rows`
 /// on *every* frame, including every frame the editor stays open, so a
 /// hardcoded placeholder was clobbering the real values down to a

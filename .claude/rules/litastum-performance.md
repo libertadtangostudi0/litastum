@@ -48,20 +48,20 @@ reported bug had to continue.
 `pub(crate)`, unreachable once the buffer is spliced directly instead
 of going through a real `Execute`-able action. Since "`Ctrl+Z` undoes
 exactly the paste, and both have to be fast" was itself an explicit
-requirement, `Editor` keeps its own one-shot snapshot
-(`paste_undo`/`PasteUndo`) instead of `edtui`'s stack for this one
-operation — see `fast_paste_from_clipboard`'s own doc comment for the
-full mechanism.
+requirement, `Editor` first kept its own one-shot paste snapshot, and
+later took over the whole undo/redo stack for the `Standard` keymap
+(`editor/editor/undo.rs`) — see [[litastum-editor-undo]] for why the
+one-shot version wasn't enough.
 
 **Round 2 — assumed it was one redraw per pasted character.** This
-app's own main loop (`main.rs::run`) redraws once per handled
+app's own main loop (`event_loop::run`) redraws once per handled
 `crossterm` event, and pasting without a terminal's "bracketed paste"
 feature enabled means every pasted character arrives as its own
 separate `Event::Key`, indistinguishable from a real keystroke — so a
 20,000-character paste genuinely was 20,000 redraws. Enabled
 `crossterm::event::EnableBracketedPaste` (`setup_terminal`) and handled
 the resulting `Event::Paste(String)` as one atomic block
-(`main.rs::handle_paste_event`) — correct, and a real improvement in
+(`event_loop::paste::handle_paste_event`) — correct, and a real improvement in
 principle, but **also not what fixed the actual report**: `bracketed-paste`
 is a real Cargo feature crossterm ships (on by default), but confirmed
 directly from `crossterm` 0.29's own source that its *Windows* backend
@@ -71,7 +71,7 @@ parsing raw ANSI escape bytes out of stdin, which the Windows Console
 API backend (structured `KEY_EVENT_RECORD`s via `ReadConsoleInputW`,
 never a raw byte stream) simply never does. `EnableBracketedPaste` was
 dead code for this user's actual platform. Kept anyway (harmless,
-correct on Unix, and `main.rs::drain_pending_editor_typing`'s
+correct on Unix, and `event_loop::keys::drain_pending_editor_typing`'s
 "coalesce a burst of already-queued plain characters into one
 `Editor::paste_text` call, redraw once" fix built alongside it is a
 real, general improvement for any burst of queued key events, pasted
@@ -99,14 +99,14 @@ app's normal `crossterm` event handling has no influence at all.
 Windows API instead — `GetAsyncKeyState`, the exact same technique
 `alt_key.rs` already uses for tracking real `Alt` hold/release (see its
 own module doc for why `crossterm` can't report a bare modifier key on
-Windows either). `paste_hotkey.rs` + `main.rs::try_intercept_paste_hotkey`:
+Windows either). `paste_hotkey.rs` + `event_loop::paste::try_intercept_paste_hotkey`:
 the instant a real physical `Ctrl+V` is detected, read the OS clipboard
 directly and apply `Editor::paste_text` immediately — full speed,
 independent of whatever Windows Terminal does next. Windows Terminal's
 own (now redundant, still-slow) keystroke flood keeps arriving right
 afterward regardless — there's no way to tell it to stop — so
 `App::pending_paste_swallow`/`_deadline` silently discard that
-predictable tail (`main.rs::should_swallow_paste_tail`) instead of
+predictable tail (`event_loop::paste::should_swallow_paste_tail`) instead of
 typing the same text a second time. The swallow count is an *estimate*
 (pasted-text length, `\r`-stripped), not a guarantee the flood matches
 exactly, which is why the deadline safety valve exists: undercounting

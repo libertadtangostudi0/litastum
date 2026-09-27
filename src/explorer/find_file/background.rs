@@ -93,7 +93,7 @@ impl PendingSearch {
 
 
 /// Whether `Mode::FindFile`'s own search is currently running on a
-/// background thread -- `main.rs::wait_for_event` polls more often than
+/// background thread -- `event_loop::wait_for_event` polls more often than
 /// its own default idle cadence while this is `true`, mirroring
 /// `explorer::image_preview::is_image_decode_pending`'s own reasoning
 /// exactly: a finished search should be picked up within one short

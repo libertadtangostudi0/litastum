@@ -188,7 +188,7 @@ mod scrolling_tests {
     }
 
     /// 20 single-column entries, 5 visible rows -- `set_visible_rows`
-    /// is what `ui::draw_panel`/`main.rs::run` calls each frame with
+    /// is what `ui::draw_panel`/`event_loop::run` calls each frame with
     /// the panel's own actual inner height; nothing scrolls until
     /// it's been told what that height is.
     fn panel_with_viewport(count: usize, columns: usize, visible_rows: usize) -> Panel {

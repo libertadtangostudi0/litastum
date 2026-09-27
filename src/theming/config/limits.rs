@@ -38,23 +38,20 @@ pub struct Limits {
     /// `logs/litastum.log` is truncated and restarted once a write
     /// would exceed this -- was `logging.rs::MAX_LOG_BYTES`.
     pub max_log_bytes: u64,
-    /// How many consecutive fast pastes (`editor::Editor::paste_text`,
-    /// `Ctrl+V`/a real terminal paste) the built-in editor keeps a
-    /// dedicated undo snapshot for -- was an unbounded `Vec`, made
+    /// How many undo steps the built-in editor keeps for the `Standard`
+    /// keymap (`editor/editor/undo.rs`, every mutating key, not just
+    /// pastes -- the name predates that, when this capped a paste-only
+    /// stack; see `.claude/rules/litastum-editor-undo.md`). Made
     /// configurable after a direct request: each entry is a full clone
-    /// of the *entire* buffer (`editor/editor/mod.rs::PasteUndo`, the
-    /// same "brute-force, whole-state" shape `edtui`'s own undo stack
-    /// already uses internally), and this project's own stated target
-    /// scale is real files in the tens, sometimes hundreds of thousands
-    /// of lines (`.claude/rules/litastum-performance.md`) -- pasting
-    /// repeatedly into one of those without anything else happening in
-    /// between could otherwise pile up an unbounded number of full-buffer
-    /// clones in memory at once. Oldest entry drops off once exceeded,
-    /// same "cap and drop the oldest" rule `max_command_history` already
-    /// follows -- losing the *oldest* paste's own dedicated undo step
-    /// first (falling through to `edtui`'s own real undo from there) is
-    /// the least surprising place to lose fidelity, not the most recent
-    /// paste a user is actually likely to still want to undo.
+    /// of the *entire* buffer (`undo::Snapshot`, the same "brute-force,
+    /// whole-state" shape `edtui`'s own undo stack already uses
+    /// internally), and this project's own stated target scale is real
+    /// files in the tens, sometimes hundreds of thousands of lines
+    /// (`.claude/rules/litastum-performance.md`) -- an unbounded stack
+    /// could otherwise pile up that many full-buffer clones in memory at
+    /// once. Oldest entry drops off once exceeded, same "cap and drop
+    /// the oldest" rule `max_command_history` already follows -- the
+    /// oldest step is the least surprising one to lose.
     pub max_paste_undo_stack: usize,
 }
 

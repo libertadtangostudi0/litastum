@@ -18,7 +18,7 @@ use super::centered_rect;
 /// Returns the real terminal cursor's own desired position rather than
 /// calling `frame.set_cursor_position` itself -- see `ui/mod.rs::draw`'s
 /// own doc comment on why every cursor-placing draw function in this
-/// app returns it instead now, up to `main.rs::run`, which applies it
+/// app returns it instead now, up to `event_loop::run`, which applies it
 /// once, after the whole frame has actually reached the terminal.
 pub(super) fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme) -> Option<Position> {
     let rows = Layout::default()

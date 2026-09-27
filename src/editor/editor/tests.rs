@@ -1,8 +1,9 @@
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use edtui::Index2;
 
 use super::*;
 use crate::test_support::{ctrl_key, key, shift_key, unique_scratch_dir};
+use crate::theming::Theme;
 
 /// Writes `contents` to a scratch file and opens it, so tests can
 /// exercise `Editor` without a fixture directory. Returns the path
@@ -1201,7 +1202,7 @@ fn ctrl_z_with_no_pending_paste_falls_through_to_the_real_undo_action() {
 
 
 /// `Editor::paste_text` (the shared core `fast_paste_from_clipboard`
-/// and `main.rs::handle_paste_event`'s real bracketed paste both use)
+/// and `event_loop::paste::handle_paste_event`'s real bracketed paste both use)
 /// -- exercised directly here since it takes the text as a plain
 /// argument, no real clipboard needed.
 #[test]

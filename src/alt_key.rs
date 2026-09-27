@@ -15,11 +15,11 @@
 //! whole point of a preview row (by the time it shows, the shortcut
 //! already ran). `GetAsyncKeyState` reports the true current key state
 //! regardless of whether a terminal input event was ever generated for
-//! it, so `main.rs::wait_for_event` polls this while otherwise idle.
+//! it, so `event_loop::wait_for_event` polls this while otherwise idle.
 
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
 
-/// How often `main.rs::wait_for_event` checks this while idle, waiting
+/// How often `event_loop::wait_for_event` checks this while idle, waiting
 /// for a real terminal event. Small enough that the alt-labels row
 /// feels instant when Alt is pressed or released; large enough not to
 /// burn CPU polling a key that changes state rarely.

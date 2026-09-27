@@ -48,7 +48,7 @@ pub enum PreviewFrame<'a> {
 /// (single-threaded event loop) for however long that took. Decoded on
 /// a background thread now (`spawn_decode`) instead: `open`/`step`
 /// return immediately, `poll` (called every main-loop tick while
-/// `pending` is `Some` -- see `main.rs::wait_for_event`) picks up the
+/// `pending` is `Some` -- see `event_loop::wait_for_event`) picks up the
 /// finished result once it's actually ready.
 enum Display {
     Ready(StatefulProtocol),
@@ -160,7 +160,7 @@ impl ImagePreviewState {
     }
 
     /// Whether a background decode is currently in flight --
-    /// `main.rs::wait_for_event` polls more often than its own default
+    /// `event_loop::wait_for_event` polls more often than its own default
     /// idle cadence while this is `true`, purely so a finished decode
     /// gets drawn within one short tick instead of sitting there
     /// already-ready but unseen until the next real keypress/mouse
@@ -173,7 +173,7 @@ impl ImagePreviewState {
     /// applying the result in place if so. `false` (a no-op) with
     /// nothing pending, or if the decode genuinely hasn't finished yet.
     /// `true` means something changed and the caller should redraw --
-    /// called from `main.rs::wait_for_event`'s own poll loop, and once
+    /// called from `event_loop::wait_for_event`'s own poll loop, and once
     /// more from `ui::draw` itself right before rendering, so a result
     /// that arrived in between two loop ticks (or during the brief
     /// window a real keyboard/mouse event was also being handled) is
@@ -310,7 +310,7 @@ pub fn handle_image_preview_key(app: &mut App, key: KeyEvent) {
 
 
 /// Whether `Mode::ImagePreview`'s current decode is still in flight --
-/// `main.rs::wait_for_event` polls more often than its own default
+/// `event_loop::wait_for_event` polls more often than its own default
 /// idle cadence while this is `true`, so a background decode finishing
 /// while otherwise idle gets drawn within one short tick rather than
 /// waiting for the next real input event to happen to wake the main

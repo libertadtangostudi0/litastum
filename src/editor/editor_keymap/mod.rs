@@ -11,10 +11,10 @@ use super::keymap_mode::EditorKeymapMode;
 
 
 /// A user-triggered action while a file is open in the built-in editor,
-/// at the level `main.rs` needs to care about. Almost everything —
+/// at the level the top-level dispatcher (`event_loop::keys`) needs to care about. Almost everything —
 /// typing, movement, selection, copy/cut/paste — is `edtui`'s own
 /// concern once a key reaches `Editor::input`; `Save` (a concept
-/// `edtui` has no notion of), `Close` (which `main.rs` must decide
+/// `edtui` has no notion of), `Close` (which `handle_editor_key` must decide
 /// whether to honor immediately or forward, depending on whether a
 /// selection is active — see `Editor::has_selection`), and `WordSelect`
 /// (hand-rolled logic `edtui`'s own declarative keymap can't express —
@@ -114,7 +114,7 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
 /// falls through to an unconditional `unimplemented!()` catch-all with
 /// no fallback at all, not even a silent no-op.
 ///
-/// The app's own mode-based dispatch (`main.rs::handle_event`) already
+/// The app's own mode-based dispatch (`event_loop::handle_event`) already
 /// means a global key like `F10` never reaches the browsing screen's
 /// own quit binding while `Mode::Editing` is active -- routing here
 /// through `handle_editor_key` is the *only* path a keystroke takes
@@ -187,7 +187,7 @@ pub fn resolve_confirm_discard(key: KeyEvent) -> ConfirmDiscardCommand {
 /// Moved here from `main.rs` alongside `resolve`/`resolve_confirm_discard`
 /// so this module owns editor key handling end to end, the same way
 /// `theme_menu.rs`/`menu.rs` each own their own state and handling —
-/// `main.rs` stays a thin dispatcher over `Mode`.
+/// `event_loop::keys::dispatch_key_event` stays a thin dispatcher over `Mode`.
 pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
     if matches!(&app.mode, Mode::Editing(editor) if editor.is_searching()) {
         return handle_search_key(app, key);
