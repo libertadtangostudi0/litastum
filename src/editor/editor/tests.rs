@@ -405,6 +405,58 @@ fn selection_end_cell_renders_with_selection_color_not_base() {
     );
 }
 
+/// Same bug as the test above, hit again for `Ctrl+F` search: `edtui`
+/// renders the current match through `selection_style` too, but its
+/// own search actions (`AppendCharToSearch`, `FindNext`, ...) put
+/// `state.cursor` on the match's *first* character, not its last (the
+/// opposite convention from this app's own selection, which always
+/// keeps the cursor on the trailing edge). With no exception for
+/// `is_searching()`, that first cell fell into the same "no selection,
+/// no matched bracket" branch as plain typing and got reset to `base`
+/// -- reported directly with two screenshots: a match's own first
+/// character never looked highlighted, and the correctly-highlighted
+/// rest of the match right after the cursor read as a separate block
+/// because of it.
+#[test]
+fn search_match_first_cell_renders_with_selection_color_not_base() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let (mut editor, _path) = open_test_editor("hay needle hay");
+    editor.start_search();
+    for c in "needle".chars() {
+        editor.search_push_char(c);
+    }
+    assert!(editor.is_searching());
+
+    let theme = Theme::dark();
+    let backend = TestBackend::new(40, 3);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| {
+            let view = editor.view(&theme, frame.area());
+            frame.render_widget(view, frame.area());
+        })
+        .unwrap();
+
+    // Search never shifts `cursor_screen_position()` the way an active
+    // selection does (that shift only reads `self.state.selection`,
+    // untouched during a search) -- the reported position already
+    // points straight at the match's own first character.
+    let cursor_pos = editor
+        .cursor_screen_position()
+        .expect("cursor should be visible after rendering");
+    let buf = terminal.backend().buffer();
+    let cell_bg = buf[(cursor_pos.x, cursor_pos.y)].bg;
+
+    assert_eq!(
+        cell_bg, theme.current_row_bg,
+        "a search match's own first character -- where the cursor sits during search -- must \
+         render with the selection color, not be reset to the base background by edtui's \
+         cursor-cell paint"
+    );
+}
+
 /// `Theme::selection_text`, when a scheme sets it (requested directly,
 /// to keep text readable over a deliberately bright selection
 /// background), overrides the selected text's own foreground -- plain

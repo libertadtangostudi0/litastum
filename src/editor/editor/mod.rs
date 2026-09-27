@@ -1032,12 +1032,29 @@ impl Editor {
         // on one side of a real pair, makes both brackets read as
         // highlighted together the same way selection already does.
         //
-        // With no selection and the cursor not on a matched bracket,
-        // `hide_cursor()`'s usual `base` is right: the real terminal
-        // cursor (a thin bar — see `setup_terminal` in main.rs) is what
-        // should be visible there, not edtui's own solid reverse-video
-        // block.
-        editor_theme = if self.state.selection.is_some() {
+        // Same reasoning again for an active `Ctrl+F` search: `edtui`
+        // renders the current match through `selection_style` too (its
+        // own `SearchState`'s `impl From<&SearchState> for
+        // Option<Selection>`, confirmed directly from
+        // `edtui-0.11.7/src/view.rs` -- search is rendered as a second,
+        // synthetic `Selection`, not a separate style). But unlike our
+        // own selection (cursor always on its *last* character, see
+        // above), `edtui`'s own search actions (`actions/search.rs` --
+        // `AppendCharToSearch`, `FindNext`, `FindPrevious`, ...) all set
+        // `state.cursor` to the match's *first* character instead --
+        // so with no exception here, that first cell was the one
+        // getting silently overwritten back to plain `base`, reported
+        // directly with two screenshots: a match's own first character
+        // never looked highlighted at all, and the (correctly
+        // highlighted) rest of the match right after the cursor read as
+        // a visually separate block because of it.
+        //
+        // With no selection, no active search, and the cursor not on a
+        // matched bracket, `hide_cursor()`'s usual `base` is right: the
+        // real terminal cursor (a thin bar — see `setup_terminal` in
+        // main.rs) is what should be visible there, not edtui's own
+        // solid reverse-video block.
+        editor_theme = if self.state.selection.is_some() || self.is_searching() {
             editor_theme.cursor_style(selection_style)
         } else if !pathologically_long_line && cursor_is_on_a_matched_bracket(&self.state.lines, self.state.cursor) {
             editor_theme.cursor_style(highlight_style)
