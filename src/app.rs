@@ -397,24 +397,27 @@ pub struct App {
     /// comment for why a real terminal `Ctrl+V` keystroke needs its own
     /// bypass at all.
     pub ctrl_v_physically_held: bool,
-    /// How many more incoming plain-character/`Enter` key events should
-    /// be silently discarded instead of typed -- set once, right after
-    /// `try_intercept_paste_hotkey` fast-pastes the real OS clipboard's
-    /// text directly, to the number of keystrokes Windows Terminal's
-    /// own (much slower) keystroke-simulated paste is expected to
-    /// inject for that same text right afterward. Ticks down to `0` in
-    /// `main.rs::handle_key_event`; `0` means "nothing pending," the
-    /// normal, overwhelmingly common state.
-    pub pending_paste_swallow: usize,
+    /// The remaining characters `try_intercept_paste_hotkey`'s own fast
+    /// paste expects Windows Terminal's own (much slower) keystroke-
+    /// simulated paste to inject right afterward, front = next expected
+    /// -- `'\n'` means the next expected key is a bare `Enter`, anything
+    /// else means that exact `Char`. `main.rs::should_swallow_paste_tail`
+    /// discards an incoming key only when it actually *matches* the
+    /// front of this queue, popping it off; a real keystroke that
+    /// doesn't match (most of the time, if it happens at all -- see its
+    /// own doc comment for why content-matching, not just "is it
+    /// character-shaped," is what fixed a real report of genuine typing
+    /// getting delayed several seconds) clears the whole queue instead
+    /// of being swallowed. Empty means "nothing pending," the normal,
+    /// overwhelmingly common state.
+    pub pending_paste_swallow: std::collections::VecDeque<char>,
     /// Wall-clock deadline for `pending_paste_swallow` -- a safety
-    /// valve, not the primary stop condition (that's the counter
-    /// reaching `0`). Guards against a keystroke-count estimate that
-    /// turns out to be wrong (a `\r\n` normalization mismatch, a
-    /// surrogate pair, ...): without this, swallowing more keys than
-    /// Windows Terminal actually sends would silently eat the user's
-    /// own *next* real keystrokes after the paste, which is a much
-    /// worse failure mode than the swallow ending a little early and
-    /// leaving a few stray characters from the tail of the flood.
+    /// valve, not the primary stop condition (that's either the queue
+    /// draining naturally or a mismatched key clearing it). Guards
+    /// against Windows Terminal's own flood simply never arriving (or
+    /// stalling) for some reason: without this, a queue that's actually
+    /// still correct but just very slow to drain would keep swallowing
+    /// indefinitely instead of eventually giving up.
     pub pending_paste_swallow_deadline: Option<std::time::Instant>,
     /// Where the built-in editor (F4) should hand control back once it
     /// closes, if that's somewhere other than the ordinary browser --
@@ -526,7 +529,7 @@ impl App {
             find_file_content_history: Vec::new(),
             alt_held: false,
             ctrl_v_physically_held: false,
-            pending_paste_swallow: 0,
+            pending_paste_swallow: std::collections::VecDeque::new(),
             pending_paste_swallow_deadline: None,
             editor_return_to: None,
             user_menu_command_edit: None,

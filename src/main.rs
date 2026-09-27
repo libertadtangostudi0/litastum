@@ -434,27 +434,46 @@ fn try_intercept_paste_hotkey(app: &mut App) -> Result<bool> {
 }
 
 /// Sets up `app.pending_paste_swallow`/`_deadline` right after a fast
-/// paste (`try_intercept_paste_hotkey`) so `handle_key_event` knows how
-/// much of Windows Terminal's own still-incoming keystroke flood to
-/// silently discard -- see `App::pending_paste_swallow`'s own doc
-/// comment for why the deadline exists (a safety valve against the
-/// keystroke-count estimate being wrong, not the primary stop
-/// condition).
+/// paste (`try_intercept_paste_hotkey`) so `handle_key_event` knows what
+/// Windows Terminal's own still-incoming keystroke flood is expected to
+/// look like, in order, and can silently discard it -- see
+/// `App::pending_paste_swallow`'s own doc comment for the queue itself,
+/// and `should_swallow_paste_tail`'s for why content-matching (not just
+/// counting) is what actually fixes real typing getting stuck behind a
+/// still-draining swallow window.
 ///
-/// Counts `\r`-stripped characters -- a `\n` in the pasted text becomes
-/// one `Enter` keystroke, everything else becomes one `Char` keystroke,
-/// but a `\r` immediately before a `\n` (Windows-style line endings)
-/// never becomes a keystroke of its own at all, matching
+/// **Extends the existing queue, never overwrites it.** Real reported
+/// bug: pasting again quickly (before the *first* paste's own flood had
+/// finished arriving) left a visible, slow, character-by-character
+/// typing delay afterward -- overwriting `pending_paste_swallow` with
+/// just the second paste's own text threw away whatever was left of
+/// the first paste's still-incoming flood, so those leftover characters
+/// no longer matched anything expected and got typed as real (if
+/// nonsensical) input, one throttled keystroke at a time, right where
+/// `should_swallow_paste_tail`'s own "an expired deadline or a mismatch
+/// ends the swallow" rule tries to protect *genuine* typing.
+/// Appending instead means a still-pending tail from an earlier paste
+/// keeps getting silently discarded first, in the same order the two
+/// floods should actually arrive in (Windows Terminal processes one
+/// paste's own injection before starting the next), with the new
+/// paste's own expected characters queued up right after it.
+///
+/// `\r`-stripped -- a `\n` in the pasted text becomes one `Enter`
+/// keystroke, everything else becomes one `Char` keystroke, but a `\r`
+/// immediately before a `\n` (Windows-style line endings) never becomes
+/// a keystroke of its own at all, matching
 /// `editor::fast_paste::splice_paste`'s own normalization.
 #[cfg(windows)]
 fn arm_paste_swallow(app: &mut App, text: &str) {
-    let keystrokes = text.chars().filter(|&c| c != '\r').count();
-    app.pending_paste_swallow = keystrokes;
+    app.pending_paste_swallow.extend(text.chars().filter(|&c| c != '\r'));
     // Generous relative to the ~7-8ms/char rate this was actually
     // measured at (`logs/litastum.log`, see `paste_hotkey.rs`'s own
     // doc comment) -- this only exists to eventually give up if the
-    // flood never arrives or undercounts, not to race it.
-    let budget_ms = (keystrokes as u64).saturating_mul(100).max(2000);
+    // flood never arrives, not to race it. Recomputed from the whole
+    // (possibly just-extended) queue, not just this call's own text, so
+    // a second paste's own budget still covers whatever's left of an
+    // earlier one queued ahead of it.
+    let budget_ms = (app.pending_paste_swallow.len() as u64).saturating_mul(100).max(2000);
     app.pending_paste_swallow_deadline = Some(std::time::Instant::now() + std::time::Duration::from_millis(budget_ms));
 }
 
@@ -677,7 +696,7 @@ fn is_navigation_reversal(prev: KeyCode, next: KeyCode) -> bool {
 /// entirely for a key `dispatch_key_event` never touched removes that
 /// spurious frame outright, for every key, not just the one reported.
 fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
-    if key.kind == KeyEventKind::Press && should_swallow_paste_tail(app, key.code) {
+    if key.kind == KeyEventKind::Press && should_swallow_paste_tail(app, key.code, key.modifiers) {
         return Ok(false);
     }
 
@@ -693,32 +712,51 @@ fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &m
 }
 
 /// See `App::pending_paste_swallow`'s own doc comment -- `true` means
-/// "this key is part of Windows Terminal's own still-incoming paste
-/// flood, already applied instantly by `try_intercept_paste_hotkey`;
-/// discard it rather than typing the same text a second time."
-/// Decrements the counter on every swallow, and expires it (without
-/// swallowing this particular key) once either the counter reaches `0`
-/// naturally or `pending_paste_swallow_deadline` has passed -- the
-/// deadline is a safety valve, not the primary stop condition, see
-/// that field's own doc comment for why it exists at all. A key that
-/// isn't a plain character or `Enter` arriving mid-flood also ends the
-/// swallow immediately (without discarding that key) -- the count
-/// estimate was wrong, or the user started doing something else before
-/// the flood actually finished, and eating a real, different keystroke
-/// would be a worse failure than leaving a few stray tail characters
-/// from the flood to be typed normally.
-fn should_swallow_paste_tail(app: &mut App, code: KeyCode) -> bool {
-    if app.pending_paste_swallow == 0 {
+/// "this key matches the next expected character of Windows Terminal's
+/// own still-incoming paste flood, already applied instantly by
+/// `try_intercept_paste_hotkey`; discard it rather than typing the same
+/// text a second time." Pops the queue's front on every swallow, and
+/// clears it entirely (without swallowing this particular key) once
+/// either it drains naturally, `pending_paste_swallow_deadline` has
+/// passed, or this key simply doesn't match what was expected next.
+///
+/// **Matches by content, not just by shape** -- reported directly:
+/// pressing `Enter` several times right after a paste only registered
+/// with a 5-10 second delay. An earlier version of this only checked
+/// whether a key was *character-shaped* (a plain `Char` or bare
+/// `Enter`, no `Ctrl`/`Alt`) before swallowing it, with a plain
+/// decrementing counter -- which also matches perfectly ordinary
+/// keystrokes the user types *during* the still-draining swallow
+/// window (a real `Enter` looks identical in shape to a flood `Enter`),
+/// so genuine typing got silently eaten and had to wait for the whole
+/// window to finish before anything else could get through. Comparing
+/// against the *actual* pasted text's own next character instead means
+/// a real keystroke that doesn't happen to match what the flood would
+/// send next (the overwhelming majority of the time) is recognized
+/// immediately and handled right away, not swallowed.
+///
+/// The same real report from before this fix still applies to *why*
+/// modifiers matter: `Ctrl+S`/`Ctrl+Z` must never match regardless of
+/// their `Char` code, since Windows Terminal's own flood only ever
+/// injects the pasted text's own literal, unmodified characters.
+fn should_swallow_paste_tail(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> bool {
+    if app.pending_paste_swallow.is_empty() {
         return false;
     }
     let expired = app.pending_paste_swallow_deadline.is_some_and(|deadline| std::time::Instant::now() > deadline);
-    if expired || !matches!(code, KeyCode::Char(_) | KeyCode::Enter) {
-        app.pending_paste_swallow = 0;
+    let typed = match code {
+        KeyCode::Char(c) if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => Some(c),
+        KeyCode::Enter if modifiers.is_empty() => Some('\n'),
+        _ => None,
+    };
+    let matches_next = typed.is_some_and(|c| app.pending_paste_swallow.front() == Some(&c));
+    if expired || !matches_next {
+        app.pending_paste_swallow.clear();
         app.pending_paste_swallow_deadline = None;
         return false;
     }
-    app.pending_paste_swallow -= 1;
-    if app.pending_paste_swallow == 0 {
+    app.pending_paste_swallow.pop_front();
+    if app.pending_paste_swallow.is_empty() {
         app.pending_paste_swallow_deadline = None;
     }
     true
@@ -936,49 +974,90 @@ mod tests {
     mod should_swallow_paste_tail_tests {
         use super::*;
 
-        #[test]
-        fn nothing_pending_never_swallows() {
+        fn armed(chars: &str) -> (App, std::time::Instant) {
             let mut app = test_app(unique_scratch_dir("main-paste-swallow"));
-            assert!(!should_swallow_paste_tail(&mut app, KeyCode::Char('x')));
+            app.pending_paste_swallow = chars.chars().collect();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            app.pending_paste_swallow_deadline = Some(deadline);
+            (app, deadline)
         }
 
         #[test]
-        fn swallows_plain_chars_and_enter_until_the_counter_hits_zero() {
+        fn nothing_pending_never_swallows() {
             let mut app = test_app(unique_scratch_dir("main-paste-swallow"));
-            app.pending_paste_swallow = 2;
-            app.pending_paste_swallow_deadline = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+            assert!(!should_swallow_paste_tail(&mut app, KeyCode::Char('x'), KeyModifiers::NONE));
+        }
 
-            assert!(should_swallow_paste_tail(&mut app, KeyCode::Char('a')));
-            assert_eq!(app.pending_paste_swallow, 1);
-            assert!(should_swallow_paste_tail(&mut app, KeyCode::Enter));
-            assert_eq!(app.pending_paste_swallow, 0);
-            assert!(app.pending_paste_swallow_deadline.is_none(), "should clear its own deadline once the counter naturally reaches 0");
+        #[test]
+        fn swallows_matching_chars_and_enter_in_order_until_the_queue_drains() {
+            let (mut app, _) = armed("a\n");
 
-            assert!(!should_swallow_paste_tail(&mut app, KeyCode::Char('z')), "a real keystroke after the count is exhausted must not be swallowed");
+            assert!(should_swallow_paste_tail(&mut app, KeyCode::Char('a'), KeyModifiers::NONE));
+            assert_eq!(app.pending_paste_swallow, ['\n']);
+            assert!(should_swallow_paste_tail(&mut app, KeyCode::Enter, KeyModifiers::NONE));
+            assert!(app.pending_paste_swallow.is_empty());
+            assert!(app.pending_paste_swallow_deadline.is_none(), "should clear its own deadline once the queue naturally drains");
+
+            assert!(!should_swallow_paste_tail(&mut app, KeyCode::Char('z'), KeyModifiers::NONE), "a real keystroke after the queue is drained must not be swallowed");
         }
 
         #[test]
         fn a_key_that_is_not_a_char_or_enter_ends_the_swallow_without_eating_it() {
-            let mut app = test_app(unique_scratch_dir("main-paste-swallow"));
-            app.pending_paste_swallow = 5;
-            app.pending_paste_swallow_deadline = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+            let (mut app, _) = armed("hello");
 
-            let swallowed = should_swallow_paste_tail(&mut app, KeyCode::Left);
+            let swallowed = should_swallow_paste_tail(&mut app, KeyCode::Left, KeyModifiers::NONE);
 
             assert!(!swallowed, "an unrelated key must never be silently discarded");
-            assert_eq!(app.pending_paste_swallow, 0, "the mismatch should end the whole swallow window, not just skip this one key");
+            assert!(app.pending_paste_swallow.is_empty(), "the mismatch should end the whole swallow window, not just skip this one key");
+        }
+
+        /// Real reported bug: `Ctrl+S` (save) and `Ctrl+Z` (undo the very
+        /// paste this swallow exists for) right after a large paste were
+        /// silently eaten instead of running -- both are `KeyCode::Char`
+        /// too, and the swallow used to key off `code` alone, ignoring
+        /// `modifiers` entirely. Windows Terminal's own flood only ever
+        /// injects *plain* characters (no `Ctrl`/`Alt`), so a `Ctrl`-held
+        /// `Char` must never be treated as part of it, even if its own
+        /// letter happens to match the next expected flood character.
+        #[test]
+        fn a_ctrl_held_char_is_never_swallowed_even_mid_flood() {
+            let (mut app, _) = armed("stuff");
+
+            let swallowed = should_swallow_paste_tail(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+
+            assert!(!swallowed, "Ctrl+S must reach the editor, not be eaten as flood tail");
+            assert!(app.pending_paste_swallow.is_empty(), "a real shortcut mid-flood should end the swallow window entirely");
+        }
+
+        /// Real reported bug: pressing `Enter` several times right after a
+        /// paste only registered several seconds late. Root cause: the
+        /// swallow used to match on *shape* alone (any plain `Char`/bare
+        /// `Enter`), so a real `Enter` typed while the flood was still
+        /// mid-drain looked identical to one of the flood's own and got
+        /// eaten too. Content-matching against the actual next expected
+        /// character fixes this: a real `Enter` that doesn't match
+        /// whatever the flood would send next must be handled immediately,
+        /// not swallowed and delayed.
+        #[test]
+        fn a_real_keystroke_that_does_not_match_the_next_expected_character_is_handled_immediately() {
+            let (mut app, _) = armed("hello world"); // next expected char is 'h', not Enter
+
+            let swallowed = should_swallow_paste_tail(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+
+            assert!(!swallowed, "a real Enter that doesn't match the flood's own next character must not be delayed");
+            assert!(app.pending_paste_swallow.is_empty(), "the mismatch ends the swallow window entirely, so nothing further gets delayed either");
         }
 
         #[test]
         fn an_expired_deadline_ends_the_swallow_even_for_a_matching_key() {
             let mut app = test_app(unique_scratch_dir("main-paste-swallow"));
-            app.pending_paste_swallow = 5;
+            app.pending_paste_swallow = "a".chars().collect();
             app.pending_paste_swallow_deadline = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
 
-            let swallowed = should_swallow_paste_tail(&mut app, KeyCode::Char('a'));
+            let swallowed = should_swallow_paste_tail(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
 
             assert!(!swallowed, "past the safety-valve deadline, real typing should never be eaten even if it happens to match");
-            assert_eq!(app.pending_paste_swallow, 0);
+            assert!(app.pending_paste_swallow.is_empty());
         }
     }
 }

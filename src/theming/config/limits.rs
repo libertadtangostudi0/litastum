@@ -38,6 +38,24 @@ pub struct Limits {
     /// `logs/litastum.log` is truncated and restarted once a write
     /// would exceed this -- was `logging.rs::MAX_LOG_BYTES`.
     pub max_log_bytes: u64,
+    /// How many consecutive fast pastes (`editor::Editor::paste_text`,
+    /// `Ctrl+V`/a real terminal paste) the built-in editor keeps a
+    /// dedicated undo snapshot for -- was an unbounded `Vec`, made
+    /// configurable after a direct request: each entry is a full clone
+    /// of the *entire* buffer (`editor/editor/mod.rs::PasteUndo`, the
+    /// same "brute-force, whole-state" shape `edtui`'s own undo stack
+    /// already uses internally), and this project's own stated target
+    /// scale is real files in the tens, sometimes hundreds of thousands
+    /// of lines (`.claude/rules/litastum-performance.md`) -- pasting
+    /// repeatedly into one of those without anything else happening in
+    /// between could otherwise pile up an unbounded number of full-buffer
+    /// clones in memory at once. Oldest entry drops off once exceeded,
+    /// same "cap and drop the oldest" rule `max_command_history` already
+    /// follows -- losing the *oldest* paste's own dedicated undo step
+    /// first (falling through to `edtui`'s own real undo from there) is
+    /// the least surprising place to lose fidelity, not the most recent
+    /// paste a user is actually likely to still want to undo.
+    pub max_paste_undo_stack: usize,
 }
 
 impl Default for Limits {
@@ -49,6 +67,7 @@ impl Default for Limits {
             panel_min_column_width: 24,
             markdown_preview_page_size: 15,
             max_log_bytes: 30 * 1024 * 1024,
+            max_paste_undo_stack: 20,
         }
     }
 }
@@ -97,6 +116,7 @@ fn resolve_limits(config: &Config) -> Limits {
         panel_min_column_width: config.panel_min_column_width.unwrap_or(defaults.panel_min_column_width),
         markdown_preview_page_size: config.markdown_preview_page_size.unwrap_or(defaults.markdown_preview_page_size),
         max_log_bytes: config.max_log_bytes.unwrap_or(defaults.max_log_bytes),
+        max_paste_undo_stack: config.max_paste_undo_stack.unwrap_or(defaults.max_paste_undo_stack),
     }
 }
 
@@ -130,6 +150,7 @@ mod tests {
             panel_min_column_width: Some(4),
             markdown_preview_page_size: Some(5),
             max_log_bytes: Some(6),
+            max_paste_undo_stack: Some(7),
             ..Config::default()
         };
 
@@ -142,6 +163,7 @@ mod tests {
             panel_min_column_width: 4,
             markdown_preview_page_size: 5,
             max_log_bytes: 6,
+            max_paste_undo_stack: 7,
         });
     }
 

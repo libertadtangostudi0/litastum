@@ -130,7 +130,20 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         (v(KeyInput::new(KeyCode::Backspace)), DeleteSelection.into()),
         (v(KeyInput::new(KeyCode::Delete)), DeleteSelection.into()),
 
-        // Undo/redo (Windows/VSCode convention).
+        // Undo/redo (Windows/VSCode convention). **Shadowed in the real
+        // app** -- `Editor::input` intercepts `Ctrl+Z`/`Ctrl+Y` directly,
+        // ahead of this table entirely, and owns its own full undo/redo
+        // stack instead of relying on these two actions or on
+        // `capture_on_insert` (see `Editor::input`'s own doc comment for
+        // why: `EditorState::capture()`, what `Undo` pops against here,
+        // is `pub(crate)`, so this app's own fast paste could never
+        // record a checkpoint for it, and once any edit happened after
+        // a paste, undo had no boundary left to jump back to in one
+        // step -- a real reported bug). Left bound here anyway, not
+        // removed: `bindings/tests.rs::ctrl_z_undoes_last_insert` tests
+        // this table + `capture_on_insert` directly, one level below
+        // `Editor::input`'s own interception, which needs the binding
+        // to still exist to have anything to press.
         (i(KeyInput::ctrl('z')), Undo.into()),
         (i(KeyInput::ctrl('y')), Redo.into()),
 

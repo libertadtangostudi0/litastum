@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use edtui::actions::motion::{MoveToFirstRow, MoveToLastRow};
-use edtui::actions::{Chainable, Execute, MoveToEndOfLine, MoveToStartOfLine, SwitchMode};
+use edtui::actions::{Chainable, DeleteSelection, Execute, InsertChar, MoveToEndOfLine, MoveToStartOfLine, SwitchMode};
 use edtui::syntect::highlighting::Theme as SynTheme;
 use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Highlight, Index2, LineNumbers, Lines};
 use ratatui::layout::Rect;
@@ -153,19 +153,37 @@ pub struct Editor {
     /// changed lines -- plain themed text keeps the diff coloring itself
     /// the one thing drawing the eye. `F4` editing never touches this.
     syntax_highlighting_enabled: bool,
-    /// One-shot undo snapshot for `fast_paste_from_clipboard` --
-    /// `Some` only in the window between a fast paste and the very next
-    /// keystroke, `None` otherwise. See `fast_paste_from_clipboard`'s
-    /// own doc comment for why pasting needs its own undo mechanism at
-    /// all, separate from `edtui`'s own.
-    paste_undo: Option<PasteUndo>,
+    /// This app's own undo stack for `Standard`-keymap editing, most
+    /// recent last -- replaces `edtui`'s own `Undo`/`capture_on_insert`
+    /// mechanism entirely for this keymap (see `input`'s own doc
+    /// comment for why: `EditorState::capture()`, what `edtui`'s own
+    /// `Undo` pops against, is `pub(crate)`, so this app's own fast
+    /// paste could never record a checkpoint on it, and once any other
+    /// edit happened after a paste, `edtui`'s own undo had no boundary
+    /// left to jump back to in one step -- a real reported bug).
+    /// `Vim` keeps `edtui`'s own real mechanism untouched, same "no
+    /// correction pass runs for Vim" rule every other part of this
+    /// keymap already follows -- this field simply stays empty there.
+    undo_stack: Vec<Snapshot>,
+    /// This keymap's own redo stack, the mirror of `undo_stack` -- `Ctrl+Y`
+    /// pops from here and pushes the state it's leaving onto
+    /// `undo_stack`, same as any conventional editor's redo. Cleared
+    /// whenever a *new* edit is captured (`push_undo_snapshot`) -- an
+    /// edit made after undoing invalidates whatever redo history came
+    /// before it, same convention every other editor's redo already
+    /// follows.
+    redo_stack: Vec<Snapshot>,
 }
 
 
-/// `fast_paste_from_clipboard`'s own saved state, restorable by exactly
-/// one `Ctrl+Z` (`input`, below) -- a full `Lines` clone plus the
-/// cursor position from immediately before that paste ran.
-struct PasteUndo {
+/// One entry in `undo_stack`/`redo_stack` -- a full `Lines` clone plus
+/// the cursor position, from immediately before the edit that entry
+/// represents ran. The same "brute-force, whole-buffer" shape `edtui`'s
+/// own (unreachable) undo stack already uses internally
+/// (`edtui::state::undo::UndoState`) -- not reinventing a smarter
+/// diff-based scheme, just doing the same thing `edtui` would have,
+/// from outside it.
+struct Snapshot {
     lines: Lines,
     cursor: Index2,
 }
@@ -218,6 +236,29 @@ fn can_mutate_buffer(keymap_mode: EditorKeymapMode, mode_before: EditorMode, cod
         return false;
     }
     true
+}
+
+
+/// `input`'s own gate for whether a key (about to be dispatched, under
+/// `Standard` only -- see `input`'s own doc comment) should get its own
+/// `undo_stack` entry first. Builds on `can_mutate_buffer` (the exact
+/// same "could this plausibly change the buffer" check `dirty`-tracking
+/// already relies on, so navigation keys never push a pointless
+/// snapshot) with one further exclusion: `Ctrl+C` (copy) genuinely never
+/// mutates anything, but `can_mutate_buffer` alone can't tell that --
+/// it isn't in the navigation list, so without this it would push a
+/// real snapshot for a key that changes nothing, making the very next
+/// `Ctrl+Z` a silent no-op restore into the state that key started in.
+/// Deliberately *not* implemented by comparing the buffer before and
+/// after the key runs instead (which would catch every no-op key, not
+/// just this one) -- that's exactly the O(buffer length) comparison
+/// `Editor::dirty`'s own doc comment already explains this app moved
+/// away from paying on every keystroke.
+fn should_capture_undo_snapshot(mode_before: EditorMode, code: KeyCode, modifiers: KeyModifiers) -> bool {
+    if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
+        return false;
+    }
+    can_mutate_buffer(EditorKeymapMode::Standard, mode_before, code)
 }
 
 
@@ -285,7 +326,8 @@ impl Editor {
             keymap_mode,
             extra_highlights: Vec::new(),
             syntax_highlighting_enabled: true,
-            paste_undo: None,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         })
     }
 
@@ -393,36 +435,98 @@ impl Editor {
     ///
     /// Every other key (and every already-working press these don't
     /// apply to) passes through completely unaffected.
+    ///
+    /// **Owns its own undo/redo entirely for `Standard`** (`undo_stack`/
+    /// `redo_stack`, both on `Editor` itself) -- `Ctrl+Z`/`Ctrl+Y` are
+    /// intercepted here, ahead of `edtui`'s own dispatch, and every
+    /// other key that could plausibly mutate the buffer
+    /// (`should_capture_undo_snapshot`, built on the same
+    /// `can_mutate_buffer` check `dirty`-tracking below already uses)
+    /// pushes its own snapshot *before* running. Reported directly as a
+    /// real bug in an earlier version of this, which only gave the fast
+    /// paste below its own dedicated one-shot snapshot: `EditorState::capture()`
+    /// (what `edtui`'s own `Undo` action pops against) is `pub(crate)`,
+    /// unreachable from here, so the fast paste could never record a
+    /// checkpoint *edtui's* stack would know about -- the moment any
+    /// other real edit happened afterward, `edtui`'s own undo had
+    /// nothing to jump back to for the paste as a whole, and undoing
+    /// through it fell back to whatever fine-grained checkpoints
+    /// *edtui* itself happened to have (plain typed characters, via
+    /// `capture_on_insert`), landing character by character instead of
+    /// undoing the paste as the one block it was applied as. Taking
+    /// over the whole stack directly, for every mutating key, not just
+    /// paste, means the paste's own boundary can never get lost to a
+    /// later edit -- it's just one more ordinary entry in one
+    /// consistent, fully-owned history, same as everything else this
+    /// keymap does. `Vim` is completely unaffected -- `undo_stack`/
+    /// `redo_stack` simply stay empty there, and `edtui`'s own real
+    /// `capture_on_insert`/`Undo`/`Redo` mechanism (unmodified) keeps
+    /// handling it exactly as it always has, same "no correction pass
+    /// runs for Vim" rule every other part of this function follows.
     pub fn input(&mut self, key: KeyEvent) {
-        // `Ctrl+V`/`Ctrl+Z` are intercepted here, ahead of `edtui`'s own
-        // dispatch entirely -- see `fast_paste_from_clipboard`'s own doc
-        // comment for why plain `PasteBefore` isn't used any more.
-        // `Vim` keeps `edtui`'s own (unmodified) handling, same "no
-        // correction pass runs for Vim" rule every other block in this
-        // function already follows -- Vim's own table doesn't bind
-        // `Ctrl+V` to paste at all (it's a real vim binding for visual-
-        // block mode instead), so hijacking it there would be a genuine
-        // behavior change, not just a performance fix.
+        let cursor_before = self.state.cursor;
+        let mode_before = self.state.mode;
+
         if self.keymap_mode == EditorKeymapMode::Standard {
             let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+            // `Ctrl+V` -- see `fast_paste_from_clipboard`'s own doc
+            // comment for why plain `PasteBefore` isn't used any more.
+            // Vim's own table doesn't bind `Ctrl+V` to paste at all
+            // (it's a real vim binding for visual-block mode instead),
+            // which is why this whole block is `Standard`-only, not
+            // just this one arm of it.
             if ctrl && key.code == KeyCode::Char('v') {
                 self.fast_paste_from_clipboard();
                 return;
             }
             if ctrl && key.code == KeyCode::Char('z') {
-                if self.undo_fast_paste() {
+                if self.undo() {
                     return;
                 }
-            } else {
-                // Any other key invalidates the one-shot paste-undo --
-                // it only ever means "undo the paste that *just*
-                // happened," never a stale snapshot from further back.
-                self.paste_undo = None;
+            } else if ctrl && key.code == KeyCode::Char('y') {
+                if self.redo() {
+                    return;
+                }
+            } else if should_capture_undo_snapshot(mode_before, key.code, key.modifiers) {
+                self.push_undo_snapshot();
+            }
+
+            // Typing a plain character over an active selection should
+            // replace it -- reported directly as a real gap: select-all
+            // (`Ctrl+A`) then typing a character left the selection
+            // completely untouched and the character never appeared at
+            // all. Root cause: a plain `Char` has no binding at all for
+            // `Visual` mode in `standard_key_handler`'s own table (only
+            // `Backspace`/`Delete`/`Ctrl+C`/`X`/`V` are bound there --
+            // `is_selection_consuming_key`'s own list, below), and
+            // `edtui`'s own built-in "typing inserts" fallback only
+            // fires in `Insert` mode, never `Visual` -- so the keypress
+            // reached neither path and was silently dropped. Handled
+            // directly here, ahead of dispatch, rather than added to
+            // `is_selection_consuming_key`'s list: that list only ever
+            // *clears* the selection after `edtui`'s own dispatch already
+            // ran, which works for `Backspace`/`Delete`/paste (each has
+            // a real `Visual`-mode binding of its own that already
+            // deletes/replaces something), but a plain `Char` has no
+            // such binding to piggyback on -- the delete-then-insert has
+            // to happen here instead. The snapshot above already covers
+            // this key (it's a plain `Char`, so `should_capture_undo_snapshot`
+            // already pushed one), so this only needs to perform the
+            // actual mutation.
+            if self.state.mode == EditorMode::Visual {
+                if let KeyCode::Char(c) = key.code {
+                    if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) {
+                        DeleteSelection.execute(&mut self.state);
+                        InsertChar(c).execute(&mut self.state);
+                        self.state.mode = EditorMode::Insert;
+                        self.dirty = self.state.lines != self.saved_snapshot;
+                        return;
+                    }
+                }
             }
         }
 
-        let cursor_before = self.state.cursor;
-        let mode_before = self.state.mode;
         self.event_handler.on_key_event(key, &mut self.state);
 
         // Every correction pass below is specifically tuned against
@@ -482,22 +586,10 @@ impl Editor {
     /// `fast_paste::splice_paste` can splice the row's own backing
     /// `Vec<char>` directly (`std::vec::Vec::splice`, one O(line length)
     /// pass total for the common single-line-paste case) without
-    /// needing anything crate-private from `edtui` at all.
-    ///
-    /// **Loses `edtui`'s own undo integration** -- `EditorState::capture()`
-    /// (what actually records an undo checkpoint) is `pub(crate)` inside
-    /// `edtui`, unreachable from here, and every public `Execute`-able
-    /// action that mutates the buffer calls it internally as part of
-    /// its own `execute()`, with no way to trigger just the checkpoint
-    /// on its own through any public entry point either. Since "`Ctrl+Z`
-    /// undoes exactly the paste, and both have to be fast" was the
-    /// explicit ask, this keeps its own one-shot snapshot (`paste_undo`)
-    /// instead of going through `edtui`'s stack at all -- `input` checks
-    /// it first on the very next `Ctrl+Z` and restores from it directly,
-    /// before ever reaching `edtui`'s own `Undo` action, and clears it
-    /// on any other key so a `Ctrl+Z` two edits later falls straight
-    /// through to `edtui`'s real stack instead of resurrecting a stale
-    /// snapshot.
+    /// needing anything crate-private from `edtui` at all. See `input`'s
+    /// own doc comment for how this stays undoable as one atomic block
+    /// (`push_undo_snapshot`) regardless of `edtui`'s own inaccessible
+    /// `capture()`.
     fn fast_paste_from_clipboard(&mut self) {
         let text = match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
             Ok(text) => text,
@@ -516,17 +608,15 @@ impl Editor {
     /// over directly, without a redundant clipboard read of its own --
     /// see `fast_paste_from_clipboard`'s own doc comment for the full
     /// story on why this exists as a from-scratch splice instead of
-    /// `edtui`'s own `PasteBefore`, and why it needs its own one-shot
-    /// `Ctrl+Z` handling. A no-op for empty `text` -- also what makes
-    /// this safe to call for every keystroke `main.rs` might ever route
-    /// here, not just a real paste.
+    /// `edtui`'s own `PasteBefore`. A no-op for empty `text` -- also
+    /// what makes this safe to call for every keystroke `main.rs` might
+    /// ever route here, not just a real paste.
     pub(crate) fn paste_text(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
 
-        self.paste_undo = Some(PasteUndo { lines: self.state.lines.clone(), cursor: self.state.cursor });
-
+        self.push_undo_snapshot();
         self.state.cursor = splice_paste(&mut self.state.lines, self.state.cursor, text);
 
         // Matches the pre-existing simplification for `Ctrl+V` over an
@@ -543,19 +633,58 @@ impl Editor {
         self.dirty = self.state.lines != self.saved_snapshot;
     }
 
-    /// `Ctrl+Z` immediately after `fast_paste_from_clipboard`: restores
-    /// the pre-paste snapshot directly and reports `true`, so `input`
-    /// skips `edtui`'s own `Undo` action entirely for this one press.
-    /// `false` (no effect) once anything else has happened since the
-    /// paste, or if there was never a fast paste to undo in the first
-    /// place -- `input` then falls through to the normal table dispatch,
-    /// so a plain `Ctrl+Z` otherwise behaves exactly as it always has.
-    fn undo_fast_paste(&mut self) -> bool {
-        let Some(snapshot) = self.paste_undo.take() else {
+    /// Pushes a snapshot of the buffer's *current* (pre-edit) state onto
+    /// `undo_stack`, capped at `Limits::max_paste_undo_stack` (dropping
+    /// the oldest entry once exceeded -- each entry is a full buffer
+    /// clone, and this project's own stated scale target is real files
+    /// in the tens, sometimes hundreds of thousands of lines, so an
+    /// unbounded stack risks real memory growth from a long editing
+    /// session). Also clears `redo_stack` -- a fresh edit invalidates
+    /// whatever could previously be redone, same convention every other
+    /// editor's redo already follows. Called from `input` for every key
+    /// that could plausibly mutate the buffer (`should_capture_undo_snapshot`),
+    /// and from `paste_text` directly (a fast paste isn't dispatched
+    /// through the normal table at all, so it has to trigger its own
+    /// capture by hand).
+    fn push_undo_snapshot(&mut self) {
+        self.undo_stack.push(Snapshot { lines: self.state.lines.clone(), cursor: self.state.cursor });
+        if self.undo_stack.len() > crate::theming::config::limits().max_paste_undo_stack {
+            self.undo_stack.remove(0);
+        }
+        self.redo_stack.clear();
+    }
+
+    /// `Ctrl+Z`: pops the most recent entry off `undo_stack` and
+    /// restores it, pushing the state being *left* onto `redo_stack` so
+    /// `Ctrl+Y` can bring it back. `false` (no effect) once the stack is
+    /// empty -- either nothing mutating has happened yet this session,
+    /// or every real edit has already been undone -- `input` then
+    /// leaves `Standard`'s own `Ctrl+Z` as a no-op rather than falling
+    /// through to `edtui`'s own (entirely separate, never fed by this
+    /// keymap) `Undo` action.
+    fn undo(&mut self) -> bool {
+        let Some(snapshot) = self.undo_stack.pop() else {
             return false;
         };
+        let current = Snapshot { lines: self.state.lines.clone(), cursor: self.state.cursor };
         self.state.lines = snapshot.lines;
         self.state.cursor = snapshot.cursor;
+        self.redo_stack.push(current);
+        self.dirty = self.state.lines != self.saved_snapshot;
+        true
+    }
+
+    /// `Ctrl+Y`: the mirror of `undo` -- pops `redo_stack`, restores it,
+    /// and pushes the state being left back onto `undo_stack`. `false`
+    /// (no effect) once there's nothing left to redo.
+    fn redo(&mut self) -> bool {
+        let Some(snapshot) = self.redo_stack.pop() else {
+            return false;
+        };
+        let current = Snapshot { lines: self.state.lines.clone(), cursor: self.state.cursor };
+        self.state.lines = snapshot.lines;
+        self.state.cursor = snapshot.cursor;
+        self.undo_stack.push(current);
         self.dirty = self.state.lines != self.saved_snapshot;
         true
     }

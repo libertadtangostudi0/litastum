@@ -153,7 +153,7 @@ struct Config {
     /// serde representation directly" shape as `editor_keymap_mode`
     /// right above.
     compare_line_ending_display: Option<LineEndingDisplay>,
-    /// The six fields below back `Limits` (`limits.rs`) -- optional
+    /// The seven fields below back `Limits` (`limits.rs`) -- optional
     /// overrides for app-wide tunable caps, each independent of the
     /// others (an unset field keeps `Limits::default()`'s own value for
     /// just that one field, same "missing/malformed falls back
@@ -168,6 +168,7 @@ struct Config {
     panel_min_column_width: Option<u16>,
     markdown_preview_page_size: Option<usize>,
     max_log_bytes: Option<u64>,
+    max_paste_undo_stack: Option<usize>,
 }
 
 
