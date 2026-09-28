@@ -331,6 +331,10 @@ fn sync_mouse_capture(app: &mut App) {
 /// under the pointer, not both. A click into the editor half of an
 /// editor+preview session also gives it keyboard focus (`App::active`).
 fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    // An overlay is modal: nothing underneath reacts to the mouse.
+    if app.overlay.is_some() {
+        return;
+    }
     if let Mode::Editing(editor) = &mut app.mode {
         if editor.contains_screen_position(mouse.column, mouse.row) {
             editor.mouse(mouse);

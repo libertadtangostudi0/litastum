@@ -14,7 +14,7 @@ use crate::ui::preview::{draw_preview_frame, file_title};
 /// Renders `F3`'s currently-linked Markdown preview (`App::markdown_edit_preview`)
 /// into `area` -- replaces the right panel's own file listing entirely
 /// while it's `Some` (alongside the built-in editor in the left panel,
-/// `Mode::Editing`/`ConfirmDiscard`/`MarkdownLinkSearch`). Border/title
+/// `Mode::Editing`/`MarkdownLinkSearch`). Border/title
 /// chrome comes from `ui::preview::draw_preview_frame`, shared with
 /// `ui::image_preview::draw_image_preview` (same active-panel border
 /// styling for both).

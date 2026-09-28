@@ -4,7 +4,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use ratatui::{prelude::CrosstermBackend, Terminal};
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
 use crate::{command_line, compare, editor, explorer, keyboard_layout, theming};
 
@@ -106,6 +106,9 @@ fn is_plain_typed_char(code: KeyCode, modifiers: KeyModifiers) -> bool {
 /// instead, never the editor), plus `Editor::is_plain_standard_typing`'s
 /// own keymap/mode check.
 fn editor_accepting_plain_typing(app: &App) -> bool {
+    if app.overlay.is_some() {
+        return false;
+    }
     let Mode::Editing(editor) = &app.mode else {
         return false;
     };
@@ -236,6 +239,19 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
     // there is -- see `App::alt_held`'s doc.
     app.alt_held = key.modifiers.contains(KeyModifiers::ALT);
 
+    // An open overlay gets every key; the screen underneath gets none.
+    if let Some(overlay) = &app.overlay {
+        let handled = match overlay {
+            Overlay::ConfirmDiscard if matches!(app.mode, Mode::CompareFiles(_)) => compare::handle_compare_confirm_discard_key(app, key),
+            Overlay::ConfirmDiscard => editor::handle_confirm_discard_key(app, key),
+            Overlay::EditorMenu(_) => editor::handle_editor_menu_key(app, key),
+            Overlay::EditorKeymapMenu(_) => editor::handle_editor_keymap_menu_key(app, key),
+            Overlay::CompareMenu(_) => compare::handle_compare_menu_key(app, key),
+            Overlay::CompareLineEndingMenu(_) => compare::handle_compare_line_ending_menu_key(app, key),
+        };
+        return handled.map(|()| Effect::None);
+    }
+
     // Most handlers need nothing from the terminal and return `()`; the
     // ones that can (the browser, history, the F2 menu) return their
     // `Effect` directly.
@@ -254,13 +270,7 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
         }
         Mode::Editing(_) if app.markdown_edit_preview.is_some() && app.active == 1 => explorer::handle_markdown_edit_preview_key(app, key),
         Mode::Editing(_) => editor::handle_editor_key(app, key),
-        Mode::ConfirmDiscard(_) => editor::handle_confirm_discard_key(app, key),
-        Mode::EditorMenu(_, _) => editor::handle_editor_menu_key(app, key),
-        Mode::EditorKeymapMenu(_, _) => editor::handle_editor_keymap_menu_key(app, key),
         Mode::CompareFiles(_) => compare::handle_compare_key(app, key),
-        Mode::CompareMenu(_, _) => compare::handle_compare_menu_key(app, key),
-        Mode::CompareLineEndingMenu(_, _) => compare::handle_compare_line_ending_menu_key(app, key),
-        Mode::CompareConfirmDiscard(_) => compare::handle_compare_confirm_discard_key(app, key),
         Mode::ConfirmDelete(_) => explorer::handle_confirm_delete_key(app, key),
         Mode::ConfirmTransfer(_) => explorer::handle_confirm_transfer_key(app, key),
         Mode::MainMenu(_) => theming::handle_main_menu_key(app, key),
@@ -291,4 +301,64 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
         Mode::Browsing => return command_line::handle_browsing_key(app, key),
     };
     handled.map(|()| Effect::None)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::KeyCode;
+
+    use super::*;
+    use crate::app::Overlay;
+    use crate::editor::{Editor, EditorKeymapMode};
+    use crate::test_support::{key, test_app, unique_scratch_dir};
+
+    fn editor_app() -> App {
+        let dir = unique_scratch_dir("key-routing");
+        let path = dir.join("file.txt");
+        std::fs::write(&path, "hello
+").unwrap();
+        let mut app = test_app(dir);
+        app.mode = Mode::Editing(Editor::open(path, None, EditorKeymapMode::Standard).unwrap());
+        app
+    }
+
+    #[test]
+    fn an_open_overlay_gets_the_keys_instead_of_the_editor_underneath() {
+        let mut app = editor_app();
+        app.overlay = Some(Overlay::ConfirmDiscard);
+
+        key_effect(&mut app, key(KeyCode::Char('x'))).unwrap();
+
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert!(!editor.is_dirty(), "the typed key must not reach the editor");
+        assert!(matches!(app.overlay, Some(Overlay::ConfirmDiscard)), "an unrelated key leaves the prompt open");
+    }
+
+    #[test]
+    fn closing_the_overlay_returns_keys_to_the_editor() {
+        let mut app = editor_app();
+        app.overlay = Some(Overlay::ConfirmDiscard);
+
+        key_effect(&mut app, key(KeyCode::Esc)).unwrap();
+        key_effect(&mut app, key(KeyCode::Char('x'))).unwrap();
+
+        assert!(app.overlay.is_none());
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert!(editor.is_dirty());
+    }
+
+    #[test]
+    fn f9_esc_round_trip_keeps_the_same_editor_open() {
+        let mut app = editor_app();
+        key_effect(&mut app, key(KeyCode::Char('x'))).unwrap();
+
+        key_effect(&mut app, key(KeyCode::F(9))).unwrap();
+        assert!(matches!(app.overlay, Some(Overlay::EditorMenu(_))));
+        key_effect(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert!(app.overlay.is_none());
+        let Mode::Editing(editor) = &app.mode else { panic!("expected the editor to still be open") };
+        assert!(editor.is_dirty(), "the unsaved edit survives opening and closing the menu");
+    }
 }

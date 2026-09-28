@@ -44,8 +44,7 @@ pub fn open_edit_preview(app: &mut App) {
 
 
 /// Key handling while `App::active == 1` -- the embedded preview has
-/// focus, not the editor -- during a `Mode::Editing`/`ConfirmDiscard`
-/// session that has a linked `App::markdown_edit_preview`
+/// focus, not the editor -- during a `Mode::Editing` session that has a linked `App::markdown_edit_preview`
 /// (`event_loop::keys::handle_key_event` is what routes here instead of
 /// `editor::handle_editor_key`, based on `app.active`). `Up`/`Down`
 /// scroll one line, `PageUp`/`PageDown` a fixed chunk (`PAGE_SIZE`);

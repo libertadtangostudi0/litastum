@@ -21,7 +21,7 @@ use super::UserMenuState;
 /// this item's commands, one per line -- opened in `Mode::Editing` like
 /// any other file. Held alongside `menu` (the same "park the state,
 /// hand it back once the editor really closes" shape
-/// `AddUserMenuItem`/`ConfirmDiscard` already use) so
+/// `AddUserMenuItem` already uses) so
 /// `editor_keymap::return_from_editor` can finish the edit
 /// (`finish_command_edit`) once the editor session actually ends.
 pub struct UserMenuCommandEdit {

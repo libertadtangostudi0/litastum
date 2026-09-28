@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Overlay};
 use crate::editor::{edtui_supports_key, resolve_confirm_discard, ConfirmDiscardCommand};
 
 use super::menu::open_compare_menu;
@@ -76,12 +76,7 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<()> {
         CompareCommand::ToggleFocus => state.toggle_focus(),
         CompareCommand::NextHunk => state.jump_to_next_hunk(),
         CompareCommand::PreviousHunk => state.jump_to_previous_hunk(),
-        CompareCommand::OpenMenu => {
-            let Mode::CompareFiles(state) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-                unreachable!("just matched Mode::CompareFiles above");
-            };
-            app.mode = Mode::CompareMenu(state, open_compare_menu());
-        }
+        CompareCommand::OpenMenu => app.overlay = Some(Overlay::CompareMenu(open_compare_menu())),
         CompareCommand::Forward => state.focused_mut().input(key),
         CompareCommand::Ignore => {}
     }
@@ -90,7 +85,7 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<()> {
 }
 
 /// `Esc` on Compare: closes straight back to browsing if neither pane
-/// has unsaved changes, otherwise moves to `Mode::CompareConfirmDiscard`
+/// has unsaved changes, otherwise opens `Overlay::ConfirmDiscard`
 /// instead of discarding silently -- same shape as
 /// `editor::close_editor_or_confirm`, just checking both of Compare's
 /// panes (`CompareState::is_dirty`) instead of one editor.
@@ -105,10 +100,7 @@ fn close_compare_or_confirm(app: &mut App) -> Result<()> {
     }
 
     debug!("compare close: unsaved changes, asking to confirm discard");
-    let Mode::CompareFiles(state) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-        unreachable!("just matched Mode::CompareFiles above");
-    };
-    app.mode = Mode::CompareConfirmDiscard(state);
+    app.overlay = Some(Overlay::ConfirmDiscard);
     Ok(())
 }
 
@@ -120,13 +112,11 @@ pub fn handle_compare_confirm_discard_key(app: &mut App, key: KeyEvent) -> Resul
     debug!(?key, ?command, "compare confirm-discard key");
 
     match command {
-        ConfirmDiscardCommand::Discard => app.mode = Mode::Browsing,
-        ConfirmDiscardCommand::Cancel => {
-            let Mode::CompareConfirmDiscard(state) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-                unreachable!("only called while in Mode::CompareConfirmDiscard");
-            };
-            app.mode = Mode::CompareFiles(state);
+        ConfirmDiscardCommand::Discard => {
+            app.overlay = None;
+            app.mode = Mode::Browsing;
         }
+        ConfirmDiscardCommand::Cancel => app.overlay = None,
         ConfirmDiscardCommand::Ignore => {}
     }
 
@@ -172,7 +162,7 @@ mod tests {
 
         handle_compare_key(&mut app, key(KeyCode::Esc)).unwrap();
 
-        assert!(matches!(app.mode, Mode::CompareConfirmDiscard(_)));
+        assert!(matches!(app.overlay, Some(Overlay::ConfirmDiscard)));
     }
 
     #[test]
@@ -204,7 +194,7 @@ mod tests {
 
         handle_compare_key(&mut app, key(KeyCode::F(9))).unwrap();
 
-        assert!(matches!(app.mode, Mode::CompareMenu(_, _)));
+        assert!(matches!(app.overlay, Some(Overlay::CompareMenu(_))));
     }
 
     #[test]

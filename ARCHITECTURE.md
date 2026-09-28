@@ -37,8 +37,9 @@ windows_terminal/     — how Windows Terminal and the Windows console
                                      own redundant keystroke flood, and
                                      the flood head that can arrive
                                      before the press is seen
-app.rs                — App: panels, active index, Mode, theme,
-                        popup_style, command/search history, ...
+app.rs                — App: panels, active index, Mode (the screen),
+                        Overlay (a popup over it), theme, popup_style,
+                        command/search history, ...
 test_support.rs       — shared test fixtures (test_app, key(), scratch dirs)
 logging.rs            — tracing setup
 
@@ -297,6 +298,14 @@ crossterm::event::read()
    ui::draw(frame, &mut App)  -- theme.rs supplies styles, app.popup_style
    picks Classic vs Rounded chrome for every popup
 ```
+
+`App::overlay` holds a popup drawn over the current `Mode` without
+replacing it -- the editor's and Compare's F9 menus and pickers, and
+the discard prompt -- so the editor or `CompareState` underneath never
+moves. An open overlay gets every key (`event_loop::keys::key_effect`),
+and mouse and paste ignore the screen underneath; `ui::draw_overlay`
+draws it last, over any screen (the editor+preview split view too).
+Browser popups are still `Mode` variants -- moving them is the next step.
 
 Each non-`Browsing` `Mode` (there are a dozen — see `app.rs::Mode`) is
 a self-contained `{State struct, Command enum, resolve(), handle_*_key,

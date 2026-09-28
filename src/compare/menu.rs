@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::KeyEvent;
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Overlay};
 use crate::choice_menu::{ChoiceMenu, MenuOutcome};
 
 use super::line_ending_menu::open_compare_line_ending_menu;
@@ -34,27 +34,19 @@ pub fn open_compare_menu() -> CompareMenu {
 }
 
 
-/// `Enter` on `Line endings` opens that picker over the same
-/// `CompareState`; `Esc` closes straight back to Compare.
+/// `Enter` on `Line endings` opens that picker in its place; `Esc`
+/// closes.
 pub fn handle_compare_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
-    let Mode::CompareMenu(_, menu) = &mut app.mode else {
+    let Some(Overlay::CompareMenu(menu)) = &mut app.overlay else {
         return Ok(());
     };
 
     let outcome = menu.handle_key(key);
     debug!(?key, ?outcome, "compare menu key");
-    if outcome == MenuOutcome::Open {
-        return Ok(());
-    }
-
-    let Mode::CompareMenu(state, _) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-        unreachable!("just matched Mode::CompareMenu above");
-    };
-    app.mode = match outcome {
-        MenuOutcome::Chosen(CompareMenuItem::LineEndings) => {
-            Mode::CompareLineEndingMenu(state, open_compare_line_ending_menu(app.compare_line_ending_display))
-        }
-        _ => Mode::CompareFiles(state),
+    app.overlay = match outcome {
+        MenuOutcome::Open => return Ok(()),
+        MenuOutcome::Chosen(CompareMenuItem::LineEndings) => Some(Overlay::CompareLineEndingMenu(open_compare_line_ending_menu(app.compare_line_ending_display))),
+        MenuOutcome::Closed => None,
     };
     Ok(())
 }

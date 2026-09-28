@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::KeyEvent;
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Overlay};
 use crate::choice_menu::{ChoiceMenu, MenuOutcome};
 use crate::theming::config;
 
@@ -19,10 +19,9 @@ pub fn open_compare_line_ending_menu(current: LineEndingDisplay) -> CompareLineE
 
 /// `Enter` applies the highlighted choice live (`App::compare_line_ending_display`,
 /// read by `ui/compare.rs` every frame) and persists it; `Esc` closes
-/// without changing anything. Either way, back to `Mode::CompareFiles`
-/// with the same `CompareState`.
+/// without changing anything.
 pub fn handle_compare_line_ending_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
-    let Mode::CompareLineEndingMenu(_, menu) = &mut app.mode else {
+    let Some(Overlay::CompareLineEndingMenu(menu)) = &mut app.overlay else {
         return Ok(());
     };
 
@@ -32,14 +31,11 @@ pub fn handle_compare_line_ending_menu_key(app: &mut App, key: KeyEvent) -> Resu
         return Ok(());
     }
 
-    let Mode::CompareLineEndingMenu(state, _) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-        unreachable!("just matched Mode::CompareLineEndingMenu above");
-    };
+    app.overlay = None;
     if let MenuOutcome::Chosen(display) = outcome {
         app.compare_line_ending_display = display;
         config::set_compare_line_ending_display(display);
     }
-    app.mode = Mode::CompareFiles(state);
     Ok(())
 }
 

@@ -26,16 +26,6 @@ pub enum Mode {
     /// preview right -- the same variant, so Save/Close/discard logic
     /// doesn't care why an `Editor` is open.
     Editing(Editor),
-    /// `Esc` with unsaved changes: a "discard changes?" prompt over the
-    /// editor. Holds the `Editor` so cancel hands it straight back.
-    ConfirmDiscard(Editor),
-    /// The editor's own F9 menu (`editor::EditorMenu`), holding the
-    /// `Editor` it was opened over. Not reachable while a linked Markdown
-    /// preview is open, so the split-view path never draws it.
-    EditorMenu(Editor, EditorMenu),
-    /// `EditorMenu` -> `Keybindings`: picks `editor::EditorKeymapMode`.
-    /// `Esc` closes all the way back to `Mode::Editing`.
-    EditorKeymapMenu(Editor, EditorKeymapMenu),
     /// The browser's F9 menu (`theming::menu`): Commands / Options.
     MainMenu(MainMenu),
     /// F8 was pressed on a real entry: shown as a "delete this?" prompt
@@ -69,7 +59,7 @@ pub enum Mode {
     ConfirmPortFarMenu(PathBuf),
     /// `Ins` on the user menu -- the add-item form. Holds the menu
     /// being edited so `Esc`/a finished add hands it straight back to
-    /// `Mode::UserMenu`, same shape as `ConfirmDiscard(Editor)` above.
+    /// `Mode::UserMenu`.
     AddUserMenuItem(UserMenuState, AddUserMenuItemState),
     /// A one-line, dismiss-on-any-key notification (e.g. where
     /// `FarMenu.ini` ended up after declining to port it). Generic on
@@ -87,13 +77,25 @@ pub enum Mode {
     /// `Alt+F5`: side-by-side compare of two files, both panes editable
     /// and kept row-aligned live. Design: `TODO/file-compare.md`.
     CompareFiles(CompareState),
-    /// Compare's own F9 menu (`compare::CompareMenu`).
-    CompareMenu(CompareState, CompareMenu),
-    /// Compare's F9 -> Line endings (`compare::LineEndingDisplay`).
-    CompareLineEndingMenu(CompareState, CompareLineEndingMenu),
-    /// `Esc` on Compare with unsaved changes in either pane; holds the
-    /// state so cancel hands it straight back.
-    CompareConfirmDiscard(CompareState),
+}
+
+
+/// A popup drawn over the current screen (`App::mode`) without replacing
+/// it: the editor or `CompareState` underneath stays where it is instead
+/// of being moved into a `Mode` variant and back. Keys go to the overlay
+/// while one is open (`event_loop::keys::key_effect`).
+pub enum Overlay {
+    /// "Discard unsaved changes?" -- over `Mode::Editing` or
+    /// `Mode::CompareFiles`.
+    ConfirmDiscard,
+    /// The editor's own F9 menu.
+    EditorMenu(EditorMenu),
+    /// Editor F9 -> Keybindings.
+    EditorKeymapMenu(EditorKeymapMenu),
+    /// Compare's own F9 menu.
+    CompareMenu(CompareMenu),
+    /// Compare F9 -> Line endings.
+    CompareLineEndingMenu(CompareLineEndingMenu),
 }
 
 
@@ -163,6 +165,8 @@ pub struct App {
     pub panels: [Panel; 2],
     pub active: usize,
     pub mode: Mode,
+    /// A popup over `mode`, if one is open -- see `Overlay`.
+    pub overlay: Option<Overlay>,
     pub should_quit: bool,
     /// The live interface theme — panels, borders, F-key bar, etc.
     /// Loaded once at startup (`config::load_active_theme`) and
@@ -265,6 +269,7 @@ impl App {
             panels: [left, right],
             active: 0,
             mode: Mode::Browsing,
+            overlay: None,
             should_quit: false,
             theme,
             syntax_theme,

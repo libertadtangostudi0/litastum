@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Overlay};
 use crate::explorer;
 
 use super::find_history;
@@ -33,7 +33,7 @@ pub enum EditorCommand {
     /// this). A no-op with the box closed.
     FindNext,
     FindPrevious,
-    /// `F9` -- the editor's own menu (`Mode::EditorMenu`), Far-style.
+    /// `F9` -- the editor's own menu (`Overlay::EditorMenu`), Far-style.
     OpenMenu,
     /// Not one of the bindings above — forward the raw key event to
     /// `Editor::input`.
@@ -88,7 +88,7 @@ pub(crate) fn edtui_supports_key(code: KeyCode) -> bool {
 }
 
 
-/// The choice on the "discard unsaved changes?" prompt (`Mode::ConfirmDiscard`).
+/// The choice on the "discard unsaved changes?" prompt (`Overlay::ConfirmDiscard`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmDiscardCommand {
     Discard,
@@ -147,19 +147,8 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         return close_editor_or_confirm(app);
     }
 
-    // Not while a linked Markdown preview is open: `ui::draw` can't draw
-    // the menu over the split view. `F9` is swallowed there.
     if command == EditorCommand::OpenMenu {
-        if app.markdown_edit_preview.is_some() {
-            return Ok(());
-        }
-        let Mode::Editing(_) = &app.mode else {
-            return Ok(());
-        };
-        let Mode::Editing(editor) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-            unreachable!("just matched Mode::Editing above");
-        };
-        app.mode = Mode::EditorMenu(editor, super::menu::open_editor_menu());
+        app.overlay = Some(Overlay::EditorMenu(super::menu::open_editor_menu()));
         return Ok(());
     }
 
@@ -240,7 +229,7 @@ fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
 
 /// Closes the editor if the buffer is clean, else opens
-/// `Mode::ConfirmDiscard`. Also used by the embedded Markdown preview's
+/// `Overlay::ConfirmDiscard`. Also used by the embedded Markdown preview's
 /// own `Esc`/`F3`, which close the whole session.
 pub(crate) fn close_editor_or_confirm(app: &mut App) -> Result<()> {
     let Mode::Editing(editor) = &app.mode else {
@@ -252,10 +241,7 @@ pub(crate) fn close_editor_or_confirm(app: &mut App) -> Result<()> {
     }
 
     debug!("editor close: unsaved changes, asking to confirm discard");
-    let Mode::Editing(editor) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-        unreachable!("just matched Mode::Editing above");
-    };
-    app.mode = Mode::ConfirmDiscard(editor);
+    app.overlay = Some(Overlay::ConfirmDiscard);
     Ok(())
 }
 
@@ -269,6 +255,7 @@ pub(crate) fn close_editor_or_confirm(app: &mut App) -> Result<()> {
 fn return_from_editor(app: &mut App) -> Result<()> {
     app.active_panel().reload()?;
     app.markdown_edit_preview = None;
+    app.overlay = None;
     app.mode = if let Some(state) = app.editor_return_to.take() {
         Mode::FindFile(state)
     } else if let Some(edit) = app.user_menu_command_edit.take() {
@@ -289,12 +276,7 @@ pub fn handle_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
     match command {
         ConfirmDiscardCommand::Discard => return return_from_editor(app),
-        ConfirmDiscardCommand::Cancel => {
-            let Mode::ConfirmDiscard(editor) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-                unreachable!("only called while in Mode::ConfirmDiscard");
-            };
-            app.mode = Mode::Editing(editor);
-        }
+        ConfirmDiscardCommand::Cancel => app.overlay = None,
         ConfirmDiscardCommand::Ignore => {}
     }
 

@@ -76,6 +76,10 @@ enum PasteTarget {
 /// this is an explicit allow-list, not "every mode but the editor's"
 /// (what bracketed paste used to do before this existed).
 fn paste_target(app: &App) -> Option<PasteTarget> {
+    // No overlay has a text field.
+    if app.overlay.is_some() {
+        return None;
+    }
     match &app.mode {
         // The embedded Markdown preview half of an editor+preview
         // session has no text field of its own.
@@ -188,6 +192,20 @@ mod tests {
         handle_paste_event(&mut app, "svn st\r\n--quiet").unwrap();
 
         assert_eq!(app.command_line.text(), "svn st--quiet");
+    }
+
+    /// With a prompt or menu open over the editor, a paste must not
+    /// reach the buffer underneath.
+    #[test]
+    fn a_paste_over_an_overlay_leaves_the_editor_alone() {
+        let mut app = editor_app("hello
+");
+        app.overlay = Some(crate::app::Overlay::ConfirmDiscard);
+
+        handle_paste_event(&mut app, "pasted").unwrap();
+
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert!(!editor.is_dirty());
     }
 
     /// Real bug, found while routing both paste paths through

@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::*;
+use crate::app::Overlay;
 use crate::editor::{Editor, EditorKeymapMode};
 use crate::test_support::{ctrl_key, key, shift_key, test_app, unique_scratch_dir};
 
@@ -220,7 +221,8 @@ mod handle_editor_key_tests {
 
         handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
 
-        assert!(matches!(app.mode, Mode::ConfirmDiscard(_)));
+        assert!(matches!(app.overlay, Some(Overlay::ConfirmDiscard)));
+        assert!(matches!(app.mode, Mode::Editing(_)), "the editor stays open under the prompt");
     }
 
     /// Regression test for the real, reported crash: `cargo run` ->
@@ -301,17 +303,17 @@ mod handle_editor_key_tests {
 
         handle_editor_key(&mut app, key(KeyCode::F(9))).unwrap();
 
-        let Mode::EditorMenu(editor, menu) = &app.mode else { panic!("expected Mode::EditorMenu") };
+        let Mode::Editing(editor) = &app.mode else { panic!("expected Mode::Editing") };
+        let Some(Overlay::EditorMenu(menu)) = &app.overlay else { panic!("expected the editor menu overlay") };
         assert_eq!(editor.keymap_mode(), EditorKeymapMode::Standard, "should carry the editor's own current mode over unchanged");
         assert_eq!(menu.selected_index(), 0, "should open at the first item (Keybindings)");
     }
 
-    /// `F9` while editing a linked Markdown preview session (`App::
-    /// markdown_edit_preview`) is silently swallowed instead of opening
-    /// this menu -- `ui::draw` has no split-view rendering support for
-    /// `Mode::EditorKeymapMenu` (see its own doc comment on `app.rs`).
+    /// `F9` works in the editor+preview split view too -- it used to be
+    /// swallowed there, since the split view couldn't draw the menu
+    /// until overlays were drawn over any screen.
     #[test]
-    fn handle_editor_key_f9_is_a_noop_while_a_linked_markdown_preview_is_active() {
+    fn handle_editor_key_f9_opens_the_menu_over_a_linked_markdown_preview_too() {
         let (mut app, dir_path) = open_editor_app("hi\n");
         let md_path = dir_path.with_file_name("preview.md");
         fs::write(&md_path, "# heading\n").expect("write markdown fixture");
@@ -320,7 +322,7 @@ mod handle_editor_key_tests {
 
         handle_editor_key(&mut app, key(KeyCode::F(9))).unwrap();
 
-        assert!(matches!(app.mode, Mode::Editing(_)), "F9 should not have opened the keymap menu");
+        assert!(matches!(app.overlay, Some(Overlay::EditorMenu(_))));
     }
 
     /// `Ctrl+S` must still save and clear `is_dirty` correctly when the
@@ -898,7 +900,8 @@ mod handle_confirm_discard_key_tests {
         let (mut app, _path) = open_editor_app("hi\n");
         handle_editor_key(&mut app, key(KeyCode::Char('!'))).unwrap();
         handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
-        assert!(matches!(app.mode, Mode::ConfirmDiscard(_)));
+        assert!(matches!(app.overlay, Some(Overlay::ConfirmDiscard)));
+        assert!(matches!(app.mode, Mode::Editing(_)), "the editor stays open under the prompt");
 
         handle_confirm_discard_key(&mut app, key(KeyCode::Char('y'))).unwrap();
 
@@ -927,6 +930,7 @@ mod handle_confirm_discard_key_tests {
 
         handle_confirm_discard_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 
-        assert!(matches!(app.mode, Mode::ConfirmDiscard(_)));
+        assert!(matches!(app.overlay, Some(Overlay::ConfirmDiscard)));
+        assert!(matches!(app.mode, Mode::Editing(_)), "the editor stays open under the prompt");
     }
 }

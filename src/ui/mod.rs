@@ -3,7 +3,8 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Overlay};
+use crate::theming::Theme;
 
 mod command_line;
 mod compare;
@@ -86,11 +87,10 @@ use panel::build_list_item;
 pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Position>) {
     let theme = app.theme; // Theme is Copy -- see theme.rs for why
     let area = frame.area();
-    // Plain `F4` editing (no linked preview) and its own `ConfirmDiscard`
-    // still take over the *entire* frame, exactly as before. Once
-    // `App::markdown_edit_preview` is `Some` (`F3` on a `.md`/`.markdown`
-    // file, `explorer::markdown_preview::open_edit_preview`), both fall
-    // through instead to the ordinary panel-layout code below, which
+    // Plain `F4` editing (no linked preview) takes over the *entire*
+    // frame. Once `App::markdown_edit_preview` is `Some` (`F3` on a
+    // `.md`/`.markdown` file, `explorer::markdown_preview::open_edit_preview`),
+    // it falls through instead to the ordinary panel-layout code below, which
     // draws the editor into the *left* panel's own slot and the live
     // preview into the *right* one -- see `left_columns`/`right_columns`.
     let has_linked_preview = app.markdown_edit_preview.is_some();
@@ -119,8 +119,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         Mode::Editing(editor) if !has_linked_preview => {
             let mut cursor = draw_editor(frame, area, editor, &theme);
             if editor.search_box_open() {
-                // Drawn on top, same "popup over a full-screen mode"
-                // shape as ConfirmDiscard below -- and, only while the
+                // Drawn on top, like an overlay -- and, only while the
                 // box has keyboard focus, takes over the real terminal
                 // cursor from draw_editor's own buffer-cursor placement
                 // (with focus in the text, the caret there is the one
@@ -130,31 +129,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
                     cursor = Some(box_cursor);
                 }
             }
-            return (unchanged_layout, cursor);
-        }
-        Mode::ConfirmDiscard(editor) if !has_linked_preview => {
-            let cursor = draw_editor(frame, area, editor, &theme);
-            draw_confirm_discard_popup(frame, area, &theme);
-            return (unchanged_layout, cursor);
-        }
-        // Same "editor full-screen, popup on top" shape as
-        // `ConfirmDiscard` right above -- only ever reached while
-        // `!has_linked_preview` (`editor::handle_editor_key` won't open
-        // this menu at all otherwise, see `Mode::EditorMenu`'s own doc
-        // comment on `app.rs`), so there's no `if has_linked_preview`
-        // counterpart to also wire up in the split-view code below, the
-        // way `Mode::ConfirmDiscard`/`Mode::Editing` themselves have.
-        Mode::EditorMenu(editor, menu) => {
-            let cursor = draw_editor(frame, area, editor, &theme);
-            editor_menu::draw_editor_menu(frame, area, menu, &theme, app.popup_style);
-            return (unchanged_layout, cursor);
-        }
-        // `EditorMenu`'s own `Keybindings` item -- same shape and same
-        // reasoning as `EditorMenu` immediately above.
-        Mode::EditorKeymapMenu(editor, menu) => {
-            let current = editor.keymap_mode();
-            let cursor = draw_editor(frame, area, editor, &theme);
-            editor_keymap_menu::draw_editor_keymap_menu(frame, area, menu, &theme, app.popup_style, current);
+            draw_overlay(frame, area, app, &theme);
             return (unchanged_layout, cursor);
         }
         // `Alt+F5`'s own full-screen comparer -- same "takes over the
@@ -166,26 +141,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         // "Rendering approach"/data-model sketch).
         Mode::CompareFiles(state) => {
             let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
-            return (unchanged_layout, cursor);
-        }
-        Mode::CompareMenu(state, menu) => {
-            let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
-            compare_menu::draw_compare_menu(frame, area, menu, &theme, app.popup_style);
-            return (unchanged_layout, cursor);
-        }
-        Mode::CompareLineEndingMenu(state, menu) => {
-            let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
-            compare_line_ending_menu::draw_compare_line_ending_menu(frame, area, menu, &theme, app.popup_style, app.compare_line_ending_display);
-            return (unchanged_layout, cursor);
-        }
-        // Reuses the built-in editor's own "Unsaved changes" popup
-        // (`draw_confirm_discard_popup`) unmodified -- it's already
-        // generic (just `theme`/`area`, no `Editor` reference), and
-        // Compare's own confirm-discard prompt needs exactly the same
-        // Y/N choice over whichever screen was showing before `Esc`.
-        Mode::CompareConfirmDiscard(state) => {
-            let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
-            draw_confirm_discard_popup(frame, area, &theme);
+            draw_overlay(frame, area, app, &theme);
             return (unchanged_layout, cursor);
         }
         Mode::Browsing
@@ -205,7 +161,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         | Mode::Info(_)
         | Mode::ImagePreview(_)
         | Mode::Editing(_)
-        | Mode::ConfirmDiscard(_)
         | Mode::MarkdownLinkSearch(..) => {}
     }
 
@@ -248,7 +203,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     // the cursor hasn't moved.
     if has_linked_preview && app.active == 0 {
         let cursor_info = match &app.mode {
-            Mode::Editing(editor) | Mode::ConfirmDiscard(editor) => Some((editor.cursor_row(), editor.viewport_top_row())),
+            Mode::Editing(editor) => Some((editor.cursor_row(), editor.viewport_top_row())),
             _ => None,
         };
         if let Some((cursor_row, viewport_top)) = cursor_info {
@@ -272,7 +227,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     // tuple while its popup is up (below), but the same editor, same
     // slot, still underneath it.
     let left_columns = match &mut app.mode {
-        Mode::Editing(editor) | Mode::ConfirmDiscard(editor) if has_linked_preview => {
+        Mode::Editing(editor) if has_linked_preview => {
             draw_editor(frame, panels[0], editor, &theme);
             (1, 1)
         }
@@ -300,7 +255,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         state.poll();
         image_preview::draw_image_preview(frame, panels[1], state, &theme);
         (1, 1)
-    } else if has_linked_preview && matches!(&app.mode, Mode::Editing(_) | Mode::ConfirmDiscard(_) | Mode::MarkdownLinkSearch(..)) {
+    } else if has_linked_preview && matches!(&app.mode, Mode::Editing(_) | Mode::MarkdownLinkSearch(..)) {
         // The link-search popup (below) is an overlay over this same
         // underlying preview -- draw it exactly like the plain combined
         // view here, so the document stays visible behind the popup.
@@ -347,8 +302,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     };
 
     // The F9/Ctrl+P popups show over the browser, like a Far Manager
-    // menu, not in place of it -- unlike Editing/ConfirmDiscard above,
-    // which replace the whole screen.
+    // menu, not in place of it -- unlike Editing/Compare above, which
+    // replace the whole screen. `App::overlay` is drawn last of all.
     let popup_style = app.popup_style;
     match &app.mode {
         Mode::MainMenu(state) => menu::draw_main_menu(frame, area, state, &theme, popup_style),
@@ -379,12 +334,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         Mode::MarkdownLinkSearch(_, search) => {
             cursor = Some(markdown_preview::draw_markdown_link_search(frame, area, search, &theme, popup_style));
         }
-        // Both mirror plain `F4`'s own popups (top of this function) --
-        // reached here instead because a linked preview
-        // (`App::markdown_edit_preview`) sent `Editing`/`ConfirmDiscard`
-        // through the ordinary split-panel path above rather than the
-        // early, full-screen return.
-        Mode::ConfirmDiscard(_) if has_linked_preview => draw_confirm_discard_popup(frame, area, &theme),
+        // Mirrors plain `F4`'s own search box (top of this function) --
+        // reached here because a linked preview sent `Editing` through
+        // the split-panel path instead of the full-screen return.
         Mode::Editing(editor) if has_linked_preview && editor.search_box_open() => {
             let box_cursor = editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme);
             if editor.is_searching() {
@@ -393,8 +345,33 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         }
         _ => {}
     }
+    draw_overlay(frame, area, app, &theme);
 
     ([left_columns, right_columns], cursor)
+}
+
+
+/// Draws `app.overlay`, if any, over whatever screen was just drawn.
+fn draw_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let Some(overlay) = &app.overlay else {
+        return;
+    };
+    let style = app.popup_style;
+    match overlay {
+        Overlay::ConfirmDiscard => draw_confirm_discard_popup(frame, area, theme),
+        Overlay::EditorMenu(menu) => editor_menu::draw_editor_menu(frame, area, menu, theme, style),
+        Overlay::EditorKeymapMenu(menu) => {
+            let current = match &app.mode {
+                Mode::Editing(editor) => editor.keymap_mode(),
+                _ => app.editor_keymap_mode,
+            };
+            editor_keymap_menu::draw_editor_keymap_menu(frame, area, menu, theme, style, current);
+        }
+        Overlay::CompareMenu(menu) => compare_menu::draw_compare_menu(frame, area, menu, theme, style),
+        Overlay::CompareLineEndingMenu(menu) => {
+            compare_line_ending_menu::draw_compare_line_ending_menu(frame, area, menu, theme, style, app.compare_line_ending_display);
+        }
+    }
 }
 
 

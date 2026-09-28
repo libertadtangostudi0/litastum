@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::KeyEvent;
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Overlay};
 use crate::choice_menu::{ChoiceMenu, MenuOutcome};
 
 use super::keymap_menu::open_editor_keymap_menu;
@@ -36,29 +36,25 @@ pub fn open_editor_menu() -> EditorMenu {
 }
 
 
-/// `Enter` on `Keybindings` opens the keymap picker over the same
-/// `Editor`; `Esc` closes straight back to `Mode::Editing` (a leaf `Esc`
-/// closes all the way out, like the picker's own).
+/// `Enter` on `Keybindings` opens the keymap picker in its place; `Esc`
+/// closes (a leaf `Esc` closes all the way out, like the picker's own).
 pub fn handle_editor_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
-    let Mode::EditorMenu(_, menu) = &mut app.mode else {
+    let Some(Overlay::EditorMenu(menu)) = &mut app.overlay else {
         return Ok(());
     };
 
     let outcome = menu.handle_key(key);
     debug!(?key, ?outcome, "editor menu key");
-    if outcome == MenuOutcome::Open {
-        return Ok(());
-    }
-
-    let Mode::EditorMenu(editor, _) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-        unreachable!("just matched Mode::EditorMenu above");
-    };
-    app.mode = match outcome {
+    app.overlay = match outcome {
+        MenuOutcome::Open => return Ok(()),
         MenuOutcome::Chosen(EditorMenuItem::Keybindings) => {
-            let keymap_menu = open_editor_keymap_menu(editor.keymap_mode());
-            Mode::EditorKeymapMenu(editor, keymap_menu)
+            let current = match &app.mode {
+                Mode::Editing(editor) => editor.keymap_mode(),
+                _ => app.editor_keymap_mode,
+            };
+            Some(Overlay::EditorKeymapMenu(open_editor_keymap_menu(current)))
         }
-        _ => Mode::Editing(editor),
+        MenuOutcome::Closed => None,
     };
     Ok(())
 }
@@ -81,7 +77,8 @@ mod tests {
         let editor = Editor::open(path, None, EditorKeymapMode::Standard).expect("open test fixture file");
 
         let mut app = test_app(dir);
-        app.mode = Mode::EditorMenu(editor, open_editor_menu());
+        app.mode = Mode::Editing(editor);
+        app.overlay = Some(Overlay::EditorMenu(open_editor_menu()));
         app
     }
 
@@ -91,9 +88,9 @@ mod tests {
 
         handle_editor_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        let Mode::EditorKeymapMenu(editor, menu) = &app.mode else { panic!("expected Mode::EditorKeymapMenu") };
-        assert_eq!(editor.keymap_mode(), EditorKeymapMode::Standard);
+        let Some(Overlay::EditorKeymapMenu(menu)) = &app.overlay else { panic!("expected the keymap picker") };
         assert_eq!(menu.selected(), EditorKeymapMode::Standard);
+        assert!(matches!(app.mode, Mode::Editing(_)), "the editor stays underneath");
     }
 
     #[test]
@@ -102,17 +99,17 @@ mod tests {
 
         handle_editor_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
 
+        assert!(app.overlay.is_none());
         assert!(matches!(app.mode, Mode::Editing(_)));
     }
 
     #[test]
-    fn is_a_noop_outside_editor_menu_mode() {
+    fn is_a_noop_without_the_editor_menu_open() {
         let mut app = app_in_editor_menu();
-        let Mode::EditorMenu(editor, _) = std::mem::replace(&mut app.mode, Mode::Browsing) else { unreachable!() };
-        app.mode = Mode::Editing(editor);
+        app.overlay = None;
 
         handle_editor_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Editing(_)));
+        assert!(app.overlay.is_none());
     }
 }
