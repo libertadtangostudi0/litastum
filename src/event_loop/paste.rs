@@ -60,13 +60,80 @@ pub(super) fn try_intercept_paste_hotkey(app: &mut App, terminal: &mut Terminal<
         Ok(text) => text,
         Err(_) => return Ok(false),
     };
-    if text.is_empty() {
+    let chars: Vec<char> = text.chars().filter(|&c| c != '\r').collect();
+    if chars.is_empty() {
         return Ok(false);
     }
 
-    apply_paste(app, terminal, target, &text)?;
-    arm_paste_swallow(app, &text);
+    let already = already_typed_prefix_len(&recently_typed_chars(app), &chars);
+    app.recently_typed.clear();
+    let rest: String = chars[already..].iter().collect();
+    if !rest.is_empty() {
+        apply_paste(app, terminal, target, &rest)?;
+        arm_paste_swallow(app, &rest);
+    }
     Ok(true)
+}
+
+/// How long a typed character stays eligible to be recognized as the
+/// head of a Windows Terminal paste flood -- that flood runs at ~7-8ms
+/// per character, and the physical-key poll only ever lags it by a
+/// loop iteration or so, so this is generous.
+#[cfg(windows)]
+const RECENTLY_TYPED_WINDOW: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// More than enough for the few characters the flood can get ahead of
+/// the physical-key poll.
+const RECENTLY_TYPED_CAP: usize = 64;
+
+/// Records one key that went through ordinary key handling
+/// (`keys::handle_key_event` and its typing drain) -- see
+/// `App::recently_typed`. A plain character is remembered, a bare
+/// `Enter` as `'\n'` (how the flood sends a line break); any other key
+/// forgets everything, since text typed before it is no longer right
+/// before where a paste would land.
+pub(super) fn record_typed_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    let typed = match code {
+        KeyCode::Char(c) if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => c,
+        KeyCode::Enter if modifiers.is_empty() => '\n',
+        _ => {
+            app.recently_typed.clear();
+            return;
+        }
+    };
+    app.recently_typed.push_back((typed, std::time::Instant::now()));
+    if app.recently_typed.len() > RECENTLY_TYPED_CAP {
+        app.recently_typed.pop_front();
+    }
+}
+
+/// The recently typed characters still inside `RECENTLY_TYPED_WINDOW`,
+/// oldest first.
+#[cfg(windows)]
+fn recently_typed_chars(app: &App) -> Vec<char> {
+    let now = std::time::Instant::now();
+    app.recently_typed.iter().filter(|(_, at)| now.duration_since(*at) <= RECENTLY_TYPED_WINDOW).map(|&(c, _)| c).collect()
+}
+
+/// How many leading characters of `text` were already typed as the
+/// very latest entries of `recent` -- the longest `k` such that
+/// `recent`'s last `k` characters are exactly `text`'s first `k`.
+///
+/// Reported directly, with screenshots: pasting "Тесты добавлены:" into
+/// the editor's `Ctrl+F` box produced "ТТесты добавлены:есты добавл...".
+/// A race, not a logic slip in any one place: Windows Terminal starts
+/// injecting its keystroke flood the instant `Ctrl+V` goes down, and
+/// the first flood character can be read and typed normally before the
+/// next `GetAsyncKeyState` poll ever sees the physical key. The bypass
+/// then pasted the *whole* clipboard after it (doubling the "Т") and
+/// armed the swallow expecting a flood starting with "Т" -- the flood's
+/// actual next character, "е", didn't match, the swallow gave up, and
+/// the rest of the flood got typed as ordinary input. Skipping whatever
+/// the flood already delivered -- pasting and expecting only the rest
+/// -- makes both come out right.
+#[cfg(any(windows, test))]
+fn already_typed_prefix_len(recent: &[char], text: &[char]) -> usize {
+    (1..=recent.len().min(text.len())).rev().find(|&k| recent[recent.len() - k..] == text[..k]).unwrap_or(0)
 }
 
 /// Where a paste should land right now.
@@ -432,6 +499,50 @@ mod tests {
             let Mode::Editing(editor) = &app.mode else { unreachable!() };
             assert_eq!(editor.search_query(), "world");
             assert!(!editor.is_dirty(), "the buffer itself must be untouched");
+        }
+    }
+
+    mod already_typed_prefix_tests {
+        use super::*;
+
+        fn chars(text: &str) -> Vec<char> {
+            text.chars().collect()
+        }
+
+        /// The real report: the flood's first character ("Т") was typed
+        /// before the bypass saw `Ctrl+V` -- only the rest should be
+        /// pasted and expected from the flood.
+        #[test]
+        fn a_flood_head_already_typed_is_recognized() {
+            assert_eq!(already_typed_prefix_len(&chars("xТ"), &chars("Тесты добавлены:")), 1);
+            assert_eq!(already_typed_prefix_len(&chars("Тес"), &chars("Тесты")), 3);
+        }
+
+        #[test]
+        fn nothing_typed_or_no_overlap_means_paste_everything() {
+            assert_eq!(already_typed_prefix_len(&[], &chars("abc")), 0);
+            assert_eq!(already_typed_prefix_len(&chars("xyz"), &chars("abc")), 0);
+        }
+
+        /// Only the *latest* typed characters count -- an older, earlier
+        /// match that isn't right before the paste point doesn't.
+        #[test]
+        fn only_the_most_recent_characters_can_match() {
+            assert_eq!(already_typed_prefix_len(&chars("ab!"), &chars("abc")), 0);
+        }
+
+        #[test]
+        fn record_typed_key_forgets_everything_on_any_other_key() {
+            let mut app = test_app(unique_scratch_dir("paste-recent"));
+            record_typed_key(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
+            record_typed_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+            assert_eq!(app.recently_typed.iter().map(|&(c, _)| c).collect::<String>(), "a\n");
+
+            record_typed_key(&mut app, KeyCode::Left, KeyModifiers::NONE);
+            assert!(app.recently_typed.is_empty(), "text typed before a cursor move isn't where a paste lands");
+
+            record_typed_key(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+            assert!(app.recently_typed.is_empty(), "a shortcut is not typed text");
         }
     }
 }

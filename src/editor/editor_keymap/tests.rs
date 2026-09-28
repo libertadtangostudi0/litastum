@@ -644,6 +644,115 @@ mod handle_search_key_tests {
         assert_eq!(editor.search_query(), "world");
     }
 
+    /// Requested directly: the box should edit like Find file's fields
+    /// -- `Shift+Left` selects, and typing replaces the selection, with
+    /// the matches following the new query immediately.
+    #[test]
+    fn typing_over_a_shift_selection_replaces_it_and_re_searches() {
+        let (mut app, _path) = open_editor_app("cat cot\n");
+        handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+        for c in "cat".chars() {
+            handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();
+        }
+        handle_editor_key(&mut app, key(KeyCode::Left)).unwrap(); // cursor between 'a' and 't'
+        handle_editor_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap(); // selects 'a'
+
+        handle_editor_key(&mut app, key(KeyCode::Char('o'))).unwrap();
+
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert_eq!(editor.search_query(), "cot");
+        assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 4 }, "should have jumped to \"cot\"");
+    }
+
+    #[test]
+    fn ctrl_shift_left_selects_a_whole_word_of_the_query() {
+        let (mut app, _path) = open_editor_app("hello world\n");
+        handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+        for c in "hello world".chars() {
+            handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();
+        }
+
+        handle_editor_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT)).unwrap();
+        handle_editor_key(&mut app, key(KeyCode::Backspace)).unwrap();
+
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert_eq!(editor.search_query(), "hello ", "Backspace should remove the selected word, not one character");
+    }
+
+    #[test]
+    fn typing_after_moving_the_cursor_left_inserts_mid_query() {
+        let (mut app, _path) = open_editor_app("xx worlds\n");
+        handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+        for c in "wrld".chars() {
+            handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();
+        }
+        handle_editor_key(&mut app, key(KeyCode::Home)).unwrap();
+        handle_editor_key(&mut app, key(KeyCode::Right)).unwrap();
+
+        handle_editor_key(&mut app, key(KeyCode::Char('o'))).unwrap();
+
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert_eq!(editor.search_query(), "world");
+        assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 3 }, "the fixed query should match \"world\" inside \"worlds\"");
+    }
+
+    /// Reported directly: `Ctrl+X` did nothing to a selection in the box.
+    /// The clipboard itself is inert in a test build
+    /// (`text_field::os_clipboard`), so this checks the cut's own effect
+    /// on the query and the matches.
+    #[test]
+    fn ctrl_x_cuts_the_selection_and_re_searches() {
+        let (mut app, _path) = open_editor_app("cat catalog\n");
+        handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+        for c in "catalog".chars() {
+            handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();
+        }
+        for _ in 0..4 {
+            handle_editor_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap(); // selects "alog"
+        }
+
+        handle_editor_key(&mut app, ctrl_key('x')).unwrap();
+
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert_eq!(editor.search_query(), "cat");
+        assert_eq!(editor.search_selection(), None, "nothing left selected after a cut");
+        assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 0 }, "the shorter query matches the first \"cat\"");
+    }
+
+    #[test]
+    fn ctrl_x_with_nothing_selected_changes_nothing() {
+        let (mut app, _path) = open_editor_app("hello\n");
+        handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+        handle_editor_key(&mut app, key(KeyCode::Char('h'))).unwrap();
+
+        handle_editor_key(&mut app, ctrl_key('x')).unwrap();
+
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert_eq!(editor.search_query(), "h");
+    }
+
+    /// `End` still accepts the history suggestion, but only from the end
+    /// of the query -- from the middle it first moves there, like `End`
+    /// in any other text field.
+    #[test]
+    fn end_mid_query_moves_to_the_end_before_accepting_a_suggestion() {
+        let (mut app, _path) = open_editor_app("hello world\n");
+        app.search_history = vec!["world".to_string()];
+        handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+        handle_editor_key(&mut app, key(KeyCode::Char('w'))).unwrap();
+        handle_editor_key(&mut app, key(KeyCode::Char('o'))).unwrap();
+        handle_editor_key(&mut app, key(KeyCode::Left)).unwrap();
+
+        handle_editor_key(&mut app, key(KeyCode::End)).unwrap();
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert_eq!(editor.search_query(), "wo", "first End only moves the cursor");
+        assert_eq!(editor.search_cursor(), 2);
+
+        handle_editor_key(&mut app, key(KeyCode::End)).unwrap();
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert_eq!(editor.search_query(), "world", "second End accepts the suggestion");
+    }
+
     #[test]
     fn plain_keys_are_swallowed_by_the_search_box_not_forwarded_to_the_buffer() {
         let (mut app, _path) = open_editor_app("hello world\n");

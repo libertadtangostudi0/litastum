@@ -1,5 +1,5 @@
 use color_eyre::eyre::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use tracing::debug;
 
 use crate::app::{App, Mode};
@@ -51,81 +51,12 @@ pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<()> {
         }
         return Ok(());
     }
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     let (field, cursor, selection_anchor, history_index) = match state.active_field {
         FindFileField::Name => (&mut state.query, &mut state.cursor, &mut state.selection_anchor, &mut state.name_history_index),
         FindFileField::Content => (&mut state.content_query, &mut state.content_cursor, &mut state.content_selection_anchor, &mut state.content_history_index),
     };
-    match key.code {
-        // Backspace/Delete remove the active selection instead of one
-        // character, if there is one -- `text_field::delete_selection`
-        // reports whether it did anything, so the single-character path
-        // only runs when there wasn't a selection to consume instead.
-        // Same shape as `explorer::confirm::handle_confirm_transfer_key`'s
-        // own destination field, reported missing here directly.
-        KeyCode::Backspace => {
-            let removed_selection = text_field::delete_selection(field, cursor, selection_anchor);
-            if !removed_selection {
-                text_field::backspace(field, cursor);
-            }
-            *history_index = None; // editing means fresh typing, not still showing a recalled entry
-        }
-        KeyCode::Delete => {
-            let removed_selection = text_field::delete_selection(field, cursor, selection_anchor);
-            if !removed_selection {
-                text_field::delete_forward(field, cursor);
-            }
-            *history_index = None;
-        }
-        // Ctrl+Shift+Left/Right (word-wise selection) is checked ahead
-        // of plain Shift+Left/Right below -- `shift` alone is `true` for
-        // both, so without this the word-wise combination would silently
-        // fall into character-wise selection instead of extending by a
-        // whole word (reported directly: it "didn't work" in the sense
-        // of doing the wrong thing, not nothing at all). Mirrors
-        // `command_line/browsing/mod.rs`'s own
-        // `extend_selection_word_left`/`_right` wiring, the one thing
-        // this popup's otherwise-`explorer::confirm`-shaped selection
-        // handling didn't already have.
-        KeyCode::Left if ctrl && shift => text_field::extend_selection_word_left(field, cursor, selection_anchor),
-        KeyCode::Right if ctrl && shift => text_field::extend_selection_word_right(field, cursor, selection_anchor),
-        // Shift+Left/Right (character-wise selection) is checked ahead
-        // of Ctrl+Left/Right and plain Left/Right below -- `KeyCode::Left`
-        // alone can't distinguish "extend selection" from "move" or
-        // "jump a word".
-        KeyCode::Left if shift => text_field::extend_selection_left(cursor, selection_anchor),
-        KeyCode::Right if shift => text_field::extend_selection_right(field, cursor, selection_anchor),
-        KeyCode::Left if ctrl => {
-            *selection_anchor = None;
-            text_field::move_word_left(field, cursor);
-        }
-        KeyCode::Right if ctrl => {
-            *selection_anchor = None;
-            text_field::move_word_right(field, cursor);
-        }
-        // Plain Left/Right with a selection active collapses to that
-        // selection's near edge (standard editor behavior) rather than
-        // moving one further character past it.
-        KeyCode::Left => text_field::collapse_selection_left(cursor, selection_anchor),
-        KeyCode::Right => text_field::collapse_selection_right(field, cursor, selection_anchor),
-        KeyCode::Home => {
-            *selection_anchor = None;
-            text_field::move_home(cursor);
-        }
-        KeyCode::End => {
-            *selection_anchor = None;
-            text_field::move_end(field, cursor);
-        }
-        // Typing over an active selection replaces it, like any normal
-        // text field -- delete it first, then insert at the (now
-        // collapsed) cursor.
-        KeyCode::Char(c) if !ctrl => {
-            text_field::delete_selection(field, cursor, selection_anchor);
-            text_field::insert_char(field, cursor, c);
-            *history_index = None; // same reasoning as Backspace above
-        }
-        _ => {}
+    if text_field::apply_edit_key(field, cursor, selection_anchor, key) == text_field::EditOutcome::TextChanged {
+        *history_index = None; // editing means fresh typing, not still showing a recalled entry
     }
     Ok(())
 }
@@ -180,6 +111,8 @@ fn run_search(app: &mut App) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+
+    use crossterm::event::KeyModifiers;
 
     use super::super::test_support::{app_with_find_file, wait_for_search};
     use super::*;

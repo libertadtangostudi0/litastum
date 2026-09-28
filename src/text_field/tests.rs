@@ -259,3 +259,26 @@ mod selection_tests {
         assert_eq!(cursor, 2);
     }
 }
+
+mod selected_text_tests {
+    use super::*;
+
+    #[test]
+    fn no_anchor_means_no_selection() {
+        assert_eq!(selected_text("W:\\path\\to\\file.txt", 3, None), None);
+    }
+
+    #[test]
+    fn a_collapsed_selection_is_treated_as_none() {
+        assert_eq!(selected_text("W:\\path\\to\\file.txt", 5, Some(5)), None);
+    }
+
+    #[test]
+    fn extracts_the_selected_span_regardless_of_anchor_cursor_order() {
+        // "W:\path\to\file.txt" -- selecting just "path" (indices 3..7).
+        assert_eq!(selected_text("W:\\path\\to\\file.txt", 7, Some(3)), Some("path".to_string()));
+        // Same span, cursor and anchor swapped -- selection_range
+        // normalizes either order, this should too.
+        assert_eq!(selected_text("W:\\path\\to\\file.txt", 3, Some(7)), Some("path".to_string()));
+    }
+}

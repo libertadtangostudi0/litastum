@@ -32,14 +32,14 @@ use edtui::{Index2, Lines, RowIndex};
 /// adding a character only has to *filter* the previous candidates by
 /// that one extra position, never rescan the buffer (only the very
 /// first character does a full scan). Each prefix length's own
-/// candidates are kept on a stack (`candidates`), so Backspace is just
-/// a pop. Candidates deliberately include *overlapping* positions --
+/// candidates are kept on a stack (`candidates`), so Backspace just
+/// drops the top level (`set_pattern`). Candidates deliberately include *overlapping* positions --
 /// dropping one because it overlapped a shorter pattern's earlier match
 /// could lose a real match once the pattern grows -- and the
 /// non-overlapping view (`matches`) is recomputed from the top of the
 /// stack after every edit, O(candidates).
 #[derive(Default)]
-pub(in crate::editor::editor) struct SearchSession {
+pub(super) struct SearchSession {
     pattern: Vec<char>,
     /// `candidates[i]`: every position (overlaps included) where
     /// `pattern[..=i]` matches, in buffer order.
@@ -64,7 +64,8 @@ impl SearchSession {
         self.start_cursor
     }
 
-    pub(super) fn pattern(&self) -> String {
+    #[cfg(test)]
+    fn pattern(&self) -> String {
         self.pattern.iter().collect()
     }
 
@@ -92,11 +93,21 @@ impl SearchSession {
         self.recompute_matches();
     }
 
-    /// Removes the query's last character -- a pop of the candidate
-    /// stack, no buffer access at all.
-    pub(super) fn pop(&mut self) {
-        if self.pattern.pop().is_some() {
-            self.candidates.pop();
+    /// Brings the session in line with an arbitrarily edited query --
+    /// the box is a real text field (cursor, selection, typing over a
+    /// selection), so an edit isn't always "add or remove at the end."
+    /// Keeps every candidate level for the prefix the old and new query
+    /// still share, and only re-filters from there: appending/Backspace
+    /// at the end stay as cheap as `push`/`pop`, and the worst case (an
+    /// edit at the very first character) is one full scan, the same as
+    /// starting over.
+    pub(super) fn set_pattern(&mut self, lines: &Lines, new_pattern: &str) {
+        let new_pattern: Vec<char> = new_pattern.chars().collect();
+        let common = self.pattern.iter().zip(&new_pattern).take_while(|(old, new)| old == new).count();
+        self.pattern.truncate(common);
+        self.candidates.truncate(common);
+        for &c in &new_pattern[common..] {
+            self.push(lines, c);
         }
         self.recompute_matches();
     }
@@ -245,27 +256,39 @@ mod tests {
     }
 
     #[test]
-    fn pop_restores_the_shorter_patterns_own_matches() {
+    fn shortening_the_pattern_restores_the_shorter_patterns_own_matches() {
         let (lines, mut session) = session_for("cat car cab", "cat");
         assert_eq!(session.matches, vec![Index2::new(0, 0)]);
 
-        session.pop();
+        session.set_pattern(&lines, "ca");
 
         assert_eq!(session.pattern(), "ca");
         assert_eq!(session.matches, vec![Index2::new(0, 0), Index2::new(0, 4), Index2::new(0, 8)]);
 
         session.push(&lines, 'b');
-        assert_eq!(session.matches, vec![Index2::new(0, 8)], "pushing again after a pop filters from the restored level");
+        assert_eq!(session.matches, vec![Index2::new(0, 8)], "pushing again after shortening filters from the restored level");
+    }
+
+    /// An edit in the middle of the query (typing over a selection,
+    /// deleting inside it) must land on exactly the matches a fresh
+    /// search for the new text would find.
+    #[test]
+    fn set_pattern_after_a_mid_query_edit_matches_a_fresh_search() {
+        let (lines, mut session) = session_for("cart cat cab cot", "cart");
+
+        session.set_pattern(&lines, "cot");
+
+        let (_, fresh) = session_for("cart cat cab cot", "cot");
+        assert_eq!(session.pattern(), "cot");
+        assert_eq!(session.matches, fresh.matches);
     }
 
     #[test]
-    fn popping_past_empty_is_harmless() {
-        let (_, mut session) = session_for("abc", "ab");
-        session.pop();
-        session.pop();
-        session.pop();
-        assert_eq!(session.pattern(), "");
+    fn set_pattern_to_empty_clears_everything() {
+        let (lines, mut session) = session_for("abc", "ab");
+        session.set_pattern(&lines, "");
         assert!(session.matches.is_empty());
+        assert_eq!(session.pattern_len(), 0);
     }
 
     #[test]

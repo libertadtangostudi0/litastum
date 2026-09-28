@@ -419,6 +419,14 @@ pub struct App {
     /// still correct but just very slow to drain would keep swallowing
     /// indefinitely instead of eventually giving up.
     pub pending_paste_swallow_deadline: Option<std::time::Instant>,
+    /// The last few characters actually typed through ordinary key
+    /// handling, with when they arrived -- lets the Windows `Ctrl+V`
+    /// bypass notice that Windows Terminal's own keystroke flood already
+    /// delivered the start of the paste before the physical key press
+    /// was seen (`event_loop::paste::already_typed_prefix_len`'s own doc
+    /// comment has the real report). Cleared by any other key, since the
+    /// characters before it are no longer where a paste would continue.
+    pub recently_typed: std::collections::VecDeque<(char, std::time::Instant)>,
     /// Where the built-in editor (F4) should hand control back once it
     /// closes, if that's somewhere other than the ordinary browser --
     /// `None` (the common case: F4 pressed from `Mode::Browsing`)
@@ -531,6 +539,7 @@ impl App {
             ctrl_v_physically_held: false,
             pending_paste_swallow: std::collections::VecDeque::new(),
             pending_paste_swallow_deadline: None,
+            recently_typed: std::collections::VecDeque::new(),
             editor_return_to: None,
             user_menu_command_edit: None,
             image_picker: Picker::halfblocks(),

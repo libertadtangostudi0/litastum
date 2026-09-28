@@ -19,7 +19,7 @@ mod undo;
 mod view;
 mod word_select_touch;
 
-use search::SearchSession;
+use search::SearchBox;
 use undo::Snapshot;
 use word_select_touch::WordSelectTouch;
 
@@ -127,7 +127,7 @@ pub struct Editor {
     /// character too, not only by `start_search`, so a search opened
     /// some other way (Vim's own `/`) still starts from where the cursor
     /// actually was.
-    search: Option<SearchSession>,
+    search: Option<SearchBox>,
     /// Which key-binding scheme this session currently uses -- see
     /// `EditorKeymapMode`'s own doc comment. Drives both which
     /// `event_handler` was built with (`Editor::open`/`set_keymap_mode`)

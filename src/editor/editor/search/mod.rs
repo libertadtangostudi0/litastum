@@ -1,11 +1,37 @@
+use crossterm::event::KeyEvent;
 use edtui::actions::{Execute, SwitchMode};
 use edtui::{EditorMode, Index2};
+
+use crate::text_field::{self, EditOutcome};
 
 use super::Editor;
 
 mod session;
 
-pub(super) use session::SearchSession;
+use session::SearchSession;
+
+/// The open `Ctrl+F` box: a real single-line text field (its own
+/// cursor and selection, the same keys as Find file's fields --
+/// `text_field::apply_edit_key`) plus the matching state for whatever it
+/// currently holds. Requested directly: the box used to be append/
+/// Backspace-only, with no way to select part of the query or fix a
+/// typo in the middle of it.
+pub(in crate::editor::editor) struct SearchBox {
+    text: String,
+    /// Character index into `text`, same convention as every other
+    /// `text_field` user.
+    cursor: usize,
+    selection_anchor: Option<usize>,
+    session: SearchSession,
+}
+
+
+impl SearchBox {
+    fn new(start_cursor: Index2) -> Self {
+        Self { text: String::new(), cursor: 0, selection_anchor: None, session: SearchSession::new(start_cursor) }
+    }
+}
+
 
 impl Editor {
     /// `Ctrl+F` -- whether the built-in search box is currently open.
@@ -21,7 +47,27 @@ impl Editor {
 
     /// The search box's current query text, for rendering the popup.
     pub fn search_query(&self) -> String {
-        self.search.as_ref().map(SearchSession::pattern).unwrap_or_default()
+        self.search.as_ref().map(|search_box| search_box.text.clone()).unwrap_or_default()
+    }
+
+    /// The search box's own cursor, as a character index into
+    /// `search_query()`.
+    pub fn search_cursor(&self) -> usize {
+        self.search.as_ref().map_or(0, |search_box| search_box.cursor)
+    }
+
+    /// The search box's own selected character range (`start..end`,
+    /// end exclusive), if any -- for rendering it highlighted.
+    pub fn search_selection(&self) -> Option<(usize, usize)> {
+        let search_box = self.search.as_ref()?;
+        search_box.selection_anchor.map(|anchor| text_field::selection_range(anchor, search_box.cursor))
+    }
+
+    /// Whether the box's own cursor sits right after its last character
+    /// -- where `End` accepts the history suggestion instead of moving
+    /// (`editor_keymap::handle_search_key`).
+    pub fn search_cursor_at_end(&self) -> bool {
+        self.search.as_ref().is_none_or(|search_box| search_box.cursor == search_box.text.chars().count())
     }
 
     /// The currently selected match as an inclusive `(start, end)` span
@@ -31,7 +77,7 @@ impl Editor {
         if !self.is_searching() {
             return None;
         }
-        let session = self.search.as_ref()?;
+        let session = &self.search.as_ref()?.session;
         let start = session.selected_match()?;
         Some((start, Index2::new(start.row, start.col + session.pattern_len().saturating_sub(1))))
     }
@@ -40,37 +86,36 @@ impl Editor {
     /// (what `stop_search` below restores if the box is cancelled with
     /// nothing found).
     pub fn start_search(&mut self) {
-        self.search = Some(SearchSession::new(self.state.cursor));
+        self.search = Some(SearchBox::new(self.state.cursor));
         SwitchMode(EditorMode::Search).execute(&mut self.state);
         self.search_history_index = None;
     }
 
-    /// One typed character into the search box -- re-filters the matches
-    /// immediately and jumps to the first one, the same find-as-you-type
-    /// feel as the command line's own always-live autosuggestion. Also
-    /// leaves history-browsing (`Up`/`Down`, below) -- typing means the
-    /// query is being edited fresh again, not still showing whatever
-    /// history entry `Up`/`Down` last recalled.
-    pub fn search_push_char(&mut self, c: char) {
+    /// One editing key in the search box (`text_field::apply_edit_key` --
+    /// typing, Backspace/Delete, character/word selection with
+    /// `Shift`/`Ctrl+Shift` + arrows, `Home`/`End`, ...). Whenever the
+    /// text itself changes, the matches follow immediately and the
+    /// cursor jumps to the first one (find-as-you-type), and history
+    /// browsing ends -- editing means the query is being written fresh
+    /// again, not still showing whatever `Up`/`Down` last recalled.
+    /// Returns whether the key was an editing key at all.
+    pub fn search_edit_key(&mut self, key: KeyEvent) -> bool {
         let lines = &self.state.lines;
-        self.search.get_or_insert_with(|| SearchSession::new(self.state.cursor)).push(lines, c);
-        self.jump_to_first_match();
-        self.search_history_index = None;
+        let search_box = self.search.get_or_insert_with(|| SearchBox::new(self.state.cursor));
+        let outcome = text_field::apply_edit_key(&mut search_box.text, &mut search_box.cursor, &mut search_box.selection_anchor, key);
+        if outcome == EditOutcome::TextChanged {
+            search_box.session.set_pattern(lines, &search_box.text);
+            self.jump_to_first_match();
+            self.search_history_index = None;
+        }
+        outcome != EditOutcome::Unhandled
     }
 
-    /// `Backspace` in the search box -- pops the *last* character (no
-    /// mid-string cursor to delete from, matching the box's own "just an
-    /// input field" scope for now) and jumps to the first match of the
-    /// now-shorter query, same as typing does. `edtui`'s own version
-    /// left the cursor (and a possibly stale match index) wherever the
-    /// longer query had put it. Also leaves history-browsing, same
-    /// reasoning as `search_push_char`.
-    pub fn search_pop_char(&mut self) {
-        if let Some(session) = &mut self.search {
-            session.pop();
-        }
-        self.jump_to_first_match();
-        self.search_history_index = None;
+    /// Types `c` at the box's cursor -- `search_edit_key` for a plain
+    /// character.
+    #[cfg(test)]
+    pub fn search_push_char(&mut self, c: char) {
+        self.search_edit_key(KeyEvent::new(crossterm::event::KeyCode::Char(c), crossterm::event::KeyModifiers::NONE));
     }
 
     /// `Enter` -- jumps to the next match, VS Code's own `Ctrl+F`
@@ -79,7 +124,7 @@ impl Editor {
     /// instead, below, the same way a shell's own `Up`/`Down` work on
     /// the command being typed, not on some other piece of state).
     pub fn search_next(&mut self) {
-        if let Some(start) = self.search.as_mut().and_then(SearchSession::select_next) {
+        if let Some(start) = self.search.as_mut().and_then(|search_box| search_box.session.select_next()) {
             self.state.cursor = start;
         }
     }
@@ -87,7 +132,7 @@ impl Editor {
     /// `Shift+Enter` -- jumps to the previous match, the other half of
     /// the VS Code convention `search_next` follows.
     pub fn search_previous(&mut self) {
-        if let Some(start) = self.search.as_mut().and_then(SearchSession::select_previous) {
+        if let Some(start) = self.search.as_mut().and_then(|search_box| search_box.session.select_previous()) {
             self.state.cursor = start;
         }
     }
@@ -117,8 +162,8 @@ impl Editor {
         let query = self.search_query();
         if !query.is_empty() && self.cursor_sits_on_a_real_match(&query) {
             self.state.cursor.col += query.chars().count();
-        } else if let Some(session) = &self.search {
-            self.state.cursor = session.start_cursor();
+        } else if let Some(search_box) = &self.search {
+            self.state.cursor = search_box.session.start_cursor();
         }
         SwitchMode(EditorMode::Insert).execute(&mut self.state);
         self.search = None;
@@ -135,7 +180,7 @@ impl Editor {
     }
 
     fn jump_to_first_match(&mut self) {
-        if let Some(start) = self.search.as_mut().and_then(SearchSession::select_first_from_start) {
+        if let Some(start) = self.search.as_mut().and_then(|search_box| search_box.session.select_first_from_start()) {
             self.state.cursor = start;
         }
     }
@@ -165,10 +210,9 @@ impl Editor {
     /// entirely (the shell convention's own "back to your own
     /// not-yet-recalled line," simplified here to just "empty," since
     /// this box has no separate "what was I typing before I started
-    /// browsing" state to restore -- matches its own "just an input
-    /// field for now" scope). A no-op while not currently browsing
-    /// history at all (`Up` was never pressed, or a keystroke since
-    /// already cleared it -- see `search_push_char`/`search_pop_char`).
+    /// browsing" state to restore). A no-op while not currently browsing
+    /// history at all (`Up` was never pressed, or an edit since already
+    /// cleared it -- see `search_edit_key`).
     pub fn search_history_down(&mut self, history: &[String]) {
         let Some(index) = self.search_history_index else {
             return;
@@ -184,7 +228,7 @@ impl Editor {
 
     /// Replaces the search box's current query with `suggestion` in
     /// full (accepting the ghost-text history suggestion, `End`) --
-    /// leaves history-browsing, same reasoning as `search_push_char`
+    /// leaves history-browsing, same reasoning as `search_edit_key`
     /// (this is a fresh, explicit choice of query, not a step through
     /// `Up`/`Down`'s own separate history walk).
     pub fn accept_search_suggestion(&mut self, suggestion: &str) {
@@ -193,16 +237,15 @@ impl Editor {
     }
 
     /// Shared mechanics for `accept_search_suggestion` and
-    /// `search_history_up`/`_down` above -- a fresh session from the same
-    /// start position, fed `new_query` one character at a time (only the
-    /// first character scans the buffer, see `SearchSession`).
+    /// `search_history_up`/`_down` above -- the whole text replaced, the
+    /// cursor at its end, no selection, and the matches synced to it.
     fn replace_search_query(&mut self, new_query: &str) {
-        let start = self.search.as_ref().map_or(self.state.cursor, SearchSession::start_cursor);
-        let mut session = SearchSession::new(start);
-        for c in new_query.chars() {
-            session.push(&self.state.lines, c);
-        }
-        self.search = Some(session);
+        let lines = &self.state.lines;
+        let search_box = self.search.get_or_insert_with(|| SearchBox::new(self.state.cursor));
+        search_box.text = new_query.to_string();
+        search_box.cursor = new_query.chars().count();
+        search_box.selection_anchor = None;
+        search_box.session.set_pattern(lines, new_query);
         self.jump_to_first_match();
     }
 }

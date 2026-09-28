@@ -287,15 +287,21 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
 /// ahead of `resolve`/the normal table entirely (see `handle_editor_key`
 /// above), the same way an in-progress word-select drag or the discard
 /// prompt each own their own key handling rather than sharing the
-/// ordinary editor dispatch. Typing filters live (`Editor::search_push_char`
-/// re-runs `edtui`'s own search on every keystroke); `Enter`/`Shift+Enter`
+/// ordinary editor dispatch. The box is a full single-line text field
+/// (`Editor::search_edit_key` -- the same keys as Find file's fields,
+/// including selection with `Shift`/`Ctrl+Shift` + arrows and typing
+/// over it), and every text change filters the matches live; `Enter`/`Shift+Enter`
 /// jump to the next/previous match, VS Code's own `Ctrl+F` convention --
 /// `Up`/`Down` were tried for this first and reported wrong: those are
 /// for browsing *history* instead (`Editor::search_history_up`/`_down`),
 /// the same way a shell's own `Up`/`Down` recall past commands rather
 /// than doing anything to the command currently being typed. `End`
 /// accepts the ghost-text history suggestion shown after the query, if
-/// any (`find_history::suggest`); `Esc` closes the box and records the
+/// any (`find_history::suggest`) and the box's own cursor is already at
+/// the end -- otherwise it just moves there first, like `End` in any
+/// other text field (a shell's own autosuggestion convention: the
+/// suggestion is taken from the end of the line, not from the middle
+/// of it); `Esc` closes the box and records the
 /// query into the persisted search history
 /// (`find_history::record_history`/`save_history`) if it isn't empty.
 fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<()> {
@@ -327,16 +333,16 @@ fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Down => active_editor.search_history_down(&app.search_history),
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => active_editor.search_previous(),
         KeyCode::Enter => active_editor.search_next(),
-        KeyCode::Backspace => active_editor.search_pop_char(),
-        KeyCode::End => {
+        KeyCode::End if active_editor.search_cursor_at_end() => {
             let query = active_editor.search_query();
             if let Some(suggestion) = find_history::suggest(&app.search_history, &query) {
                 let suggestion = suggestion.to_string();
                 active_editor.accept_search_suggestion(&suggestion);
             }
         }
-        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => active_editor.search_push_char(c),
-        _ => {}
+        _ => {
+            active_editor.search_edit_key(key);
+        }
     }
 
     Ok(())

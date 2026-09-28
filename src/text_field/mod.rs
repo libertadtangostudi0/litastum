@@ -1,5 +1,8 @@
-//! Cursor-aware text editing for a single-line field — currently just
-//! the F5/F6/Shift+F6 destination path (`app::PendingTransfer`).
+//! Cursor-aware text editing for a single-line field — the F5/F6/
+//! Shift+F6 destination path (`app::PendingTransfer`), Find file's
+//! fields, the editor's `Ctrl+F` box, the user-menu prompts, and the
+//! command line's own selection. `apply_edit_key` is the shared key
+//! layout for fields that take the whole standard set.
 //!
 //! Deliberately a separate module from `command_line.rs`, not a
 //! generalization of it: the always-live command line keeps its
@@ -15,6 +18,9 @@
 //! `String`, so multi-byte UTF-8 filenames don't panic on a split at a
 //! non-boundary; `byte_index` is the one place that converts between
 //! the two.
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tracing::warn;
 
 /// Byte offset of the `char_idx`-th character in `text` (or `text`'s
 /// full length, for `char_idx == text.chars().count()` — the
@@ -248,6 +254,199 @@ pub fn delete_selection(text: &mut String, cursor: &mut usize, anchor: &mut Opti
     delete_range(text, start, end);
     *cursor = start;
     true
+}
+
+
+/// The active selection's own text, if there is one and it's non-empty
+/// -- split out of `copy_selection` as a pure function so the actual
+/// substring arithmetic has real unit coverage without touching the real
+/// OS clipboard (this codebase deliberately avoids that elsewhere too --
+/// `editor::clipboard`'s own tests never call a real `Clipboard::new()`
+/// either, since it isn't guaranteed to be available wherever the test
+/// suite happens to run).
+pub fn selected_text(text: &str, cursor: usize, anchor: Option<usize>) -> Option<String> {
+    let anchor = anchor?;
+    let (start, end) = selection_range(anchor, cursor);
+    let selected: String = text.chars().skip(start).take(end - start).collect();
+    (!selected.is_empty()).then_some(selected)
+}
+
+
+/// Copies the active selection (nothing, if there isn't one) to the real
+/// OS clipboard -- a failure (no clipboard available in this
+/// environment, or the OS call itself failing) is only logged, same
+/// "don't fail the keystroke over it" rule
+/// `editor::clipboard::OsClipboardBridge` already follows.
+pub fn copy_selection(text: &str, cursor: usize, anchor: Option<usize>) {
+    let Some(selected) = selected_text(text, cursor, anchor) else {
+        return;
+    };
+    let Some(mut clipboard) = os_clipboard() else {
+        return;
+    };
+    if let Err(err) = clipboard.set_text(selected) {
+        warn!(%err, "text field: clipboard set_text failed");
+    }
+}
+
+
+/// Pastes the real OS clipboard's text at the cursor, replacing the
+/// active selection first if there is one -- the same "replace on type"
+/// convention typing follows. Control characters (line breaks, tabs)
+/// are dropped: every user of this is a single-line field. A missing/
+/// unavailable clipboard or non-text contents is only logged, same as
+/// `copy_selection`.
+pub fn paste_clipboard(text: &mut String, cursor: &mut usize, anchor: &mut Option<usize>) {
+    let Some(mut clipboard) = os_clipboard() else {
+        return;
+    };
+    let pasted = match clipboard.get_text() {
+        Ok(pasted) => pasted,
+        Err(err) => {
+            warn!(%err, "text field: clipboard get_text failed");
+            return;
+        }
+    };
+    delete_selection(text, cursor, anchor);
+    for c in pasted.chars().filter(|c| !c.is_control()) {
+        insert_char(text, cursor, c);
+    }
+}
+
+
+/// The real OS clipboard -- `None` if it isn't available (logged), and
+/// always `None` in a test build: a test pressing `Ctrl+C`/`Ctrl+X` must
+/// never overwrite the clipboard of whoever happens to be running the
+/// suite (the same isolation rule `theming::config::limits()` follows
+/// for `config.json`).
+fn os_clipboard() -> Option<arboard::Clipboard> {
+    if cfg!(test) {
+        return None;
+    }
+    match arboard::Clipboard::new() {
+        Ok(clipboard) => Some(clipboard),
+        Err(err) => {
+            warn!(%err, "text field: clipboard unavailable");
+            None
+        }
+    }
+}
+
+
+/// What `apply_edit_key` did with a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditOutcome {
+    /// The text itself changed (typing, deleting, replacing a selection).
+    TextChanged,
+    /// Handled, but the text itself didn't change (a cursor/selection
+    /// move, a copy).
+    NoTextChange,
+    /// Not an editing key -- left for the caller's own bindings.
+    Unhandled,
+}
+
+/// The standard single-line editing keys, in one place: `Backspace`/
+/// `Delete` (consuming a selection first if there is one), `Shift`/
+/// `Ctrl+Shift` + `Left`/`Right` to select by character/word, `Ctrl` +
+/// `Left`/`Right` to jump a word, plain `Left`/`Right` (collapsing a
+/// selection to its near edge first), `Home`/`End`, `Ctrl+C`/`Ctrl+X`/
+/// `Ctrl+V` against the real OS clipboard, and typing (which replaces a
+/// selection). Pulled out of Find file's own field handling
+/// when the editor's `Ctrl+F` box needed exactly the same keys --
+/// requested directly: "the same as in Find file" -- so both stay
+/// identical by construction instead of by copy.
+///
+/// Order matters for the arrow keys: `Ctrl+Shift` is checked before
+/// plain `Shift` (both have `SHIFT` set -- reported directly once as
+/// word-wise selection silently doing character-wise selection instead),
+/// and `Shift` before `Ctrl` and plain arrows.
+pub fn apply_edit_key(text: &mut String, cursor: &mut usize, anchor: &mut Option<usize>, key: KeyEvent) -> EditOutcome {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    match key.code {
+        KeyCode::Backspace => {
+            if !delete_selection(text, cursor, anchor) {
+                backspace(text, cursor);
+            }
+            EditOutcome::TextChanged
+        }
+        KeyCode::Delete => {
+            if !delete_selection(text, cursor, anchor) {
+                delete_forward(text, cursor);
+            }
+            EditOutcome::TextChanged
+        }
+        // Clipboard -- reported directly as missing from the editor's
+        // `Ctrl+F` box ("Ctrl+X doesn't work on the selected text"); the
+        // F5/F6 destination field already had these, so they moved here
+        // from there and every field using this function gets them.
+        KeyCode::Char('c' | 'C') if ctrl => {
+            copy_selection(text, *cursor, *anchor);
+            EditOutcome::NoTextChange
+        }
+        KeyCode::Char('x' | 'X') if ctrl => {
+            copy_selection(text, *cursor, *anchor);
+            if delete_selection(text, cursor, anchor) {
+                EditOutcome::TextChanged
+            } else {
+                EditOutcome::NoTextChange
+            }
+        }
+        KeyCode::Char('v' | 'V') if ctrl => {
+            paste_clipboard(text, cursor, anchor);
+            EditOutcome::TextChanged
+        }
+        KeyCode::Char(c) if !ctrl => {
+            delete_selection(text, cursor, anchor);
+            insert_char(text, cursor, c);
+            EditOutcome::TextChanged
+        }
+        KeyCode::Left if ctrl && shift => {
+            extend_selection_word_left(text, cursor, anchor);
+            EditOutcome::NoTextChange
+        }
+        KeyCode::Right if ctrl && shift => {
+            extend_selection_word_right(text, cursor, anchor);
+            EditOutcome::NoTextChange
+        }
+        KeyCode::Left if shift => {
+            extend_selection_left(cursor, anchor);
+            EditOutcome::NoTextChange
+        }
+        KeyCode::Right if shift => {
+            extend_selection_right(text, cursor, anchor);
+            EditOutcome::NoTextChange
+        }
+        KeyCode::Left if ctrl => {
+            *anchor = None;
+            move_word_left(text, cursor);
+            EditOutcome::NoTextChange
+        }
+        KeyCode::Right if ctrl => {
+            *anchor = None;
+            move_word_right(text, cursor);
+            EditOutcome::NoTextChange
+        }
+        KeyCode::Left => {
+            collapse_selection_left(cursor, anchor);
+            EditOutcome::NoTextChange
+        }
+        KeyCode::Right => {
+            collapse_selection_right(text, cursor, anchor);
+            EditOutcome::NoTextChange
+        }
+        KeyCode::Home => {
+            *anchor = None;
+            move_home(cursor);
+            EditOutcome::NoTextChange
+        }
+        KeyCode::End => {
+            *anchor = None;
+            move_end(text, cursor);
+            EditOutcome::NoTextChange
+        }
+        _ => EditOutcome::Unhandled,
+    }
 }
 
 

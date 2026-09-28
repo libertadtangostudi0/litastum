@@ -48,13 +48,22 @@ pub fn draw_find_popup(frame: &mut Frame, area: Rect, editor: &Editor, search_hi
     let suggestion_suffix = crate::editor::find_history::suggest(search_history, &query)
         .map(|full| full.chars().skip(query.chars().count()).collect::<String>());
 
-    let mut spans = vec![Span::styled(query.clone(), Style::default().fg(theme.text))];
+    // The query's own selection, if any, in the same selected-text style
+    // every other text field uses (`popup::selected_text_style`).
+    let chars: Vec<char> = query.chars().collect();
+    let (selection_start, selection_end) = editor.search_selection().unwrap_or((chars.len(), chars.len()));
+    let text_style = Style::default().fg(theme.text);
+    let mut spans = vec![
+        Span::styled(chars[..selection_start].iter().collect::<String>(), text_style),
+        Span::styled(chars[selection_start..selection_end].iter().collect::<String>(), crate::ui::popup::selected_text_style(theme)),
+        Span::styled(chars[selection_end..].iter().collect::<String>(), text_style),
+    ];
     if let Some(suffix) = suggestion_suffix {
         spans.push(Span::styled(suffix, Style::default().fg(theme.text_dim)));
     }
     frame.render_widget(Line::from(spans), inner);
 
-    Position { x: inner.x + query.chars().count() as u16, y: inner.y }
+    Position { x: inner.x + editor.search_cursor() as u16, y: inner.y }
 }
 
 
@@ -112,6 +121,37 @@ mod tests {
 
         let contents = buffer_text(terminal.backend().buffer());
         assert!(contents.contains("world"), "typed 'w' plus the dimmed 'orld' suffix should together read 'world'");
+    }
+
+    /// The box's own selection renders highlighted, and the cursor sits
+    /// where the box's own cursor is, not always after the last character.
+    #[test]
+    fn draw_find_popup_highlights_the_selection_and_places_the_cursor_inside_the_query() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut editor = open_test_editor("hello world");
+        editor.start_search();
+        for c in "wor".chars() {
+            editor.search_push_char(c);
+        }
+        editor.search_edit_key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)); // selects 'r'
+        let theme = Theme::dark();
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let mut cursor = Position::default();
+        terminal
+            .draw(|frame| {
+                cursor = draw_find_popup(frame, frame.area(), &editor, &[], &theme);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let row: Vec<String> = (0..80).map(|x| buffer[(x, cursor.y)].symbol().to_string()).collect();
+        let start = row.windows(3).position(|w| w.concat() == "wor").expect("query should render");
+        let selected_bg = crate::ui::popup::selected_text_style(&theme).bg.unwrap();
+        assert_eq!(buffer[((start + 2) as u16, cursor.y)].bg, selected_bg, "'r' is selected");
+        assert_ne!(buffer[(start as u16, cursor.y)].bg, selected_bg, "'w' is not");
+        assert_eq!(cursor.x as usize, start + 2, "cursor sits before the selected 'r', where the box's own cursor is");
     }
 
     /// Real requirement, stated directly: the popup goes in the top-right
