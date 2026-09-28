@@ -423,19 +423,22 @@ impl Panel {
     /// (`..` segments collapsed, so `cd ..` leaves a clean parent path
     /// rather than `.../sub/..` — found by a test that (correctly)
     /// expected the clean form). Used by the command line's `cd`
-    /// handling (`command_line::parse_cd_target`); a target that
-    /// doesn't resolve to a real directory is silently ignored rather
-    /// than erroring, matching a real shell's tolerance for a typo'd
-    /// `cd` not crashing anything.
-    pub fn change_dir(&mut self, target: &str) -> io::Result<()> {
+    /// handling (`command_line::parse_cd_target`). A target that
+    /// doesn't resolve to a real directory leaves the panel untouched
+    /// and returns `false` rather than erroring -- a typo'd `cd` on the
+    /// command line shouldn't crash anything, but a multi-line user-menu
+    /// item needs to know it failed, so it can stop before running the
+    /// rest of its lines in the wrong directory.
+    pub fn change_dir(&mut self, target: &str) -> io::Result<bool> {
         let new_path = lexically_normalize(&self.path.join(target));
         if !new_path.is_dir() {
-            return Ok(());
+            return Ok(false);
         }
         self.path = new_path;
         self.selected = 0;
         self.marked.clear();
-        self.reload()
+        self.reload()?;
+        Ok(true)
     }
 }
 

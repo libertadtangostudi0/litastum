@@ -149,12 +149,24 @@ pub(crate) fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermB
 /// the plan doc), and `None` for anything that isn't `cd` at all
 /// (including a different command that merely starts with "cd", like
 /// `"cdw"` — checked via a word boundary, not a bare prefix).
+///
+/// Understands `cmd.exe`'s own `cd /d <path>` form and a quoted path
+/// (`cd "W:\Work Copies"`) -- found while fixing `cd` in user-menu
+/// items, where both are common (Far Manager menus in particular): the
+/// `/d` switch and the quotes used to end up as part of the path
+/// itself, which then silently resolved to nowhere.
 pub(super) fn parse_cd_target(input: &str) -> Option<&str> {
     let rest = input.strip_prefix("cd")?;
     if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
         return None; // e.g. "cdw ..", not "cd"
     }
-    let target = rest.trim();
+    let mut target = rest.trim();
+    if let Some(after_switch) = target.strip_prefix("/d").or_else(|| target.strip_prefix("/D")) {
+        if after_switch.is_empty() || after_switch.starts_with(char::is_whitespace) {
+            target = after_switch.trim();
+        }
+    }
+    let target = target.strip_prefix('"').and_then(|unquoted| unquoted.strip_suffix('"')).unwrap_or(target);
     if target.is_empty() {
         None
     } else {
@@ -289,13 +301,27 @@ fn wrap_leading_quote_for_cmd(line: &str) -> String {
 /// covers "I want to actually look at what a command printed" as its
 /// own dedicated, non-transient view, so this pause was only ever
 /// protecting against losing output nobody asked to look at again.
+///
+/// **`cd` lines are handled here, not shelled out** -- reported
+/// directly: a user-menu item `cd W:\WorkCopies\rust` followed by
+/// `cargo make diffs4` ran `cargo make` back in the original directory
+/// (and failed there), while the same item works in Far Manager. Each
+/// line is its own shell process, so a `cd` inside one could never
+/// outlive it. Far runs a menu item's lines as if typed into its own
+/// command line, where `cd` is Far's own; this does the same, reusing
+/// the command line's own `parse_cd_target`/`Panel::change_dir`: the
+/// active panel moves there (and stays there afterward, as in Far), and
+/// every following line runs in it. A `cd` to a directory that doesn't
+/// exist stops the item right there -- running the remaining lines in
+/// the wrong directory is exactly how a `cd build` / `del *` item goes
+/// badly wrong.
 pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, lines: &[String]) -> Result<()> {
     if lines.is_empty() {
         return Ok(());
     }
 
     let profile = app.shell_profiles[app.active_shell].clone();
-    let cwd = app.active_panel().path.clone();
+    let mut cwd = app.active_panel().path.clone();
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -303,6 +329,14 @@ pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermB
     for line in lines {
         debug!(shell = profile.name, %line, cwd = %cwd.display(), "running shell command");
         print_themed(&app.theme, format_args!("{}> {line}\n", cwd.display()))?;
+        if let Some(target) = parse_cd_target(line) {
+            if !app.active_panel().change_dir(target)? {
+                print_themed(&app.theme, format_args!("cd: no such directory: {target} -- the remaining commands were not run\n"))?;
+                break;
+            }
+            cwd = app.active_panel().path.clone();
+            continue;
+        }
         let mut command = std::process::Command::new(&profile.program);
         command.args(&profile.args_prefix);
         append_command_line(&mut command, &resolve_app_paths_command(line));
@@ -381,6 +415,18 @@ mod tests {
             assert_eq!(parse_cd_target("cdw --version"), None);
             assert_eq!(parse_cd_target("cargo build"), None);
             assert_eq!(parse_cd_target(""), None);
+        }
+
+        /// Found while fixing `cd` in user-menu items: `cmd.exe`'s own
+        /// `/d` switch and a quoted path used to end up inside the path.
+        #[test]
+        fn parse_cd_target_understands_cmds_slash_d_and_quotes() {
+            assert_eq!(parse_cd_target(r"cd /d W:\WorkCopies\rust"), Some(r"W:\WorkCopies\rust"));
+            assert_eq!(parse_cd_target(r"cd /D W:\x"), Some(r"W:\x"));
+            assert_eq!(parse_cd_target(r#"cd "W:\Work Copies""#), Some(r"W:\Work Copies"));
+            assert_eq!(parse_cd_target(r#"cd /d "W:\Work Copies""#), Some(r"W:\Work Copies"));
+            assert_eq!(parse_cd_target("cd /d"), None, "the switch alone names no directory");
+            assert_eq!(parse_cd_target("cd /dir"), Some("/dir"), "only a standalone /d is the switch");
         }
 
         #[test]

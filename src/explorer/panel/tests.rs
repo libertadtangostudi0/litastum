@@ -42,18 +42,21 @@ mod change_dir_tests {
         let mut panel = scratch_panel();
         let original = panel.path.clone();
 
-        panel.change_dir("sub").unwrap();
+        assert!(panel.change_dir("sub").unwrap(), "should report success");
 
         assert_eq!(panel.path, original.join("sub"));
         assert_eq!(panel.selected, 0);
     }
 
+    /// Also reports the failure -- a multi-line user-menu item stops on
+    /// it (`command_line::run_shell_command_lines`) rather than running
+    /// its remaining lines in the wrong directory.
     #[test]
     fn change_dir_ignores_a_target_that_is_not_a_directory() {
         let mut panel = scratch_panel();
         let original = panel.path.clone();
 
-        panel.change_dir("does-not-exist").unwrap();
+        assert!(!panel.change_dir("does-not-exist").unwrap(), "should report the failure");
 
         assert_eq!(panel.path, original, "path should be unchanged");
     }

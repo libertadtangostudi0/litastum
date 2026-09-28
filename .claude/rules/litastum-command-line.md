@@ -77,7 +77,15 @@ already handle the key):
   than left as `.../sub/..`; deliberately *not* `fs::canonicalize`,
   which also resolves symlinks and — on Windows — prepends the ugly
   `\\?\` extended-length prefix, neither of which is wanted just to
-  clean up `..`.
+  clean up `..`. `cmd.exe`'s own `cd /d <path>` form and a quoted path
+  are understood too. **The same applies to every line of a multi-line
+  F2 user-menu item** (`run_shell_command_lines`) — reported directly:
+  `cd W:\WorkCopies\rust` followed by `cargo make diffs4` ran `cargo make`
+  back in the original directory, since each line is its own shell
+  process; Far runs a menu item's lines through its own command line,
+  where `cd` is Far's own. A `cd` line now moves the active panel and
+  every following line runs there; a `cd` to a missing directory stops
+  the item instead of running the rest in the wrong place.
 - **`cls`/`clear` are special-cased too**, the same way `cd` is —
   `run_command_line` calls `terminal.clear()` directly and never
   suspends the TUI at all, instead of actually shelling out. Found by
