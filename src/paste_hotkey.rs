@@ -37,8 +37,10 @@
 //! report a `Ctrl+V` `KeyEvent` and instead catch the real, physical
 //! key combo directly from the OS -- `GetAsyncKeyState`, exactly
 //! `alt_key.rs`'s own approach -- read the clipboard ourselves the
-//! instant it's detected, and apply the same fast splice `Ctrl+V`
-//! itself would have (`Editor::paste_text`). `event_loop::wait_for_event`
+//! instant it's detected, and apply it at once -- the editor's own fast
+//! splice (`Editor::paste_text`), or, for any other text field (the
+//! command line, Find file, the `Ctrl+F` box, ...), one replay with no
+//! redraw in between (`event_loop::paste::paste_target`). `event_loop::wait_for_event`
 //! checks this on every loop iteration (not just once per call, the
 //! way `alt_key`'s own idle-only check works) -- during an active
 //! keystroke flood this app is still processing individual characters

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use edtui::{EditorTheme, EditorView, LineNumbers};
+use edtui::{EditorTheme, EditorView, Highlight, LineNumbers};
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Block;
@@ -80,8 +80,21 @@ impl Editor {
         // for the same reason.
         let highlight_style = Style::default().fg(theme.text).bg(theme.border);
 
-        self.state.highlights = if self.state.selection.is_none() {
-            let mut highlights = word_occurrence_highlights(&self.state.lines, self.state.cursor, highlight_style);
+        // While the `Ctrl+F` box is open, its current match is the only
+        // highlight shown (plus `extra_highlights`, which search never
+        // coexists with -- Compare doesn't route keys through the search
+        // box at all). `edtui` used to draw the match itself, as a
+        // synthetic selection built from its own `SearchState`; this
+        // app's own `SearchSession` replaced that (see its doc comment),
+        // so the match is a plain `Highlight` now -- and `edtui`'s two
+        // render paths disagree on which of two overlapping highlights
+        // wins (first in the plain path, last in the syntax-highlighted
+        // one), so word-occurrence/bracket highlights are left out
+        // entirely rather than risk one of them painting over the match.
+        self.state.highlights = if let Some((start, end)) = self.search_match_span() {
+            vec![Highlight::new(start, end, selection_style)]
+        } else if self.state.selection.is_none() {
+            let mut highlights = word_occurrence_highlights(&self.state.lines, self.state.cursor, rows_that_can_be_visible(self.state.cursor.row, area), highlight_style);
             if !pathologically_long_line {
                 highlights.extend(bracket_match_highlights(&self.state.lines, self.state.cursor, highlight_style));
             }
@@ -168,11 +181,12 @@ impl Editor {
     /// - **Bracket matching**: once `bracket_match_highlights` returned
     ///   *both* brackets of a pair, the near one (under the cursor) was
     ///   still overwritten, so only the far one ever looked highlighted.
-    /// - **`Ctrl+F` search**: `edtui` renders the current match through
-    ///   `selection_style` too (a synthetic `Selection` built from its
-    ///   own `SearchState`, confirmed from `edtui-0.11.7/src/view.rs`),
-    ///   but its search actions put the cursor on the match's *first*
-    ///   character -- which then never looked highlighted.
+    /// - **`Ctrl+F` search**: the current match is painted in
+    ///   `selection_style` too (`view`'s own search highlight), but a
+    ///   search jump puts the cursor on the match's *first* character --
+    ///   which then never looked highlighted. Reported back when `edtui`
+    ///   still drew the match itself; `search::SearchSession` keeps the
+    ///   same cursor placement, so the exception still applies.
     /// - **`extra_highlights`** (Compare's red/green diff rows,
     ///   `ui/compare.rs::row_highlights`): the cursor's cell on a
     ///   diff-colored line rendered as a plain patch cut out of it.
@@ -245,6 +259,19 @@ impl Editor {
         }
         Some(pos)
     }
+}
+
+
+/// Every buffer row that could possibly end up on screen this frame --
+/// `edtui` always keeps the cursor's own row visible, so whatever
+/// viewport it settles on lies within one screen height of it in either
+/// direction (the bracket-pair viewport nudge in `view` only ever
+/// applies when the whole pair fits, which keeps the cursor on screen
+/// too). `area`'s height is an upper bound on the real content height
+/// (border and gutter only make it smaller).
+fn rows_that_can_be_visible(cursor_row: usize, area: Rect) -> std::ops::Range<usize> {
+    let height = area.height as usize;
+    cursor_row.saturating_sub(height)..cursor_row + height + 1
 }
 
 

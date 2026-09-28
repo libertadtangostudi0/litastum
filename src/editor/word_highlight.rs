@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use edtui::{Highlight, Index2, Lines, RowIndex};
 use ratatui::style::Style;
 
@@ -33,12 +35,22 @@ use ratatui::style::Style;
 /// `CharacterClass::Alphanumeric` definition (ASCII alphanumeric or
 /// underscore) since there's no need to reach into the crate for
 /// something this simple.
-pub(super) fn word_occurrence_highlights(lines: &Lines, cursor: Index2, style: Style) -> Vec<Highlight> {
+///
+/// Only scans `rows` (clamped to the buffer), not the whole buffer --
+/// reported directly as part of a "the editor is slow on a big file"
+/// report and measured on a real-scale file (100k lines,
+/// `.claude/rules/litastum-performance.md`): the whole-buffer scan cost
+/// ~30ms on *every* frame (1404 highlights computed, ~50 ever visible),
+/// which is almost the entire per-keystroke redraw cost there. Rows
+/// outside the viewport are never drawn, so highlights there are pure
+/// waste; `Editor::view` passes a window around the cursor that's
+/// guaranteed to cover whatever `edtui` ends up scrolling to.
+pub(super) fn word_occurrence_highlights(lines: &Lines, cursor: Index2, rows: Range<usize>, style: Style) -> Vec<Highlight> {
     let Some((home_start, _home_end, word)) = word_at(lines, cursor) else {
         return Vec::new();
     };
 
-    word_occurrences(lines, &word)
+    word_occurrences(lines, &word, rows)
         .into_iter()
         .filter(|&(row, start, _end)| !(row == cursor.row && start == home_start))
         .map(|(row, start, end)| Highlight::new(Index2::new(row, start), Index2::new(row, end.saturating_sub(1)), style))
@@ -133,10 +145,10 @@ fn word_at(lines: &Lines, cursor: Index2) -> Option<(usize, usize, String)> {
 /// isn't itself flanked by another word character (so searching for
 /// `"log"` doesn't also light up the `"log"` inside `"logger"`), the
 /// same "identifier, not substring" rule VS Code's own highlight uses.
-/// A plain, un-indexed scan -- fine for the file sizes this editor
-/// targets (see `find_file/search.rs`'s own similar scope note), not
-/// built for huge files.
-fn word_occurrences(lines: &Lines, word: &str) -> Vec<(usize, usize, usize)> {
+/// A plain, un-indexed scan over `rows` only -- see
+/// `word_occurrence_highlights`'s own doc comment for why not the whole
+/// buffer.
+fn word_occurrences(lines: &Lines, word: &str, rows: Range<usize>) -> Vec<(usize, usize, usize)> {
     let word_len = word.chars().count();
     if word_len == 0 {
         return Vec::new();
@@ -144,7 +156,7 @@ fn word_occurrences(lines: &Lines, word: &str) -> Vec<(usize, usize, usize)> {
 
     let word_chars: Vec<char> = word.chars().collect();
     let mut occurrences = Vec::new();
-    for row_index in 0..lines.len() {
+    for row_index in rows.start..rows.end.min(lines.len()) {
         let Some(row) = lines.get(RowIndex::new(row_index)) else {
             continue;
         };
@@ -178,11 +190,28 @@ mod tests {
         Style::default().fg(Color::White).bg(Color::Blue)
     }
 
+    fn word_occurrence_highlights_all(lines: &Lines, cursor: Index2, style: Style) -> Vec<Highlight> {
+        word_occurrence_highlights(lines, cursor, 0..usize::MAX, style)
+    }
+
+    /// Only rows inside the given window are scanned -- the per-frame
+    /// cost fix, see `word_occurrence_highlights`'s own doc comment.
+    #[test]
+    fn occurrences_outside_the_row_window_are_not_reported() {
+        let lines = Lines::from("word
+word
+word
+word");
+        let highlights = word_occurrence_highlights(&lines, Index2::new(0, 0), 0..2, style());
+
+        assert_eq!(highlights, vec![Highlight::new(Index2::new(1, 0), Index2::new(1, 3), style())]);
+    }
+
     #[test]
     fn highlights_every_other_occurrence_not_the_one_under_the_cursor() {
         let lines = Lines::from("command command_line\ncommand");
         // Cursor on the first "command" (row 0, col 0).
-        let highlights = word_occurrence_highlights(&lines, Index2::new(0, 0), style());
+        let highlights = word_occurrence_highlights_all(&lines, Index2::new(0, 0), style());
 
         // Not "command_line" (substring, not a whole word) and not the
         // occurrence the cursor itself sits on -- only row 1's "command".
@@ -192,7 +221,7 @@ mod tests {
     #[test]
     fn no_highlights_when_the_cursor_is_not_on_or_next_to_a_word_character() {
         let lines = Lines::from("foo  bar"); // two spaces -- neither is adjacent to a word
-        let highlights = word_occurrence_highlights(&lines, Index2::new(0, 4), style());
+        let highlights = word_occurrence_highlights_all(&lines, Index2::new(0, 4), style());
 
         assert!(highlights.is_empty());
     }
@@ -207,7 +236,7 @@ mod tests {
     #[test]
     fn does_not_panic_when_the_cursor_column_is_stale_on_an_empty_row() {
         let lines = Lines::from("a very long line up above\n");
-        let highlights = word_occurrence_highlights(&lines, Index2::new(1, 34), style());
+        let highlights = word_occurrence_highlights_all(&lines, Index2::new(1, 34), style());
 
         assert!(highlights.is_empty());
     }
@@ -223,7 +252,7 @@ mod tests {
         let lines = Lines::from("theme.rs\ntheme.rs");
         // Cursor right after "theme" (col 5), not on any of its own
         // characters -- row[5] is '.'.
-        let highlights = word_occurrence_highlights(&lines, Index2::new(0, 5), style());
+        let highlights = word_occurrence_highlights_all(&lines, Index2::new(0, 5), style());
 
         assert_eq!(highlights, vec![Highlight::new(Index2::new(1, 0), Index2::new(1, 4), style())]);
     }
@@ -233,7 +262,7 @@ mod tests {
     #[test]
     fn touching_a_word_at_the_end_of_a_line_still_highlights_other_occurrences() {
         let lines = Lines::from("theme\ntheme");
-        let highlights = word_occurrence_highlights(&lines, Index2::new(0, 5), style()); // past the 'e'
+        let highlights = word_occurrence_highlights_all(&lines, Index2::new(0, 5), style()); // past the 'e'
 
         assert_eq!(highlights, vec![Highlight::new(Index2::new(1, 0), Index2::new(1, 4), style())]);
     }
@@ -241,7 +270,7 @@ mod tests {
     #[test]
     fn no_highlights_when_the_word_appears_only_once() {
         let lines = Lines::from("unique");
-        let highlights = word_occurrence_highlights(&lines, Index2::new(0, 0), style());
+        let highlights = word_occurrence_highlights_all(&lines, Index2::new(0, 0), style());
 
         assert!(highlights.is_empty());
     }
@@ -249,7 +278,7 @@ mod tests {
     #[test]
     fn does_not_match_a_word_that_is_only_a_substring() {
         let lines = Lines::from("log logger catalog");
-        let highlights = word_occurrence_highlights(&lines, Index2::new(0, 0), style());
+        let highlights = word_occurrence_highlights_all(&lines, Index2::new(0, 0), style());
 
         assert!(highlights.is_empty(), "\"logger\"/\"catalog\" contain \"log\" but aren't the whole word \"log\"");
     }
@@ -257,7 +286,7 @@ mod tests {
     #[test]
     fn matches_underscored_identifiers_as_one_word() {
         let lines = Lines::from("my_var = 1\nprint(my_var)");
-        let highlights = word_occurrence_highlights(&lines, Index2::new(0, 0), style());
+        let highlights = word_occurrence_highlights_all(&lines, Index2::new(0, 0), style());
 
         assert_eq!(highlights, vec![Highlight::new(Index2::new(1, 6), Index2::new(1, 11), style())]);
     }
@@ -275,7 +304,7 @@ mod tests {
         let long_row = format!("needle {}", "x".repeat(MAX_HIGHLIGHTED_LINE_LEN + 1));
         let lines = Lines::from(format!("{long_row}\nneedle"));
 
-        let highlights = word_occurrence_highlights(&lines, Index2::new(1, 0), style());
+        let highlights = word_occurrence_highlights_all(&lines, Index2::new(1, 0), style());
 
         assert_eq!(highlights, Vec::new(), "the long row's own match must not be reported");
     }

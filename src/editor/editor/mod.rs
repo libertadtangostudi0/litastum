@@ -19,6 +19,7 @@ mod undo;
 mod view;
 mod word_select_touch;
 
+use search::SearchSession;
 use undo::Snapshot;
 use word_select_touch::WordSelectTouch;
 
@@ -120,6 +121,13 @@ pub struct Editor {
     /// `_pop_char`/`accept_search_suggestion` for why editing the query
     /// any other way resets this back to `None`.
     search_history_index: Option<usize>,
+    /// The open `Ctrl+F` search's own matching state -- `None` while the
+    /// box is closed. See `search::SearchSession` for why this replaces
+    /// `edtui`'s own search entirely. Created lazily on the first typed
+    /// character too, not only by `start_search`, so a search opened
+    /// some other way (Vim's own `/`) still starts from where the cursor
+    /// actually was.
+    search: Option<SearchSession>,
     /// Which key-binding scheme this session currently uses -- see
     /// `EditorKeymapMode`'s own doc comment. Drives both which
     /// `event_handler` was built with (`Editor::open`/`set_keymap_mode`)
@@ -228,6 +236,7 @@ impl Editor {
             vertical_shift_anchor_col: None,
             word_select_true_anchor: None,
             search_history_index: None,
+            search: None,
             keymap_mode,
             extra_highlights: Vec::new(),
             syntax_highlighting_enabled: true,

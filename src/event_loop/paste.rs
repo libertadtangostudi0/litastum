@@ -13,13 +13,22 @@ use super::keys::dispatch_key_event;
 /// previous poll's state, same pattern `wait_for_event`'s own
 /// `alt_held` tracking already uses), never repeatedly while the combo
 /// stays held. Returns `true` (asking `wait_for_event` to return and
-/// let `run()` redraw) only when something actually happened --a fresh
-/// press outside the one context this has a fast path for (the
-/// built-in editor, in ordinary typing mode -- `Editor::is_plain_standard_typing`)
-/// is deliberately left completely alone, no swallow armed, so
-/// `crossterm`'s normal (slow) event flow handles it exactly as before
-/// anywhere else -- extending this to the command line/other popups is
-/// real future work, not something this fix reaches for speculatively.
+/// let `run()` redraw) only when something actually happened -- a fresh
+/// press while nothing can take a paste (`paste_target` is `None`) is
+/// left completely alone, no swallow armed, so `crossterm`'s normal
+/// event flow handles it exactly as before.
+///
+/// Covers every text field, not just the editor's own buffer --
+/// reported directly that pasting into a search field (Find file, the
+/// editor's own `Ctrl+F` box, ...) was slow too. It was the same cause
+/// as the editor's own paste had been: Windows Terminal owns `Ctrl+V`
+/// and feeds the clipboard in as simulated keystrokes at ~7-8ms each,
+/// so even a field whose own per-key handling costs a fraction of a
+/// millisecond (measured: the command line and Find file, key plus
+/// redraw, ~0.25ms) couldn't paste faster than that. The editor's own
+/// buffer additionally requires plain `Standard` typing
+/// (`Editor::is_plain_standard_typing`) -- Vim's own `Ctrl+V` means
+/// visual-block mode, not paste.
 ///
 /// See `paste_hotkey.rs`'s own module doc comment for why a real
 /// terminal `Ctrl+V` needs this bypass in the first place, and for how
@@ -29,9 +38,11 @@ use super::keys::dispatch_key_event;
 /// text's own keystroke-equivalent length) so `handle_key_event` can
 /// silently discard that flood once it actually arrives, instead of
 /// typing the same text a second time right after this already pasted
-/// it once, instantly.
+/// it once, instantly. For a single-line field that also keeps the
+/// flood's own `Enter` keystrokes (one per pasted line break) from
+/// submitting the field.
 #[cfg(windows)]
-pub(super) fn try_intercept_paste_hotkey(app: &mut App) -> Result<bool> {
+pub(super) fn try_intercept_paste_hotkey(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
     let held = crate::paste_hotkey::ctrl_v_physically_down();
     let just_pressed = held && !app.ctrl_v_physically_held;
     app.ctrl_v_physically_held = held;
@@ -39,10 +50,10 @@ pub(super) fn try_intercept_paste_hotkey(app: &mut App) -> Result<bool> {
         return Ok(false);
     }
 
-    let Mode::Editing(editor) = &mut app.mode else {
+    let Some(target) = paste_target(app) else {
         return Ok(false);
     };
-    if !editor.is_plain_standard_typing() {
+    if target == PasteTarget::EditorBuffer && !matches!(&app.mode, Mode::Editing(editor) if editor.is_plain_standard_typing()) {
         return Ok(false);
     }
     let text = match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
@@ -53,9 +64,68 @@ pub(super) fn try_intercept_paste_hotkey(app: &mut App) -> Result<bool> {
         return Ok(false);
     }
 
-    editor.paste_text(&text);
+    apply_paste(app, terminal, target, &text)?;
     arm_paste_swallow(app, &text);
     Ok(true)
+}
+
+/// Where a paste should land right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PasteTarget {
+    /// The built-in editor's own buffer -- one fast splice,
+    /// `Editor::paste_text`.
+    EditorBuffer,
+    /// A single-line text field (the command line, a search box, a
+    /// prompt, ...) -- replayed as typed characters through the normal
+    /// dispatch, with no redraw in between.
+    TextField,
+}
+
+/// `None` for a mode with no text field at all, *or* one where a plain
+/// character is a command rather than text -- `y`/`n` in a
+/// confirmation, a drive letter in `Alt+F1`, `I`/`E` in the theme
+/// picker, ... Replaying pasted text into one of those would silently
+/// run whatever commands its characters happen to spell, which is why
+/// this is an explicit allow-list, not "every mode but the editor's"
+/// (what bracketed paste used to do before this existed).
+fn paste_target(app: &App) -> Option<PasteTarget> {
+    match &app.mode {
+        // The embedded Markdown preview half of an editor+preview
+        // session has no text field of its own.
+        Mode::Editing(_) if app.markdown_edit_preview.is_some() && app.active == 1 => None,
+        Mode::Editing(editor) if editor.is_searching() => Some(PasteTarget::TextField),
+        Mode::Editing(_) => Some(PasteTarget::EditorBuffer),
+        Mode::FindFile(state) if state.phase == crate::explorer::FindFilePhase::Typing => Some(PasteTarget::TextField),
+        Mode::Browsing
+        | Mode::CommandHistory(_)
+        | Mode::ConfirmTransfer(_)
+        | Mode::UserMenuPrompt(_)
+        | Mode::AddUserMenuItem(..)
+        | Mode::MarkdownLinkSearch(..) => Some(PasteTarget::TextField),
+        _ => None,
+    }
+}
+
+/// Applies `text` to `target` -- see `PasteTarget`'s own variants. A
+/// line break is skipped rather than replayed as `Enter` for a text
+/// field: these fields are single-line, and forwarding it could submit
+/// a command/form the user never meant to trigger this instant, the
+/// same "may execute unexpected commands" concern Windows Terminal's
+/// own multi-line-paste warning is about.
+fn apply_paste(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, target: PasteTarget, text: &str) -> Result<()> {
+    match target {
+        PasteTarget::EditorBuffer => {
+            if let Mode::Editing(editor) = &mut app.mode {
+                editor.paste_text(text);
+            }
+        }
+        PasteTarget::TextField => {
+            for ch in text.chars().filter(|&ch| ch != '\n' && ch != '\r') {
+                dispatch_key_event(app, crossterm::event::KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE), terminal)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Sets up `app.pending_paste_swallow`/`_deadline` right after a fast
@@ -104,39 +174,22 @@ fn arm_paste_swallow(app: &mut App, text: &str) {
 
 /// A bracketed paste (`EnableBracketedPaste` in `setup_terminal`) --
 /// see its own doc comment for the real reported bug this exists to
-/// fix. While the built-in editor is open, hands `text` straight to
-/// `Editor::paste_text` -- the same fast, O(text length) splice
-/// `Ctrl+V` itself uses (`editor::fast_paste_from_clipboard`), just fed
-/// from this event's own text instead of a fresh clipboard read (the
-/// terminal already handed it to us; reading the clipboard again would
-/// just be redundant, and could even race a clipboard change between
-/// the copy and this paste actually arriving).
+/// fix. Unix-only in practice (`crossterm`'s Windows backend never
+/// produces `Event::Paste`, see `paste_hotkey.rs`). Goes through the
+/// same `paste_target`/`apply_paste` as the Windows `Ctrl+V` bypass --
+/// the terminal already handed the text over, so there's no clipboard
+/// read, and no keystroke flood to swallow afterward either.
 ///
-/// Every other mode has no equivalent fast path of its own (the
-/// always-live command line, Find file's fields, the transfer popup,
-/// ...) -- replayed as ordinary per-character key presses through the
-/// exact same `dispatch_key_event` a real keystroke would take, just
-/// looped here with no redraw in between rather than arriving one at a
-/// time over the wire with a full redraw after each (which is what
-/// "no bracketed paste" looked like before this existed, for *every*
-/// mode, not just the editor). A newline in the pasted text is skipped
-/// rather than replayed as `Enter` -- these fields are single-line, and
-/// forwarding it could submit a command/form the user never meant to
-/// trigger this instant, the same "may execute unexpected commands"
-/// concern Windows Terminal's own multi-line-paste warning is about.
+/// Two real problems this fixed by sharing that routing: every mode
+/// that wasn't the editor used to get the text replayed as keystrokes
+/// unconditionally (including ones where a letter is a command), and
+/// an open `Ctrl+F` box still sent the paste into the file's own
+/// buffer instead of the box.
 pub(super) fn handle_paste_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, text: &str) -> Result<()> {
-    if let Mode::Editing(editor) = &mut app.mode {
-        editor.paste_text(text);
-        return Ok(());
+    match paste_target(app) {
+        Some(target) => apply_paste(app, terminal, target, text),
+        None => Ok(()),
     }
-
-    for ch in text.chars() {
-        if ch == '\n' || ch == '\r' {
-            continue;
-        }
-        dispatch_key_event(app, crossterm::event::KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE), terminal)?;
-    }
-    Ok(())
 }
 
 /// See `App::pending_paste_swallow`'s own doc comment -- `true` means
@@ -172,6 +225,16 @@ pub(super) fn should_swallow_paste_tail(app: &mut App, code: KeyCode, modifiers:
         return false;
     }
     let expired = app.pending_paste_swallow_deadline.is_some_and(|deadline| std::time::Instant::now() > deadline);
+    // A real `Ctrl+V` event right after a bypass paste means this
+    // terminal passes the key through instead of owning it (unlike
+    // Windows Terminal) -- the paste already happened, and letting the
+    // key through would make the editor/field paste the same clipboard
+    // a second time on its own. Doesn't end the swallow window: a
+    // terminal that passes `Ctrl+V` through sends no flood at all, so
+    // the queue just expires or ends on the next real keystroke.
+    if !expired && modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('v' | 'V')) {
+        return true;
+    }
     let typed = match code {
         KeyCode::Char(c) if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => Some(c),
         KeyCode::Enter if modifiers.is_empty() => Some('\n'),
@@ -282,6 +345,93 @@ mod tests {
 
             assert!(!swallowed, "past the safety-valve deadline, real typing should never be eaten even if it happens to match");
             assert!(app.pending_paste_swallow.is_empty());
+        }
+    }
+
+    /// Real bug, found while extending the `Ctrl+V` bypass: in a
+    /// terminal that passes `Ctrl+V` through instead of owning it, the
+    /// real key event arriving right after the bypass paste would have
+    /// made the field paste the same clipboard a second time.
+    #[test]
+    fn a_ctrl_v_right_after_a_bypass_paste_is_swallowed_without_ending_the_window() {
+        let mut app = test_app(unique_scratch_dir("main-paste-swallow"));
+        app.pending_paste_swallow = "ab".chars().collect();
+        app.pending_paste_swallow_deadline = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+
+        assert!(should_swallow_paste_tail(&mut app, KeyCode::Char('v'), KeyModifiers::CONTROL));
+        assert_eq!(app.pending_paste_swallow.len(), 2, "the flood (if any) is still expected afterward");
+    }
+
+    mod paste_routing_tests {
+        use super::*;
+        use crate::editor::{Editor, EditorKeymapMode};
+
+        fn dummy_terminal() -> Terminal<CrosstermBackend<Stdout>> {
+            Terminal::new(CrosstermBackend::new(std::io::stdout())).unwrap()
+        }
+
+        fn editor_app(contents: &str) -> App {
+            let dir = unique_scratch_dir("paste-routing");
+            let path = dir.join("file.txt");
+            std::fs::write(&path, contents).unwrap();
+            let mut app = test_app(dir);
+            app.mode = Mode::Editing(Editor::open(path, None, EditorKeymapMode::Standard).unwrap());
+            app
+        }
+
+        #[test]
+        fn text_fields_and_the_editor_buffer_are_paste_targets() {
+            let mut app = test_app(unique_scratch_dir("paste-routing"));
+            assert_eq!(paste_target(&app), Some(PasteTarget::TextField), "the always-live command line");
+
+            app.mode = Mode::FindFile(crate::explorer::FindFileState::new());
+            assert_eq!(paste_target(&app), Some(PasteTarget::TextField), "Find file's own fields while typing");
+
+            let mut results = crate::explorer::FindFileState::new();
+            results.phase = crate::explorer::FindFilePhase::Results;
+            app.mode = Mode::FindFile(results);
+            assert_eq!(paste_target(&app), None, "the results list has no text field");
+
+            let app = editor_app("hello");
+            assert_eq!(paste_target(&app), Some(PasteTarget::EditorBuffer));
+        }
+
+        /// A mode where a plain character is a command must never get
+        /// pasted text replayed into it -- bracketed paste used to do
+        /// exactly that for every non-editor mode.
+        #[test]
+        fn a_mode_without_a_text_field_ignores_a_paste() {
+            let mut app = test_app(unique_scratch_dir("paste-routing"));
+            app.mode = Mode::Info("read me".to_string());
+
+            handle_paste_event(&mut app, &mut dummy_terminal(), "anything").unwrap();
+
+            assert!(matches!(app.mode, Mode::Info(_)), "any key dismisses Info -- the paste must not have been replayed as keys");
+        }
+
+        #[test]
+        fn pasting_into_the_command_line_drops_line_breaks() {
+            let mut app = test_app(unique_scratch_dir("paste-routing"));
+
+            handle_paste_event(&mut app, &mut dummy_terminal(), "svn st\r\n--quiet").unwrap();
+
+            assert_eq!(app.command_line, "svn st--quiet");
+        }
+
+        /// Real bug, found while routing both paste paths through
+        /// `paste_target`: with the `Ctrl+F` box open, a paste went into
+        /// the file's own buffer, not the box.
+        #[test]
+        fn pasting_while_the_editor_search_box_is_open_fills_the_box_not_the_buffer() {
+            let mut app = editor_app("hello world\n");
+            let Mode::Editing(editor) = &mut app.mode else { unreachable!() };
+            editor.start_search();
+
+            handle_paste_event(&mut app, &mut dummy_terminal(), "world").unwrap();
+
+            let Mode::Editing(editor) = &app.mode else { unreachable!() };
+            assert_eq!(editor.search_query(), "world");
+            assert!(!editor.is_dirty(), "the buffer itself must be untouched");
         }
     }
 }

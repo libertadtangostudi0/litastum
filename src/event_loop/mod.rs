@@ -144,7 +144,7 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
         // almost every time, so an idle-only check would never run
         // until the flood was already over. See `paste_hotkey.rs`'s own
         // module doc comment for the full story.
-        if try_intercept_paste_hotkey(app)? {
+        if try_intercept_paste_hotkey(app, terminal)? {
             return Ok(());
         }
         let poll_interval = if background_task_pending(app) { BACKGROUND_TASK_POLL_INTERVAL } else { crate::alt_key::POLL_INTERVAL };

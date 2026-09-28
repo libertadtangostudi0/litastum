@@ -114,6 +114,45 @@ and leaving a few stray tail characters is an acceptable, minor
 imperfection; overcounting and silently eating the user's own *next*
 real keystrokes after the paste would not be.
 
+## Case study: pasting into / deleting from a search field
+
+Reported directly: pasting into search fields was slow, and so was
+deleting with Backspace. Measured first, per the lesson below (release
+build, a real-scale file of 100k lines, temporary `#[ignore]` benches,
+removed afterward):
+
+| Where | Per keystroke, before | After |
+|---|---|---|
+| Editor `Ctrl+F` box: type a char | **2.46s** | ~0.5ms |
+| Editor `Ctrl+F` box: Backspace | **0.59s** | ~15µs |
+| Editor redraw (every keystroke) | ~30ms | ~1ms |
+| Command line / Find file: key + redraw | 0.25ms | unchanged |
+
+Three separate causes, each fixed where it actually lived:
+
+- **`edtui`'s own search was the whole cost of the `Ctrl+F` box**:
+  `edtui-jagged`'s case-insensitive char comparison allocates two
+  `String`s per comparison, inside a sliding window over the whole
+  buffer, rerun from scratch on every query edit. Its `SearchState` is
+  `pub(crate)`, so the mechanism was replaced wholesale
+  (`editor/editor/search/session.rs::SearchSession` -- same semantics,
+  checked against `edtui-jagged`'s own test fixture): no allocation per
+  comparison, and incremental -- a longer pattern only filters the
+  previous candidates, and Backspace pops a per-prefix stack.
+- **Every editor redraw scanned the whole buffer** for other
+  occurrences of the word under the cursor (1404 found, ~50 visible).
+  Now limited to rows that can possibly be on screen
+  (`view.rs::rows_that_can_be_visible`).
+- **Pasting into any field other than the editor's own buffer** still
+  arrived as Windows Terminal's ~7-8ms/char keystroke flood (the Round 3
+  cause above) -- the fields' own handling was already fast. The
+  physical-`Ctrl+V` bypass now covers an explicit allow-list of text
+  fields (`event_loop::paste::paste_target`), not just the editor.
+
+Not fixed here, found along the way: Backspace (or any edit) in the
+editor's own *text* costs ~29ms on the same file, almost all of it the
+undo snapshot's full-buffer clone ([[litastum-editor-undo]]).
+
 ## The general lesson
 
 Three plausible-sounding theories in a row, each backed by real source

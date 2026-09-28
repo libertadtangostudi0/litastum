@@ -69,7 +69,10 @@ fn is_navigation_reversal(prev: KeyCode, next: KeyCode) -> bool {
 /// entirely for a key `dispatch_key_event` never touched removes that
 /// spurious frame outright, for every key, not just the one reported.
 pub(super) fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
-    if key.kind == KeyEventKind::Press && should_swallow_paste_tail(app, key.code, key.modifiers) {
+    // Normalized first so a `Ctrl+V` typed under a non-Latin layout is
+    // still recognized by the swallow's own double-paste guard.
+    let normalized = keyboard_layout::normalize_ctrl_shortcut(key);
+    if key.kind == KeyEventKind::Press && should_swallow_paste_tail(app, normalized.code, normalized.modifiers) {
         return Ok(false);
     }
 

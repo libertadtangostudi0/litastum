@@ -49,13 +49,13 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             sort (natural_sort.rs)
   explorer/entry.rs     —   Entry, HighlightRole (file-type coloring)
   explorer/fs_ops.rs    —   actual copy/move/delete filesystem calls
-  explorer/confirm.rs   —   Mode::ConfirmDelete/ConfirmTransfer key handling
+  explorer/confirm/     —   Mode::ConfirmDelete/ConfirmTransfer key handling
   explorer/drive_menu.rs—   Alt+F1/F2 "change drive" popup state
   explorer/find_file/   —   F9 -> Commands -> Find file (search, state,
                             input handling, .txt export)
   explorer/system_open.rs — Shift+Enter: hands a path to the OS's own
                             file manager (explorer.exe/open/xdg-open)
-  explorer/image_preview.rs — F3 on a supported image (jpg/jpeg/png/bmp):
+  explorer/image_preview/ — F3 on a supported image (jpg/jpeg/png/bmp):
                             Mode::ImagePreview, ImagePreviewState (decode
                             + Left/Right cycling within the directory via
                             ratatui-image); ui/image_preview.rs draws it
@@ -183,7 +183,7 @@ editor.rs               — F4 built-in editor, backed by `edtui`
 
 theming.rs              — Theme, color-scheme loading/persistence,
   theming/theme.rs       —   the resolved Theme struct itself
-  theming/scheme.rs      —   ColorScheme: parses Windows Terminal JSON
+  theming/scheme/        —   ColorScheme: parses Windows Terminal JSON
                               scheme files, derives Theme + syntect Theme
   theming/config/        —   config.json read/write (interface_theme,
                               editor_theme, active_shell, popup_style),
@@ -203,10 +203,12 @@ command_line.rs         — the always-live Far-style command line
                               "suspend the TUI, run N lines through the
                               active shell" primitive explorer::user_menu
                               reuses for its own item execution --
-                              toggle_panels_hidden, parse_cd_target),
-                              editing.rs (insert_char/backspace)
+                              parse_cd_target), hidden_console.rs (Ctrl+O:
+                              toggle_panels_hidden and its own typed
+                              command loop), editing.rs (insert_char/
+                              backspace)
   command_line/completion.rs — Tab path completion, cycling
-  command_line/history.rs —  command history, Alt+F8 popup, ghost-text
+  command_line/history/ —  command history, Alt+F8 popup, ghost-text
                               autosuggestion
   command_line/shell.rs  —   Ctrl+P shell-profile picker
 

@@ -406,10 +406,10 @@ fn selection_end_cell_renders_with_selection_color_not_base() {
     );
 }
 
-/// Same bug as the test above, hit again for `Ctrl+F` search: `edtui`
-/// renders the current match through `selection_style` too, but its
-/// own search actions (`AppendCharToSearch`, `FindNext`, ...) put
-/// `state.cursor` on the match's *first* character, not its last (the
+/// Same bug as the test above, hit again for `Ctrl+F` search: the
+/// current match is painted in `selection_style` too, but a search
+/// jump (typing, `Enter`, ...) puts `state.cursor` on the match's
+/// *first* character, not its last (the
 /// opposite convention from this app's own selection, which always
 /// keeps the cursor on the trailing edge). With no exception for
 /// `is_searching()`, that first cell fell into the same "no selection,

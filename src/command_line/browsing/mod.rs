@@ -13,13 +13,14 @@ use super::completion::complete;
 use super::history::{suggest_history, CommandHistoryMenu};
 
 mod editing;
+mod hidden_console;
 mod shell_exec;
 
 pub use editing::{backspace, insert_char};
 pub use shell_exec::run_shell_command_lines;
 pub(crate) use shell_exec::run_command_line;
 
-use shell_exec::toggle_panels_hidden;
+use hidden_console::toggle_panels_hidden;
 
 /// Key handling in the browser: `Ctrl+P` opens the shell picker,
 /// `Ctrl+U` swaps the two panels' contents (`Command::SwapPanels`),
