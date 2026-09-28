@@ -12,26 +12,28 @@ runs it (or does the usual `EnterSelected` if the line is empty).
 type into the command line, a lone `q` has to be the start of a typed
 command, not a shortcut. Only `F10` quits now, matching real Far.
 
-Dispatch order in `command_line.rs::handle_browsing_key` (moved here
-from `main.rs` when every mode's handling got split out of it — this
-exact order matters, each step only runs if the previous one didn't
-already handle the key):
-1. `Ctrl+O` → show/hide panels (below), real Far Manager's own toggle.
-   Checked first since it needs to win over everything else, including
-   `Ctrl+P` right after it — there's no real ordering conflict between
-   the two (`O` vs `P`), just keeping every raw-modifier special case
-   grouped at the top of the function together.
-2. `Ctrl+P` → open the shell picker (below).
-3. `Shift+F6` → rename prompt (needs the raw modifier, same reason as
-   Tab below — `keymap::resolve`'s table only keys off `KeyCode`).
-4. `Enter` with a non-empty command line → run it.
-5. `Tab` with a non-empty command line → complete it (below) instead
-   of falling through to `keymap::resolve`'s Tab-as-`ToggleActive`
-   binding.
-6. `keymap::resolve` — the fixed table (arrows, Tab *on an empty
-   line*, F4/F9/F10, and `Enter` on an *empty* line).
-7. Anything left over (a plain character, `Backspace`, `Esc`) edits the
-   command line (`command_line.rs`).
+Keys are resolved by one ordered table,
+`command_line/browsing/bindings.rs::BINDINGS`: each row is a key, the
+modifiers it needs and must not have, a condition (`Always`,
+`EmptyLine`, `TypedLine`, `SuggestionsShowing`) and an action. The
+first matching row wins; a key no row matches types into the command
+line. Order matters and the table is grouped by it:
+1. Modifier chords -- `Ctrl+O` (show/hide panels), `Ctrl+P` (shell
+   picker), `Ctrl+U`, `Shift+F6`, `Shift+Enter` on an empty line,
+   `Alt+F1/F2/F5/F7/F8`. They sit above the plain keys they would
+   otherwise fall through to (`Alt+F5` above `F5` = Copy).
+2. Selection and word moves in the command line (`Shift`/`Ctrl` +
+   arrows); `Shift+Left/Right` select only while something is typed.
+3. Marking -- `Shift+arrows`, and `Shift+A` on an empty line only.
+4. The typed line -- `Enter` runs it; while history suggestions show,
+   `Up`/`Down`/`Tab` work on them (never `Enter`); `Tab` completes.
+5. Panel navigation and the F-key row, with any modifiers (these are
+   below every chord on the same key) -- `Enter`/`Tab` here only on an
+   empty line, since the rows above took the typed case.
+6. `Esc`/`Backspace`/`Delete` edit the line.
+
+`bindings.rs`'s tests pin the order (`a_chord_wins_over_the_plain_key_below_it`,
+...); `handle_browsing_key`'s tests cover the resulting behavior.
 
 ## Scope cuts (deliberate, not oversights)
 
@@ -85,8 +87,8 @@ already handle the key):
   every following line runs there; a `cd` to a missing directory stops
   the item instead of running the rest in the wrong place.
 - **`cls`/`clear` are special-cased too**, the same way `cd` is —
-  `run_command_line` calls `terminal.clear()` directly and never
-  suspends the TUI at all, instead of actually shelling out. Found by
+  `submit_command_line` returns `Effect::ClearScreen` (a plain
+  `terminal.clear()`) and never suspends the TUI at all, instead of actually shelling out. Found by
   running `cls` for real: a screen-clear command's entire job is
   leaving nothing on screen, so shelling out to a real `cls` wiped even
   the `"{cwd}> cls"` prompt line printed for every other command, and
@@ -97,7 +99,7 @@ already handle the key):
   actually trying to accomplish anyway, far more directly than a
   subprocess round-trip.
 - **A command actually runs by suspending the TUI and inheriting
-  stdio** (`command_line.rs::run_command_line`) — not a captured/parsed
+  stdio** (`Effect::RunShell` -> `run_shell_command_lines`) — not a captured/parsed
   output pane. This is deliberate: it's what makes interactive things
   (`python`, `git commit` invoking an editor, ...) work at all, and
   gives real colors/prompts, matching Far Manager's own behavior. A
@@ -122,14 +124,11 @@ already handle the key):
 
 ## Tab completion (`command_line::complete`)
 
-Reported as a bug, not requested as a feature: `Tab` used to hit
-`keymap::resolve`'s Tab-as-`ToggleActive` binding unconditionally, even
-with text typed and mid-command — backwards from every shell's own
-convention for the key. Fixed by special-casing `Tab` ahead of that
-table (same pattern as `Ctrl+P`/`Shift+F6` above) whenever
-`app.command_line` isn't empty; an empty line still falls through to
-the panel-switch binding, so Tab's original behavior survives outside
-the command line.
+Reported as a bug, not requested as a feature: `Tab` used to switch
+panels unconditionally, even with text typed mid-command -- backwards
+from every shell's own convention for the key. `Tab` now completes
+while something is typed (a `TypedLine` row above the panel-switch
+row); an empty line still switches panels.
 
 Completes the *last whitespace-separated word* in the typed line as a
 filesystem path relative to the active panel's directory (an
@@ -216,7 +215,17 @@ output the user is trying to look at cleanly. No "press any key"
 message either, unlike that same function's own pause — the entire
 point is showing exactly what's already there, not adding to it.
 
-No unit test coverage, same reason `event_loop::handle_event`/
-`handle_browsing_key` itself already has none: this needs a real
-`Terminal`, and its own inner loop reads real `crossterm` events
-directly rather than going through anything test-fakeable.
+No unit test coverage for the hidden console itself: its loop reads
+real `crossterm` events directly. Getting there (`Ctrl+O` ->
+`Effect::ToggleHiddenPanels`) is covered by `handle_browsing_key`'s tests.
+
+## Handlers return `Effect`, `event_loop` owns the terminal
+
+Key handlers never take the `Terminal`. Anything that needs the real
+console -- running shell lines, `cls`, the hidden console -- comes back
+as a `command_line::Effect` (`RunShell`, `ClearScreen`,
+`ToggleHiddenPanels`), and `event_loop::keys::dispatch_key_event`
+performs it (`apply_effect`). `key_effect` is the whole key routing
+without a terminal, so the browser's dispatch order, history recall and
+F2 menu execution are all unit-tested. A new handler that needs the
+console should add an `Effect` variant rather than take a `Terminal`.

@@ -108,19 +108,6 @@ mod suggest_history_tests {
 mod history_key_handling_tests {
     use super::*;
 
-    /// A throwaway `Terminal` for handlers that need one just to
-    /// satisfy the signature -- never actually drawn to. Every test
-    /// here recalls a `cd`-shaped entry specifically so
-    /// `run_command_line` takes its early `Panel::change_dir`
-    /// return, never reaching the real-subprocess `run_shell_command_lines`
-    /// path (which needs a real console -- same limitation
-    /// `command_line::browsing`'s own tests already accept, and
-    /// `explorer::user_menu::input`'s own `dummy_terminal` doc
-    /// comment explains the same way).
-    fn dummy_terminal() -> Terminal<CrosstermBackend<Stdout>> {
-        Terminal::new(CrosstermBackend::new(std::io::stdout())).unwrap()
-    }
-
     /// Real reported behavior, by analogy with a shell's own history
     /// recall: selecting a past command should run it immediately,
     /// not just drop it back into the line unexecuted.
@@ -135,10 +122,20 @@ mod history_key_handling_tests {
         // exists, so the effect of running it is observable.
         app.command_history[1] = "cd sub".to_string();
 
-        handle_history_key(&mut app, key(KeyCode::Enter), &mut dummy_terminal()).unwrap();
+        handle_history_key(&mut app, key(KeyCode::Enter)).unwrap();
 
         assert_eq!(app.panels[app.active].path, target, "Enter should have actually run the recalled cd, not just copied it");
-        assert_eq!(app.command_line.text(), "", "run_command_line clears the line once it's actually run");
+        assert_eq!(app.command_line.text(), "", "submitting clears the line");
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn handle_history_key_enter_on_a_shell_command_hands_it_to_the_shell() {
+        let mut app = app_in_history_menu(vec!["svn status"]);
+
+        let effect = handle_history_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert_eq!(effect, crate::command_line::Effect::RunShell(vec!["svn status".to_string()]));
         assert!(matches!(app.mode, Mode::Browsing));
     }
 
@@ -147,7 +144,7 @@ mod history_key_handling_tests {
         let mut app = app_in_history_menu(vec!["dir"]);
         app.command_line.set_text("untouched");
 
-        handle_history_key(&mut app, key(KeyCode::Esc), &mut dummy_terminal()).unwrap();
+        handle_history_key(&mut app, key(KeyCode::Esc)).unwrap();
 
         assert_eq!(app.command_line.text(), "untouched");
         assert!(matches!(app.mode, Mode::Browsing));
@@ -157,7 +154,7 @@ mod history_key_handling_tests {
     fn handle_history_key_down_is_clamped_at_the_last_entry() {
         let mut app = app_in_history_menu(vec!["a", "b"]);
         for _ in 0..5 {
-            handle_history_key(&mut app, key(KeyCode::Down), &mut dummy_terminal()).unwrap();
+            handle_history_key(&mut app, key(KeyCode::Down)).unwrap();
         }
         let Mode::CommandHistory(menu) = &app.mode else { panic!("expected Mode::CommandHistory") };
         assert_eq!(menu.selected, 1);
@@ -168,7 +165,7 @@ mod history_key_handling_tests {
         let mut app = app_in_history_menu(vec!["dir"]);
         app.mode = Mode::Browsing;
 
-        handle_history_key(&mut app, key(KeyCode::Enter), &mut dummy_terminal()).unwrap();
+        handle_history_key(&mut app, key(KeyCode::Enter)).unwrap();
 
         assert!(matches!(app.mode, Mode::Browsing));
         assert_eq!(app.command_line.text(), "");
@@ -182,9 +179,9 @@ mod history_key_handling_tests {
         let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
         menu.selected = 1; // "cargo build", before any filtering
 
-        handle_history_key(&mut app, key(KeyCode::Char('s')), &mut dummy_terminal()).unwrap();
-        handle_history_key(&mut app, key(KeyCode::Char('v')), &mut dummy_terminal()).unwrap();
-        handle_history_key(&mut app, key(KeyCode::Char('n')), &mut dummy_terminal()).unwrap();
+        handle_history_key(&mut app, key(KeyCode::Char('s'))).unwrap();
+        handle_history_key(&mut app, key(KeyCode::Char('v'))).unwrap();
+        handle_history_key(&mut app, key(KeyCode::Char('n'))).unwrap();
 
         assert_eq!(app.command_line.text(), "svn");
         let Mode::CommandHistory(menu) = &app.mode else { panic!("expected Mode::CommandHistory") };
@@ -202,13 +199,13 @@ mod history_key_handling_tests {
         fs::create_dir_all(base.join("sub2")).unwrap();
 
         for c in "cd s".chars() {
-            handle_history_key(&mut app, key(KeyCode::Char(c)), &mut dummy_terminal()).unwrap();
+            handle_history_key(&mut app, key(KeyCode::Char(c))).unwrap();
         }
         // Filtered list is now ["cd sub1", "cd sub2"]; arrow down to
         // the second match before running it.
-        handle_history_key(&mut app, key(KeyCode::Down), &mut dummy_terminal()).unwrap();
+        handle_history_key(&mut app, key(KeyCode::Down)).unwrap();
 
-        handle_history_key(&mut app, key(KeyCode::Enter), &mut dummy_terminal()).unwrap();
+        handle_history_key(&mut app, key(KeyCode::Enter)).unwrap();
 
         assert_eq!(app.panels[app.active].path, base.join("sub2"), "Enter should have run the highlighted filtered match (\"cd sub2\"), not the first entry");
         assert!(matches!(app.mode, Mode::Browsing));
@@ -224,7 +221,7 @@ mod history_key_handling_tests {
         menu.selected = 1;
         let original_path = app.panels[app.active].path.clone();
 
-        handle_history_key(&mut app, key(KeyCode::Tab), &mut dummy_terminal()).unwrap();
+        handle_history_key(&mut app, key(KeyCode::Tab)).unwrap();
 
         assert_eq!(app.command_line.text(), "cd nonexistent-dir");
         assert_eq!(app.panels[app.active].path, original_path, "Tab must not run the command");
@@ -240,7 +237,7 @@ mod history_key_handling_tests {
         let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
         menu.selected = 1;
 
-        handle_history_key(&mut app, key(KeyCode::F(8)), &mut dummy_terminal()).unwrap();
+        handle_history_key(&mut app, key(KeyCode::F(8))).unwrap();
 
         assert_eq!(app.command_history, vec!["dir", "git status"]);
         assert!(matches!(app.mode, Mode::CommandHistory(_)), "F8 should delete in place, not close the popup");
@@ -255,13 +252,13 @@ mod history_key_handling_tests {
         let mut app = app_in_history_menu(vec!["cd sub1", "cargo build", "cd sub2"]);
 
         for c in "cd s".chars() {
-            handle_history_key(&mut app, key(KeyCode::Char(c)), &mut dummy_terminal()).unwrap();
+            handle_history_key(&mut app, key(KeyCode::Char(c))).unwrap();
         }
         // Filtered list is now ["cd sub1", "cd sub2"]; arrow down to
         // the second match before deleting it.
-        handle_history_key(&mut app, key(KeyCode::Down), &mut dummy_terminal()).unwrap();
+        handle_history_key(&mut app, key(KeyCode::Down)).unwrap();
 
-        handle_history_key(&mut app, key(KeyCode::F(8)), &mut dummy_terminal()).unwrap();
+        handle_history_key(&mut app, key(KeyCode::F(8))).unwrap();
 
         assert_eq!(app.command_history, vec!["cd sub1", "cargo build"], "should have deleted \"cd sub2\", not \"cargo build\"");
     }
@@ -275,7 +272,7 @@ mod history_key_handling_tests {
         let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
         menu.selected = 1;
 
-        handle_history_key(&mut app, key(KeyCode::F(8)), &mut dummy_terminal()).unwrap();
+        handle_history_key(&mut app, key(KeyCode::F(8))).unwrap();
 
         assert_eq!(app.command_history, vec!["dir"]);
         let Mode::CommandHistory(menu) = &app.mode else { panic!("expected Mode::CommandHistory") };

@@ -11,6 +11,7 @@ use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::debug;
 
 use crate::app::App;
+use crate::command_line::effect::Effect;
 use crate::command_line::history::{record_history, save_history};
 
 mod app_paths;
@@ -61,15 +62,16 @@ fn to_crossterm_color(color: ratatui::style::Color) -> CtColor {
 }
 
 
-/// Runs `app.command_line`: `cd` moves the active panel (a shell's own
-/// `cd` couldn't affect our process), `cls`/`clear` repaint the TUI, and
-/// anything else suspends the TUI and runs through the active shell
-/// profile with inherited stdio, so interactive programs work.
-pub(crate) fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+/// Submits `app.command_line`: `cd` moves the active panel right here (a
+/// shell's own `cd` couldn't affect our process); `cls`/`clear` becomes
+/// `Effect::ClearScreen` (shelling out wiped even the echoed prompt);
+/// anything else becomes `Effect::RunShell` -- the TUI is suspended and
+/// the line runs with inherited stdio, so interactive programs work.
+pub(crate) fn submit_command_line(app: &mut App) -> Result<Effect> {
     let input = app.command_line.text().trim().to_string();
     app.command_line.clear();
     if input.is_empty() {
-        return Ok(());
+        return Ok(Effect::None);
     }
     record_history(app, &input);
     save_history(&app.command_history);
@@ -77,18 +79,13 @@ pub(crate) fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermB
     if let Some(target) = parse_cd_target(&input) {
         debug!(target, "command line: cd");
         app.active_panel().change_dir(target)?;
-        return Ok(());
+        return Ok(Effect::None);
     }
-
-    // Handled in-process: shelling out wiped even the echoed prompt.
     if input == "cls" || input == "clear" {
         debug!("command line: clear screen (handled directly, no subprocess)");
-        terminal.clear()?;
-        app.active_panel().reload()?;
-        return Ok(());
+        return Ok(Effect::ClearScreen);
     }
-
-    run_shell_command_lines(app, terminal, &[input])
+    Ok(Effect::RunShell(vec![input]))
 }
 
 
@@ -175,7 +172,7 @@ fn wrap_leading_quote_for_cmd(line: &str) -> String {
 /// process, so a shelled-out `cd` wouldn't carry over. The active panel
 /// moves and later lines run there; a `cd` to a missing directory stops
 /// the item. History: docs/history/command-execution.md.
-pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, lines: &[String]) -> Result<()> {
+pub(in crate::command_line) fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, lines: &[String]) -> Result<()> {
     if lines.is_empty() {
         return Ok(());
     }

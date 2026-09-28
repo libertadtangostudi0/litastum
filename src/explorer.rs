@@ -21,7 +21,7 @@ pub use find_file::history as find_file_history;
 #[cfg(test)]
 pub use find_file::spawn_search;
 pub use image_preview::{handle_image_preview_key, is_image_decode_pending, poll_pending_image_decode, ImagePreviewState, PreviewFrame};
-pub use keymap::{resolve, Command};
+pub use keymap::Command;
 pub use markdown_preview::{
     handle_markdown_edit_preview_key, handle_markdown_link_search_key, handle_markdown_preview_mouse, wrap_markdown_line, MarkdownLine, MarkdownLinkSearchState, MarkdownPreviewState,
     MarkdownSpan, MarkdownSpanKind,

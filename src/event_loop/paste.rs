@@ -1,12 +1,11 @@
-use std::io::Stdout;
-
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::{prelude::CrosstermBackend, Terminal};
 
 use crate::app::{App, Mode};
 
-use super::keys::dispatch_key_event;
+use crate::command_line::Effect;
+
+use super::keys::key_effect;
 
 /// Edge-triggered: fires the fast paste path once per distinct real
 /// physical `Ctrl+V` press (`PasteFlood::ctrl_v_just_pressed`), never
@@ -30,7 +29,7 @@ use super::keys::dispatch_key_event;
 /// of it once it arrives -- is `windows_terminal::PasteFlood`'s; this
 /// only decides where the paste goes (`paste_target`) and applies it.
 #[cfg(windows)]
-pub(super) fn try_intercept_paste_hotkey(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
+pub(super) fn try_intercept_paste_hotkey(app: &mut App) -> Result<bool> {
     if !app.paste_flood.ctrl_v_just_pressed() {
         return Ok(false);
     }
@@ -51,7 +50,7 @@ pub(super) fn try_intercept_paste_hotkey(app: &mut App, terminal: &mut Terminal<
 
     let rest = app.paste_flood.not_yet_delivered(&text);
     if !rest.is_empty() {
-        apply_paste(app, terminal, target, &rest)?;
+        apply_paste(app, target, &rest)?;
         app.paste_flood.expect(&rest);
     }
     Ok(true)
@@ -100,7 +99,7 @@ fn paste_target(app: &App) -> Option<PasteTarget> {
 /// a command/form the user never meant to trigger this instant, the
 /// same "may execute unexpected commands" concern Windows Terminal's
 /// own multi-line-paste warning is about.
-fn apply_paste(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, target: PasteTarget, text: &str) -> Result<()> {
+fn apply_paste(app: &mut App, target: PasteTarget, text: &str) -> Result<()> {
     match target {
         PasteTarget::EditorBuffer => {
             if let Mode::Editing(editor) = &mut app.mode {
@@ -109,7 +108,9 @@ fn apply_paste(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>,
         }
         PasteTarget::TextField => {
             for ch in text.chars().filter(|&ch| ch != '\n' && ch != '\r') {
-                dispatch_key_event(app, crossterm::event::KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE), terminal)?;
+                // A plain typed character never asks for terminal work.
+                let effect = key_effect(app, crossterm::event::KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))?;
+                debug_assert_eq!(effect, Effect::None);
             }
         }
     }
@@ -128,9 +129,9 @@ fn apply_paste(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>,
 /// unconditionally (including ones where a letter is a command), and
 /// an open `Ctrl+F` box still sent the paste into the file's own
 /// buffer instead of the box.
-pub(super) fn handle_paste_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, text: &str) -> Result<()> {
+pub(super) fn handle_paste_event(app: &mut App, text: &str) -> Result<()> {
     match paste_target(app) {
-        Some(target) => apply_paste(app, terminal, target, text),
+        Some(target) => apply_paste(app, target, text),
         None => Ok(()),
     }
 }
@@ -140,10 +141,6 @@ mod tests {
     use super::*;
     use crate::editor::{Editor, EditorKeymapMode};
     use crate::test_support::{test_app, unique_scratch_dir};
-
-    fn dummy_terminal() -> Terminal<CrosstermBackend<Stdout>> {
-        Terminal::new(CrosstermBackend::new(std::io::stdout())).unwrap()
-    }
 
     fn editor_app(contents: &str) -> App {
         let dir = unique_scratch_dir("paste-routing");
@@ -179,7 +176,7 @@ mod tests {
         let mut app = test_app(unique_scratch_dir("paste-routing"));
         app.mode = Mode::Info("read me".to_string());
 
-        handle_paste_event(&mut app, &mut dummy_terminal(), "anything").unwrap();
+        handle_paste_event(&mut app, "anything").unwrap();
 
         assert!(matches!(app.mode, Mode::Info(_)), "any key dismisses Info -- the paste must not have been replayed as keys");
     }
@@ -188,7 +185,7 @@ mod tests {
     fn pasting_into_the_command_line_drops_line_breaks() {
         let mut app = test_app(unique_scratch_dir("paste-routing"));
 
-        handle_paste_event(&mut app, &mut dummy_terminal(), "svn st\r\n--quiet").unwrap();
+        handle_paste_event(&mut app, "svn st\r\n--quiet").unwrap();
 
         assert_eq!(app.command_line.text(), "svn st--quiet");
     }
@@ -202,7 +199,7 @@ mod tests {
         let Mode::Editing(editor) = &mut app.mode else { unreachable!() };
         editor.start_search();
 
-        handle_paste_event(&mut app, &mut dummy_terminal(), "world").unwrap();
+        handle_paste_event(&mut app, "world").unwrap();
 
         let Mode::Editing(editor) = &app.mode else { unreachable!() };
         assert_eq!(editor.search_query(), "world");

@@ -1,10 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 
-/// A user-triggered action, resolved from a raw key press. Keeps the
-/// event loop from growing a `match` arm per new binding, and gives
-/// scripting (stage 4 of the roadmap) a typed value to emit instead of
-/// a raw key.
+/// A panel-level action. Bound to keys in the browser's binding table
+/// (`command_line::browsing::bindings`), and the typed value scripting
+/// (stage 4 of the roadmap) can emit instead of a raw key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
     MoveUp,
@@ -26,10 +25,7 @@ pub enum Command {
     /// plain `Enter` does (see `EnterSelected` above) rather than
     /// handing it to the OS too — requested directly, so `Shift+Enter`
     /// and plain `Enter` behave identically on a file and differ only
-    /// on a directory. Modifier-specific, so it's resolved directly in
-    /// `command_line::handle_browsing_key` rather than through this
-    /// module's `resolve` table (which only keys off `KeyCode`, not
-    /// modifiers), same reason as `RenameSelected` below.
+    /// on a directory.
     OpenInFileManager,
     ToggleActive,
     EditSelected,
@@ -64,22 +60,15 @@ pub enum Command {
     /// the same `Mode::ConfirmTransfer` prompt as `MoveSelected`, but
     /// defaulting the destination to the entry's *own* directory
     /// (rather than the other panel's) so editing just the trailing
-    /// name renames it in place. Modifier-specific, so it's resolved
-    /// directly in `command_line::browsing::handle_browsing_key` rather than through
-    /// this module's `resolve` table (which only keys off `KeyCode`,
-    /// not modifiers).
+    /// name renames it in place.
     RenameSelected,
     /// F8 — asks to delete the entry under the cursor
     /// (`Mode::ConfirmDelete`), never deletes directly. Matches Far
     /// Manager's own F8 binding.
     DeleteSelected,
-    /// `Shift+A` (only on an empty command line — see
-    /// `command_line::handle_browsing_key`'s own doc comment on this)
+    /// `Shift+A` (only on an empty command line -- see the binding table)
     /// — marks every entry in the active panel except `..`
-    /// (`panel/marks.rs::select_all`). Modifier-specific, resolved
-    /// directly in `command_line::handle_browsing_key` rather than
-    /// through this module's `resolve` table, same reason as
-    /// `RenameSelected` above.
+    /// (`panel/marks.rs::select_all`).
     SelectAll,
     /// `Shift+Up` — toggles the mark on the entry under the cursor,
     /// then moves up one row (`panel/marks.rs::toggle_mark_move_up`).
@@ -95,37 +84,9 @@ pub enum Command {
     /// `Ctrl+U` — swaps the two panels' full contents (path, entries,
     /// cursor, scroll, marks — `App::swap_panels`), keeping keyboard
     /// focus on the same screen *side*, exactly like real Far
-    /// Manager's own Ctrl+U. Modifier-specific, so it's resolved
-    /// directly in `command_line::handle_browsing_key` rather than
-    /// through this module's `resolve` table, same reason as
-    /// `RenameSelected` above.
+    /// Manager's own Ctrl+U.
     SwapPanels,
     Quit,
-}
-
-
-/// Maps a raw key press to a `Command`, or `None` if the key isn't bound.
-pub fn resolve(key: KeyCode) -> Option<Command> {
-    match key {
-        KeyCode::Up => Some(Command::MoveUp),
-        KeyCode::Down => Some(Command::MoveDown),
-        KeyCode::Left => Some(Command::MoveLeft),
-        KeyCode::Right => Some(Command::MoveRight),
-        KeyCode::Enter => Some(Command::EnterSelected),
-        KeyCode::Tab => Some(Command::ToggleActive),
-        KeyCode::F(2) => Some(Command::OpenUserMenu),
-        KeyCode::F(3) => Some(Command::PreviewSelected),
-        KeyCode::F(4) => Some(Command::EditSelected),
-        KeyCode::F(5) => Some(Command::CopySelected),
-        KeyCode::F(6) => Some(Command::MoveSelected),
-        KeyCode::F(8) => Some(Command::DeleteSelected),
-        KeyCode::F(9) => Some(Command::OpenMenu),
-        // Only F10 quits, matching real Far Manager -- bare letters
-        // now type into the always-live command line (`command_line::browsing`), so a
-        // lone 'q' shortcut would swallow the start of typed commands.
-        KeyCode::F(10) => Some(Command::Quit),
-        _ => None,
-    }
 }
 
 
@@ -156,55 +117,6 @@ pub fn resolve_confirm_delete(key: KeyEvent) -> ConfirmDeleteCommand {
 mod tests {
     use super::*;
     use crate::test_support::key;
-
-    #[test]
-    fn unbound_key_resolves_to_none() {
-        assert_eq!(resolve(KeyCode::Char('z')), None);
-    }
-
-    #[test]
-    fn f9_opens_the_menu() {
-        assert_eq!(resolve(KeyCode::F(9)), Some(Command::OpenMenu));
-    }
-
-    #[test]
-    fn f2_opens_the_user_menu() {
-        assert_eq!(resolve(KeyCode::F(2)), Some(Command::OpenUserMenu));
-    }
-
-    #[test]
-    fn f3_previews_the_selected_entry() {
-        assert_eq!(resolve(KeyCode::F(3)), Some(Command::PreviewSelected));
-    }
-
-    #[test]
-    fn f10_quits() {
-        assert_eq!(resolve(KeyCode::F(10)), Some(Command::Quit));
-    }
-
-    #[test]
-    fn bare_q_no_longer_quits() {
-        // Regression guard: 'q' used to be a quick-quit shortcut, but
-        // now types into the always-live command line (`command_line::browsing`) like
-        // any other letter -- only F10 quits, matching real Far
-        // Manager. See ARCHITECTURE.md / the plan for this feature.
-        assert_eq!(resolve(KeyCode::Char('q')), None);
-    }
-
-    #[test]
-    fn f8_requests_delete() {
-        assert_eq!(resolve(KeyCode::F(8)), Some(Command::DeleteSelected));
-    }
-
-    #[test]
-    fn f5_requests_copy() {
-        assert_eq!(resolve(KeyCode::F(5)), Some(Command::CopySelected));
-    }
-
-    #[test]
-    fn f6_requests_move() {
-        assert_eq!(resolve(KeyCode::F(6)), Some(Command::MoveSelected));
-    }
 
     #[test]
     fn y_or_uppercase_y_confirms_delete() {

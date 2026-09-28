@@ -43,7 +43,8 @@ test_support.rs       — shared test fixtures (test_app, key(), scratch dirs)
 logging.rs            — tracing setup
 
 explorer.rs            — dual-pane browser: Panel, F-key commands,
-  explorer/keymap.rs    —   KeyCode -> Command
+  explorer/keymap.rs    —   Command (panel actions); the browser binds
+                            keys to them in command_line/browsing/bindings.rs
   explorer/command/     —   execute(); the one chokepoint keyboard (and,
                             later, scripts) funnels filesystem actions
                             through. Split by concern once the old flat
@@ -205,17 +206,21 @@ theming.rs              — Theme, color-scheme loading/persistence,
 command_line.rs         — the always-live Far-style command line
   command_line/browsing/ —   Mode::Browsing key dispatch (the other big
                               chokepoint alongside explorer::command::execute),
-                              handle_browsing_key itself in mod.rs. Split
+                              handle_browsing_key itself in mod.rs,
+                              bindings.rs (the ordered key -> action
+                              table it looks keys up in). Split
                               by concern once the old flat mod.rs passed
-                              ~500 lines: shell_exec.rs (run_command_line,
-                              run_shell_command_lines -- the shared
-                              "suspend the TUI, run N lines through the
-                              active shell" primitive explorer::user_menu
-                              reuses for its own item execution --
+                              ~500 lines: shell_exec.rs (submit_command_line,
+                              run_shell_command_lines -- "suspend the
+                              TUI, run N lines through the active shell",
+                              reached via Effect::RunShell --
                               parse_cd_target), hidden_console.rs (Ctrl+O:
                               toggle_panels_hidden and its own typed
-                              command loop), editing.rs (insert_char/
-                              backspace)
+                              command loop)
+  command_line/effect.rs —   Effect (RunShell/ClearScreen/
+                              ToggleHiddenPanels): terminal work key
+                              handlers return instead of taking the
+                              Terminal; apply_effect performs it
   command_line/completion.rs — Tab path completion, cycling
   command_line/history/ —  command history, Alt+F8 popup, ghost-text
                               autosuggestion

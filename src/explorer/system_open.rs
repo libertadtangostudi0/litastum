@@ -32,7 +32,7 @@ fn build_open_command(path: &Path) -> Command {
 
 /// `Shift+Enter`: opens the entry under the cursor in the OS's own file
 /// manager, fire-and-forget -- same reasoning as
-/// `command_line.rs::run_command_line`'s own external process spawns:
+/// the command line's own external process spawns:
 /// a failure here (the OS command itself missing, or whatever it
 /// launches failing) isn't something this app can usefully react to
 /// beyond logging it, so it's never propagated up as an

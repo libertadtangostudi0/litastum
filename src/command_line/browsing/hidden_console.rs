@@ -31,7 +31,7 @@ pub(super) fn is_ctrl_o(key: crossterm::event::KeyEvent) -> bool {
 /// A `Ctrl+O` pressed while a child ran is honored as soon as it's
 /// drained. Always ends with a newline, so the unterminated prompt isn't
 /// continued by whatever prints next. History: docs/history/command-execution.md.
-pub(super) fn toggle_panels_hidden(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+pub(in crate::command_line) fn toggle_panels_hidden(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
     let mut input = String::new();
@@ -105,7 +105,8 @@ fn print_prompt(app: &mut App) -> Result<()> {
 
 /// Runs one trimmed, non-empty line on the real console the hidden loop
 /// is already on -- same `cd`/`cls`/shell-out handling as
-/// `run_command_line`, minus the alternate-screen switching. Returns
+/// `submit_command_line` + `apply_effect`, minus the alternate-screen
+/// switching. Returns
 /// whether a `Ctrl+O` was drained after a subprocess ran.
 fn run_single_line_on_console(app: &mut App, line: &str) -> Result<bool> {
     if let Some(target) = parse_cd_target(line) {

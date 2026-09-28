@@ -147,7 +147,7 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
         // almost every time, so an idle-only check would never run
         // until the flood was already over. See `windows_terminal`'s own
         // module doc comment for the full story.
-        if try_intercept_paste_hotkey(app, terminal)? {
+        if try_intercept_paste_hotkey(app)? {
             return Ok(());
         }
         let poll_interval = if background_task_pending(app) { BACKGROUND_TASK_POLL_INTERVAL } else { crate::windows_terminal::alt_key::POLL_INTERVAL };
@@ -211,7 +211,7 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
             Ok(true)
         }
         Event::Paste(text) => {
-            handle_paste_event(app, terminal, &text)?;
+            handle_paste_event(app, &text)?;
             Ok(true)
         }
         _ => Ok(true),

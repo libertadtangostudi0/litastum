@@ -5,6 +5,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEv
 use ratatui::{prelude::CrosstermBackend, Terminal};
 
 use crate::app::{App, Mode};
+use crate::command_line::Effect;
 use crate::{command_line, compare, editor, explorer, keyboard_layout, theming};
 
 use super::drain_pending_mouse_events;
@@ -205,8 +206,17 @@ fn drain_pending_navigation_keys(app: &mut App, terminal: &mut Terminal<Crosster
 }
 
 pub(super) fn dispatch_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    let effect = key_effect(app, key)?;
+    command_line::apply_effect(app, terminal, effect)
+}
+
+
+/// Routes one key to the current mode's handler and returns whatever
+/// terminal work it asked for -- no `Terminal` here, so the whole
+/// routing is testable.
+pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Result<Effect> {
     if key.kind != KeyEventKind::Press {
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     // See `keyboard_layout::normalize_ctrl_shortcut`'s own doc comment
@@ -226,7 +236,10 @@ pub(super) fn dispatch_key_event(app: &mut App, key: crossterm::event::KeyEvent,
     // there is -- see `App::alt_held`'s doc.
     app.alt_held = key.modifiers.contains(KeyModifiers::ALT);
 
-    match &app.mode {
+    // Most handlers need nothing from the terminal and return `()`; the
+    // ones that can (the browser, history, the F2 menu) return their
+    // `Effect` directly.
+    let handled = match &app.mode {
         // `Tab` toggles which half of a combined editor+preview session
         // (`App::markdown_edit_preview`) keyboard input reaches -- `0`
         // the editor, `1` the embedded preview -- intercepted here,
@@ -255,10 +268,10 @@ pub(super) fn dispatch_key_event(app: &mut App, key: crossterm::event::KeyEvent,
         Mode::ShellMenu(_) => command_line::handle_shell_menu_key(app, key),
         Mode::PopupStyleMenu(_) => theming::handle_popup_style_menu_key(app, key),
         Mode::FindFile(_) => explorer::handle_find_file_key(app, key),
-        Mode::CommandHistory(_) => command_line::handle_history_key(app, key, terminal),
+        Mode::CommandHistory(_) => return command_line::handle_history_key(app, key),
         Mode::ChangeDrive(_) => explorer::handle_drive_menu_key(app, key),
-        Mode::UserMenu(_) => explorer::handle_user_menu_key(app, key, terminal),
-        Mode::UserMenuPrompt(_) => explorer::handle_user_menu_prompt_key(app, key, terminal),
+        Mode::UserMenu(_) => return explorer::handle_user_menu_key(app, key),
+        Mode::UserMenuPrompt(_) => return explorer::handle_user_menu_prompt_key(app, key),
         Mode::ConfirmPortFarMenu(_) => explorer::handle_confirm_port_far_menu_key(app, key),
         Mode::AddUserMenuItem(..) => explorer::handle_add_user_menu_item_key(app, key),
         Mode::ImagePreview(_) => {
@@ -275,6 +288,7 @@ pub(super) fn dispatch_key_event(app: &mut App, key: crossterm::event::KeyEvent,
             app.mode = Mode::Browsing;
             Ok(())
         }
-        Mode::Browsing => command_line::handle_browsing_key(app, key, terminal),
-    }
+        Mode::Browsing => return command_line::handle_browsing_key(app, key),
+    };
+    handled.map(|()| Effect::None)
 }

@@ -27,19 +27,3 @@ fn scratch_dir() -> std::path::PathBuf {
     crate::test_support::unique_scratch_dir("user-menu-input")
 }
 
-/// A throwaway `Terminal` for handlers that need one just to satisfy
-/// the signature -- never actually drawn to or suspended in these
-/// tests, since every test here either stays inside the popup (no
-/// command runs) or is documented as covering the "would run" path
-/// only up to the point where it hands off to
-/// `command_line::run_shell_command_lines` (which needs a real console
-/// and isn't exercised directly here, same limitation
-/// `command_line::browsing`'s own tests already accept). The handlers'
-/// own signature hardcodes `CrosstermBackend<Stdout>` (matching
-/// `main.rs`'s real terminal type), not a generic backend, so this has
-/// to wrap real stdout too -- harmless here since nothing in these
-/// tests ever calls `.draw()` on it.
-#[cfg(test)]
-fn dummy_terminal() -> ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
-    ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout())).unwrap()
-}

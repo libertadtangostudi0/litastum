@@ -4,7 +4,7 @@ use crossterm::event::KeyCode;
 
 use super::*;
 use crate::explorer::UserMenuState;
-use crate::explorer::user_menu::input::{dummy_terminal, scratch_dir};
+use crate::explorer::user_menu::input::scratch_dir;
 use crate::test_support::{key, test_app};
 
 /// `content` is parsed as the DSL (`parse::parse`), same as
@@ -22,9 +22,8 @@ fn app_with_menu(content: &str) -> App {
 #[test]
 fn up_and_down_move_the_cursor() {
     let mut app = app_with_menu("a: A\necho a\n\nb: B\necho b\n");
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Down), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Down)).unwrap();
 
     let Mode::UserMenu(menu) = &app.mode else { panic!("expected Mode::UserMenu") };
     assert_eq!(menu.current_level().selected, 1);
@@ -33,9 +32,8 @@ fn up_and_down_move_the_cursor() {
 #[test]
 fn enter_on_a_submenu_descends_into_it() {
     let mut app = app_with_menu("p: Parent\n{\nc: Child\necho child\n}\n");
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Enter), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
     let Mode::UserMenu(menu) = &app.mode else { panic!("expected Mode::UserMenu") };
     assert_eq!(menu.current_level().items[0].title, "Child");
@@ -46,9 +44,8 @@ fn enter_on_a_submenu_descends_into_it() {
 #[test]
 fn right_on_a_submenu_descends_into_it_same_as_enter() {
     let mut app = app_with_menu("p: Parent\n{\nc: Child\necho child\n}\n");
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Right), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Right)).unwrap();
 
     let Mode::UserMenu(menu) = &app.mode else { panic!("expected Mode::UserMenu") };
     assert_eq!(menu.current_level().items[0].title, "Child");
@@ -63,9 +60,8 @@ fn right_on_a_submenu_descends_into_it_same_as_enter() {
 #[test]
 fn right_on_a_commands_item_opens_it_for_editing_instead_of_running_it() {
     let mut app = app_with_menu("a: A\necho a\n");
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Right), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Right)).unwrap();
 
     assert!(matches!(app.mode, Mode::Editing(_)), "should open the item for editing, not run it");
     let temp_path = app.user_menu_command_edit.as_ref().unwrap().temp_path.clone();
@@ -75,9 +71,8 @@ fn right_on_a_commands_item_opens_it_for_editing_instead_of_running_it() {
 #[test]
 fn esc_at_the_top_level_closes_the_menu() {
     let mut app = app_with_menu("a: A\necho a\n");
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Esc), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
 
     assert!(matches!(app.mode, Mode::Browsing));
 }
@@ -85,10 +80,9 @@ fn esc_at_the_top_level_closes_the_menu() {
 #[test]
 fn esc_inside_a_submenu_backs_up_one_level_without_closing() {
     let mut app = app_with_menu("p: Parent\n{\nc: Child\necho child\n}\n");
-    let mut terminal = dummy_terminal();
-    handle_user_menu_key(&mut app, key(KeyCode::Enter), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Esc), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
 
     let Mode::UserMenu(menu) = &app.mode else { panic!("should still be in the menu, one level up") };
     assert_eq!(menu.current_level().items[0].title, "Parent");
@@ -99,10 +93,9 @@ fn esc_inside_a_submenu_backs_up_one_level_without_closing() {
 #[test]
 fn left_inside_a_submenu_backs_up_one_level_same_as_esc() {
     let mut app = app_with_menu("p: Parent\n{\nc: Child\necho child\n}\n");
-    let mut terminal = dummy_terminal();
-    handle_user_menu_key(&mut app, key(KeyCode::Enter), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Left), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Left)).unwrap();
 
     let Mode::UserMenu(menu) = &app.mode else { panic!("should still be in the menu, one level up") };
     assert_eq!(menu.current_level().items[0].title, "Parent");
@@ -111,9 +104,8 @@ fn left_inside_a_submenu_backs_up_one_level_same_as_esc() {
 #[test]
 fn left_at_the_top_level_closes_the_menu_same_as_esc() {
     let mut app = app_with_menu("a: A\necho a\n");
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Left), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Left)).unwrap();
 
     assert!(matches!(app.mode, Mode::Browsing));
 }
@@ -124,20 +116,44 @@ fn left_at_the_top_level_closes_the_menu_same_as_esc() {
 #[test]
 fn enter_on_an_item_with_a_prompt_opens_the_prompt_popup_instead_of_running() {
     let mut app = app_with_menu("c: Commit\ngit commit -m \"!?Commit title?!\"\n");
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Enter), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
     let Mode::UserMenuPrompt(prompt) = &app.mode else { panic!("expected Mode::UserMenuPrompt") };
     assert_eq!(prompt.current_label(), "Commit title");
 }
 
 #[test]
+fn enter_on_a_commands_item_runs_it_and_closes_the_menu() {
+    let mut app = app_with_menu("a: A
+echo a
+");
+
+    let effect = handle_user_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+    assert_eq!(effect, crate::command_line::Effect::RunShell(vec!["echo a".to_string()]));
+    assert!(matches!(app.mode, Mode::Browsing));
+}
+
+#[test]
+fn a_hotkey_runs_its_item_like_enter() {
+    let mut app = app_with_menu("a: A
+echo a
+
+b: B
+echo b
+");
+
+    let effect = handle_user_menu_key(&mut app, key(KeyCode::Char('b'))).unwrap();
+
+    assert_eq!(effect, crate::command_line::Effect::RunShell(vec!["echo b".to_string()]));
+}
+
+#[test]
 fn ignores_unrelated_keys_and_stays_open() {
     let mut app = app_with_menu("a: A\necho a\n");
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Char('z')), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Char('z'))).unwrap();
 
     assert!(matches!(app.mode, Mode::UserMenu(_)));
 }
@@ -146,9 +162,8 @@ fn ignores_unrelated_keys_and_stays_open() {
 fn is_a_noop_outside_user_menu_mode() {
     let mut app = app_with_menu("a: A\necho a\n");
     app.mode = Mode::Browsing;
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Down), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Down)).unwrap();
 
     assert!(matches!(app.mode, Mode::Browsing));
 }
@@ -156,9 +171,8 @@ fn is_a_noop_outside_user_menu_mode() {
 #[test]
 fn ins_opens_the_add_item_form() {
     let mut app = app_with_menu("a: A\necho a\n");
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Insert), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Insert)).unwrap();
 
     assert!(matches!(app.mode, Mode::AddUserMenuItem(..)));
 }
@@ -166,9 +180,8 @@ fn ins_opens_the_add_item_form() {
 #[test]
 fn del_removes_the_selected_item_and_persists() {
     let mut app = app_with_menu("a: A\necho a\n\nb: B\necho b\n");
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::Delete), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::Delete)).unwrap();
 
     let Mode::UserMenu(menu) = &app.mode else { panic!("expected Mode::UserMenu") };
     assert_eq!(menu.current_level().items.len(), 1);
@@ -183,9 +196,8 @@ fn del_removes_the_selected_item_and_persists() {
 #[test]
 fn f4_on_a_commands_item_opens_the_command_in_the_real_editor() {
     let mut app = app_with_menu("a: A\necho a\n");
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::F(4)), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::F(4))).unwrap();
 
     assert!(matches!(app.mode, Mode::Editing(_)));
     let temp_path = app.user_menu_command_edit.as_ref().unwrap().temp_path.clone();
@@ -200,9 +212,8 @@ fn closing_the_editor_after_f4_returns_to_the_menu_with_the_edited_command() {
     let mut app = app_with_menu("a: A\necho a\n\nb: B\necho b\n");
     let Mode::UserMenu(menu) = &mut app.mode else { unreachable!() };
     menu.move_down(); // cursor on "B" -- F4 should edit its command, not "A"'s
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::F(4)), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::F(4))).unwrap();
     assert!(matches!(app.mode, Mode::Editing(_)), "sanity");
     let temp_path = app.user_menu_command_edit.as_ref().unwrap().temp_path.clone();
     fs::write(&temp_path, "echo replaced").unwrap(); // simulates typing + Ctrl+S
@@ -220,9 +231,8 @@ fn closing_the_editor_after_f4_returns_to_the_menu_with_the_edited_command() {
 #[test]
 fn f4_on_a_submenu_item_is_a_noop() {
     let mut app = app_with_menu("p: Parent\n{\nc: Child\necho child\n}\n");
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::F(4)), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::F(4))).unwrap();
 
     assert!(matches!(app.mode, Mode::UserMenu(_)), "should stay on the menu, unchanged");
 }
@@ -231,9 +241,8 @@ fn f4_on_a_submenu_item_is_a_noop() {
 fn f4_is_a_noop_outside_user_menu_mode() {
     let mut app = app_with_menu("a: A\necho a\n");
     app.mode = Mode::Browsing;
-    let mut terminal = dummy_terminal();
 
-    handle_user_menu_key(&mut app, key(KeyCode::F(4)), &mut terminal).unwrap();
+    handle_user_menu_key(&mut app, key(KeyCode::F(4))).unwrap();
 
     assert!(matches!(app.mode, Mode::Browsing));
 }

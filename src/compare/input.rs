@@ -22,8 +22,8 @@ use super::menu::open_compare_menu;
 /// next/previous-difference convention for quickly scanning where a
 /// file actually changed. Both bindings do the exact same thing; `F7`/
 /// `F8` are neither taken by anything else in this mode nor by
-/// `keymap::resolve`'s own global F-key row, which this mode's dispatch
-/// never falls through to in the first place).
+/// the browser's own F-key row, which this mode's dispatch never falls
+/// through to in the first place).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CompareCommand {
     Close,

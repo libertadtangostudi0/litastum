@@ -1,12 +1,9 @@
-use std::io::Stdout;
-
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::debug;
 
 use crate::app::{App, Mode};
-use crate::command_line;
+use crate::command_line::Effect;
 use crate::editor::Editor;
 use crate::explorer::Panel;
 use crate::explorer::user_menu::parse::{self, MacroContext, MenuItemBody, PanelMacroContext};
@@ -41,17 +38,17 @@ use crate::explorer::user_menu::state::{self, AddUserMenuItemState, UserMenuComm
 /// with `Right` first -- unlike `Right`, it's a no-op on a `Submenu`
 /// item rather than descending into it, since reaching for `F4`
 /// directly is specifically about editing a command.
-pub fn handle_user_menu_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+pub fn handle_user_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     // `Enter` needs its own function: descending into a submenu or
     // running an item both need fresh, narrowly-scoped borrows of
     // `app.mode` (running also needs a separate `&mut App` for
-    // `active_panel()`/`run_shell_command_lines`) -- easier to keep
+    // `active_panel()`) -- easier to keep
     // that self-contained than to share one long-lived borrow across
     // every arm of the match below, same reasoning
     // `confirm::handle_confirm_transfer_key` already applies to its own
     // `Enter` case.
     if key.code == KeyCode::Enter {
-        return run_selected_user_menu_item(app, terminal);
+        return run_selected_user_menu_item(app);
     }
 
     // `Ins` also needs to *replace* `app.mode` entirely (moving the
@@ -61,13 +58,13 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent, terminal: &mut Termina
     // own payload" reasoning as `Enter` above.
     if key.code == KeyCode::Insert {
         if !matches!(&app.mode, Mode::UserMenu(_)) {
-            return Ok(());
+            return Ok(Effect::None);
         }
         let Mode::UserMenu(menu) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
             unreachable!("just matched above");
         };
         app.mode = Mode::AddUserMenuItem(menu, AddUserMenuItemState::new());
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     // `Right` needs its own function too: it either descends into a
@@ -76,7 +73,7 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent, terminal: &mut Termina
     // `Ins` above -- needs to *replace* `app.mode` entirely).
     if key.code == KeyCode::Right {
         open_selected_item(app);
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     // `F4` -- same "needs the whole `&mut App`, not just the payload"
@@ -88,7 +85,7 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent, terminal: &mut Termina
     // than silently doing something else instead.
     if key.code == KeyCode::F(4) {
         open_edit_selected_command(app);
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     // A plain letter matching some item's own `hotkey` at the *current*
@@ -97,25 +94,25 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent, terminal: &mut Termina
     // convention (and, before this, a real gap: the hotkey was parsed
     // and shown as a prefix in every row but never actually wired up as
     // a shortcut at all -- reported directly). Same "needs the whole
-    // `&mut App` + `Terminal`" reasoning as `Enter` above, since a
+    // `&mut App`" reasoning as `Enter` above, since a
     // match runs `run_selected_user_menu_item` itself. An unmatched
     // letter (or any other key still falling through to here) is a
     // silent no-op past this point, same as before this was added.
     if let KeyCode::Char(c) = key.code {
         let matched = {
             let Mode::UserMenu(menu) = &mut app.mode else {
-                return Ok(());
+                return Ok(Effect::None);
             };
             menu.select_by_hotkey(c)
         };
         if matched {
-            return run_selected_user_menu_item(app, terminal);
+            return run_selected_user_menu_item(app);
         }
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     let Mode::UserMenu(menu) = &mut app.mode else {
-        return Ok(());
+        return Ok(Effect::None);
     };
     match key.code {
         KeyCode::Up => menu.move_up(),
@@ -129,34 +126,33 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent, terminal: &mut Termina
         _ => {}
     }
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 
 /// `Enter` on the user menu: descends into a highlighted submenu, or --
 /// for a `Commands` item -- substitutes every Far (`!.!`, `!&`, ...) or
 /// litastum-native (`{{cursor}}`) macro (`parse::substitute_macros`),
-/// and either runs the result immediately
-/// (`command_line::run_shell_command_lines`) or, if any
+/// and either runs the result immediately (`Effect::RunShell`) or, if any
 /// `!?Label?Default!`/`{{prompt:...}}` placeholders remain, opens
 /// `Mode::UserMenuPrompt` to collect them first.
-fn run_selected_user_menu_item(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+fn run_selected_user_menu_item(app: &mut App) -> Result<Effect> {
     let entered = {
         let Mode::UserMenu(menu) = &mut app.mode else {
-            return Ok(());
+            return Ok(Effect::None);
         };
         menu.enter_submenu()
     };
     if entered {
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     let (raw_commands, item_title) = {
         let Mode::UserMenu(menu) = &app.mode else {
-            return Ok(());
+            return Ok(Effect::None);
         };
         let Some(item) = menu.selected_item() else {
-            return Ok(());
+            return Ok(Effect::None);
         };
         let MenuItemBody::Commands(raw_commands) = &item.body else {
             unreachable!("enter_submenu already handled the Submenu case above")
@@ -171,10 +167,10 @@ fn run_selected_user_menu_item(app: &mut App, terminal: &mut Terminal<CrosstermB
     debug!(item = %item_title, prompt_count = prompts.len(), "user menu: running item");
     if prompts.is_empty() {
         app.mode = Mode::Browsing;
-        return command_line::run_shell_command_lines(app, terminal, &commands);
+        return Ok(Effect::RunShell(commands));
     }
     app.mode = Mode::UserMenuPrompt(UserMenuPromptState::new(commands, prompts));
-    Ok(())
+    Ok(Effect::None)
 }
 
 

@@ -1,232 +1,141 @@
-use std::io::Stdout;
-
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::debug;
 
 use crate::app::{App, Mode};
-use crate::explorer::{execute, resolve, Command, DriveMenu, FindFileState};
+use crate::explorer::{execute, DriveMenu, FindFileState};
 
 use super::completion::complete;
+use super::effect::Effect;
 use super::history::{suggest_history, CommandHistoryMenu};
 
+mod bindings;
 mod hidden_console;
 mod shell_exec;
 
-pub use shell_exec::run_shell_command_lines;
-pub(crate) use shell_exec::run_command_line;
+pub(super) use hidden_console::toggle_panels_hidden;
+pub(super) use shell_exec::run_shell_command_lines;
+pub(crate) use shell_exec::submit_command_line;
 
-use hidden_console::toggle_panels_hidden;
+use bindings::{BrowserAction, LineState};
 
-/// Key handling in the browser. Modifier chords come first (they need
-/// the raw modifier; `keymap::resolve` only sees `KeyCode`), then the
-/// command line's own selection/word keys, `Enter` to run, the history
-/// suggestions, `Tab` completion, the fixed `keymap::resolve` table, and
-/// finally editing the always-live command line. Bare `Left`/`Right`
-/// stay panel navigation. Order and scope cuts:
+/// Key handling in the browser: the first matching row of
+/// `bindings::BINDINGS` (chords, command-line selection, marking, the
+/// typed line, panel navigation and the F-key row, line editing), else a
+/// plain character types into the command line. Order and scope cuts:
 /// `.claude/rules/litastum-command-line.md`.
-pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+pub fn handle_browsing_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     debug!(?key, "browsing key");
 
-    // Ctrl+O -- Far's show/hide panels (`hidden_console`).
-    if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        return toggle_panels_hidden(app, terminal);
-    }
-
-    if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        app.mode = Mode::ShellMenu(super::open_shell_menu(app));
-        return Ok(());
-    }
-
-    // Ctrl+U -- Far's swap panels.
-    if key.code == KeyCode::Char('u') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        return execute(Command::SwapPanels, app);
-    }
-
-    // Shift+F6 -- rename (plain F6 is move).
-    if key.code == KeyCode::F(6) && key.modifiers.contains(KeyModifiers::SHIFT) {
-        return execute(Command::RenameSelected, app);
-    }
-
-    // Shift+Enter on an empty line -- a directory opens in the OS file
-    // manager, a file in the built-in editor (`Command::OpenInFileManager`).
-    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) && app.command_line.is_empty() {
-        return execute(Command::OpenInFileManager, app);
-    }
-
-    // Alt+F7 -- Find file.
-    if key.code == KeyCode::F(7) && key.modifiers.contains(KeyModifiers::ALT) {
-        app.mode = Mode::FindFile(FindFileState::new());
-        return Ok(());
-    }
-
-    // Alt+F1/Alt+F2 -- change drive for the left/right panel (always
-    // that panel, not the focused one, as in Far).
-    if key.code == KeyCode::F(1) && key.modifiers.contains(KeyModifiers::ALT) {
-        app.mode = Mode::ChangeDrive(DriveMenu::open(0));
-        return Ok(());
-    }
-    if key.code == KeyCode::F(2) && key.modifiers.contains(KeyModifiers::ALT) {
-        app.mode = Mode::ChangeDrive(DriveMenu::open(1));
-        return Ok(());
-    }
-
-    // Alt+F8 -- command history.
-    if key.code == KeyCode::F(8) && key.modifiers.contains(KeyModifiers::ALT) {
-        app.mode = Mode::CommandHistory(CommandHistoryMenu::open());
-        return Ok(());
-    }
-
-    // Alt+F5 -- Compare files (`compare_targets`). Must come before the
-    // table, which maps any F5 to Copy. Silently does nothing if a path
-    // can't be compared (e.g. a directory).
-    if key.code == KeyCode::F(5) && key.modifiers.contains(KeyModifiers::ALT) {
-        let Some((left_path, right_path)) = compare_targets(app) else {
-            return Ok(());
-        };
-        let syntax_theme = app.syntax_theme.clone();
-        if let Ok(state) = crate::compare::CompareState::open(left_path, right_path, syntax_theme, app.editor_keymap_mode) {
-            app.mode = Mode::CompareFiles(state);
-        }
-        return Ok(());
-    }
-
-    // Ctrl+Shift+Left/Right -- word-wise selection in the command line
-    // (`text_field`).
-    if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::SHIFT) && key.modifiers.contains(KeyModifiers::CONTROL) {
-        app.command_line.extend_selection_word_left();
-        return Ok(());
-    }
-    if key.code == KeyCode::Right && key.modifiers.contains(KeyModifiers::SHIFT) && key.modifiers.contains(KeyModifiers::CONTROL) {
-        app.command_line.extend_selection_word_right();
-        return Ok(());
-    }
-
-    // Shift+Left/Right -- character selection while something is typed;
-    // on an empty line they fall through to panel marking below.
-    if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::SHIFT) && !key.modifiers.contains(KeyModifiers::CONTROL) && !app.command_line.is_empty() {
-        app.command_line.extend_selection_left();
-        return Ok(());
-    }
-    if key.code == KeyCode::Right && key.modifiers.contains(KeyModifiers::SHIFT) && !key.modifiers.contains(KeyModifiers::CONTROL) && !app.command_line.is_empty() {
-        app.command_line.extend_selection_right();
-        return Ok(());
-    }
-
-    // Ctrl+Left/Right -- move by a word and drop any selection (like a
-    // real editor, not collapse to its nearer edge).
-    if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) {
-        app.command_line.move_word_left();
-        return Ok(());
-    }
-    if key.code == KeyCode::Right && key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) {
-        app.command_line.move_word_right();
-        return Ok(());
-    }
-
-    // Shift+A / Shift+arrows -- mark entries (`panel/marks.rs`).
-    // Shift+A only on an empty line, or a command could never start with
-    // a capital letter.
-    if key.modifiers.contains(KeyModifiers::SHIFT) && !key.modifiers.contains(KeyModifiers::CONTROL) {
-        let mark_command = match key.code {
-            KeyCode::Char('a' | 'A') if app.command_line.is_empty() => Some(Command::SelectAll),
-            KeyCode::Up => Some(Command::MarkMoveUp),
-            KeyCode::Down => Some(Command::MarkMoveDown),
-            KeyCode::Left => Some(Command::MarkMoveLeft),
-            KeyCode::Right => Some(Command::MarkMoveRight),
-            _ => None,
-        };
-        if let Some(cmd) = mark_command {
-            return execute(cmd, app);
-        }
-    }
-
-    if key.code == KeyCode::Enter && !app.command_line.is_empty() {
-        app.command_line_completion = None;
-        return run_command_line(app, terminal);
-    }
-
-    // While history suggestions are showing, Up/Down/Tab work on them
-    // (ahead of path completion). `Enter` always runs exactly what's
-    // typed, so accepting a suggestion never runs something unexpected.
-    let suggestions = suggest_history(&app.command_history, app.command_line.text());
-    if !app.command_line.is_empty() && !suggestions.is_empty() && !app.command_line_suggestion_dismissed {
-        match key.code {
-            KeyCode::Up => {
-                app.command_line_suggestion_selected = app.command_line_suggestion_selected.saturating_sub(1);
-                return Ok(());
-            }
-            KeyCode::Down => {
-                if app.command_line_suggestion_selected + 1 < suggestions.len() {
-                    app.command_line_suggestion_selected += 1;
+    let line = LineState {
+        empty: app.command_line.is_empty(),
+        suggestions_showing: suggestions_showing(app),
+    };
+    match bindings::lookup(key, line) {
+        Some(action) => perform(app, action),
+        None => {
+            if let KeyCode::Char(c) = key.code {
+                if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                    app.command_line.insert_char(c);
+                    line_edited(app);
                 }
-                return Ok(());
             }
-            KeyCode::Tab => {
-                if let Some(&entry) = suggestions.get(app.command_line_suggestion_selected) {
-                    app.command_line.set_text(entry);
-                    app.command_line_completion = None;
-                }
-                app.command_line_suggestion_selected = 0;
-                // See `App::command_line_suggestion_dismissed`.
-                app.command_line_suggestion_dismissed = true;
-                return Ok(());
-            }
-            _ => {}
+            Ok(Effect::None)
         }
     }
+}
 
-    // Tab completes while something is typed; on an empty line it
-    // switches panels (the table below).
-    if key.code == KeyCode::Tab && !app.command_line.is_empty() {
-        let cwd = app.active_panel().path.clone();
-        let mut line = app.command_line.text().to_string();
-        complete(&mut line, &cwd, &mut app.command_line_completion);
-        app.command_line.set_text(line);
-        return Ok(());
-    }
 
-    if let Some(cmd) = resolve(key.code) {
-        debug!(?cmd, "browsing command");
-        // A bound command ends any completion cycle and suggestion
-        // browsing.
-        app.command_line_completion = None;
-        app.command_line_suggestion_selected = 0;
-        // Focus moved to the panels -- drop the command-line selection.
-        app.command_line.clear_selection();
-        return execute(cmd, app);
-    }
+/// Whether the history suggestions overlay is up (`ui::draw` shows it
+/// under the same condition).
+fn suggestions_showing(app: &App) -> bool {
+    !app.command_line.is_empty() && !app.command_line_suggestion_dismissed && !suggest_history(&app.command_history, app.command_line.text()).is_empty()
+}
 
-    match key.code {
-        KeyCode::Esc => {
+
+/// Any edit ends a completion cycle and suggestion browsing, and lets
+/// the suggestions show again.
+fn line_edited(app: &mut App) {
+    app.command_line_completion = None;
+    app.command_line_suggestion_selected = 0;
+    app.command_line_suggestion_dismissed = false;
+}
+
+
+fn perform(app: &mut App, action: BrowserAction) -> Result<Effect> {
+    debug!(?action, "browsing action");
+    match action {
+        BrowserAction::Command(command) => execute(command, app)?,
+        BrowserAction::Navigate(command) => {
+            app.command_line_completion = None;
+            app.command_line_suggestion_selected = 0;
+            app.command_line.clear_selection();
+            execute(command, app)?;
+        }
+        BrowserAction::ToggleHiddenPanels => return Ok(Effect::ToggleHiddenPanels),
+        BrowserAction::OpenShellMenu => app.mode = Mode::ShellMenu(super::open_shell_menu(app)),
+        BrowserAction::OpenFindFile => app.mode = Mode::FindFile(FindFileState::new()),
+        BrowserAction::OpenDriveMenu(panel) => app.mode = Mode::ChangeDrive(DriveMenu::open(panel)),
+        BrowserAction::OpenHistory => app.mode = Mode::CommandHistory(CommandHistoryMenu::open()),
+        BrowserAction::CompareFiles => open_compare(app),
+        BrowserAction::SelectWordLeft => app.command_line.extend_selection_word_left(),
+        BrowserAction::SelectWordRight => app.command_line.extend_selection_word_right(),
+        BrowserAction::SelectLeft => app.command_line.extend_selection_left(),
+        BrowserAction::SelectRight => app.command_line.extend_selection_right(),
+        BrowserAction::WordLeft => app.command_line.move_word_left(),
+        BrowserAction::WordRight => app.command_line.move_word_right(),
+        BrowserAction::Submit => {
+            app.command_line_completion = None;
+            return submit_command_line(app);
+        }
+        BrowserAction::SuggestionUp => app.command_line_suggestion_selected = app.command_line_suggestion_selected.saturating_sub(1),
+        BrowserAction::SuggestionDown => {
+            let count = suggest_history(&app.command_history, app.command_line.text()).len();
+            crate::list_cursor::move_down(&mut app.command_line_suggestion_selected, count);
+        }
+        BrowserAction::AcceptSuggestion => {
+            let entry = suggest_history(&app.command_history, app.command_line.text()).get(app.command_line_suggestion_selected).map(|entry| entry.to_string());
+            if let Some(entry) = entry {
+                app.command_line.set_text(entry);
+                app.command_line_completion = None;
+            }
+            app.command_line_suggestion_selected = 0;
+            // See `App::command_line_suggestion_dismissed`.
+            app.command_line_suggestion_dismissed = true;
+        }
+        BrowserAction::Complete => {
+            let cwd = app.active_panel().path.clone();
+            let mut line = app.command_line.text().to_string();
+            complete(&mut line, &cwd, &mut app.command_line_completion);
+            app.command_line.set_text(line);
+        }
+        BrowserAction::ClearLine => {
             app.command_line.clear();
-            app.command_line_completion = None;
-            app.command_line_suggestion_selected = 0;
-            app.command_line_suggestion_dismissed = false;
+            line_edited(app);
         }
-        KeyCode::Backspace => {
+        BrowserAction::Backspace => {
             app.command_line.backspace();
-            app.command_line_completion = None;
-            app.command_line_suggestion_selected = 0;
-            app.command_line_suggestion_dismissed = false;
+            line_edited(app);
         }
-        KeyCode::Delete => {
+        BrowserAction::DeleteForward => {
             app.command_line.delete_forward();
-            app.command_line_completion = None;
-            app.command_line_suggestion_selected = 0;
-            app.command_line_suggestion_dismissed = false;
+            line_edited(app);
         }
-        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.command_line.insert_char(c);
-            app.command_line_completion = None;
-            app.command_line_suggestion_selected = 0;
-            app.command_line_suggestion_dismissed = false;
-        }
-        _ => {}
     }
+    Ok(Effect::None)
+}
 
-    Ok(())
+
+/// `Alt+F5`: opens Compare on `compare_targets`; silently does nothing
+/// if a path can't be compared (e.g. a directory).
+fn open_compare(app: &mut App) {
+    let Some((left_path, right_path)) = compare_targets(app) else {
+        return;
+    };
+    let syntax_theme = app.syntax_theme.clone();
+    if let Ok(state) = crate::compare::CompareState::open(left_path, right_path, syntax_theme, app.editor_keymap_mode) {
+        app.mode = Mode::CompareFiles(state);
+    }
 }
 
 
@@ -291,5 +200,102 @@ mod compare_targets_tests {
 
         let (left, _right) = compare_targets(&app).expect("both panels have a selected file");
         assert_eq!(left, app.panels[app.active].selected_path().unwrap(), "should have fallen back to the cursor's own selection, not picked two of the three marked entries");
+    }
+}
+
+
+/// The browser's key routing -- testable now that terminal work comes
+/// back as an `Effect` instead of being done in place.
+#[cfg(test)]
+mod handle_browsing_key_tests {
+    use std::fs;
+
+    use crossterm::event::KeyCode;
+
+    use super::handle_browsing_key;
+    use crate::app::App;
+    use crate::command_line::Effect;
+    use crate::test_support::{ctrl_key, key, shift_key, test_app, unique_scratch_dir};
+
+    fn typed(line: &str) -> App {
+        let mut app = test_app(unique_scratch_dir("browsing-keys"));
+        app.command_line.set_text(line);
+        app
+    }
+
+    #[test]
+    fn ctrl_o_asks_for_the_hidden_console() {
+        let mut app = typed("");
+        assert_eq!(handle_browsing_key(&mut app, ctrl_key('o')).unwrap(), Effect::ToggleHiddenPanels);
+    }
+
+    #[test]
+    fn enter_hands_the_typed_line_to_the_shell() {
+        let mut app = typed("echo hi");
+
+        let effect = handle_browsing_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert_eq!(effect, Effect::RunShell(vec!["echo hi".to_string()]));
+        assert!(app.command_line.is_empty());
+        assert_eq!(app.command_history.last().map(String::as_str), Some("echo hi"));
+    }
+
+    #[test]
+    fn enter_on_cls_asks_for_a_repaint_not_a_shell() {
+        let mut app = typed("cls");
+        assert_eq!(handle_browsing_key(&mut app, key(KeyCode::Enter)).unwrap(), Effect::ClearScreen);
+    }
+
+    #[test]
+    fn enter_on_cd_moves_the_panel_without_a_shell() {
+        let mut app = typed("cd sub");
+        let target = app.panels[app.active].path.join("sub");
+        fs::create_dir_all(&target).unwrap();
+
+        assert_eq!(handle_browsing_key(&mut app, key(KeyCode::Enter)).unwrap(), Effect::None);
+        assert_eq!(app.panels[app.active].path, target);
+    }
+
+    #[test]
+    fn tab_switches_panels_on_an_empty_line_but_completes_while_typing() {
+        let mut app = typed("");
+        handle_browsing_key(&mut app, key(KeyCode::Tab)).unwrap();
+        assert_eq!(app.active, 1, "Tab on an empty line switches panels");
+
+        let mut app = typed("cd su");
+        fs::create_dir_all(app.panels[app.active].path.join("sub")).unwrap();
+        handle_browsing_key(&mut app, key(KeyCode::Tab)).unwrap();
+        assert_eq!(app.active, 0, "Tab while typing must not switch panels");
+        assert!(app.command_line.text().starts_with("cd sub"), "completed: {:?}", app.command_line.text());
+    }
+
+    #[test]
+    fn shift_a_marks_everything_only_on_an_empty_line() {
+        let dir = unique_scratch_dir("browsing-keys-shift-a");
+        fs::write(dir.join("a.txt"), "a").unwrap();
+        let mut app = test_app(dir);
+
+        handle_browsing_key(&mut app, shift_key(KeyCode::Char('A'))).unwrap();
+        assert!(!app.panels[app.active].marked_entries().is_empty(), "empty line: Shift+A marks all");
+        assert!(app.command_line.is_empty());
+
+        app.command_line.set_text("x");
+        handle_browsing_key(&mut app, shift_key(KeyCode::Char('A'))).unwrap();
+        assert_eq!(app.command_line.text(), "xA", "while typing, Shift+A is just a capital letter");
+    }
+
+    #[test]
+    fn a_plain_letter_types_instead_of_acting_as_a_shortcut() {
+        let mut app = typed("");
+        handle_browsing_key(&mut app, key(KeyCode::Char('q'))).unwrap();
+        assert_eq!(app.command_line.text(), "q");
+        assert!(!app.should_quit, "only F10 quits; a bare q is the start of a command");
+    }
+
+    #[test]
+    fn shift_left_selects_in_the_typed_line() {
+        let mut app = typed("abc");
+        handle_browsing_key(&mut app, shift_key(KeyCode::Left)).unwrap();
+        assert_eq!(app.command_line.selection(), Some((2, 3)));
     }
 }

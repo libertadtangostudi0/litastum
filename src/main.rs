@@ -100,12 +100,10 @@ fn main() -> Result<()> {
     }
     let result = event_loop::run(&mut terminal, &mut app);
     restore_terminal(&mut terminal, app.mouse_capture_enabled)?;
-    // Unlike command_history.txt (saved incrementally, per command run,
-    // from inside browsing::run_command_line), the search box has no
-    // equivalent "needs a real Terminal" choke point to hang a disk
-    // write off without also making handle_search_key's own extensive
-    // unit tests touch the filesystem -- see editor_keymap.rs's own
-    // comment on this. Saved once here instead, at clean exit; a crash
+    // Unlike command_history.txt (saved per command, from
+    // browsing::submit_command_line), the editor's search history is
+    // saved only here: saving from handle_search_key would make its
+    // unit tests touch the filesystem -- see editor_keymap.rs. Saved once here instead, at clean exit; a crash
     // mid-session loses that session's own search history, same
     // tradeoff `command_history.txt` doesn't have to make, accepted for
     // keeping the key-handling tests filesystem-free.

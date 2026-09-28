@@ -1,15 +1,14 @@
 use std::fs;
-use std::io::Stdout;
 
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::{debug, warn};
 
 use crate::app::{App, Mode};
 use crate::history_dir::history_dir;
 
-use super::browsing::run_command_line;
+use super::browsing::submit_command_line;
+use super::effect::Effect;
 
 /// The file name persisted history is stored under, inside
 /// `history_dir()`'s own directory.
@@ -41,7 +40,7 @@ pub fn load_history() -> Vec<String> {
 /// `record_history`'s own unit tests — which run in parallel and don't
 /// want to touch real state — can exercise the in-memory bookkeeping
 /// without ever writing this file; the one real caller
-/// (`browsing::run_command_line`) calls both in sequence.
+/// (`browsing::submit_command_line`) calls both in sequence.
 pub(super) fn save_history(history: &[String]) {
     let Some(dir) = history_dir() else {
         warn!("command history: no history directory available, not persisted");
@@ -146,7 +145,7 @@ fn matching_history_indices(history: &[String], query: &str) -> Vec<usize> {
 /// same way, narrowing the list as you type rather than needing a
 /// separate search field. `Up`/`Down` move within the *filtered* list,
 /// `Enter` runs the highlighted (filtered) entry straight away (through
-/// the exact same `run_command_line` the always-live command line's own
+/// the exact same `submit_command_line` the always-live command line's own
 /// `Enter` uses, so `cd`/`cls` and the actual shell-out all behave
 /// identically) — reported directly as the expected behavior, matching
 /// a real shell's own history recall: picking a past command should run
@@ -160,9 +159,9 @@ fn matching_history_indices(history: &[String], query: &str) -> Vec<usize> {
 /// disk), matching this popup's own F8-deletes convention everywhere
 /// else in this app (the file panel's own F8). `Esc` closes without
 /// changing the command line.
-pub fn handle_history_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+pub fn handle_history_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if !matches!(app.mode, Mode::CommandHistory(_)) {
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     match key.code {
@@ -183,7 +182,7 @@ pub fn handle_history_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal<
             app.mode = Mode::Browsing;
             if let Some(entry) = entry {
                 app.command_line.set_text(entry);
-                return run_command_line(app, terminal);
+                return submit_command_line(app);
             }
             app.command_line.move_to_end();
         }
@@ -226,7 +225,7 @@ pub fn handle_history_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal<
         _ => {}
     }
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 /// The filtered list shrinks/reorders as the query changes, so a
