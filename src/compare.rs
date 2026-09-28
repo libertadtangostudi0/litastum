@@ -32,4 +32,6 @@ pub use input::{handle_compare_confirm_discard_key, handle_compare_key};
 pub use line_ending::{LineEnding, LineEndingDisplay};
 pub use line_ending_menu::{handle_compare_line_ending_menu_key, CompareLineEndingMenu};
 pub use menu::{handle_compare_menu_key, CompareMenu};
+#[cfg(test)]
+pub use menu::CompareMenuItem;
 pub use state::{CompareState, Side};

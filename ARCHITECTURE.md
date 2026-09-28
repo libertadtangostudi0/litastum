@@ -225,6 +225,10 @@ text_field/             — TextField (text + cursor + selection) and the
                            standard single-line key layout; every text
                            field in the app (command line, F5/F6
                            destination, Find file, Ctrl+F box, F2 forms)
+choice_menu.rs          — ChoiceMenu<T>: a fixed "pick one" popup
+                           (Up/Down/Enter/Esc -> MenuOutcome). The
+                           editor's and Compare's F9 menus and pickers,
+                           F9 -> Options -> UI, the Ctrl+P shell picker
 
 ui/mod.rs               — pure(ish) rendering: App -> ratatui widgets;
                            draw() itself, the one central dispatcher.

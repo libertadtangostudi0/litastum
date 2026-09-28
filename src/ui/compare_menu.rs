@@ -4,11 +4,10 @@ use crate::compare::CompareMenu;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
-/// Renders Compare's own F9 menu -- same shape as `ui/editor_menu.rs`'s
-/// own F9 (which this was directly modeled on).
+/// Compare's own F9 menu, drawn over Compare.
 pub fn draw_compare_menu(frame: &mut Frame, area: Rect, menu: &CompareMenu, theme: &Theme, style: PopupStyle) {
-    let labels: Vec<String> = menu.items().iter().map(|label| (*label).to_string()).collect();
-    popup::draw_list_popup(frame, area, theme, style, " Menu ", 30, &labels, menu.selected, "open", "close");
+    let labels = popup::choice_labels(menu, |item| item.label().to_string(), None);
+    popup::draw_list_popup(frame, area, theme, style, " Menu ", 30, &labels, menu.selected_index(), "open", "close");
 }
 
 
@@ -17,6 +16,8 @@ mod tests {
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
+    use crate::choice_menu::ChoiceMenu;
+    use crate::compare::CompareMenuItem;
 
     fn rendered(menu: &CompareMenu, style: PopupStyle) -> String {
         let backend = TestBackend::new(80, 24);
@@ -36,14 +37,14 @@ mod tests {
 
     #[test]
     fn shows_the_line_endings_item() {
-        let menu = CompareMenu::open();
+        let menu = ChoiceMenu::new(CompareMenuItem::ALL, None);
         let text = rendered(&menu, PopupStyle::Rounded);
         assert!(text.contains("Line endings"));
     }
 
     #[test]
     fn renders_fine_in_classic_style_too() {
-        let menu = CompareMenu::open();
+        let menu = ChoiceMenu::new(CompareMenuItem::ALL, None);
         let text = rendered(&menu, PopupStyle::Classic);
         assert!(text.contains("Line endings"));
     }

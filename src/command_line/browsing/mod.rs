@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::debug;
 
-use crate::app::{App, Mode, ShellMenu};
+use crate::app::{App, Mode};
 use crate::explorer::{execute, resolve, Command, DriveMenu, FindFileState};
 
 use super::completion::complete;
@@ -35,7 +35,7 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     }
 
     if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        app.mode = Mode::ShellMenu(ShellMenu { selected: app.active_shell });
+        app.mode = Mode::ShellMenu(super::open_shell_menu(app));
         return Ok(());
     }
 

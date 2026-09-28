@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use edtui::syntect::highlighting::Theme as SynTheme;
 use ratatui_image::picker::Picker;
 
+use crate::choice_menu::ChoiceMenu;
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
 use crate::compare::{CompareLineEndingMenu, CompareMenu, CompareState, LineEndingDisplay};
 use crate::editor::{Editor, EditorKeymapMenu, EditorKeymapMode, EditorMenu};
@@ -151,13 +152,9 @@ pub struct PendingTransfer {
 }
 
 
-/// State for the `Ctrl+P` "pick a shell" popup — which row is
-/// highlighted while it's open. No file discovery step like
-/// `ThemeMenu::open` needs (the profile list is fixed, from
-/// `App::shell_profiles`), so this is just a cursor position.
-pub struct ShellMenu {
-    pub selected: usize,
-}
+/// The `Ctrl+P` shell picker, over indices into `App::shell_profiles`
+/// (a runtime list, so indices rather than the profiles themselves).
+pub type ShellMenu = ChoiceMenu<usize>;
 
 
 /// Top-level application state: the two file panels, which one

@@ -303,7 +303,7 @@ mod handle_editor_key_tests {
 
         let Mode::EditorMenu(editor, menu) = &app.mode else { panic!("expected Mode::EditorMenu") };
         assert_eq!(editor.keymap_mode(), EditorKeymapMode::Standard, "should carry the editor's own current mode over unchanged");
-        assert_eq!(menu.selected, 0, "should open at the first item (Keybindings)");
+        assert_eq!(menu.selected_index(), 0, "should open at the first item (Keybindings)");
     }
 
     /// `F9` while editing a linked Markdown preview session (`App::

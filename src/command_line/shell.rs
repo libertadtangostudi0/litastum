@@ -1,8 +1,9 @@
 use color_eyre::eyre::Result;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyEvent;
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, ShellMenu};
+use crate::choice_menu::{ChoiceMenu, MenuOutcome};
 
 
 /// A shell the command line can run typed input through — Windows
@@ -55,39 +56,39 @@ fn profiles_for_platform() -> Vec<ShellProfile> {
 }
 
 
-/// Key handling on the `Ctrl+P` shell picker: `Up`/`Down` to move,
-/// `Enter` sets `app.active_shell` and closes, `Esc` cancels. Not
-/// persisted to `config.json` — resets to the platform default each
-/// run (see `.claude/rules/litastum-stack.md`). Moved here from
-/// `main.rs` so this module owns both the profile list and the popup
-/// that picks from it (`app::ShellMenu`, the "which row is
-/// highlighted" state, still lives on `App` — it's simple enough not
-/// to need its own file the way `MainMenu`/`ThemeMenu` do).
+/// The `Ctrl+P` picker, opened on the active profile.
+pub fn open_shell_menu(app: &App) -> ShellMenu {
+    ChoiceMenu::new((0..app.shell_profiles.len()).collect::<Vec<_>>(), Some(app.active_shell))
+}
+
+
+/// Key handling on the `Ctrl+P` shell picker: `Enter` sets
+/// `app.active_shell`, `Esc` cancels. Not persisted automatically (F9 ->
+/// Options -> Save setup does that).
 pub fn handle_shell_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let Mode::ShellMenu(menu) = &mut app.mode else {
         return Ok(());
     };
-    debug!(?key, selected = menu.selected, "shell menu key");
 
-    match key.code {
-        KeyCode::Up => crate::list_cursor::move_up(&mut menu.selected),
-        KeyCode::Down => crate::list_cursor::move_down(&mut menu.selected, app.shell_profiles.len()),
-        KeyCode::Enter => {
-            app.active_shell = menu.selected;
+    let outcome = menu.handle_key(key);
+    debug!(?key, ?outcome, "shell menu key");
+    match outcome {
+        MenuOutcome::Open => {}
+        MenuOutcome::Closed => app.mode = Mode::Browsing,
+        MenuOutcome::Chosen(index) => {
+            app.active_shell = index;
             app.mode = Mode::Browsing;
         }
-        KeyCode::Esc => app.mode = Mode::Browsing,
-        _ => {}
     }
-
     Ok(())
 }
 
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::KeyCode;
+
     use super::*;
-    use crate::app::ShellMenu;
     use crate::test_support::{key, test_app, unique_scratch_dir};
 
     #[test]
@@ -100,7 +101,7 @@ mod tests {
     /// there's always something to navigate.
     fn app_in_shell_menu() -> App {
         let mut app = test_app(unique_scratch_dir("shell-menu"));
-        app.mode = Mode::ShellMenu(ShellMenu { selected: 0 });
+        app.mode = Mode::ShellMenu(open_shell_menu(&app));
         app
     }
 
@@ -114,7 +115,7 @@ mod tests {
         }
 
         let Mode::ShellMenu(menu) = &app.mode else { panic!("expected Mode::ShellMenu") };
-        assert_eq!(menu.selected, profile_count - 1);
+        assert_eq!(menu.selected(), profile_count - 1);
     }
 
     #[test]
@@ -124,7 +125,7 @@ mod tests {
         handle_shell_menu_key(&mut app, key(KeyCode::Up)).unwrap();
 
         let Mode::ShellMenu(menu) = &app.mode else { panic!("expected Mode::ShellMenu") };
-        assert_eq!(menu.selected, 0);
+        assert_eq!(menu.selected(), 0);
     }
 
     #[test]
@@ -134,7 +135,7 @@ mod tests {
             handle_shell_menu_key(&mut app, key(KeyCode::Down)).unwrap();
         }
         let Mode::ShellMenu(menu) = &app.mode else { unreachable!() };
-        let expected = menu.selected;
+        let expected = menu.selected();
 
         handle_shell_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 

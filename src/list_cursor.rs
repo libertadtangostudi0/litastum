@@ -1,16 +1,7 @@
-//! Clamped-cursor movement for a plain, flat list-picker popup.
-//!
-//! The same two lines (`selected = selected.saturating_sub(1)` on the
-//! way up, `if selected + 1 < len { selected += 1 }` on the way down)
-//! were hand-copied across roughly eight list-popup states in this
-//! codebase (`theming::{ThemeMenu, MainMenu, PopupStyleMenu}`,
-//! `command_line::{ShellMenu, CommandHistoryMenu}`,
-//! `explorer::DriveMenu`, `editor::{EditorKeymapMenu, EditorMenu}`),
-//! in two different shapes: a `move_up`/`move_down` method on the
-//! menu's own struct, or inlined directly in the key handler. Neither
-//! shape needed anything beyond `&mut usize` and a length, so there
-//! was nothing to gain from wrapping `selected` in a dedicated type --
-//! these two free functions are the whole thing.
+//! Clamped-cursor movement for a flat list popup. `choice_menu`
+//! builds on it for the fixed pickers; list popups with their own extra
+//! keys (`ThemeMenu`, `MainMenu`, `CommandHistoryMenu`, `DriveMenu`)
+//! use these two functions directly.
 
 /// Moves `selected` up by one row, clamped at `0` -- never panics on
 /// an already-empty list (`saturating_sub`).

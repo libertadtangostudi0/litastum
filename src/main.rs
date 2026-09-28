@@ -1,4 +1,5 @@
 mod app;
+mod choice_menu;
 mod command_line;
 mod compare;
 mod editor;

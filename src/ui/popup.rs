@@ -6,6 +6,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::choice_menu::ChoiceMenu;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::centered_rect;
 
@@ -206,6 +207,17 @@ pub fn draw_list_popup(frame: &mut Frame, area: Rect, theme: &Theme, style: Popu
         Span::styled(format!(" {esc_label}"), Style::default().fg(theme.text_dim)),
     ]);
     frame.render_widget(hint, rows[1]);
+}
+
+
+/// A `ChoiceMenu`'s option labels for `draw_list_popup`, the option
+/// equal to `current` (the setting actually in effect, not the
+/// highlighted row) suffixed with " (current)".
+pub fn choice_labels<T: Copy + PartialEq>(menu: &ChoiceMenu<T>, label: impl Fn(T) -> String, current: Option<T>) -> Vec<String> {
+    menu.options()
+        .iter()
+        .map(|&option| if Some(option) == current { format!("{} (current)", label(option)) } else { label(option) })
+        .collect()
 }
 
 

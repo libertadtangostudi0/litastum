@@ -4,13 +4,10 @@ use crate::editor::EditorMenu;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
-/// Renders the built-in editor's own F9 menu -- same shape as
-/// `ui/menu.rs::draw_main_menu` (the browsing screen's own F9), just
-/// over a single, currently one-item list (`EditorMenu::items`) rather
-/// than `MenuLevel`'s multi-level one.
+/// The editor's own F9 menu, drawn over the editor.
 pub fn draw_editor_menu(frame: &mut Frame, area: Rect, menu: &EditorMenu, theme: &Theme, style: PopupStyle) {
-    let labels: Vec<String> = menu.items().iter().map(|label| (*label).to_string()).collect();
-    popup::draw_list_popup(frame, area, theme, style, " Menu ", 30, &labels, menu.selected, "open", "close");
+    let labels = popup::choice_labels(menu, |item| item.label().to_string(), None);
+    popup::draw_list_popup(frame, area, theme, style, " Menu ", 30, &labels, menu.selected_index(), "open", "close");
 }
 
 
@@ -19,6 +16,8 @@ mod tests {
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
+    use crate::choice_menu::ChoiceMenu;
+    use crate::editor::EditorMenuItem;
 
     fn rendered(menu: &EditorMenu, style: PopupStyle) -> String {
         let backend = TestBackend::new(80, 24);
@@ -38,14 +37,14 @@ mod tests {
 
     #[test]
     fn shows_the_keybindings_item() {
-        let menu = EditorMenu::open();
+        let menu = ChoiceMenu::new(EditorMenuItem::ALL, None);
         let text = rendered(&menu, PopupStyle::Rounded);
         assert!(text.contains("Keybindings"));
     }
 
     #[test]
     fn renders_fine_in_classic_style_too() {
-        let menu = EditorMenu::open();
+        let menu = ChoiceMenu::new(EditorMenuItem::ALL, None);
         let text = rendered(&menu, PopupStyle::Classic);
         assert!(text.contains("Keybindings"));
     }

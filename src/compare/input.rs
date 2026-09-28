@@ -5,7 +5,7 @@ use tracing::debug;
 use crate::app::{App, Mode};
 use crate::editor::{edtui_supports_key, resolve_confirm_discard, ConfirmDiscardCommand};
 
-use super::menu::CompareMenu;
+use super::menu::open_compare_menu;
 
 /// A key press while Compare (`Mode::CompareFiles`) is open, at the
 /// level `handle_compare_key` needs to care about -- mirrors
@@ -80,7 +80,7 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<()> {
             let Mode::CompareFiles(state) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
                 unreachable!("just matched Mode::CompareFiles above");
             };
-            app.mode = Mode::CompareMenu(state, CompareMenu::open());
+            app.mode = Mode::CompareMenu(state, open_compare_menu());
         }
         CompareCommand::Forward => state.focused_mut().input(key),
         CompareCommand::Ignore => {}

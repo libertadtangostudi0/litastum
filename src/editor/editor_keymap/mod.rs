@@ -159,7 +159,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         let Mode::Editing(editor) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
             unreachable!("just matched Mode::Editing above");
         };
-        app.mode = Mode::EditorMenu(editor, super::menu::EditorMenu::open());
+        app.mode = Mode::EditorMenu(editor, super::menu::open_editor_menu());
         return Ok(());
     }
 

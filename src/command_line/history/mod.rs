@@ -80,7 +80,7 @@ pub fn record_history(app: &mut App, input: &str) {
 /// State for the F9 → Commands → History / `Alt+F8` popup — which row
 /// is highlighted. The history itself lives on `App::command_history`
 /// (recorded by `record_history` above), not here — this is just a
-/// cursor position, same shape as `app::ShellMenu`.
+/// cursor position.
 pub struct CommandHistoryMenu {
     pub selected: usize,
 }

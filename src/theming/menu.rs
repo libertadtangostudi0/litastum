@@ -6,7 +6,7 @@ use crate::app::{App, Mode};
 use crate::command_line::CommandHistoryMenu;
 use crate::explorer::FindFileState;
 use super::config;
-use super::popup_style_menu::PopupStyleMenu;
+use super::popup_style_menu::open_popup_style_menu;
 use super::theme_menu::ThemeMenu;
 
 /// F9's top menu. Enough structure to reach what's actually been asked
@@ -138,7 +138,7 @@ pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
                 (MenuLevel::Commands, Some("Find file")) => app.mode = Mode::FindFile(FindFileState::new()),
                 (MenuLevel::Commands, Some("History")) => app.mode = Mode::CommandHistory(CommandHistoryMenu::open()),
                 (MenuLevel::Options, Some("Color schemes")) => app.mode = Mode::ThemeMenu(ThemeMenu::open()),
-                (MenuLevel::Options, Some("UI")) => app.mode = Mode::PopupStyleMenu(PopupStyleMenu::open(app.popup_style)),
+                (MenuLevel::Options, Some("UI")) => app.mode = Mode::PopupStyleMenu(open_popup_style_menu(app.popup_style)),
                 (MenuLevel::Options, Some("Save setup")) => {
                     // Far Manager's own Shift+F9 -- persists the
                     // current session's choices (so far, just which
