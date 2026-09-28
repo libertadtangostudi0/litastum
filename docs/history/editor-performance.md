@@ -100,6 +100,21 @@ The swallow count is an estimate, hence the deadline: leaving a few
 stray tail characters is a minor imperfection; eating the user's next
 real keystrokes isn't.
 
+## Arrow keys lagging on a file with one enormous line
+
+After syntax highlighting was gated for pathologically long lines
+(`word_highlight.rs::has_pathologically_long_line`), such a file still
+lagged on every arrow press. `is_dirty` ran every frame (the
+"[modified]" title marker) and compared the live buffer to the saved
+one; `Lines`' derived `PartialEq` can only stop early on a difference,
+so proving the buffers *equal* -- the normal case while just moving the
+cursor -- walked hundreds of thousands of characters per redraw.
+`Editor::dirty` now caches the result and recomputes only after keys
+that can mutate the buffer (`can_mutate_buffer`; `Shift`/`Ctrl` on
+navigation keys only select or change jump size) and in
+`buffer_changed`. The same reasoning later ruled out diffing the buffer
+to skip no-op undo snapshots (`editor-undo.md`).
+
 ## Pasting into / deleting from a search field
 
 Reported: pasting into search fields was slow, and so was Backspace.
