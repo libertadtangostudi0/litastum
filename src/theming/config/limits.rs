@@ -2,19 +2,9 @@ use std::sync::OnceLock;
 
 use super::Config;
 
-/// App-wide tunable limits/caps, with known-safe defaults baked in here
-/// and overridable per-field via `config.json` (`Config`'s own new
-/// fields below) -- requested directly, after an audit pass turned up
-/// five unrelated hardcoded `const`s scattered across
-/// `command_line/history.rs`, `explorer/find_file/search.rs`,
-/// `ui/panel.rs`, `explorer/markdown_preview.rs`, and `logging.rs`, each
-/// only ever fixable by editing source and rebuilding. Centralizing the
-/// *values* here doesn't change who reads them -- each of those five
-/// call sites still reads its own one field straight from `limits()`
-/// (no new parameter threaded through any of their signatures) -- it
-/// just gives every one of them the same "known default, real override
-/// path" shape `interface_theme`/`popup_style`/... already have,
-/// instead of a bare `const` nobody but a developer could ever change.
+/// App-wide tunable caps: defaults here, each overridable in
+/// `config.json`. Callers read their one field from `limits()`. See
+/// `.claude/rules/litastum-config.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     /// How many typed commands `command_line/history.rs::record_history`
@@ -38,20 +28,9 @@ pub struct Limits {
     /// `logs/litastum.log` is truncated and restarted once a write
     /// would exceed this -- was `logging.rs::MAX_LOG_BYTES`.
     pub max_log_bytes: u64,
-    /// How many undo steps the built-in editor keeps for the `Standard`
-    /// keymap (`editor/editor/undo.rs`, every mutating key, not just
-    /// pastes -- the name predates that, when this capped a paste-only
-    /// stack; see `.claude/rules/litastum-editor-undo.md`). Made
-    /// configurable after a direct request: each entry is a full clone
-    /// of the *entire* buffer (`undo::Snapshot`, the same "brute-force,
-    /// whole-state" shape `edtui`'s own undo stack already uses
-    /// internally), and this project's own stated target scale is real
-    /// files in the tens, sometimes hundreds of thousands of lines
-    /// (`.claude/rules/litastum-performance.md`) -- an unbounded stack
-    /// could otherwise pile up that many full-buffer clones in memory at
-    /// once. Oldest entry drops off once exceeded, same "cap and drop
-    /// the oldest" rule `max_command_history` already follows -- the
-    /// oldest step is the least surprising one to lose.
+    /// Undo steps the editor keeps (`editor/editor/undo.rs`, every edit
+    /// despite the name). Each is a full buffer clone, so it's capped;
+    /// oldest dropped first.
     pub max_paste_undo_stack: usize,
 }
 

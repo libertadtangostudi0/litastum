@@ -9,41 +9,19 @@ use super::find_history;
 use super::keymap_mode::EditorKeymapMode;
 
 
-/// A user-triggered action while a file is open in the built-in editor,
-/// at the level the top-level dispatcher (`event_loop::keys`) needs to care about. Almost everything —
-/// typing, movement, selection, copy/cut/paste — is `edtui`'s own
-/// concern once a key reaches `Editor::input`; `Save` (a concept
-/// `edtui` has no notion of), `Close` (which `handle_editor_key` must decide
-/// whether to honor immediately or forward, depending on whether a
-/// selection is active — see `Editor::has_selection`), and `WordSelect`
-/// (hand-rolled logic `edtui`'s own declarative keymap can't express —
-/// see its own doc comment) are the only things resolved before that.
+/// An editor key resolved before (or instead of) `Editor::input`: things
+/// `edtui` has no notion of (save, the search box, the menu) or that its
+/// declarative table can't express. Everything else is `Forward`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorCommand {
     Close,
     Save,
     /// `Ctrl+Shift+Left`/`Right` -- word-wise selection
-    /// (`Editor::extend_word_selection`). Resolved here rather than
-    /// left to `edtui`'s own dispatch (`Forward`, below) because no
-    /// combination of `bindings.rs`'s declarative `Action` table could
-    /// give both "repeated presses keep progressing" and "`Left` undoes
-    /// exactly what `Right` just did" -- see
-    /// `docs/history/word-select.md` for the full
-    /// story of why. `handle_editor_key`'s own match arm for this only
-    /// calls that method under `EditorKeymapMode::Standard` -- it's
-    /// exactly the kind of hand-rolled, Standard-tuned correction pass
-    /// that must never run under `Vim` (see that enum's own doc
-    /// comment), and this call site had no such gate until a real Vim-
-    /// mode test found it running anyway.
+    /// (`Editor::extend_word_selection`), hand-rolled because no table
+    /// entry could express it; `Standard` only. History:
+    /// docs/history/word-select.md.
     WordSelect { forward: bool },
-    /// `Ctrl+A` -- selects the entire buffer (`Editor::select_all`).
-    /// Resolved here rather than left to `edtui`'s own dispatch: there's
-    /// no entry for it in `bindings.rs`'s declarative table at all (it
-    /// was simply never bound), and `edtui`'s own action set has no
-    /// single "select everything" primitive to bind to one key input
-    /// even if there were -- `Editor::select_all` chains several plain
-    /// motions instead, the same shape `WordSelect` above already uses
-    /// for logic too involved for one table entry.
+    /// `Ctrl+A` -- `Editor::select_all` (no single `edtui` action for it).
     SelectAll,
     /// `Ctrl+F` -- opens the built-in search box (`Editor::start_search`),
     /// or gives it focus back if it's open but the text has focus. Never
@@ -55,34 +33,18 @@ pub enum EditorCommand {
     /// this). A no-op with the box closed.
     FindNext,
     FindPrevious,
-    /// `F9` -- opens the built-in editor's own settings menu
-    /// (`Mode::EditorKeymapMenu`, currently just the `EditorKeymapMode`
-    /// picker) over the editor, Far Manager-style. `F9` isn't among the
-    /// fourteen `crossterm::event::KeyCode` variants `edtui` itself
-    /// understands (`edtui_supports_key`'s own doc comment), so it was a
-    /// silent no-op before this variant existed -- free real estate for
-    /// a new binding, not a rebind of anything.
+    /// `F9` -- the editor's own menu (`Mode::EditorMenu`), Far-style.
     OpenMenu,
     /// Not one of the bindings above — forward the raw key event to
     /// `Editor::input`.
     Forward,
-    /// A key `edtui` itself has no conversion for at all (see
-    /// `edtui_supports_key`'s own doc comment) -- swallowed here rather
-    /// than forwarded, so the editor stays isolated from whatever this
-    /// key would otherwise mean outside it (a global shortcut on the
-    /// browsing screen, or nothing at all).
+    /// A key `edtui` can't handle (`edtui_supports_key`) -- swallowed.
     Ignore,
 }
 
 
-/// Resolves a raw key press to an `EditorCommand`.
-///
-/// Matches both the lowercase and uppercase letter for `Ctrl+S`: some
-/// terminal/backend combinations report the Caps-Lock-affected case
-/// even while `Ctrl` is held, so it can arrive as `Char('S')` rather
-/// than `Char('s')` — this was found by hand while debugging save
-/// appearing to silently do nothing (back when this also handled
-/// copy/paste directly, before the `edtui` switch).
+/// Resolves a raw key press to an `EditorCommand`. Letters match both
+/// cases: some terminals report the Caps-Lock case with `Ctrl` held.
 pub fn resolve(key: KeyEvent) -> EditorCommand {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
@@ -102,38 +64,9 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
     }
 }
 
-/// Real crash, reported directly: `F10` (the app's own global quit key
-/// on the browsing screen) while a file was open in the editor panicked
-/// the whole process with `unimplemented!()` inside `edtui`'s own
-/// `KeyCode::from(crossterm::event::KeyCode)` conversion
-/// (`edtui-0.11.7/src/events/key/input.rs`, confirmed directly from
-/// source) -- forwarded here as `EditorCommand::Forward` like any other
-/// unrecognized key, then straight into `Editor::input` ->
-/// `EditorEventHandler::on_key_event`, which converts the raw
-/// `crossterm::event::KeyEvent` into `edtui`'s own `KeyInput`
-/// internally. That conversion only explicitly matches fourteen
-/// `crossterm::event::KeyCode` variants (`Char`, `Enter`, `Esc`,
-/// `Backspace`, `Delete`, `Tab`, the four arrow keys, `Home`, `End`,
-/// `PageUp`, `PageDown`) -- everything else, function keys included,
-/// falls through to an unconditional `unimplemented!()` catch-all with
-/// no fallback at all, not even a silent no-op.
-///
-/// The app's own mode-based dispatch (`event_loop::handle_event`) already
-/// means a global key like `F10` never reaches the browsing screen's
-/// own quit binding while `Mode::Editing` is active -- routing here
-/// through `handle_editor_key` is the *only* path a keystroke takes
-/// while editing, so "the editor needs isolated key handling" was
-/// already true structurally. This crash was really the isolation
-/// leaking the *other* way: an unsupported key wasn't being swallowed
-/// by the editor, it was being forwarded into a library that has no
-/// silent-ignore path for it at all. Matching an explicit allowlist of
-/// what `edtui` actually supports (rather than trying to name every
-/// unsupported crossterm variant -- function keys, `Insert`, `Null`,
-/// `CapsLock`, `Menu`, `KeypadBegin`, `Media(_)`, `Modifier(_)`, and
-/// whatever else crossterm might report) means a future `edtui` upgrade
-/// that starts supporting more keys just needs this list extended to
-/// match, rather than a blocklist that has to keep pace with every
-/// crossterm variant that exists.
+/// The keys `edtui`'s own key conversion handles; it hits
+/// `unimplemented!()` for any other (`F10` crashed the app). An
+/// allow-list, so an `edtui` upgrade only needs it extended. History: docs/history/editor-keymap.md.
 pub(crate) fn edtui_supports_key(code: KeyCode) -> bool {
     matches!(
         code,
@@ -177,21 +110,11 @@ pub fn resolve_confirm_discard(key: KeyEvent) -> ConfirmDiscardCommand {
 }
 
 
-/// Key handling while a file is open in the built-in editor. `Ctrl+S`
-/// and `Esc` are the only things this module resolves itself (`resolve`
-/// above) — everything else `edtui` actually understands, including
-/// copy/cut/paste/selection, is `edtui`'s own concern once forwarded to
-/// `Editor::input`; anything it doesn't (see `edtui_supports_key`'s own
-/// doc comment) is silently ignored instead of forwarded, rather than
-/// crashing. `Esc` is
-/// special-cased further: with an active selection it's forwarded too
-/// (so `edtui`'s own binding cancels the selection), only closing the
-/// editor once there's nothing selected.
-///
-/// Moved here from `main.rs` alongside `resolve`/`resolve_confirm_discard`
-/// so this module owns editor key handling end to end, the same way
-/// `theme_menu.rs`/`menu.rs` each own their own state and handling —
-/// `event_loop::keys::dispatch_key_event` stays a thin dispatcher over `Mode`.
+/// Key handling while a file is open in the editor. A focused search box
+/// gets every key (`handle_search_key`). `Esc` closes an open search box
+/// first, then cancels a selection, then closes the editor (asking first
+/// if there are unsaved changes). Everything `edtui` understands is
+/// forwarded to `Editor::input`; anything else is ignored.
 pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
     if matches!(&app.mode, Mode::Editing(editor) if editor.is_searching()) {
         return handle_search_key(app, key);
@@ -224,15 +147,8 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         return close_editor_or_confirm(app);
     }
 
-    // Only reachable from plain full-screen editing -- while a linked
-    // Markdown preview session is active (`App::markdown_edit_preview`),
-    // `F9` is silently swallowed instead (same as any other unbound key)
-    // rather than opening this menu over the split-view layout, which
-    // `ui::draw` has no rendering support for (`Mode::EditorMenu`'s own
-    // doc comment on `app.rs`). Not a real gap in practice: F9 while
-    // editing a linked preview's own source file is a narrow case with
-    // no reported need for it yet -- easy to add real split-view support
-    // for later if that changes.
+    // Not while a linked Markdown preview is open: `ui::draw` can't draw
+    // the menu over the split view. `F9` is swallowed there.
     if command == EditorCommand::OpenMenu {
         if app.markdown_edit_preview.is_some() {
             return Ok(());
@@ -256,11 +172,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         EditorCommand::OpenMenu => unreachable!("handled above"),
         EditorCommand::Save => {
             active_editor.save()?;
-            // Keeps a linked embedded preview (`App::markdown_edit_preview`)
-            // in sync with what was just written -- requested directly:
-            // saving should refresh the preview on the right. A
-            // disjoint field borrow from `active_editor` above (both are
-            // separate fields of `app`), not a re-borrow of `app.mode`.
+            // Saving refreshes a linked Markdown preview.
             if let Some(preview) = &mut app.markdown_edit_preview {
                 preview.reload();
             }
@@ -269,23 +181,8 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         EditorCommand::FindNext => active_editor.search_next(),
         EditorCommand::FindPrevious => active_editor.search_previous(),
         EditorCommand::SelectAll => active_editor.select_all(),
-        // `Editor::extend_word_selection` is exactly the kind of
-        // hand-rolled, Standard-keymap-tuned logic `EditorKeymapMode::Vim`'s
-        // own doc comment says never runs while Vim is active (it
-        // manages `word_select_touch`/`word_select_true_anchor`, state
-        // machinery built specifically around this app's own Ctrl+Shift+
-        // Left/Right gesture -- see `WordSelect`'s own doc comment for
-        // why it couldn't be expressed as a plain `bindings.rs` table
-        // entry in the first place). Found by hand while testing Vim
-        // mode directly: unlike `input()`'s own post-table correction
-        // block (gated on `keymap_mode` already), this call site had no
-        // such gate at all, so Ctrl+Shift+Right silently ran this
-        // Standard-only logic even in Vim, forcing `state.mode` into
-        // `Visual` outside any of Vim's own bindings. Forwarded as a
-        // raw key instead while Vim is active -- `edtui`'s own
-        // `vim_mode()` table has no entry for this key combination
-        // either, so `Editor::input` correctly treats it as a no-op,
-        // the same as any other genuinely unbound Vim key.
+        // Standard-only logic; under Vim the raw key goes to `edtui`,
+        // where it's unbound. History: docs/history/editor-keymap.md.
         EditorCommand::WordSelect { forward } => {
             if active_editor.keymap_mode() == EditorKeymapMode::Vim {
                 active_editor.input(key);
@@ -301,27 +198,12 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
 }
 
 
-/// Key handling while the `Ctrl+F` search box is open -- intercepted
-/// ahead of `resolve`/the normal table entirely (see `handle_editor_key`
-/// above), the same way an in-progress word-select drag or the discard
-/// prompt each own their own key handling rather than sharing the
-/// ordinary editor dispatch. The box is a full single-line text field
-/// (`Editor::search_edit_key` -- the same keys as Find file's fields,
-/// including selection with `Shift`/`Ctrl+Shift` + arrows and typing
-/// over it), and every text change filters the matches live; `Enter`/`Shift+Enter`
-/// jump to the next/previous match, VS Code's own `Ctrl+F` convention --
-/// `Up`/`Down` were tried for this first and reported wrong: those are
-/// for browsing *history* instead (`Editor::search_history_up`/`_down`),
-/// the same way a shell's own `Up`/`Down` recall past commands rather
-/// than doing anything to the command currently being typed. `End`
-/// accepts the ghost-text history suggestion shown after the query, if
-/// any (`find_history::suggest`) and the box's own cursor is already at
-/// the end -- otherwise it just moves there first, like `End` in any
-/// other text field (a shell's own autosuggestion convention: the
-/// suggestion is taken from the end of the line, not from the middle
-/// of it); `Esc` closes the box and records the
-/// query into the persisted search history
-/// (`find_history::record_history`/`save_history`) if it isn't empty.
+/// Key handling while the `Ctrl+F` box has focus. The box is a full
+/// single-line text field (`Editor::search_edit_key`) that filters
+/// matches live. `Enter`/`Shift+Enter` go to the next/previous match (VS
+/// Code); `Up`/`Down` browse the search history, like a shell; `End` at
+/// the end of the query accepts the ghost-text suggestion; `Esc` closes
+/// the box and records a non-empty query. History: docs/history/editor-keymap.md.
 fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let Mode::Editing(active_editor) = &mut app.mode else {
         return Ok(());
@@ -334,18 +216,8 @@ fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<()> {
             if !query.is_empty() {
                 find_history::record_history(&mut app.search_history, &query);
             }
-            // Deliberately doesn't save to disk here -- this function is
-            // heavily unit-tested (see `handle_search_key_tests` below),
-            // and saving here would mean every one of those tests writes
-            // a real `editor_search_history.txt` into the cwd, exactly
-            // the trap `command_line::history` avoids by keeping
-            // `record_history` (memory) and `save_history` (disk)
-            // separate, with only the latter's *own* caller
-            // (`browsing::run_command_line`) touching disk -- see that
-            // function's own doc comment. `main.rs::main` persists
-            // `app.search_history` once at clean exit instead, the same
-            // in-memory-during-the-session shape without any unit-tested
-            // code path ever touching the real filesystem.
+            // Saved to disk once at exit (`main.rs`), not here -- this
+            // handler is unit-tested and would write into the cwd.
         }
         KeyCode::Up => active_editor.search_history_up(&app.search_history),
         KeyCode::Down => active_editor.search_history_down(&app.search_history),
@@ -367,15 +239,9 @@ fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<()> {
 }
 
 
-/// `Esc` in the editor: closes straight back to browsing if the buffer
-/// has no unsaved changes, otherwise moves to `Mode::ConfirmDiscard`
-/// instead of discarding them silently. `pub(crate)` (not just a
-/// private `fn`) so `explorer::markdown_preview::input::handle_markdown_edit_preview_key`
-/// can reuse it too -- `Esc`/`F3` on the *embedded preview* half of a
-/// combined editor+preview session (`App::markdown_edit_preview`) needs
-/// to close the whole session exactly like `Esc` on the editor half
-/// already does, unsaved-changes prompt included, rather than
-/// duplicating this logic for that one extra caller.
+/// Closes the editor if the buffer is clean, else opens
+/// `Mode::ConfirmDiscard`. Also used by the embedded Markdown preview's
+/// own `Esc`/`F3`, which close the whole session.
 pub(crate) fn close_editor_or_confirm(app: &mut App) -> Result<()> {
     let Mode::Editing(editor) = &app.mode else {
         return Ok(());
@@ -394,33 +260,12 @@ pub(crate) fn close_editor_or_confirm(app: &mut App) -> Result<()> {
 }
 
 
-/// The editor is actually closing for good (no unsaved changes, or they
-/// were just discarded) -- reloads the active panel (in case anything
-/// changed on disk while editing) and hands control back to wherever
-/// `F4` was originally pressed from: `Mode::Browsing` normally,
-/// `Mode::FindFile` if it was pressed from the Find file results popup
-/// (`app.editor_return_to`, set by `find_file/input.rs::edit_selected_result`),
-/// or `Mode::UserMenu` if it was pressed on a `Commands` item in the
-/// `F2` user menu (`app.user_menu_command_edit`, set by
-/// `explorer::user_menu::input::open_edit_selected_command`) -- each
-/// taken (`Option::take`) exactly once here; at most one is ever
-/// actually set at a time, since the editor can only have been opened
-/// from one place. The user-menu case also has to *finish* the edit
-/// (`explorer::finish_command_edit`: read the scratch file's final
-/// contents back into the item, persist, delete the scratch file),
-/// not just pick which mode to restore -- unlike the other two cases,
-/// the editor here was never pointed at the item's real backing file.
-/// `Mode::ConfirmDiscard`'s own `Cancel` path (back into the editor,
-/// nothing lost) deliberately does *not* call this -- the editor hasn't
-/// actually closed there.
-///
-/// Also clears `App::markdown_edit_preview` whenever a linked preview
-/// was showing -- the embedded-preview half of a combined editor+preview
-/// session (`explorer::markdown_preview::open_edit_preview`) has no
-/// close path of its own once this actually runs, since `Esc`/`F3` on
-/// either half funnels through `close_editor_or_confirm` into here.
-/// Mouse capture turns itself off with the editor
-/// (`event_loop::sync_mouse_capture`).
+/// The editor is closing for good: reloads the active panel and returns
+/// to wherever `F4` came from -- `Mode::FindFile` (`editor_return_to`),
+/// `Mode::UserMenu` after writing the scratch file back
+/// (`user_menu_command_edit`), else browsing. Clears a linked Markdown
+/// preview; mouse capture follows the mode. Cancelling the discard
+/// prompt doesn't come here -- the editor hasn't closed.
 fn return_from_editor(app: &mut App) -> Result<()> {
     app.active_panel().reload()?;
     app.markdown_edit_preview = None;

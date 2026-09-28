@@ -22,46 +22,17 @@ pub(crate) use shell_exec::run_command_line;
 
 use hidden_console::toggle_panels_hidden;
 
-/// Key handling in the browser: `Ctrl+P` opens the shell picker,
-/// `Ctrl+U` swaps the two panels' contents (`Command::SwapPanels`),
-/// `Shift+F6` opens the rename prompt, `Shift+Enter` (command line
-/// empty) opens a directory under the cursor in the OS's own file
-/// manager instead of navigating into it (a file opens in the built-in
-/// editor instead, same as plain `Enter` — see `explorer::keymap::
-/// Command::OpenInFileManager`'s own doc comment), `Alt+F1`/`Alt+F2`/
-/// `Alt+F5`/`Alt+F7`/`Alt+F8` open their own popups (all need the raw
-/// modifier, which `keymap::resolve`'s table can't see since it only
-/// keys off `KeyCode`), `Shift+Left`/`Right` and `Ctrl+Shift+Left`/`Right`
-/// select within the command line (character- and word-wise), plain
-/// `Ctrl+Left`/`Right` moves the cursor by a word with no selection —
-/// all reusing `text_field.rs`'s cursor/selection functions against
-/// `App::command_line_cursor`/`command_line_selection_anchor`; bare
-/// `Left`/`Right` are still panel navigation only, never touched
-/// here), `Enter` with something typed runs it
-/// (`shell_exec::run_command_line`). While an auto-popping history-
-/// suggestion list is actually showing (`suggest_history` found at
-/// least one match), `Up`/`Down` move within it and `Tab` accepts the
-/// highlighted entry into the command line instead of their usual
-/// meaning (panel navigation / path completion) — see the dedicated
-/// check below for why `Enter` is deliberately *not* part of that.
-/// Otherwise `Tab` completes a path while something's typed, then the
-/// fixed `keymap::resolve` table (arrows, Tab, F4/F9/F10, and `Enter`
-/// on an *empty* command line — `EnterSelected`, unchanged) takes
-/// over; anything that table doesn't bind — plain characters,
-/// `Backspace`, `Delete`, `Esc` — edits the always-live command line at
-/// the bottom of the browser. This is also why `q` no longer quits on its
-/// own (`keymap.rs`) — a bare letter now types into the command line
-/// like any other.
+/// Key handling in the browser. Modifier chords come first (they need
+/// the raw modifier; `keymap::resolve` only sees `KeyCode`), then the
+/// command line's own selection/word keys, `Enter` to run, the history
+/// suggestions, `Tab` completion, the fixed `keymap::resolve` table, and
+/// finally editing the always-live command line. Bare `Left`/`Right`
+/// stay panel navigation. Order and scope cuts:
+/// `.claude/rules/litastum-command-line.md`.
 pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     debug!(?key, "browsing key");
 
-    // Ctrl+O -- real Far Manager's own "show/hide panels" toggle,
-    // requested directly so real output already sitting on the actual
-    // terminal (a command run through `run_shell_command_lines`, or
-    // anything printed before litastum itself even started) can be
-    // looked at again without re-running whatever produced it. Also a
-    // real command line of its own while hidden -- see
-    // `shell_exec::toggle_panels_hidden`'s own doc comment.
+    // Ctrl+O -- Far's show/hide panels (`hidden_console`).
     if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return toggle_panels_hidden(app, terminal);
     }
@@ -71,46 +42,30 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         return Ok(());
     }
 
-    // Ctrl+U -- real Far Manager's own "swap panels" binding
-    // (`Command::SwapPanels`'s own doc comment has the full reasoning).
-    // Needs the raw modifier, same reason as Ctrl+O/Ctrl+P above.
+    // Ctrl+U -- Far's swap panels.
     if key.code == KeyCode::Char('u') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return execute(Command::SwapPanels, app);
     }
 
-    // Shift+F6 (rename) vs plain F6 (move) only differ by modifier --
-    // keymap::resolve's table keys off KeyCode alone, so this one has
-    // to be special-cased ahead of it, same as Ctrl+P above.
+    // Shift+F6 -- rename (plain F6 is move).
     if key.code == KeyCode::F(6) && key.modifiers.contains(KeyModifiers::SHIFT) {
         return execute(Command::RenameSelected, app);
     }
 
-    // Shift+Enter -- on a directory, opens it in the OS's own file
-    // manager (`explorer::system_open`) instead of navigating into it;
-    // on a file, opens the built-in editor, same as plain Enter
-    // (`Command::OpenInFileManager`'s own doc comment has the full
-    // reasoning) -- needs the raw modifier, same reason as Shift+F6
-    // above. Only while the command line is empty, matching plain
-    // Enter's own "acts on the panel selection" case immediately below
-    // in `keymap::resolve` -- with something typed, Shift+Enter has no
-    // special meaning here and falls through to the same "run it"
-    // handling plain Enter gets.
+    // Shift+Enter on an empty line -- a directory opens in the OS file
+    // manager, a file in the built-in editor (`Command::OpenInFileManager`).
     if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) && app.command_line.is_empty() {
         return execute(Command::OpenInFileManager, app);
     }
 
-    // Alt+F7 -- real Far Manager's own global shortcut for "Find file",
-    // previously only reachable through F9 -> Commands -> Find file.
-    // Same reason as Shift+F6 above: needs the raw modifier.
+    // Alt+F7 -- Find file.
     if key.code == KeyCode::F(7) && key.modifiers.contains(KeyModifiers::ALT) {
         app.mode = Mode::FindFile(FindFileState::new());
         return Ok(());
     }
 
-    // Alt+F1/Alt+F2 -- real Far Manager's own per-panel "change drive"
-    // popup. Always the left/right panel respectively, not whichever
-    // one currently has focus (`DriveMenu::open`'s `target_panel`),
-    // matching real Far -- same raw-modifier reasoning as above.
+    // Alt+F1/Alt+F2 -- change drive for the left/right panel (always
+    // that panel, not the focused one, as in Far).
     if key.code == KeyCode::F(1) && key.modifiers.contains(KeyModifiers::ALT) {
         app.mode = Mode::ChangeDrive(DriveMenu::open(0));
         return Ok(());
@@ -120,36 +75,15 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         return Ok(());
     }
 
-    // Alt+F8 -- real Far Manager's own global shortcut for "History",
-    // previously only reachable through F9 -> Commands -> History.
-    // Same raw-modifier reasoning as above.
+    // Alt+F8 -- command history.
     if key.code == KeyCode::F(8) && key.modifiers.contains(KeyModifiers::ALT) {
         app.mode = Mode::CommandHistory(CommandHistoryMenu::open());
         return Ok(());
     }
 
-    // Alt+F5 -- Compare files (`compare.rs`, `TODO/file-compare.md`),
-    // requested directly. Bare `F5` is Copy; `keymap::resolve`'s own
-    // `KeyCode::F(5) => Command::CopySelected` arm has no modifier
-    // awareness at all (confirmed directly against its source), so
-    // `Alt+F5` needs the same raw-modifier interception every other
-    // rebound `Alt+F<n>` above already gets, ahead of that table, or it
-    // would silently fall through to Copy instead.
-    //
-    // Two source conventions, checked in this order (requested directly
-    // as an addition on top of the original cross-panel behavior, not a
-    // replacement for it): if the *active* panel has exactly two entries
-    // marked (Far Manager-style multi-select, `Ins`/`Shift+Up`/`Down`/...),
-    // compare those two directly -- lets someone compare two files sitting
-    // side by side in the same directory without needing them split
-    // across both panels first. Otherwise, falls back to the original
-    // two-panel convention (`compare_targets`'s own doc comment).
-    //
-    // A silent no-op if either resolved path can't be opened as a
-    // comparison at all (e.g. a selected "file" is actually a directory)
-    // -- same "couldn't act on this" convention the rest of this codebase
-    // already follows, not an error popup for what's usually just an
-    // empty/directory-only panel.
+    // Alt+F5 -- Compare files (`compare_targets`). Must come before the
+    // table, which maps any F5 to Copy. Silently does nothing if a path
+    // can't be compared (e.g. a directory).
     if key.code == KeyCode::F(5) && key.modifiers.contains(KeyModifiers::ALT) {
         let Some((left_path, right_path)) = compare_targets(app) else {
             return Ok(());
@@ -161,17 +95,8 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         return Ok(());
     }
 
-    // Ctrl+Shift+Left/Right (word-wise) select within the command line
-    // -- reported as a real gap: fixing a typo in the middle of a typed
-    // command ("go info" meant to be "svn info") had no way to select
-    // and replace just the wrong word, only backspacing everything
-    // after it. Bare Left/Right still aren't touched here
-    // (`keymap::resolve`'s table below still owns them, for panel
-    // navigation) -- panel navigation never claimed this combination in
-    // the first place. Reuses `text_field.rs`'s selection functions
-    // (built for the Copy/Move destination field) against the command
-    // line's own `command_line_cursor`/`command_line_selection_anchor`
-    // rather than duplicating that logic.
+    // Ctrl+Shift+Left/Right -- word-wise selection in the command line
+    // (`text_field`).
     if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::SHIFT) && key.modifiers.contains(KeyModifiers::CONTROL) {
         text_field::extend_selection_word_left(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
         return Ok(());
@@ -181,15 +106,8 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         return Ok(());
     }
 
-    // Bare Shift+Left/Right (character-wise, no Ctrl) select within the
-    // command line -- same reasoning as the Ctrl+Shift case above, but
-    // only while there's actually a typed command to select within.
-    // Once the line is empty, bare Shift+Left/Right falls through
-    // instead to the panel's own column-marking
-    // (`Command::MarkMoveLeft`/`MarkMoveRight`, below) -- these two
-    // combinations don't collide with each other since selecting
-    // nothing in an empty command line was never a meaningful action to
-    // give up.
+    // Shift+Left/Right -- character selection while something is typed;
+    // on an empty line they fall through to panel marking below.
     if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::SHIFT) && !key.modifiers.contains(KeyModifiers::CONTROL) && !app.command_line.is_empty() {
         text_field::extend_selection_left(&mut app.command_line_cursor, &mut app.command_line_selection_anchor);
         return Ok(());
@@ -199,17 +117,8 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         return Ok(());
     }
 
-    // Ctrl+Left/Right (no Shift) -- plain word-wise cursor movement, no
-    // selection. `resolve(key.code)` below only sees `KeyCode`, not
-    // modifiers, so without this check Ctrl+Left/Right would silently
-    // fall through to the exact same panel-navigation move as a bare
-    // arrow -- not a loss of any existing behavior (bare Left/Right
-    // already cover that), just Ctrl+arrow having done nothing of its
-    // own until now. Clears a selection rather than collapsing to its
-    // edge (`text_field::collapse_selection_left/right`'s own
-    // behavior): a real editor's Ctrl+arrow moves *from* the cursor by
-    // a word and drops the selection, it doesn't jump to whichever edge
-    // is already closer.
+    // Ctrl+Left/Right -- move by a word and drop any selection (like a
+    // real editor, not collapse to its nearer edge).
     if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) {
         app.command_line_selection_anchor = None;
         text_field::move_word_left(&app.command_line, &mut app.command_line_cursor);
@@ -221,23 +130,9 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         return Ok(());
     }
 
-    // Shift+A / Shift+Up/Down/Left/Right -- marks files/directories in
-    // the active panel (Far Manager-style multi-select,
-    // `panel/marks.rs`). Shift+Up/Down have no command-line meaning to
-    // yield to (this project's command line never moves its own cursor
-    // via arrows at all, only Backspace/typed characters edit it), so
-    // they're always available. Shift+Left/Right only reach here once
-    // the command line is empty -- the check above already claims them,
-    // unconditionally, for extending a text selection whenever there's
-    // something to select. Shift+A is gated on an empty line
-    // explicitly, unlike the arrows: unlike Ctrl+A (which types
-    // nothing), Shift+A types a literal uppercase 'A' -- reported
-    // directly as a real conflict, since swallowing it unconditionally
-    // would make it impossible to start a command with a capital
-    // letter. Deliberately accepted as a narrower binding than the
-    // arrows: "select all" only fires on the very first keystroke of an
-    // otherwise-empty line, exactly the one place it can never compete
-    // with typing text.
+    // Shift+A / Shift+arrows -- mark entries (`panel/marks.rs`).
+    // Shift+A only on an empty line, or a command could never start with
+    // a capital letter.
     if key.modifiers.contains(KeyModifiers::SHIFT) && !key.modifiers.contains(KeyModifiers::CONTROL) {
         let mark_command = match key.code {
             KeyCode::Char('a' | 'A') if app.command_line.is_empty() => Some(Command::SelectAll),
@@ -257,19 +152,9 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         return run_command_line(app, terminal);
     }
 
-    // Auto-popping history suggestions (`ui::draw_history_suggestions`)
-    // claim Up/Down/Tab while they're actually showing -- i.e. only
-    // once there's a non-empty command line with at least one deduped
-    // substring match (`suggest_history`), same "only while something
-    // matters" guard the older Tab-path-completion check below already
-    // uses. Checked ahead of that Tab check so a showing suggestion
-    // list wins the key over path completion; falls through untouched
-    // to normal panel navigation / path completion whenever there's
-    // nothing to suggest, so this never steals arrows or Tab
-    // otherwise. `Enter` is deliberately left alone here -- it always
-    // just runs whatever's literally typed (`run_command_line`,
-    // below), suggestion showing or not, so accepting one never
-    // surprises you into running something you didn't type.
+    // While history suggestions are showing, Up/Down/Tab work on them
+    // (ahead of path completion). `Enter` always runs exactly what's
+    // typed, so accepting a suggestion never runs something unexpected.
     let suggestions = suggest_history(&app.command_history, &app.command_line);
     if !app.command_line.is_empty() && !suggestions.is_empty() && !app.command_line_suggestion_dismissed {
         match key.code {
@@ -291,11 +176,7 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
                     app.command_line_selection_anchor = None;
                 }
                 app.command_line_suggestion_selected = 0;
-                // The just-accepted command line is always itself a
-                // substring match of the entry it came from, so the
-                // same list would otherwise reappear unchanged on the
-                // very next frame -- suppress it until an actual edit
-                // (insert_char/backspace/Esc, below) clears this again.
+                // See `App::command_line_suggestion_dismissed`.
                 app.command_line_suggestion_dismissed = true;
                 return Ok(());
             }
@@ -303,12 +184,8 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         }
     }
 
-    // Tab completes the command line's typed text (below) while
-    // there's something to complete; only falls through to
-    // `keymap::resolve`'s Tab-as-ToggleActive binding once the line is
-    // empty. Without this check, Tab always switched panels, even
-    // mid-command -- exactly backwards from every shell's own
-    // convention for the key.
+    // Tab completes while something is typed; on an empty line it
+    // switches panels (the table below).
     if key.code == KeyCode::Tab && !app.command_line.is_empty() {
         let cwd = app.active_panel().path.clone();
         complete(&mut app.command_line, &cwd, &mut app.command_line_completion);
@@ -319,18 +196,11 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
 
     if let Some(cmd) = resolve(key.code) {
         debug!(?cmd, "browsing command");
-        // Any bound command (including plain Tab on an empty line,
-        // switching panels) leaves the command line untouched, so a
-        // stale completion cycle wouldn't otherwise get cleared here --
-        // but there's nothing left to cycle through once the mode
-        // changes or the panel does, so drop it regardless.
+        // A bound command ends any completion cycle and suggestion
+        // browsing.
         app.command_line_completion = None;
         app.command_line_suggestion_selected = 0;
-        // Bare Left/Right always mean panel navigation here (the
-        // Shift/Ctrl+Shift combinations above are what select within
-        // the command line) -- clear a selection left active from
-        // before, so it doesn't visually linger once focus has moved
-        // to browsing the panels instead of editing the command line.
+        // Focus moved to the panels -- drop the command-line selection.
         app.command_line_selection_anchor = None;
         return execute(cmd, app);
     }
@@ -345,11 +215,7 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
             app.command_line_suggestion_dismissed = false;
         }
         KeyCode::Backspace => {
-            // A selection is what Backspace deletes if one's active
-            // (`text_field::delete_selection`) -- only falls back to
-            // removing one character at the cursor when there isn't
-            // one, same "select, then edit" flow a normal text field
-            // gives.
+            // Deletes the selection if any, else one character.
             if !text_field::delete_selection(&mut app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor) {
                 text_field::backspace(&mut app.command_line, &mut app.command_line_cursor);
             }
@@ -357,10 +223,7 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
             app.command_line_suggestion_selected = 0;
             app.command_line_suggestion_dismissed = false;
         }
-        // Forward delete -- reported missing directly. Same "consume a
-        // selection first, otherwise remove one character" shape as
-        // Backspace right above, just removing the character *at* the
-        // cursor instead of the one before it.
+        // Same as Backspace, deleting forward.
         KeyCode::Delete => {
             if !text_field::delete_selection(&mut app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor) {
                 text_field::delete_forward(&mut app.command_line, &mut app.command_line_cursor);
@@ -370,10 +233,7 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
             app.command_line_suggestion_dismissed = false;
         }
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // Typing over an active selection replaces it, same as any
-            // normal text field -- delete it first, then insert at the
-            // cursor `delete_selection` left behind (the selection's
-            // own start).
+            // Typing over a selection replaces it.
             text_field::delete_selection(&mut app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
             text_field::insert_char(&mut app.command_line, &mut app.command_line_cursor, c);
             app.command_line_completion = None;
@@ -387,18 +247,10 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
 }
 
 
-/// Which two files `Alt+F5` should compare -- pulled out of
-/// `handle_browsing_key` as its own pure function (no `Terminal`
-/// needed, unlike that function's other branches) so it's directly
-/// unit-testable. If the *active* panel has exactly two entries marked,
-/// compares those two. Otherwise, falls back to the original two-panel
-/// convention: the active panel's own selected file as the left pane,
-/// the *other* (inactive) panel's own selected file as the right one.
-/// Any other marked count (0, 1, or 3+) also falls back to the
-/// two-panel convention -- there's no sensible third pane to put a
-/// third marked file into, and silently picking "the first two" would
-/// be surprising rather than helpful. `None` if a fallback path has
-/// nothing selected.
+/// Which two files `Alt+F5` compares: exactly two marked entries in the
+/// active panel if so, otherwise each panel's cursor file (active panel
+/// on the left). Any other marked count falls back too -- there's no
+/// sensible third pane. `None` if a panel has nothing selected.
 fn compare_targets(app: &App) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     let marked_in_active_panel: Vec<std::path::PathBuf> = {
         let panel = &app.panels[app.active];

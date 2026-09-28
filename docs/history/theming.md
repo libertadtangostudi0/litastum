@@ -44,6 +44,19 @@ preview it is backwards. `./themes/` became a fallback after the config
 dir. `cargo test`'s cwd is also the package root, so this path has real
 test coverage (`config.rs`'s `*_via_cwd_fallback` tests).
 
+## `config_dir()` is `None` in tests
+
+`LITASTUM_CONFIG_DIR` was added for local development (testing the F2
+menu's common-directory fallback without creating files under
+`%APPDATA%`). The first time it was actually set to a directory with a
+real menu, an integration test
+(`open_user_menu_tests::creates_and_opens_a_new_menu_file_when_neither_exists`)
+started failing: the new fallback routed it through the real config
+directory. Every other config-touching function had always been kept
+out of tests for exactly this reason, so the gate went into
+`config_dir()` itself -- the one choke point -- rather than into each
+affected test. `limits()` follows the same rule.
+
 ## `success`/`warning` in `Theme`
 
 Planned in the original "color 2" design (`litastum-ui-theme.md`) but

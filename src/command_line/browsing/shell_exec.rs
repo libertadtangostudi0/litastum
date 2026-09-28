@@ -18,57 +18,22 @@ mod app_paths;
 use super::hidden_console::is_ctrl_o;
 
 
-/// Prints one line to the real (TUI-suspended) console in `theme.text`
-/// -- as close as this project's "inherit stdio, don't capture it"
-/// design (see `.claude/rules/litastum-command-line.md`) can get to
-/// real Far Manager's own `CommandLine.UserScreen` color group. This
-/// only colors litastum's *own* printed lines (the echoed `"{cwd}> "`
-/// prompt) -- the shelled-out command's own output is never touched,
-/// since it's real inherited stdio, not something rendered through our
-/// own buffer the way Far's full-screen text-mode architecture lets it
-/// recolor everything (including a child process's output).
-/// Reproducing that would need a PTY-based capture-and-recolor layer --
-/// a much bigger redesign than this project's current "suspend the TUI
-/// and hand off stdio directly" approach.
-///
-/// **Foreground only, no explicit background** -- reported directly
-/// from a screenshot: painting `theme.bg` behind these lines made them
-/// stand out as a highlighted-looking rectangle, since a real
-/// terminal's own default background is whatever the user has it set
-/// to, not necessarily `theme.bg` (the same reason
-/// `.claude/rules/litastum-popup-design.md`'s own popup-fill saga
-/// eventually gave up trying to match an untouched default by painting
-/// a guessed color over it). Leaving the background alone lets these
-/// lines blend into the same real background every other line on this
-/// suspended console already sits on.
+/// Prints one of litastum's own lines (the echoed `"{cwd}> "` prompt) to
+/// the suspended console in `theme.text`. Foreground only: the terminal's
+/// default background isn't necessarily `theme.bg`. The command's own
+/// output is inherited stdio and never recolored.
 pub(super) fn print_themed(theme: &crate::theming::Theme, args: std::fmt::Arguments) -> Result<()> {
     execute!(std::io::stdout(), SetForegroundColor(to_crossterm_color(theme.text)), Print(args), ResetColor)?;
     Ok(())
 }
 
 
-/// Discards every input event already sitting in the console's queue,
-/// without blocking for one that isn't there yet. Returns `true` if a
-/// genuine `Ctrl+O` (`toggle_panels_hidden`'s own "return to panels"
-/// key) was among what got discarded -- unlike an ordinary stray
-/// keystroke, that one can't just be thrown away silently; see
-/// `run_single_line_on_console`'s own doc comment for why.
-///
-/// Reported directly from a screenshot: after running one command, the
-/// prompt for the *next* one showed up printed three times in a row on
-/// the same line before the actually-typed command. Root cause: while
-/// a real subprocess has the console (raw mode off, its own stdin),
-/// any keys the user presses meanwhile -- an impatient extra `Enter`
-/// while `svn merge` is still working, say -- aren't lost, they queue
-/// up at the OS console level regardless of which process currently
-/// "owns" the terminal. The moment raw mode comes back on and this
-/// loop resumes reading events, each of those queued `Enter` presses
-/// gets treated as a real (empty) command line -- printing the prompt
-/// again with nothing typed, since nothing distinguishes a leftover
-/// keystroke from a fresh, intentional one. Called right after
-/// `enable_raw_mode()` in both places that suspend the console for a
-/// child process (`run_shell_command_lines`, `run_single_line_on_console`),
-/// before anything else reads a "real" event again.
+/// Discards every input event queued while a child process owned the
+/// console (keys pressed meanwhile queue at the OS level; a stray
+/// `Enter` would otherwise run as an empty command and reprint the
+/// prompt). Call right after `enable_raw_mode()`. Returns `true` if a
+/// `Ctrl+O` was among them -- that one carries intent and the hidden
+/// console honors it. History: docs/history/command-execution.md.
 pub(super) fn drain_stale_input() -> Result<bool> {
     let mut saw_ctrl_o = false;
     while event::poll(std::time::Duration::from_secs(0))? {
@@ -96,15 +61,10 @@ fn to_crossterm_color(color: ratatui::style::Color) -> CtColor {
 }
 
 
-/// Runs whatever's typed in `app.command_line`: `cd`-shaped input
-/// changes the active panel's directory directly (`Panel::change_dir`
-/// — a spawned shell's own `cd` could never affect our process, so
-/// this has to be handled ourselves, same as Far Manager does it);
-/// `cls`/`clear` repaint the TUI directly (below) rather than actually
-/// shelling out; anything else suspends the TUI and hands the console
-/// to the configured shell profile (`app.shell_profiles[app.active_shell]`),
-/// inheriting stdio so interactive programs (an editor, a REPL, ...)
-/// work too, not just one-shot commands.
+/// Runs `app.command_line`: `cd` moves the active panel (a shell's own
+/// `cd` couldn't affect our process), `cls`/`clear` repaint the TUI, and
+/// anything else suspends the TUI and runs through the active shell
+/// profile with inherited stdio, so interactive programs work.
 pub(crate) fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     let input = app.command_line.trim().to_string();
     app.command_line.clear();
@@ -122,17 +82,7 @@ pub(crate) fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermB
         return Ok(());
     }
 
-    // A screen-clear command's entire job is leaving nothing on
-    // screen -- shelling out to a real `cls`/`clear` did exactly that,
-    // including wiping the "{cwd}> cls" prompt line printed just below
-    // for every other command, and then the "Press any key to
-    // continue..." pause (which exists so real command *output* isn't
-    // lost the instant the panels redraw over it) had nothing left to
-    // protect -- just a stray message floating on an otherwise blank
-    // screen. Reported as a confusing/broken-looking screen; fixed by
-    // never leaving the TUI for these two at all, matching what the
-    // command is actually trying to accomplish (a repaint) far more
-    // directly than round-tripping through a real subprocess.
+    // Handled in-process: shelling out wiped even the echoed prompt.
     if input == "cls" || input == "clear" {
         debug!("command line: clear screen (handled directly, no subprocess)");
         terminal.clear()?;
@@ -144,17 +94,9 @@ pub(crate) fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermB
 }
 
 
-/// If `input` is a `cd` command, returns its argument (trimmed) — or
-/// `None` for the argument-less `"cd"` (a no-op, not "go home"; see
-/// the plan doc), and `None` for anything that isn't `cd` at all
-/// (including a different command that merely starts with "cd", like
-/// `"cdw"` — checked via a word boundary, not a bare prefix).
-///
-/// Understands `cmd.exe`'s own `cd /d <path>` form and a quoted path
-/// (`cd "W:\Work Copies"`) -- found while fixing `cd` in user-menu
-/// items, where both are common (Far Manager menus in particular): the
-/// `/d` switch and the quotes used to end up as part of the path
-/// itself, which then silently resolved to nowhere.
+/// If `input` is a `cd` command, its target -- `None` for a bare `cd`
+/// (a no-op, not "go home") and for anything else, including `cdw`.
+/// Understands `cmd.exe`'s `cd /d <path>` and a quoted path.
 pub(super) fn parse_cd_target(input: &str) -> Option<&str> {
     let rest = input.strip_prefix("cd")?;
     if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
@@ -175,49 +117,10 @@ pub(super) fn parse_cd_target(input: &str) -> Option<&str> {
 }
 
 
-/// Appends `line` -- the actual typed/substituted command text, e.g.
-/// `svn cleanup --remove-unversioned --remove-ignored "Project Alpha"`
-/// -- to `command` as the argument the active shell profile's own
-/// `/C`/`-Command`/`-c` flag receives. **Not** a plain `.arg(line)` on
-/// Windows -- reported directly, against a real quoted argument: the
-/// shell (`cmd`, or the file/folder name it names) ended up seeing the
-/// literal characters `"Project Alpha"`, quotes included, instead of
-/// the bare name they were meant to delimit (`svn`'s own error message
-/// named the culprit outright: `Error resolving case of
-/// '"Project Alpha"'`). Root cause: `Command::arg` on Windows
-/// re-escapes its argument for `CommandLineToArgvW`-style parsing
-/// (wrapping the whole string in an *extra* pair of quotes since it
-/// contains spaces, and backslash-escaping every quote already inside
-/// it) -- correct for a child that parses its own argv the normal
-/// Windows way, but `cmd.exe` (and `powershell.exe -Command`) instead
-/// *re-parses* their `/C`/`-Command` argument as an entire command
-/// line of their own, using their own, different quoting rules that
-/// don't treat a backslash before a quote as an escape at all. The net
-/// effect: the user's own quotes around `Project Alpha` survived,
-/// mangled, all the way through to `svn`'s own argv.
-/// `CommandExt::raw_arg` appends `line` completely unescaped instead,
-/// so `cmd`/`powershell` see exactly the text the user typed (or a
-/// menu macro substituted), quoted or not, and apply their own parsing
-/// to it themselves -- exactly what happens when the same line is
-/// typed directly into a `cmd.exe`/PowerShell window. Plain
-/// `.arg(line)` is correct (and `raw_arg` isn't available at all) on
-/// Unix: `sh -c` receives `line` as one real `argv` element with no
-/// re-escaping in between, no reparsing-child mismatch to correct for.
-/// Rewrites `line`'s first word to an absolute path if it's a bare
-/// executable name (no `\`, `/`, or `:` — i.e. not already a path of
-/// some kind) that only resolves through `app_paths::resolve`, not
-/// `cmd.exe`'s own `PATH` search. Leaves `line` untouched for the
-/// overwhelming majority of typed commands (a real word-in-`PATH` like
-/// `svn`/`git`, or nothing registered under that name at all) — this
-/// is meant to catch the narrow "GUI app registered via App Paths
-/// instead of `PATH`" case (`devenv`, and the same mechanism most other
-/// installed IDEs/editors use), not to replace `PATH` resolution.
-///
-/// Doesn't try to handle a first word that's itself quoted (e.g.
-/// `"my program" arg`) — a quoted first word already implies the user
-/// typed an actual path (quoting only ever exists to protect spaces in
-/// one), not the bare unadorned name this registry key is keyed by, so
-/// there's nothing this lookup could usefully add there.
+/// Rewrites `line`'s first word to an absolute path when it's a bare
+/// name (no `\`, `/`, `:`) that only resolves through App Paths, not
+/// `PATH` -- GUI apps like `devenv` register there. Everything else,
+/// including a quoted first word (already a path), is left untouched.
 pub(super) fn resolve_app_paths_command(line: &str) -> String {
     let trimmed = line.trim_start();
     let leading_ws = &line[..line.len() - trimmed.len()];
@@ -234,6 +137,10 @@ pub(super) fn resolve_app_paths_command(line: &str) -> String {
 }
 
 
+/// Appends `line` as the argument of the shell's `/C`/`-Command`/`-c`.
+/// On Windows via `raw_arg`, unescaped: `cmd`/PowerShell re-parse that
+/// argument as a whole command line, and `Command::arg`'s argv escaping
+/// mangled quoted arguments. History: docs/history/command-execution.md.
 pub(super) fn append_command_line(command: &mut std::process::Command, line: &str) {
     #[cfg(windows)]
     {
@@ -247,32 +154,10 @@ pub(super) fn append_command_line(command: &mut std::process::Command, line: &st
 }
 
 
-/// Wraps `line` in one extra outer pair of quotes if it already starts
-/// with a `"` -- otherwise returns it unchanged.
-///
-/// Reported directly against `resolve_app_paths_command`'s own
-/// substitution: `svn status "RFI15.0"` became
-/// `"C:\Program Files\SlikSvn\bin\svn.exe" status "RFI15.0"` (`svn` is
-/// registered under App Paths *as well as* being on `PATH`), and
-/// `cmd.exe` came back with `'C:\Program' is not recognized...` --
-/// `cmd /?` documents the exact mechanism: `/C`'s own argument only
-/// keeps its quotes intact as literally written when it contains
-/// *exactly* two quote characters total; otherwise (four, here -- two
-/// around the resolved path, two around `"RFI15.0"`) `cmd.exe` falls
-/// back to unconditionally stripping just the first and last character
-/// of the whole string when the first one happens to be a quote --
-/// which are the quotes protecting the exe path's own spaces, not some
-/// outer wrapper we ever intended. Adding one more (deliberately
-/// redundant) outer quote pair makes that blind strip remove *those*
-/// instead, leaving the real, inner quoting -- around the exe path and
-/// around `"RFI15.0"` -- completely untouched.
-///
-/// Never triggers for an ordinary typed command (`svn status ...`,
-/// `cd ..`, ...) -- those never start with a quote in the first place,
-/// so `cmd.exe`'s own straightforward parsing already handles them
-/// (see `append_command_line`'s own doc comment, and its regression
-/// test, for the *other* cmd quoting quirk this project already works
-/// around).
+/// Wraps `line` in one extra pair of quotes if it starts with `"`: with
+/// more than two quotes, `cmd /C` strips the first and last character,
+/// which would otherwise be the quotes around an exe path with spaces
+/// (as `resolve_app_paths_command` produces). History: docs/history/command-execution.md.
 #[cfg(windows)]
 fn wrap_leading_quote_for_cmd(line: &str) -> String {
     if line.starts_with('"') {
@@ -282,39 +167,16 @@ fn wrap_leading_quote_for_cmd(line: &str) -> String {
     }
 }
 
-/// Suspends the TUI and runs each of `lines` in sequence through the
-/// active shell profile, inheriting stdio (so interactive programs
-/// still work), then returns straight to the panels -- shared by the
-/// command line's own `Enter` (a single line, `run_command_line` above)
-/// and the user menu's own item execution (`explorer::user_menu`, one
-/// or more lines run back to back, matching real Far Manager's own
-/// multi-line user-menu items — e.g. `git pull` followed by `git remote
-/// update ...`). A spawn failure for one line is printed to the
-/// suspended console and doesn't stop the remaining lines from still
-/// running, same as a plain sequence of typed commands would behave.
+/// Suspends the TUI, runs `lines` in sequence through the active shell
+/// profile with inherited stdio, and returns straight to the panels (no
+/// "press any key" pause -- `Ctrl+O` shows the output again). Shared by
+/// the command line and multi-line F2 menu items. A failed spawn is
+/// printed and the rest still run.
 ///
-/// **No "press any key" pause** -- reported directly as an unwanted
-/// extra keypress every single time, on top of the command's own
-/// `Enter`. An earlier version paused here so fast-scrolling output
-/// wouldn't vanish the instant the panels redrew over it; dropped
-/// anyway, per that report -- `Ctrl+O` (`toggle_panels_hidden`) already
-/// covers "I want to actually look at what a command printed" as its
-/// own dedicated, non-transient view, so this pause was only ever
-/// protecting against losing output nobody asked to look at again.
-///
-/// **`cd` lines are handled here, not shelled out** -- reported
-/// directly: a user-menu item `cd W:\WorkCopies\rust` followed by
-/// `cargo make diffs4` ran `cargo make` back in the original directory
-/// (and failed there), while the same item works in Far Manager. Each
-/// line is its own shell process, so a `cd` inside one could never
-/// outlive it. Far runs a menu item's lines as if typed into its own
-/// command line, where `cd` is Far's own; this does the same, reusing
-/// the command line's own `parse_cd_target`/`Panel::change_dir`: the
-/// active panel moves there (and stays there afterward, as in Far), and
-/// every following line runs in it. A `cd` to a directory that doesn't
-/// exist stops the item right there -- running the remaining lines in
-/// the wrong directory is exactly how a `cd build` / `del *` item goes
-/// badly wrong.
+/// `cd` lines are handled here, as Far does: each line is its own shell
+/// process, so a shelled-out `cd` wouldn't carry over. The active panel
+/// moves and later lines run there; a `cd` to a missing directory stops
+/// the item. History: docs/history/command-execution.md.
 pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, lines: &[String]) -> Result<()> {
     if lines.is_empty() {
         return Ok(());
@@ -350,10 +212,7 @@ pub fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermB
         }
     }
     enable_raw_mode()?;
-    // A queued Ctrl+O is moot here -- this path already returns
-    // straight to the panels below regardless, so there's nothing
-    // extra to honor it with (unlike `run_single_line_on_console`'s
-    // own use of this same return value).
+    // A queued Ctrl+O is moot: this returns to the panels anyway.
     let _ = drain_stale_input()?;
     execute!(terminal.backend_mut(), EnterAlternateScreen)?;
     terminal.clear()?;
@@ -450,27 +309,11 @@ mod tests {
         use super::*;
         use crate::test_support::unique_scratch_dir;
 
-        /// `%~1` is a batch-file parameter modifier that strips one
-        /// surrounding pair of quotes from `%1` -- exactly what should
-        /// happen to the quoted `Project Alpha` below if `cmd.exe`
-        /// tokenized the command text itself the normal way (a quoted
-        /// argument, quotes meaningful, not literal). The old, broken
-        /// `.arg(line)` version of this reported directly as a real `svn`
-        /// failure with the quote characters still embedded in the
-        /// argument it received (`Error resolving case of
-        /// '"Project Alpha"'`) -- if this test is ever reverted to that
-        /// version, `%~1` would come back still carrying stray
-        /// quote/backslash characters instead of the bare name.
-        ///
-        /// Shaped to start with a plain word (`call ...`), matching the
-        /// real report (`svn cleanup ... "Project Alpha"`) -- deliberately
-        /// *not* `"<script>" "Project Alpha"` starting with a quote
-        /// itself: `cmd.exe`'s own `/C` handling has a separate, documented
-        /// special case for a tail that starts and ends with a quote
-        /// (stripping the outer pair under specific conditions, to let a
-        /// quoted *executable path* work at all), which doesn't apply to
-        /// -- and would give a false result for -- the actual bug being
-        /// tested here.
+        /// Regression: `.arg(line)` delivered `"Project Alpha"` to `svn`
+        /// with the quotes still in it. `%~1` strips one pair of quotes,
+        /// so it prints the bare name only if `cmd` tokenized the line
+        /// itself. Starts with a plain word (`call`), so `cmd`'s separate
+        /// leading-quote rule doesn't apply.
         #[test]
         fn a_quoted_argument_survives_cmds_own_reparsing_unmangled() {
             let dir = unique_scratch_dir("append-command-line");
@@ -487,16 +330,9 @@ mod tests {
             assert_eq!(stdout.trim(), "Project Alpha", "cmd should have tokenized the quoted argument itself, not received it pre-mangled");
         }
 
-        /// The actual reported bug: `wrap_leading_quote_for_cmd`'s own
-        /// case, previously untested -- a quoted *program path* (what
-        /// `resolve_app_paths_command` produces) followed by a quoted
-        /// *argument*, so the whole line both starts and ends with a
-        /// quote and carries four quote characters total, not two.
-        /// Without the extra outer wrap, `cmd.exe`'s own "not exactly
-        /// two quotes" fallback blindly strips the first and last
-        /// character of the line -- exactly the quotes protecting the
-        /// script path's own spaces -- and `%~1` below would come back
-        /// having eaten part of the path instead of the real argument.
+        /// Regression: a quoted program path plus a quoted argument (four
+        /// quotes) -- without the extra wrap, `cmd` strips the quotes
+        /// around the script path.
         #[test]
         fn a_quoted_program_path_followed_by_a_quoted_argument_survives_too() {
             let dir = unique_scratch_dir("append-command-line leading quote");
