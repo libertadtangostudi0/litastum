@@ -145,8 +145,7 @@ impl Editor {
     /// intercepted here, ahead of `edtui`'s own dispatch, and every
     /// other key that could plausibly mutate the buffer
     /// (`should_capture_undo_snapshot`) pushes its own snapshot *before*
-    /// running. `.claude/rules/litastum-editor-undo.md` has the full
-    /// history of why (`EditorState::capture()` is `pub(crate)`, so a
+    /// running. History: docs/history/editor-undo.md. Why (`EditorState::capture()` is `pub(crate)`, so a
     /// fast paste could never register a boundary on `edtui`'s own
     /// stack, and undo through it fell back to per-character steps).
     /// `Vim` is completely unaffected -- `undo_stack`/`redo_stack` simply

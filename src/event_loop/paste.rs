@@ -17,17 +17,11 @@ use super::keys::dispatch_key_event;
 /// armed, so `crossterm`'s normal event flow handles it exactly as
 /// before.
 ///
-/// Covers every text field, not just the editor's own buffer --
-/// reported directly that pasting into a search field (Find file, the
-/// editor's own `Ctrl+F` box, ...) was slow too. It was the same cause
-/// as the editor's own paste had been: Windows Terminal owns `Ctrl+V`
-/// and feeds the clipboard in as simulated keystrokes at ~7-8ms each,
-/// so even a field whose own per-key handling costs a fraction of a
-/// millisecond (measured: the command line and Find file, key plus
-/// redraw, ~0.25ms) couldn't paste faster than that. The editor's own
-/// buffer additionally requires plain `Standard` typing
-/// (`Editor::is_plain_standard_typing`) -- Vim's own `Ctrl+V` means
-/// visual-block mode, not paste.
+/// Covers every text field in `paste_target`, not just the editor's
+/// buffer -- every field got the same ~7-8ms/char flood. The editor
+/// additionally requires plain `Standard` typing
+/// (`Editor::is_plain_standard_typing`): Vim's `Ctrl+V` is visual-block
+/// mode, not paste. History: docs/history/editor-performance.md.
 ///
 /// See `windows_terminal`'s own module doc for why a real terminal
 /// `Ctrl+V` needs this bypass in the first place. Everything about the
@@ -122,9 +116,8 @@ fn apply_paste(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     Ok(())
 }
 
-/// A bracketed paste (`EnableBracketedPaste` in `setup_terminal`) --
-/// see its own doc comment for the real reported bug this exists to
-/// fix. Unix-only in practice (`crossterm`'s Windows backend never
+/// A bracketed paste (`EnableBracketedPaste` in `setup_terminal`).
+/// Unix-only in practice (`crossterm`'s Windows backend never
 /// produces `Event::Paste`, see `windows_terminal`). Goes through the
 /// same `paste_target`/`apply_paste` as the Windows `Ctrl+V` bypass --
 /// the terminal already handed the text over, so there's no clipboard

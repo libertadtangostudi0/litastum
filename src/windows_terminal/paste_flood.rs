@@ -39,8 +39,8 @@ pub struct PasteFlood {
     /// The last few characters actually typed through ordinary key
     /// handling, with when they arrived -- lets `not_yet_delivered`
     /// notice that the flood already delivered the start of the paste
-    /// before the physical key press was seen (see
-    /// `already_typed_prefix_len`'s own doc comment for the real report).
+    /// before the physical key press was seen
+    /// (`already_typed_prefix_len`).
     /// Cleared by any other key, since characters typed before it are no
     /// longer right before where a paste would land.
     recently_typed: VecDeque<(char, Instant)>,
@@ -90,18 +90,9 @@ impl PasteFlood {
     /// field, that also keeps the flood's own `Enter` keystrokes (one per
     /// pasted line break) from submitting the field.
     ///
-    /// **Extends the queue, never overwrites it.** Real reported bug:
-    /// pasting again quickly (before the *first* paste's own flood had
-    /// finished arriving) left a visible, slow, character-by-character
-    /// typing delay afterward -- overwriting the queue with just the
-    /// second paste's own text threw away whatever was left of the first
-    /// paste's still-incoming flood, so those leftover characters no
-    /// longer matched anything expected and got typed as real (if
-    /// nonsensical) input, one throttled keystroke at a time. Appending
-    /// keeps a still-pending tail from an earlier paste being discarded
-    /// first, in the same order the two floods actually arrive in
-    /// (Windows Terminal processes one paste's own injection before
-    /// starting the next).
+    /// Extends the queue, never overwrites it: pasting again before the
+    /// first flood finished would otherwise leave the rest of that flood
+    /// unmatched and typed as input.
     #[cfg(windows)]
     pub fn expect(&mut self, text: &str) {
         self.expected.extend(text.chars().filter(|&c| c != '\r'));
@@ -139,20 +130,10 @@ impl PasteFlood {
     /// swallowing this key) once it drains naturally, the deadline
     /// passes, or this key simply isn't what was expected next.
     ///
-    /// **Matches by content, not just by shape** -- reported directly:
-    /// pressing `Enter` several times right after a paste only
-    /// registered with a 5-10 second delay. An earlier version only
-    /// checked whether a key was *character-shaped* (a plain `Char` or
-    /// bare `Enter`) against a plain decrementing counter -- which also
-    /// matches ordinary keystrokes typed *during* the still-draining
-    /// window (a real `Enter` looks identical in shape to a flood
-    /// `Enter`), so genuine typing got silently eaten and delayed.
-    /// Comparing against the actual next expected character means a real
-    /// keystroke that doesn't match (nearly always) is handled right away.
-    ///
-    /// Modifiers matter too, from an earlier report: `Ctrl+S`/`Ctrl+Z`
-    /// must never match regardless of their `Char` code -- the flood only
-    /// ever injects the pasted text's own literal, unmodified characters.
+    /// Matches by content, not shape: a real `Enter` looks exactly like
+    /// a flood `Enter`, so shape-only matching ate (and delayed) real
+    /// typing. Modified keys (`Ctrl+S`, `Ctrl+Z`, ...) never match -- the
+    /// flood only sends unmodified characters.
     pub fn should_swallow(&mut self, code: KeyCode, modifiers: KeyModifiers) -> bool {
         if self.expected.is_empty() {
             return false;
@@ -192,18 +173,10 @@ impl PasteFlood {
 /// very latest entries of `recent` -- the longest `k` such that
 /// `recent`'s last `k` characters are exactly `text`'s first `k`.
 ///
-/// Reported directly, with screenshots: pasting "Тесты добавлены:" into
-/// the editor's `Ctrl+F` box produced "ТТесты добавлены:есты добавл...".
-/// A race, not a logic slip in any one place: Windows Terminal starts
-/// injecting its keystroke flood the instant `Ctrl+V` goes down, and
-/// the first flood character can be read and typed normally before the
-/// next `GetAsyncKeyState` poll ever sees the physical key. The bypass
-/// then pasted the *whole* clipboard after it (doubling the "Т") and
-/// armed the swallow expecting a flood starting with "Т" -- the flood's
-/// actual next character, "е", didn't match, the swallow gave up, and
-/// the rest of the flood got typed as ordinary input. Skipping whatever
-/// the flood already delivered -- pasting and expecting only the rest
-/// -- makes both come out right.
+/// The flood can deliver its first characters before the next
+/// `GetAsyncKeyState` poll sees the physical key; skipping those keeps
+/// the paste from doubling them (a pasted "Tests" came out as
+/// "TTests...ests..."). History: docs/history/editor-performance.md.
 #[cfg(any(windows, test))]
 fn already_typed_prefix_len(recent: &[char], text: &[char]) -> usize {
     (1..=recent.len().min(text.len())).rev().find(|&k| recent[recent.len() - k..] == text[..k]).unwrap_or(0)

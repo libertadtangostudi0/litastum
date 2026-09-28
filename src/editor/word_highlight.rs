@@ -39,7 +39,7 @@ use ratatui::style::Style;
 /// Only scans `rows` (clamped to the buffer), not the whole buffer --
 /// reported directly as part of a "the editor is slow on a big file"
 /// report and measured on a real-scale file (100k lines,
-/// `.claude/rules/litastum-performance.md`): the whole-buffer scan cost
+/// docs/history/editor-performance.md): the whole-buffer scan cost
 /// ~30ms on *every* frame (1404 highlights computed, ~50 ever visible),
 /// which is almost the entire per-keystroke redraw cost there. Rows
 /// outside the viewport are never drawn, so highlights there are pure

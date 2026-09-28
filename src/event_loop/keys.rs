@@ -114,24 +114,11 @@ fn editor_accepting_plain_typing(app: &App) -> bool {
     editor.is_plain_standard_typing()
 }
 
-/// Reported directly, traced through the real symptom ("I can literally
-/// watch it insert line by line"): pasting a real file (`ARCHITECTURE.md`,
-/// 338 lines / 20KB) into the built-in editor took well over a minute
-/// -- confirmed *not* to be `editor::fast_paste::splice_paste`'s own
-/// cost (benchmarked directly against the real file: under 1ms) or
-/// `EnableBracketedPaste` (`setup_terminal`'s own doc comment covers
-/// that attempt) -- `crossterm` 0.29's own Windows backend
-/// (`crossterm::event::sys::windows`) has no code path that ever
-/// produces `Event::Paste` at all, confirmed directly from its source;
-/// bracketed paste there is Unix-only, gated on parsing raw ANSI escape
-/// bytes from stdin, which the Windows Console API backend (structured
-/// `KEY_EVENT_RECORD`s via `ReadConsoleInputW`, not a raw byte stream)
-/// never does. On Windows, an OS paste is genuinely indistinguishable
-/// from very fast typing -- the terminal just injects the clipboard
-/// text as a flood of ordinary simulated keystrokes, one at a time, and
-/// `run()`'s own loop redraws once per key -- thousands of characters,
-/// thousands of redraws, is exactly what "line by line" looks like from
-/// the outside.
+/// Applies a burst of already-queued plain characters to the editor in
+/// one go: on Windows a terminal paste (and fast typing) arrives as
+/// ordinary key events with no `Event::Paste`, and `run()` would
+/// otherwise redraw once per character. History:
+/// docs/history/editor-performance.md (Round 2).
 ///
 /// Mirrors `drain_pending_navigation_keys`'s own "coalesce a burst,
 /// redraw once" shape: drains every already-queued plain character key
@@ -141,8 +128,7 @@ fn editor_accepting_plain_typing(app: &App) -> bool {
 /// changes mode mid-burst), and applies the whole batch in one
 /// `Editor::paste_text` call -- the same fast, from-scratch splice
 /// `Ctrl+V`/a real bracketed paste already use
-/// (`editor::fast_paste_from_clipboard`'s own doc comment has the full
-/// algorithmic story), rather than one `InsertChar` per character. A
+/// (`editor::fast_paste::splice_paste`), rather than one `InsertChar` per character. A
 /// key found mid-burst that isn't a plain character (or that arrives
 /// once the editor would no longer treat one as plain typing) is never
 /// silently dropped, same rule every sibling drain function in this

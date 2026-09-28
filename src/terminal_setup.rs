@@ -50,31 +50,15 @@ pub(crate) fn install_ctrl_c_handler() -> Result<()> {
 pub(crate) fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    // A thin bar matches a normal text caret; edtui's own cursor
-    // highlight is turned off in editor.rs so this is what's visible
-    // while editing (blinking, so it's still findable at a glance).
+    // A thin bar matches a normal text caret (blinking, so it's still
+    // findable at a glance).
     //
-    // `EnableBracketedPaste` -- reported directly as a real, severe
-    // performance problem: pasting a multi-hundred-line file into the
-    // built-in editor "felt like watching it render line by line" and
-    // took well over a minute, even after `editor::fast_paste_from_clipboard`
-    // made the actual splice itself sub-millisecond
-    // (`editor/editor/fast_paste.rs`). Root cause was one level further
-    // out than the buffer-insert algorithm: without bracketed-paste
-    // mode, the terminal has no way to tell this app "this whole block
-    // arrived from a paste, not a human typing" -- it just feeds every
-    // character of the pasted text through as its own separate
-    // `Event::Key` press. Each one is a real keystroke as far as this
-    // app is concerned, hitting the *normal* per-character `InsertChar`
-    // path (never `fast_paste_from_clipboard`'s own `Ctrl+V` interception
-    // at all, since there's no `Ctrl+V` keypress anywhere in this
-    // stream to intercept) and triggering `event_loop::run`'s own full
-    // per-event redraw every single time -- thousands of characters,
-    // thousands of redraws, is exactly what "line by line" rendering
-    // looks like from the outside. `EnableBracketedPaste` asks the
-    // terminal to instead wrap a paste in `ESC[200~.../ESC[201~` and
-    // hand it to `crossterm` as one single `Event::Paste(String)` --
-    // handled in `handle_event`, below.
+    // `EnableBracketedPaste` delivers a paste as one `Event::Paste`
+    // (`event_loop::paste::handle_paste_event`) instead of one key event
+    // and redraw per character. Unix only in practice: `crossterm`'s
+    // Windows backend never produces `Event::Paste` -- Windows goes
+    // through `windows_terminal::paste_hotkey` instead. History:
+    // docs/history/editor-performance.md.
     execute!(stdout, EnterAlternateScreen, SetCursorStyle::BlinkingBar, EnableBracketedPaste)?;
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
 }
@@ -82,24 +66,12 @@ pub(crate) fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 
 pub(crate) fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mouse_capture_enabled: bool) -> Result<()> {
     disable_raw_mode()?;
-    // `DisableMouseCapture` here is a safety net, not the primary
-    // toggle -- mouse capture is normally turned on/off around just the
-    // Markdown preview session itself
-    // (`explorer::markdown_preview::open_preview`/
-    // `handle_markdown_preview_key`), so it doesn't interfere with
-    // native mouse text-selection everywhere else in this app. But
-    // quitting (`F10`) while a preview happens to still be open would
-    // otherwise skip that "turn it back off" step and leak mouse
-    // capture into the user's terminal after this process exits.
-    //
-    // `mouse_capture_enabled` (`app.mouse_capture_enabled`) gates
-    // whether `DisableMouseCapture` is even attempted -- reported as a
-    // real crash on Windows (`Error: 0: Initial console modes not set`)
-    // from sending it *unconditionally*: `crossterm`'s Windows console
-    // backend has no "initial mode" saved to restore unless
-    // `EnableMouseCapture` actually ran first in this process, and
-    // quitting from a plain `Mode::Browsing` session (never having
-    // opened a Markdown preview at all) hit exactly that case.
+    // `DisableMouseCapture` is a safety net: capture is normally synced
+    // to the current mode (`event_loop::sync_mouse_capture`), but
+    // quitting mid-session would otherwise leak it into the user's
+    // terminal. Sent only if `EnableMouseCapture` actually succeeded
+    // earlier -- on Windows, disabling without it crashes with
+    // "Initial console modes not set".
     if mouse_capture_enabled {
         execute!(terminal.backend_mut(), DisableMouseCapture)?;
     }

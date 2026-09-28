@@ -8,8 +8,8 @@ use super::Editor;
 /// own (unreachable) undo stack already uses internally
 /// (`edtui::state::undo::UndoState`) -- not reinventing a smarter
 /// diff-based scheme, just doing the same thing `edtui` would have,
-/// from outside it. See `.claude/rules/litastum-editor-undo.md` for why
-/// this stack exists at all instead of `edtui`'s own.
+/// from outside it. Why this stack exists instead of `edtui`'s own:
+/// `.claude/rules/litastum-editor-undo.md`.
 pub(super) struct Snapshot {
     pub(super) lines: Lines,
     pub(super) cursor: Index2,

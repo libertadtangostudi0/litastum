@@ -5,7 +5,7 @@ use edtui::{Index2, Lines, RowIndex};
 ///
 /// Replaced rather than reused after a direct report ("pasting into
 /// the search box takes forever, and so does Backspace"), measured on a
-/// real-scale file (100k lines, `.claude/rules/litastum-performance.md`):
+/// real-scale file (100k lines, docs/history/editor-performance.md):
 /// **2.46s per typed character and 0.59s per Backspace**, in a release
 /// build. Root cause, confirmed from `edtui-jagged` 0.1.13's own source
 /// (`jagged/match_indices.rs`): its case-insensitive character

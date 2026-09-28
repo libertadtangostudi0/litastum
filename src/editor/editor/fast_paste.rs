@@ -7,29 +7,11 @@ impl Editor {
     /// `Ctrl+V`: pastes the real OS clipboard's text at the cursor,
     /// bypassing `edtui`'s own `PasteBefore` action entirely.
     ///
-    /// Reported directly as unusably slow for a long pasted line --
-    /// confirmed straight from source (`edtui` 0.11.7's
-    /// `actions/cpaste.rs::paste` -> `helper::insert_str` ->
-    /// `insert_char`, once *per character*) that this is a real O(n²)
-    /// cost: each of the N pasted characters does its own single-element
-    /// `Vec::insert` at a column that keeps growing, an O(current line
-    /// length) shift, every single time. `edtui-jagged`'s own `Jagged`
-    /// type (`state.lines`'s real type) has no bulk "splice N elements
-    /// into a row" API to have used instead -- only a single-element
-    /// insert (`JaggedSlice<T> for T`) or a whole-new-row insert
-    /// (`JaggedSlice<T> for Vec<T>`, keyed by `RowIndex`, not a
-    /// column). This isn't something to patch in `edtui`/`edtui-jagged`
-    /// themselves -- handing an AI-assisted fix to a third-party crate
-    /// without real review isn't something to do lightly -- so this
-    /// stays local: `state.lines` is a public field and
-    /// `Jagged::get_mut`/`insert` are both public, so `splice_paste`
-    /// below can splice the row's own backing `Vec<char>` directly
-    /// (`std::vec::Vec::splice`, one O(line length) pass total for the
-    /// common single-line-paste case) without needing anything
-    /// crate-private from `edtui` at all. See `input`'s own doc comment
-    /// for how this stays undoable as one atomic block
-    /// (`push_undo_snapshot`) regardless of `edtui`'s own inaccessible
-    /// `capture()`.
+    /// `edtui`'s own paste inserts one character at a time (O(n^2) on a
+    /// long line) and can't be patched from here; `splice_paste` splices
+    /// the row directly instead. One undo snapshot per paste
+    /// (`push_undo_snapshot`), since `edtui`'s `capture()` is
+    /// unreachable. History: docs/history/editor-performance.md.
     pub(super) fn fast_paste_from_clipboard(&mut self) {
         let text = match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
             Ok(text) => text,
@@ -75,9 +57,7 @@ impl Editor {
 /// Splices `text` into `lines` starting at `cursor`, in
 /// O(pasted length + line length) rather than `edtui`'s own `PasteBefore`
 /// (O(pasted length * line length) -- see
-/// `Editor::fast_paste_from_clipboard`'s own doc comment for the full
-/// story on why this exists as a from-scratch implementation instead of
-/// calling into `edtui` at all).
+/// `Editor::fast_paste_from_clipboard`).
 ///
 /// A no-op (returns `cursor` unchanged) for empty `text` -- callers
 /// should already be checking this themselves before saving an undo
