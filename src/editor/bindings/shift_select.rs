@@ -2,132 +2,18 @@ use crossterm::event::KeyCode;
 use edtui::actions::{Execute, MoveBackward, MoveForward, SwitchMode};
 use edtui::{EditorMode, EditorState, Index2};
 
-/// Reported directly: pressing `Shift+Right` once right before "Draft"
-/// selected two characters, `"Dr"`, not one, `"D"`. Traced to
-/// `standard_key_handler`'s own fresh-selection table entries (the
-/// `i(...)` registrations for `Shift+Left`/`Right`), which used to
-/// chain `SwitchMode(Visual)` with the matching `Move` action in a
-/// single step -- but `SwitchMode(Visual)` alone already anchors a
-/// selection on the *current* cell (vim's own `v` semantics: entering
-/// visual mode with no movement yet already "selects" the character
-/// under the cursor), so chaining a `Move` on top grabbed a *second*
-/// character for what a user experiences as one keypress. This is
-/// exactly the "N shift-rights selects N+1 characters, not N" quirk
-/// documented in `.claude/rules/litastum-stack.md` -- previously
-/// accepted as an unavoidable side effect of reusing `edtui`'s own vim-
-/// style actions, but the project's own stated goal is a "standard
-/// (non-modal, VSCode/Windows-convention) keymap," where one keypress
-/// should mean one character, not two.
+/// Resolves the first press of a fresh `Shift+Left`/`Right` selection so
+/// N presses select exactly N characters. `SwitchMode(Visual)` already
+/// anchors a one-cell selection on the current cell (vim's `v`), so the
+/// fresh table entries don't chain a `Move` -- this decides the one cell:
+/// `Right` keeps the cell the cursor is on, `Left` takes the cell it
+/// moves onto. `Up`/`Down` pass through untouched (`_ => true`).
 ///
-/// **Scoped to `Left`/`Right` only -- deliberately not `Up`/`Down`.** A
-/// first attempt applied the exact same fix to all four directions,
-/// and was reported broken immediately: `Shift+Down` started selecting
-/// only one character to the *right*, not moving to the next line at
-/// all, with the second press then landing one column off. `Up`/`Down`
-/// never actually had the "N+1, not N" bug in the first place --
-/// there's no single-character granularity to get right or wrong for a
-/// row jump, unlike `Left`/`Right`. The *wanted* behavior for
-/// `Shift+Down` -- move to the same column on the next line,
-/// extending the selection to cover everything in between -- is
-/// exactly what the *original*, unmodified chain
-/// (`SwitchMode(Visual).chain(MoveDown(1))`, still in
-/// `bindings/mod.rs`'s table for `Up`/`Down`) already produced. Only
-/// `Left`/`Right`'s fresh entries were changed to drop the chained
-/// `Move` (see their own comment in `standard_key_handler`); `Up`/
-/// `Down` keep it, unmodified, and never reach this function's own
-/// per-direction logic below -- they fall through the `_ => true` arm,
-/// a harmless no-op, since `wrap_line_boundary_arrow_movement` (the
-/// only thing this function's return value gates) never acts on
-/// `Up`/`Down` either.
+/// Returns `true` when the press is fully resolved, so `Editor::input`
+/// skips the line-boundary wrap check; `false` when a real boundary may
+/// have been hit (`Right` fell back to a move, `Left` made no progress).
 ///
-/// **First attempt at `Left`/`Right` itself** treated both the same
-/// way: if `SwitchMode(Visual)`'s own anchor cell (`cursor_before`)
-/// held a real character, stop there (one character selected);
-/// otherwise fall back to performing the direction's own `Move`. This
-/// is correct for `Right` -- the anchor cell itself, the one the
-/// cursor is currently *on*, is exactly the character a forward
-/// selection should grab first. **Wrong for `Left`, reported
-/// immediately**: `Shift+Left` selected (and copied) the character to
-/// the *right* of the cursor, not the left. The anchor cell is never
-/// the right answer for a *backward* selection -- the character a
-/// `Shift+Left` press should select is the one the cursor is about to
-/// move *onto* (one cell further left), not the one it's currently
-/// sitting on. Stopping on `cursor_before` for `Left` was really just
-/// repeating the original "N+1, not N" bug in the opposite direction,
-/// wearing the "fix" as a disguise.
-///
-/// **Landed on**: split `Right` and `Left` by which way they actually
-/// travel. `Right` keeps the anchor-only behavior above -- unmoved and
-/// correct, since the current cell genuinely is the first one a
-/// forward selection should include. `Left` always performs its `Move`
-/// first (there's no valid anchor-only answer for it at all), then --
-/// if that move made real progress -- drags the anchor
-/// (`selection.start`, still sitting wherever `SwitchMode(Visual)`
-/// first planted it, on `cursor_before`) to match the *new* cursor
-/// position too, collapsing the selection down to exactly the one cell
-/// just moved onto rather than spanning `[new, old]` (two cells, the
-/// same shape of bug all over again). If the move made *no* progress
-/// at all (already at the very start of the line/buffer), the anchor
-/// is left untouched and this function reports "not yet handled,"
-/// handing it to `wrap_line_boundary_arrow_movement` -- exactly like a
-/// plain, non-fresh `Left` press already does when it hits a line
-/// boundary, so crossing into the previous line on a fresh
-/// `Shift+Left` still works, same as `Right`'s own already-tested
-/// symmetric case.
-///
-/// Returns `true` when this press is already fully resolved (`Right`
-/// stopped on a real character, or `Left` moved and dragged the
-/// anchor) -- `Editor::input` uses this to skip the line-boundary wrap
-/// check entirely in that case: a zero-movement fresh selection
-/// anchored on a real character (or a real already-completed backward
-/// move) is a deliberate stop, not a signal that a plain arrow press
-/// hit a wall, and treating it as one would wrongly wrap an ordinary
-/// mid-line press down into the next line. Returns `false` when the
-/// wrap check should still get a look -- `Right`'s own fallback-move
-/// case (might have hit a real boundary), or `Left`'s zero-progress
-/// case (might need to wrap to the previous line). `Up`/`Down` always
-/// return `true` (see their own doc comment below) -- harmless either
-/// way, since `wrap_line_boundary_arrow_movement` never acts on them.
-///
-/// **`Up`/`Down` needed the same "exclude one column" treatment too,
-/// after a real report against aligned text** (two lines with a word
-/// landing on the identical column on both): one `Shift+Down` from
-/// right before that word swept the destination row's own copy of it
-/// into the selection too, since `MoveDown`/`MoveUp` (confirmed
-/// directly from `edtui`'s source) only ever change `state.cursor.row`,
-/// never `.col` -- the destination genuinely lands on the exact same
-/// column as the anchor. A first fix (trimming the destination's/
-/// anchor's own edge column by one, mirroring `Right`'s own
-/// single-character logic, mutating `state.cursor.col`/
-/// `selection.start.col` directly) shipped -- **then broke round-trip
-/// symmetry, reported immediately**: `Shift+Down` then `Shift+Up` (or
-/// the reverse) no longer returned to an empty selection at the exact
-/// starting point. Root cause: `MoveDown`/`MoveUp` never re-derive
-/// `.col` from anything, they just carry whatever's already in
-/// `state.cursor` forward -- so the one-time column adjustment from the
-/// first press permanently "poisoned" the column for every future
-/// vertical move in *either* direction, including the reversing one
-/// that's supposed to land exactly back on the anchor.
-///
-/// **Reverted first, then re-added with the missing piece**: the
-/// column adjustment alone has nowhere to record what the column was
-/// *before* it got trimmed -- `Up`'s own half of it already mutates
-/// `selection.start` itself, so by the time a reversing press needs to
-/// snap back to the real anchor, `selection.start` no longer reliably
-/// records where the selection actually began. The fix landed once
-/// there was somewhere else to keep that value: `Editor` now owns
-/// `vertical_shift_anchor_col: Option<usize>`, set once (to
-/// `cursor_before.col`, always identical on both ends the instant
-/// `SwitchMode(Visual)` opens a selection -- before either edge has
-/// been trimmed) whenever a fresh `Shift+Up`/`Down` press opens a
-/// selection, alongside the actual column trim
-/// (`exclude_landing_column_on_fresh_vertical_selection`, below).
-/// `close_selection_if_back_on_the_anchors_row` reads that tracked
-/// value back once the excursion is over and restores it to
-/// `state.cursor.col`, so the trimmed, "poisoned" column never survives
-/// past the press that closes the selection -- letting the aligned-word
-/// exclusion and perfect round-trip symmetry coexist, instead of having
-/// to pick one.
+/// History: docs/history/shift-select.md.
 pub(in crate::editor) fn anchor_fresh_shift_selection(state: &mut EditorState, key_code: KeyCode, cursor_before: Index2) -> bool {
     match key_code {
         KeyCode::Right => forward_anchor(state, cursor_before, MoveForward(1)),
@@ -136,28 +22,15 @@ pub(in crate::editor) fn anchor_fresh_shift_selection(state: &mut EditorState, k
     }
 }
 
-/// Trims the aligned landing column out of a freshly-opened `Shift+Up`/
-/// `Down` selection -- see `anchor_fresh_shift_selection`'s own doc
-/// comment for the real report this fixes and why it only runs once,
-/// on the press that opens the selection (`Editor::input` calls this
-/// only when `freshly_entered_visual` and the key is `Up`/`Down`;
-/// `MoveUp`/`MoveDown` never touch `.col` themselves, so whatever this
-/// leaves it at simply carries forward unchanged on every later
-/// continuing press).
+/// Keeps a fresh `Shift+Up`/`Down` from selecting the landing column on
+/// the far row (`MoveUp`/`MoveDown` never change `.col`, and the
+/// selection is inclusive). Runs once, on the press that opens the
+/// selection; the trimmed column then carries forward on its own.
 ///
-/// `Down`: the destination row (`state.cursor`, kept in lock-step with
-/// `selection.end` per this codebase's own cursor-equals-selection-end
-/// invariant) backs off one column so its own row's selected span stops
-/// right before that column. `Up`: it's `selection.start` (the row the
-/// press started on, now the selection's *bottom* edge, never touched
-/// by `MoveUp` itself) that needs the trim instead -- confirmed against
-/// `edtui`'s own multi-line selection convention that whichever raw
-/// `Selection` field sits on the larger row is also an inclusive upper
-/// bound on that row's own selected span, rather than assumed from the
-/// single-row case. Column 0 has nothing to trim into (no adjustment,
-/// same as the destination/anchor genuinely starting at the very
-/// beginning of its own line) -- left untouched rather than
-/// underflowing.
+/// `Down` trims the destination (`state.cursor`, kept equal to
+/// `selection.end`); `Up` trims `selection.start`, the bottom edge --
+/// whichever raw field sits on the larger row is an inclusive bound on
+/// that row. Column 0 is left alone.
 pub(in crate::editor) fn exclude_landing_column_on_fresh_vertical_selection(state: &mut EditorState, key_code: KeyCode) {
     match key_code {
         KeyCode::Down => {
@@ -180,23 +53,11 @@ pub(in crate::editor) fn exclude_landing_column_on_fresh_vertical_selection(stat
     }
 }
 
-/// Called unconditionally from `Editor::input` for every `Shift+Up`/
-/// `Down` press (fresh *and* continuing -- unlike the two functions
-/// above, which only ever run once, on the press that opens a
-/// selection). If the cursor has landed back on the exact row the
-/// selection's own anchor (`selection.start`) sits on, there's nothing
-/// left of this vertical excursion to show as selected -- closes it
-/// entirely, the same "can't represent empty, so close it instead" move
-/// `word_select.rs`'s "Tenth"/"Eleventh" fixes already use for
-/// word-wise selection. Also restores `state.cursor.col` from
-/// `true_anchor_col` first (`Editor::vertical_shift_anchor_col`,
-/// cleared here once used) -- without this, the fresh-press column trim
-/// `exclude_landing_column_on_fresh_vertical_selection` applies would
-/// permanently leave the cursor one column short of where it actually
-/// started, since `MoveUp`/`MoveDown` never re-derive `.col` on their
-/// own to correct it back. A no-op for every other key, and for
-/// `Up`/`Down` themselves whenever nothing is selected yet or the
-/// cursor is still on a genuinely different row.
+/// Runs on every `Shift+Up`/`Down` press: once the cursor is back on the
+/// anchor's row, closes the selection (`edtui` can't represent an empty
+/// one) and restores the untrimmed column from `true_anchor_col`
+/// (`Editor::vertical_shift_anchor_col`), so the fresh-press trim above
+/// doesn't leave the cursor one column short after a round trip.
 pub(in crate::editor) fn close_selection_if_back_on_the_anchors_row(
     state: &mut EditorState,
     key_code: KeyCode,
@@ -261,25 +122,11 @@ mod tests {
         anchor_fresh_shift_selection, close_selection_if_back_on_the_anchors_row, exclude_landing_column_on_fresh_vertical_selection,
     };
 
-    /// Uses the real `SwitchMode(Visual)` action (not a raw
-    /// `state.mode = ...` field assignment) specifically so `edtui`
-    /// itself constructs the `Selection` it always creates as a side
-    /// effect of entering `Visual` mode -- its type is `pub(crate)`
-    /// (unreachable to name directly, per this file's own project
-    /// history), so this is the only way to get a real one, and it's
-    /// also exactly what the real table entry now does before this
-    /// function ever runs.
-    ///
-    /// `state.mode` is set to `Insert` *before* `cursor.col`, matching
-    /// the real pipeline (a fresh Shift+arrow always fires while still
-    /// in `Insert`) -- `SwitchMode`'s own `execute` calls
-    /// `state.clamp_column()` using whatever mode is current *before*
-    /// switching, and `edtui`'s default (pre-`Insert`) mode clamps to
-    /// `len - 1`, not `len` -- found the hard way when a test using the
-    /// line's own append position (`col == len`, nothing real there)
-    /// got silently clamped back onto a real character before this
-    /// function ever ran, making the test assert the wrong thing
-    /// entirely.
+    /// Uses the real `SwitchMode(Visual)` action: `Selection` is
+    /// `pub(crate)`, so this is the only way to get a real one. `mode`
+    /// is set to `Insert` before `cursor.col` because `SwitchMode` clamps
+    /// with the current mode first, and the default mode clamps the
+    /// append position (`col == len`) back onto a real character.
     fn state_for(contents: &str, cursor_col: usize) -> EditorState {
         let mut state = EditorState::new(Lines::from(contents));
         state.mode = EditorMode::Insert;
@@ -305,10 +152,7 @@ mod tests {
         assert!(!handled, "nothing real to anchor on -- should have fallen back to an actual move");
     }
 
-    /// Regression test for the real report: `Shift+Left` was selecting
-    /// (and copying) the character to the *right* of the cursor, not the
-    /// left -- the anchor-only behavior correct for `Right` was being
-    /// reused unmodified for `Left`, where it's simply the wrong cell.
+    /// Regression: `Shift+Left` selected the character to the *right*.
     #[test]
     fn left_selects_the_character_actually_to_the_left() {
         let mut state = state_for("Draft", 2); // cursor on 'a', the third letter
@@ -335,17 +179,8 @@ mod tests {
         assert_eq!(state.cursor.col, 0, "should not have moved");
     }
 
-    /// Direct unit coverage for the actual fix, isolated from the
-    /// `MoveUp`/`MoveDown` actions and the rest of `Editor::input`'s
-    /// pipeline (see `bindings/tests.rs` for the full round-trip
-    /// integration tests through real key presses). Simulates "cursor
-    /// landed back on the anchor's own row" by hand -- exactly the
-    /// state a pure vertical excursion leaves behind, since
-    /// `MoveUp`/`MoveDown` never touch `.col`. No `true_anchor_col`
-    /// tracked here (`None`) -- covers the "nothing to restore" case;
-    /// see `restores_the_true_anchor_column_once_closed` below for the
-    /// tracked-column case this exists alongside `Editor`'s own field
-    /// for.
+    /// Simulates a vertical excursion landing back on the anchor's row;
+    /// full round trips through real keys are in `bindings/tests.rs`.
     #[test]
     fn closes_the_selection_once_the_cursor_is_back_on_the_anchors_row() {
         let mut state = state_for("Draft", 1);
@@ -379,12 +214,8 @@ mod tests {
         assert!(state.selection.is_some(), "Right/Left have their own handling -- this function must not touch them");
     }
 
-    /// Regression coverage for the round-trip fix's own missing piece:
-    /// a fresh vertical selection trims `state.cursor.col` by one (see
-    /// `exclude_landing_column_on_fresh_vertical_selection`), and
-    /// without restoring it here, the cursor would permanently end up
-    /// one column short of where it actually started once the
-    /// selection closes.
+    /// Regression: without restoring the tracked column, a round trip
+    /// left the cursor one column short.
     #[test]
     fn restores_the_true_anchor_column_once_closed() {
         let mut state = state_for("terminal one\nterminal two", 4); // between 't' and 'e'
@@ -401,9 +232,8 @@ mod tests {
         assert!(true_anchor_col.is_none(), "should have consumed the tracked value");
     }
 
-    /// `Down`: the destination row's own copy of whatever sits on the
-    /// aligned column should be excluded -- see
-    /// `anchor_fresh_shift_selection`'s doc comment for the real report.
+    /// Regression (aligned text): the destination row's copy of the
+    /// word on the same column must not be selected.
     #[test]
     fn down_trims_the_destination_rows_landing_column() {
         let mut state = state_for("terminal one\nterminal two", 4);

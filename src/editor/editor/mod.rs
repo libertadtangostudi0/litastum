@@ -91,10 +91,8 @@ pub struct Editor {
     /// column from an inclusive-both-ends selection), so once that
     /// happens neither field reliably remembers the pre-trim value any
     /// more -- `close_selection_if_back_on_the_anchors_row` reads this
-    /// back to restore it once the excursion closes. See
-    /// `bindings::shift_select`'s own doc comment for the full history
-    /// of why this needed its own tracked field rather than being
-    /// re-derivable from `EditorState` alone.
+    /// back to restore it once the excursion closes. History:
+    /// docs/history/shift-select.md.
     vertical_shift_anchor_col: Option<usize>,
     /// The cursor position a `Ctrl+Shift+Left`-built word selection
     /// actually started at, before `trim_anchor_off_a_word_it_never_visited`

@@ -62,28 +62,12 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
 
         // Shift+arrow starts (or extends) a selection.
         //
-        // `Left`/`Right`'s fresh entries only switch to Visual mode --
-        // no `Move` chained on top. `SwitchMode(Visual)` alone already
-        // anchors a one-character selection on the current cell (vim's
-        // own `v` semantics), so chaining a `Move` here used to grab a
-        // *second* character on what a user experiences as a single
-        // keypress (reported directly: one `Shift+Right` before "Draft"
-        // selected "Dr", not "D"). See
-        // `shift_select.rs::anchor_fresh_shift_selection` for the real
-        // fix (which also covers why it's `Left`/`Right`-only, not
-        // `Up`/`Down` -- see below) and its own call site in
-        // `editor.rs::Editor::input` for how it's sequenced with the
-        // line-boundary wrap check.
-        //
-        // `Up`/`Down` keep the original chained form, deliberately --
-        // a first attempt applying the same fix to them too was
-        // reported broken immediately (`Shift+Down` selecting one
-        // character to the right instead of moving to the next line).
-        // There's no single-character "N+1, not N" granularity to fix
-        // for a row jump the way there is for `Left`/`Right`: "move to
-        // the same column on the next line, selecting everything in
-        // between" -- exactly what this chain already does -- was
-        // always the wanted behavior.
+        // `Left`/`Right`'s fresh entries only switch to Visual mode:
+        // `SwitchMode(Visual)` already anchors a one-cell selection, and
+        // a chained `Move` would grab a second character per press.
+        // `shift_select::anchor_fresh_shift_selection` picks the cell.
+        // `Up`/`Down` keep the chained move on purpose -- a row jump has
+        // no such off-by-one. History: docs/history/shift-select.md.
         (i(KeyInput::shift(KeyCode::Left)), SwitchMode(EditorMode::Visual).into()),
         (i(KeyInput::shift(KeyCode::Right)), SwitchMode(EditorMode::Visual).into()),
         (i(KeyInput::shift(KeyCode::Up)), SwitchMode(EditorMode::Visual).chain(MoveUp(1)).into()),

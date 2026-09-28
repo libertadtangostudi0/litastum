@@ -122,9 +122,7 @@ fn typing_marks_dirty() {
     assert!(editor.is_dirty());
 }
 
-/// Real, integration-level regression test for the reported bug
-/// (`bindings/shift_select.rs`'s own doc comment has the full
-/// story): one `Shift+Right` right before "Draft" must select
+/// Integration-level regression (docs/history/shift-select.md): one `Shift+Right` right before "Draft" must select
 /// exactly "D", not "Dr". Goes through the real `Editor::input`
 /// (not just the raw table in `bindings/mod.rs`'s own tests), since
 /// this is exactly where the interaction with

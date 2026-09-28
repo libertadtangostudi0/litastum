@@ -299,7 +299,7 @@ pub struct App {
     pub compare_line_ending_display: LineEndingDisplay,
     /// The always-live command line at the bottom of the browser (Far
     /// Manager-style) — see `command_line.rs` for the editing logic
-    /// and `.claude/rules/litastum-stack.md` for the design.
+    /// and `.claude/rules/litastum-command-line.md` for the design.
     pub command_line: String,
     /// Cursor position within `command_line`, as a character index (not
     /// byte offset — see `text_field.rs`'s own module doc). Always

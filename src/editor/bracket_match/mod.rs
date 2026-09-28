@@ -31,8 +31,8 @@ const PAIRS: [(char, char); 4] = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')
 /// directly, and matches real Far/VS Code behavior (both sides of a
 /// matched pair read as "this pair," not just one of them). `edtui`
 /// paints the cursor's own cell *after* every other style
-/// (`EditorView::render`, same "cursor on top" behavior `.claude/rules/
-/// litastum-stack.md` already documents for text selection), which
+/// (`EditorView::render`, same "cursor on top" behavior
+/// docs/history/word-select.md (5) records for text selection), which
 /// would otherwise silently hide the near bracket's own highlight for
 /// as long as the cursor sits right on it -- `Editor::view`'s
 /// `cursor_style` decision compensates for that separately (see

@@ -108,14 +108,8 @@ fn shift_right_selects_exactly_one_character_not_two() {
     assert_eq!(String::from(state.lines.clone()), "Draft architectureD");
 }
 
-/// Regression test for the real report on a retest of the fix
-/// above: `Shift+Left` was selecting (and copying) the character to
-/// the *right* of the cursor, not the left -- the anchor-only
-/// behavior that's correct for `Shift+Right` was, at first, reused
-/// unmodified for `Shift+Left` too, which is simply the wrong cell
-/// for a backward selection. See
-/// `shift_select.rs::anchor_fresh_shift_selection`'s own doc comment
-/// for the direction-aware fix.
+/// Regression: `Shift+Left` selected (and copied) the character to the
+/// *right* of the cursor. History: docs/history/shift-select.md (2).
 #[test]
 fn shift_left_selects_the_character_actually_to_the_left() {
     let (mut state, mut handler) = test_state("Draft architecture");
@@ -136,18 +130,10 @@ fn shift_left_selects_the_character_actually_to_the_left() {
     assert_eq!(String::from(state.lines.clone()), "Draft architecture ", "should have copied the space, not 'a'");
 }
 
-/// A fresh `Shift+Down` lands one column *short* of the aligned
-/// destination column, not on it -- reported against real, aligned
-/// text (a word landing on the identical column on both lines): the
-/// destination row's own copy of that word must not get swept into the
-/// selection too, since `MoveDown` never touches `.col` and would
-/// otherwise land squarely on top of it. See
-/// `shift_select.rs::anchor_fresh_shift_selection`'s own doc comment
-/// for the full history (this trim was tried, reverted for breaking
-/// round-trip symmetry, then re-added once there was somewhere --
-/// `Editor::vertical_shift_anchor_col` -- to track the pre-trim column
-/// for `shift_down_then_shift_up_returns_to_an_empty_selection_at_the_start`
-/// below to restore).
+/// Regression (aligned text): a fresh `Shift+Down` lands one column
+/// short of the aligned destination column, so the destination row's
+/// copy of the word there isn't selected. History:
+/// docs/history/shift-select.md (4, 5).
 #[test]
 fn shift_down_lands_one_column_short_of_the_aligned_destination() {
     let (mut state, mut handler) = test_state("line one\nline two");
@@ -176,9 +162,7 @@ fn repeated_shift_down_keeps_the_trimmed_column() {
     assert_eq!(state.cursor, Index2 { row: 2, col: 0 }, "column 1 trimmed to 0 on the first press, unchanged on the second");
 }
 
-/// Regression test for the real report that broke an earlier version
-/// of the landing-column trim above (see `shift_select.rs`'s own doc
-/// comment for the full story): pressing `Shift+Down` then `Shift+Up`
+/// Regression (docs/history/shift-select.md, 5): pressing `Shift+Down` then `Shift+Up`
 /// (or the reverse) must return to *exactly* the starting point with
 /// nothing selected -- `edtui`'s inclusive-both-ends model can't
 /// represent an empty selection as `Some` at all, so landing back on

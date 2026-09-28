@@ -11,7 +11,7 @@ pub enum EditorKeymapMode {
     /// correction pass `Editor::input` layers on top of it (word-wise
     /// selection touch-tracking, `Shift`+arrow anchor fixes, line-
     /// boundary wrapping, ...) -- see `.claude/rules/litastum-stack.md`
-    /// for the long history of why those exist. All of that is
+    /// and `docs/history/` for why those exist. All of that is
     /// specifically tuned against this keymap's own declarative table;
     /// none of it runs while `Vim` (below) is active instead.
     #[default]

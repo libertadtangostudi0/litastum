@@ -108,8 +108,8 @@ fn is_word_char(c: char) -> bool {
 ///
 /// Both branches re-check `< row.len()` before indexing, not just
 /// `> 0` -- a second real crash, reported directly: `MoveUp`/`MoveDown`
-/// (confirmed from `edtui`'s own source, see `.claude/rules/litastum-stack.md`'s
-/// word-selection history) only ever change `cursor.row`, never
+/// (confirmed from `edtui`'s own source, see
+/// docs/history/shift-select.md) only ever change `cursor.row`, never
 /// `.col` -- so moving from a long line onto a short or empty one
 /// leaves `cursor.col` sitting well past that new line's own length
 /// until a horizontal move re-clamps it. `row[cursor.col - 1]` on an

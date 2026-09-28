@@ -171,7 +171,7 @@ Code comments and tests elsewhere refer to these by ordinal ("Eighth",
 
 - Before generalizing a fix to "all four directions," check that the
   directions are really the same kind of motion (they weren't for
-  character-wise `Shift+arrows` either -- see `litastum-stack.md`).
+  character-wise `Shift+arrows` either -- see `shift-select.md`).
 - A decision that keeps failing when read from characters usually
   needs real state instead (8).
 - Several special cases in a row often turn out to be one rule (13).
