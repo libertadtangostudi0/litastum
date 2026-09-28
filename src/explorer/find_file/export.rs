@@ -27,7 +27,7 @@ pub fn export_results(state: &FindFileState) -> io::Result<PathBuf> {
 /// repeated exports for different searches — or the same one, run
 /// again later — don't overwrite each other.
 fn write_results(dir: &Path, state: &FindFileState) -> io::Result<PathBuf> {
-    let filename = format!("find-results_{}_{}.txt", sanitize_for_filename(&state.query), timestamp_for_filename());
+    let filename = format!("find-results_{}_{}.txt", sanitize_for_filename(state.query.text()), timestamp_for_filename());
     let path = dir.join(filename);
 
     let mut contents = String::new();
@@ -168,7 +168,7 @@ mod tests {
         fn write_results_writes_one_path_per_line() {
             let dir = scratch_dir();
             let mut state = FindFileState::new();
-            state.query = "test".to_string();
+            state.query.set_text("test");
             state.results = vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")];
 
             let path = write_results(&dir, &state).expect("export should succeed");
@@ -191,7 +191,7 @@ mod tests {
         fn write_results_filename_embeds_the_sanitized_query() {
             let dir = scratch_dir();
             let mut state = FindFileState::new();
-            state.query = "*.md".to_string();
+            state.query.set_text("*.md");
 
             let path = write_results(&dir, &state).unwrap();
 

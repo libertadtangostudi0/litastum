@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::command_line::{matching_history, CommandHistoryMenu};
+use crate::text_field::TextField;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
@@ -27,29 +28,11 @@ use crate::ui::popup;
 /// version had one, `"Ctrl+P {shell_name}"`) — reported as visual
 /// clutter that doesn't belong on a Far-style command line; `Ctrl+P`'s
 /// own picker already shows which profile is active when opened.
-pub(super) fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &str, selection_anchor: Option<usize>, cursor: usize, theme: &Theme) -> u16 {
+pub(super) fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &TextField, theme: &Theme) -> u16 {
     let prefix = format!("{}> ", cwd.display());
 
     let mut spans = vec![Span::styled(prefix.clone(), Style::default().fg(theme.command_line_prefix).add_modifier(Modifier::BOLD))];
-
-    // A `Shift`/`Ctrl+Shift`+`Left`/`Right` selection (`command_line/
-    // browsing.rs`) highlights the same way the Copy/Move destination
-    // field's own selection does (`text_field.rs::destination_line`,
-    // `theme.current_row_bg`) -- no selection just renders as one plain
-    // span, same as before this feature existed.
-    match selection_anchor {
-        Some(anchor) => {
-            let (start, end) = crate::text_field::selection_range(anchor, cursor);
-            let chars: Vec<char> = command_line.chars().collect();
-            let before: String = chars[..start].iter().collect();
-            let selected: String = chars[start..end].iter().collect();
-            let after: String = chars[end..].iter().collect();
-            spans.push(Span::styled(before, Style::default().fg(theme.text)));
-            spans.push(Span::styled(selected, popup::selected_text_style(theme)));
-            spans.push(Span::styled(after, Style::default().fg(theme.text)));
-        }
-        None => spans.push(Span::styled(command_line.to_string(), Style::default().fg(theme.text))),
-    }
+    spans.extend(super::text_field::field_spans(command_line, theme));
 
     frame.render_widget(Line::from(spans), area);
     prefix.chars().count() as u16

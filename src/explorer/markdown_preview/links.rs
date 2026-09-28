@@ -25,7 +25,7 @@ pub struct MarkdownLink {
 /// backspace only, no cursor movement or selection) -- same scope as
 /// the editor's own `Ctrl+F` search box (`editor.rs::search_push_char`/
 /// `_pop_char`), which this is modeled on: a short filter query has no
-/// real need for the fuller `text_field.rs` machinery other popups in
+/// real need for the fuller `text_field` machinery other popups in
 /// this app use for actual data entry.
 pub struct MarkdownLinkSearchState {
     links: Vec<MarkdownLink>,

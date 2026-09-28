@@ -66,10 +66,8 @@ fn to_crossterm_color(color: ratatui::style::Color) -> CtColor {
 /// anything else suspends the TUI and runs through the active shell
 /// profile with inherited stdio, so interactive programs work.
 pub(crate) fn run_command_line(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    let input = app.command_line.trim().to_string();
+    let input = app.command_line.text().trim().to_string();
     app.command_line.clear();
-    app.command_line_cursor = 0;
-    app.command_line_selection_anchor = None;
     if input.is_empty() {
         return Ok(());
     }

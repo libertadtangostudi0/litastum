@@ -2,7 +2,7 @@ use crossterm::event::KeyEvent;
 use edtui::actions::{Execute, SwitchMode};
 use edtui::{EditorMode, Index2};
 
-use crate::text_field::{self, EditOutcome};
+use crate::text_field::{EditOutcome, TextField};
 
 use super::Editor;
 
@@ -10,25 +10,20 @@ mod session;
 
 use session::SearchSession;
 
-/// The open `Ctrl+F` box: a real single-line text field (its own
-/// cursor and selection, the same keys as Find file's fields --
-/// `text_field::apply_edit_key`) plus the matching state for whatever it
+/// The open `Ctrl+F` box: a standard single-line text field (the same
+/// keys as Find file's fields) plus the matching state for whatever it
 /// currently holds. Requested directly: the box used to be append/
 /// Backspace-only, with no way to select part of the query or fix a
 /// typo in the middle of it.
 pub(in crate::editor::editor) struct SearchBox {
-    text: String,
-    /// Character index into `text`, same convention as every other
-    /// `text_field` user.
-    cursor: usize,
-    selection_anchor: Option<usize>,
+    field: TextField,
     session: SearchSession,
 }
 
 
 impl SearchBox {
     fn new(start_cursor: Index2) -> Self {
-        Self { text: String::new(), cursor: 0, selection_anchor: None, session: SearchSession::new(start_cursor) }
+        Self { field: TextField::new(), session: SearchSession::new(start_cursor) }
     }
 }
 
@@ -57,27 +52,20 @@ impl Editor {
 
     /// The search box's current query text, for rendering the popup.
     pub fn search_query(&self) -> String {
-        self.search.as_ref().map(|search_box| search_box.text.clone()).unwrap_or_default()
+        self.search_field().map(|field| field.text().to_string()).unwrap_or_default()
     }
 
-    /// The search box's own cursor, as a character index into
-    /// `search_query()`.
-    pub fn search_cursor(&self) -> usize {
-        self.search.as_ref().map_or(0, |search_box| search_box.cursor)
-    }
-
-    /// The search box's own selected character range (`start..end`,
-    /// end exclusive), if any -- for rendering it highlighted.
-    pub fn search_selection(&self) -> Option<(usize, usize)> {
-        let search_box = self.search.as_ref()?;
-        search_box.selection_anchor.map(|anchor| text_field::selection_range(anchor, search_box.cursor))
+    /// The search box's text field (text, cursor, selection), `None`
+    /// while the box is closed -- for rendering it.
+    pub fn search_field(&self) -> Option<&TextField> {
+        self.search.as_ref().map(|search_box| &search_box.field)
     }
 
     /// Whether the box's own cursor sits right after its last character
     /// -- where `End` accepts the history suggestion instead of moving
     /// (`editor_keymap::handle_search_key`).
     pub fn search_cursor_at_end(&self) -> bool {
-        self.search.as_ref().is_none_or(|search_box| search_box.cursor == search_box.text.chars().count())
+        self.search_field().is_none_or(|field| field.cursor() == field.text().chars().count())
     }
 
     /// The currently selected match as an inclusive `(start, end)` span
@@ -98,8 +86,7 @@ impl Editor {
     pub fn start_search(&mut self) {
         match &mut self.search {
             Some(search_box) => {
-                search_box.selection_anchor = Some(0);
-                search_box.cursor = search_box.text.chars().count();
+                search_box.field.select_all();
                 search_box.session.set_start_cursor(self.state.cursor);
             }
             None => self.search = Some(SearchBox::new(self.state.cursor)),
@@ -134,7 +121,7 @@ impl Editor {
         }
     }
 
-    /// One editing key in the search box (`text_field::apply_edit_key` --
+    /// One editing key in the search box (`TextField::apply_key` --
     /// typing, Backspace/Delete, character/word selection with
     /// `Shift`/`Ctrl+Shift` + arrows, `Home`/`End`, ...). Whenever the
     /// text itself changes, the matches follow immediately and the
@@ -145,9 +132,9 @@ impl Editor {
     pub fn search_edit_key(&mut self, key: KeyEvent) -> bool {
         let lines = &self.state.lines;
         let search_box = self.search.get_or_insert_with(|| SearchBox::new(self.state.cursor));
-        let outcome = text_field::apply_edit_key(&mut search_box.text, &mut search_box.cursor, &mut search_box.selection_anchor, key);
+        let outcome = search_box.field.apply_key(key);
         if outcome == EditOutcome::TextChanged {
-            search_box.session.set_pattern(lines, &search_box.text);
+            search_box.session.set_pattern(lines, search_box.field.text());
             self.jump_to_first_match();
             self.search_history_index = None;
         }
@@ -287,9 +274,7 @@ impl Editor {
     fn replace_search_query(&mut self, new_query: &str) {
         let lines = &self.state.lines;
         let search_box = self.search.get_or_insert_with(|| SearchBox::new(self.state.cursor));
-        search_box.text = new_query.to_string();
-        search_box.cursor = new_query.chars().count();
-        search_box.selection_anchor = None;
+        search_box.field.set_text(new_query);
         search_box.session.set_pattern(lines, new_query);
         self.jump_to_first_match();
     }

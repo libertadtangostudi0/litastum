@@ -9,7 +9,6 @@ use ratatui::{
 };
 
 use crate::explorer::{AddUserMenuItemState, MenuItemBody, UserMenuPromptState, UserMenuState};
-use crate::text_field;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
@@ -80,11 +79,7 @@ pub fn draw_user_menu(frame: &mut Frame, area: Rect, menu: &UserMenuState, theme
 /// terminal cursor should sit, same mechanism as every other text-entry
 /// popup in this app.
 pub fn draw_add_user_menu_item(frame: &mut Frame, area: Rect, form: &AddUserMenuItemState, theme: &Theme, style: PopupStyle) -> Position {
-    let (title, value, cursor, selection_anchor) = if form.is_title_stage() {
-        (" Title ", &form.title, form.title_cursor, form.title_selection_anchor)
-    } else {
-        (" Command (empty = submenu) ", &form.command, form.command_cursor, form.command_selection_anchor)
-    };
+    let (title, field) = if form.is_title_stage() { (" Title ", &form.title) } else { (" Command (empty = submenu) ", &form.command) };
 
     let extra = popup::chrome_extra_rows(style);
     let height = 4 + extra;
@@ -92,7 +87,7 @@ pub fn draw_add_user_menu_item(frame: &mut Frame, area: Rect, form: &AddUserMenu
 
     let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(inner);
 
-    frame.render_widget(field_line(value, cursor, selection_anchor, theme), rows[0]);
+    frame.render_widget(super::text_field::field_line(field, theme), rows[0]);
 
     let next_label = if form.is_title_stage() { " next  " } else { " add  " };
     let hint = Line::from(vec![
@@ -103,12 +98,12 @@ pub fn draw_add_user_menu_item(frame: &mut Frame, area: Rect, form: &AddUserMenu
     ]);
     frame.render_widget(hint, rows[1]);
 
-    Position { x: rows[0].x + cursor as u16, y: rows[0].y }
+    Position { x: rows[0].x + field.cursor() as u16, y: rows[0].y }
 }
 
 
 /// Renders a selected user-menu item's own `!?Label?Default!` prompt --
-/// one text field at a time (`text_field.rs`, same editing surface as
+/// one text field at a time (`text_field`, same editing surface as
 /// `confirm.rs`'s transfer-destination field), with the label and
 /// (once there's more than one) a "current of total" count in the
 /// popup's own title. Returns where the real terminal cursor should
@@ -127,7 +122,7 @@ pub fn draw_user_menu_prompt(frame: &mut Frame, area: Rect, prompt: &UserMenuPro
 
     let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(inner);
 
-    frame.render_widget(field_line(&prompt.value, prompt.cursor, prompt.selection_anchor, theme), rows[0]);
+    frame.render_widget(super::text_field::field_line(&prompt.value, theme), rows[0]);
 
     let next_label = if current < total { " next  " } else { " run  " };
     let hint = Line::from(vec![
@@ -138,7 +133,7 @@ pub fn draw_user_menu_prompt(frame: &mut Frame, area: Rect, prompt: &UserMenuPro
     ]);
     frame.render_widget(hint, rows[1]);
 
-    Position { x: rows[0].x + prompt.cursor as u16, y: rows[0].y }
+    Position { x: rows[0].x + prompt.value.cursor() as u16, y: rows[0].y }
 }
 
 
@@ -165,30 +160,6 @@ pub fn draw_confirm_port_far_menu(frame: &mut Frame, area: Rect, far_path: &Path
         Span::styled(" / Esc cancel", Style::default().fg(theme.text_dim)),
     ]);
     frame.render_widget(hint, rows[1]);
-}
-
-
-/// Renders a text field's value with its `Shift+Left`/`Right` selection
-/// (if any) picked out, same highlight `confirm.rs::destination_line`
-/// uses for the transfer-destination field -- no selection just renders
-/// as plain text. Shared by every single-line text-entry popup in this
-/// module (the prompt popup, the add-item form).
-fn field_line(value: &str, cursor: usize, selection_anchor: Option<usize>, theme: &Theme) -> Line<'static> {
-    let Some(anchor) = selection_anchor else {
-        return Line::from(Span::styled(value.to_string(), Style::default().fg(theme.text)));
-    };
-
-    let (start, end) = text_field::selection_range(anchor, cursor);
-    let chars: Vec<char> = value.chars().collect();
-    let before: String = chars[..start].iter().collect();
-    let selected: String = chars[start..end].iter().collect();
-    let after: String = chars[end..].iter().collect();
-
-    Line::from(vec![
-        Span::styled(before, Style::default().fg(theme.text)),
-        Span::styled(selected, popup::selected_text_style(theme)),
-        Span::styled(after, Style::default().fg(theme.text)),
-    ])
 }
 
 
@@ -263,8 +234,7 @@ mod tests {
     #[test]
     fn add_item_form_title_stage_shows_the_title_field() {
         let mut form = AddUserMenuItemState::new();
-        form.title = "status".to_string();
-        form.title_cursor = form.title.chars().count();
+        form.title.set_text("status");
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -281,9 +251,9 @@ mod tests {
     #[test]
     fn add_item_form_command_stage_shows_the_submenu_hint_and_command_field() {
         let mut form = AddUserMenuItemState::new();
-        form.title = "git".to_string();
+        form.title.set_text("git");
         form.advance_from_title();
-        form.command = "git status -s".to_string();
+        form.command.set_text("git status -s");
 
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();

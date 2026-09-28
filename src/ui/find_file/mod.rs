@@ -9,7 +9,6 @@ use ratatui::{
 };
 
 use crate::explorer::{FindFileField, FindFilePhase, FindFileState};
-use crate::text_field;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
@@ -117,13 +116,13 @@ fn draw_typing(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &The
     frame.render_widget(name_label, rows[content_start]);
 
     let name_row = rows[content_start + 1];
-    frame.render_widget(selection_line(&state.query, state.cursor, state.selection_anchor, theme), name_row);
+    frame.render_widget(super::text_field::field_line(&state.query, theme), name_row);
 
     let content_label = Line::from(Span::styled("Text to find:", label_style(FindFileField::Content)));
     frame.render_widget(content_label, rows[content_start + 2]);
 
     let content_row = rows[content_start + 3];
-    frame.render_widget(selection_line(&state.content_query, state.content_cursor, state.content_selection_anchor, theme), content_row);
+    frame.render_widget(super::text_field::field_line(&state.content_query, theme), content_row);
 
     let hint = Line::from(vec![
         Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
@@ -136,34 +135,10 @@ fn draw_typing(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &The
     frame.render_widget(hint, rows[content_start + 4]);
 
     let (cursor_row, cursor) = match state.active_field {
-        FindFileField::Name => (name_row, state.cursor),
-        FindFileField::Content => (content_row, state.content_cursor),
+        FindFileField::Name => (name_row, state.query.cursor()),
+        FindFileField::Content => (content_row, state.content_query.cursor()),
     };
     Position { x: cursor_row.x + cursor as u16, y: cursor_row.y }
-}
-
-/// Renders `text` with its own active selection (`text_field::selection_range`),
-/// if any, picked out with the same background used for the active row
-/// in a panel (`popup::selected_text_style`) -- no selection just
-/// renders as plain text. Same shape as
-/// `ui/confirm.rs::destination_line`, generalized to either of Find
-/// file's two independent fields.
-fn selection_line(text: &str, cursor: usize, selection_anchor: Option<usize>, theme: &Theme) -> Line<'static> {
-    let Some(anchor) = selection_anchor else {
-        return Line::from(Span::styled(text.to_string(), Style::default().fg(theme.text)));
-    };
-
-    let (start, end) = text_field::selection_range(anchor, cursor);
-    let chars: Vec<char> = text.chars().collect();
-    let before: String = chars[..start].iter().collect();
-    let selected: String = chars[start..end].iter().collect();
-    let after: String = chars[end..].iter().collect();
-
-    Line::from(vec![
-        Span::styled(before, Style::default().fg(theme.text)),
-        Span::styled(selected, popup::selected_text_style(theme)),
-        Span::styled(after, Style::default().fg(theme.text)),
-    ])
 }
 
 /// `FindFilePhase::Searching`: a live "please wait" screen shown while
@@ -240,9 +215,9 @@ fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Th
     // Manager's own results view names both the mask and the searched
     // text once a search runs.
     let base_title = if state.content_query.is_empty() {
-        format!("Find file: \"{}\"", state.query)
+        format!("Find file: \"{}\"", state.query.text())
     } else {
-        format!("Find file: \"{}\" containing \"{}\"", state.query, state.content_query)
+        format!("Find file: \"{}\" containing \"{}\"", state.query.text(), state.content_query.text())
     };
     // The result count and how long the search actually took -- Far
     // Manager's own dialog shows both once a search finishes, requested

@@ -3,16 +3,13 @@ use std::path::PathBuf;
 use ratatui::{backend::TestBackend, Terminal};
 
 use super::*;
+use crate::text_field::TextField;
 
 fn state_with(count: usize, selected: usize) -> FindFileState {
     FindFileState {
         phase: FindFilePhase::Results,
-        query: "x".to_string(),
-        cursor: 0,
-        selection_anchor: None,
-        content_query: String::new(),
-        content_cursor: 0,
-        content_selection_anchor: None,
+        query: TextField::at("x".to_string(), 0, None),
+        content_query: TextField::at(String::new(), 0, None),
         active_field: FindFileField::Name,
         name_history_index: None,
         content_history_index: None,
@@ -96,7 +93,7 @@ fn rounded_style_results_show_a_separator_before_the_hints() {
 
 #[test]
 fn rounded_style_typing_shows_a_separator_under_the_title() {
-    let state = FindFileState { phase: FindFilePhase::Typing, query: String::new(), cursor: 0, selection_anchor: None, content_query: String::new(), content_cursor: 0, content_selection_anchor: None, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: None, search_duration: None, results_capped: false, export_message: None };
+    let state = FindFileState { phase: FindFilePhase::Typing, query: TextField::at(String::new(), 0, None), content_query: TextField::at(String::new(), 0, None), active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: None, search_duration: None, results_capped: false, export_message: None };
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     let theme = Theme::dark();
@@ -123,7 +120,7 @@ fn rounded_style_typing_shows_a_separator_under_the_title() {
 /// visible under either style.
 #[test]
 fn rounded_style_typing_phase_shows_the_label_and_hint_not_just_an_empty_box() {
-    let state = FindFileState { phase: FindFilePhase::Typing, query: "abc".to_string(), cursor: 3, selection_anchor: None, content_query: String::new(), content_cursor: 0, content_selection_anchor: None, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: None, search_duration: None, results_capped: false, export_message: None };
+    let state = FindFileState { phase: FindFilePhase::Typing, query: TextField::at("abc".to_string(), 3, None), content_query: TextField::at(String::new(), 0, None), active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: None, search_duration: None, results_capped: false, export_message: None };
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     let theme = Theme::dark();
@@ -145,7 +142,7 @@ fn rounded_style_typing_phase_shows_the_label_and_hint_not_just_an_empty_box() {
 /// and the cursor should follow whichever field is currently active.
 #[test]
 fn typing_phase_shows_both_fields_and_the_cursor_follows_the_active_one() {
-    let mut state = FindFileState { phase: FindFilePhase::Typing, query: "read".to_string(), cursor: 4, selection_anchor: None, content_query: "todo".to_string(), content_cursor: 4, content_selection_anchor: None, active_field: FindFileField::Content, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: None, search_duration: None, results_capped: false, export_message: None };
+    let mut state = FindFileState { phase: FindFilePhase::Typing, query: TextField::at("read".to_string(), 4, None), content_query: TextField::at("todo".to_string(), 4, None), active_field: FindFileField::Content, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: None, search_duration: None, results_capped: false, export_message: None };
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     let theme = Theme::dark();
@@ -193,7 +190,7 @@ fn typing_phase_shows_both_fields_and_the_cursor_follows_the_active_one() {
 /// either time.
 #[test]
 fn typing_popup_width_scales_with_the_terminal_not_a_fixed_column_count() {
-    let state = FindFileState { phase: FindFilePhase::Typing, query: String::new(), cursor: 0, selection_anchor: None, content_query: String::new(), content_cursor: 0, content_selection_anchor: None, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: None, search_duration: None, results_capped: false, export_message: None };
+    let state = FindFileState { phase: FindFilePhase::Typing, query: TextField::at(String::new(), 0, None), content_query: TextField::at(String::new(), 0, None), active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: None, search_duration: None, results_capped: false, export_message: None };
     let theme = Theme::dark();
 
     // The popup's top border row is the one row that contains both
@@ -227,12 +224,8 @@ fn typing_popup_width_scales_with_the_terminal_not_a_fixed_column_count() {
 fn a_selection_in_the_name_field_is_rendered_with_the_selection_background() {
     let state = FindFileState {
         phase: FindFilePhase::Typing,
-        query: "abcdef".to_string(),
-        cursor: 4,
-        selection_anchor: Some(1),
-        content_query: String::new(),
-        content_cursor: 0,
-        content_selection_anchor: None,
+        query: TextField::at("abcdef".to_string(), 4, Some(1)),
+        content_query: TextField::at(String::new(), 0, None),
         active_field: FindFileField::Name,
         name_history_index: None,
         content_history_index: None,
@@ -267,7 +260,7 @@ fn a_selection_in_the_name_field_is_rendered_with_the_selection_background() {
 #[test]
 fn results_title_includes_the_content_query_when_set() {
     let mut state = state_with(1, 0);
-    state.content_query = "needle".to_string();
+    state.content_query.set_text("needle");
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     let theme = Theme::dark();
@@ -297,7 +290,7 @@ fn searching_phase_shows_live_progress_and_a_cancel_hint() {
         std::fs::write(dir.join(format!("file_{i}.txt")), b"hi").unwrap();
     }
     let pending = crate::explorer::spawn_search(dir, "file".to_string(), String::new());
-    let state = FindFileState { phase: FindFilePhase::Searching, query: "file".to_string(), cursor: 4, selection_anchor: None, content_query: String::new(), content_cursor: 0, content_selection_anchor: None, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: Some(pending), search_duration: None, results_capped: false, export_message: None };
+    let state = FindFileState { phase: FindFilePhase::Searching, query: TextField::at("file".to_string(), 4, None), content_query: TextField::at(String::new(), 0, None), active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: Some(pending), search_duration: None, results_capped: false, export_message: None };
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     let theme = Theme::dark();
@@ -319,7 +312,7 @@ fn searching_phase_shows_live_progress_and_a_cancel_hint() {
 /// ever somehow broken -- degrades to a plain status line instead.
 #[test]
 fn searching_phase_does_not_panic_with_no_pending_search() {
-    let state = FindFileState { phase: FindFilePhase::Searching, query: String::new(), cursor: 0, selection_anchor: None, content_query: String::new(), content_cursor: 0, content_selection_anchor: None, active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: None, search_duration: None, results_capped: false, export_message: None };
+    let state = FindFileState { phase: FindFilePhase::Searching, query: TextField::at(String::new(), 0, None), content_query: TextField::at(String::new(), 0, None), active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: None, search_duration: None, results_capped: false, export_message: None };
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     let theme = Theme::dark();

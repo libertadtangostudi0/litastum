@@ -10,7 +10,7 @@ use super::super::history;
 use super::super::state::{FindFileField, FindFilePhase};
 
 /// Key handling for `FindFilePhase::Typing` -- full-cursor editing
-/// (`text_field.rs`) into whichever of the two fields (`query`/
+/// (`text_field`) into whichever of the two fields (`query`/
 /// `content_query`) `Tab` last selected, `Up`/`Down` to browse that
 /// field's own persisted history, and `Enter` to actually run a search
 /// (`run_search` below). `Esc` is handled one level up, in
@@ -51,11 +51,11 @@ pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<()> {
         }
         return Ok(());
     }
-    let (field, cursor, selection_anchor, history_index) = match state.active_field {
-        FindFileField::Name => (&mut state.query, &mut state.cursor, &mut state.selection_anchor, &mut state.name_history_index),
-        FindFileField::Content => (&mut state.content_query, &mut state.content_cursor, &mut state.content_selection_anchor, &mut state.content_history_index),
+    let (field, history_index) = match state.active_field {
+        FindFileField::Name => (&mut state.query, &mut state.name_history_index),
+        FindFileField::Content => (&mut state.content_query, &mut state.content_history_index),
     };
-    if text_field::apply_edit_key(field, cursor, selection_anchor, key) == text_field::EditOutcome::TextChanged {
+    if field.apply_key(key) == text_field::EditOutcome::TextChanged {
         *history_index = None; // editing means fresh typing, not still showing a recalled entry
     }
     Ok(())
@@ -90,8 +90,8 @@ fn run_search(app: &mut App) -> Result<()> {
     if state.query.is_empty() && state.content_query.is_empty() {
         return Ok(());
     }
-    let query = state.query.clone();
-    let content_query = state.content_query.clone();
+    let query = state.query.text().to_string();
+    let content_query = state.content_query.text().to_string();
     let root = app.panels[app.active].path.clone();
     debug!(query, content_query, root = %root.display(), "find file: searching");
     history::record_history(&mut app.find_file_name_history, &query);
@@ -116,6 +116,7 @@ mod tests {
 
     use super::super::test_support::{app_with_find_file, wait_for_search};
     use super::*;
+    use crate::text_field::TextField;
     use crate::explorer::FindFileState;
     use crate::test_support::key;
 
@@ -127,7 +128,7 @@ mod tests {
         handle_typing_key(&mut app, key(KeyCode::Char('b'))).unwrap();
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
-        assert_eq!(state.query, "ab");
+        assert_eq!(state.query.text(), "ab");
     }
 
     /// Regression coverage for a real report: neither field supported
@@ -138,15 +139,14 @@ mod tests {
     #[test]
     fn shift_left_selects_the_character_before_the_cursor() {
         let mut state = FindFileState::new();
-        state.query = "abc".to_string();
-        state.cursor = 3;
+        state.query = TextField::at("abc", 3, None);
         let mut app = app_with_find_file(state);
 
         handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap();
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
-        assert_eq!(state.selection_anchor, Some(3));
-        assert_eq!(state.cursor, 2);
+        assert_eq!(state.query.anchor(), Some(3));
+        assert_eq!(state.query.cursor(), 2);
     }
 
     /// Regression coverage for a real report: `Ctrl+Shift+Left` used to
@@ -157,29 +157,27 @@ mod tests {
     #[test]
     fn ctrl_shift_left_selects_by_a_whole_word_not_one_character() {
         let mut state = FindFileState::new();
-        state.query = "one two".to_string();
-        state.cursor = 7;
+        state.query = TextField::at("one two", 7, None);
         let mut app = app_with_find_file(state);
 
         handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT)).unwrap();
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
-        assert_eq!(state.selection_anchor, Some(7));
-        assert_eq!(state.cursor, 4, "should have jumped back a whole word (\"two\"), not just one character");
+        assert_eq!(state.query.anchor(), Some(7));
+        assert_eq!(state.query.cursor(), 4, "should have jumped back a whole word (\"two\"), not just one character");
     }
 
     #[test]
     fn ctrl_shift_right_selects_by_a_whole_word() {
         let mut state = FindFileState::new();
-        state.query = "one two".to_string();
-        state.cursor = 0;
+        state.query = TextField::at("one two", 0, None);
         let mut app = app_with_find_file(state);
 
         handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)).unwrap();
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
-        assert_eq!(state.selection_anchor, Some(0));
-        assert_eq!(state.cursor, 3, "should have jumped forward a whole word (\"one\")");
+        assert_eq!(state.query.anchor(), Some(0));
+        assert_eq!(state.query.cursor(), 3, "should have jumped forward a whole word (\"one\")");
     }
 
     /// The content field's own Ctrl+Shift selection is independent of
@@ -187,46 +185,41 @@ mod tests {
     #[test]
     fn ctrl_shift_left_on_the_content_field_does_not_touch_the_name_field() {
         let mut state = FindFileState::new();
-        state.content_query = "one two".to_string();
-        state.content_cursor = 7;
+        state.content_query = TextField::at("one two", 7, None);
         state.active_field = FindFileField::Content;
         let mut app = app_with_find_file(state);
 
         handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT)).unwrap();
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
-        assert_eq!(state.content_selection_anchor, Some(7));
-        assert_eq!(state.content_cursor, 4);
-        assert_eq!(state.selection_anchor, None, "the name field's own selection shouldn't be touched");
+        assert_eq!(state.content_query.anchor(), Some(7));
+        assert_eq!(state.content_query.cursor(), 4);
+        assert_eq!(state.query.anchor(), None, "the name field's own selection shouldn't be touched");
     }
 
     #[test]
     fn backspace_with_a_selection_deletes_the_whole_selection_not_one_character() {
         let mut state = FindFileState::new();
-        state.query = "abc".to_string();
-        state.cursor = 3;
-        state.selection_anchor = Some(1);
+        state.query = TextField::at("abc", 3, Some(1));
         let mut app = app_with_find_file(state);
 
         handle_typing_key(&mut app, key(KeyCode::Backspace)).unwrap();
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
-        assert_eq!(state.query, "a", "should have removed \"bc\" (the whole selection), not just \"c\"");
-        assert_eq!(state.selection_anchor, None);
+        assert_eq!(state.query.text(), "a", "should have removed \"bc\" (the whole selection), not just \"c\"");
+        assert_eq!(state.query.anchor(), None);
     }
 
     #[test]
     fn typing_over_a_selection_replaces_it() {
         let mut state = FindFileState::new();
-        state.query = "abc".to_string();
-        state.cursor = 3;
-        state.selection_anchor = Some(0);
+        state.query = TextField::at("abc", 3, Some(0));
         let mut app = app_with_find_file(state);
 
         handle_typing_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
-        assert_eq!(state.query, "x");
+        assert_eq!(state.query.text(), "x");
     }
 
     /// The content field's own selection is entirely independent of the
@@ -235,19 +228,16 @@ mod tests {
     #[test]
     fn the_content_fields_selection_is_independent_of_the_name_fields() {
         let mut state = FindFileState::new();
-        state.query = "name".to_string();
-        state.cursor = 4;
-        state.selection_anchor = Some(0);
-        state.content_query = "content".to_string();
-        state.content_cursor = 7;
+        state.query = TextField::at("name", 4, Some(0));
+        state.content_query = TextField::at("content", 7, None);
         state.active_field = FindFileField::Content;
         let mut app = app_with_find_file(state);
 
         handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap();
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
-        assert_eq!(state.content_selection_anchor, Some(7));
-        assert_eq!(state.selection_anchor, Some(0), "the name field's own selection shouldn't be touched");
+        assert_eq!(state.content_query.anchor(), Some(7));
+        assert_eq!(state.query.anchor(), Some(0), "the name field's own selection shouldn't be touched");
     }
 
     #[test]
@@ -273,7 +263,7 @@ mod tests {
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
         assert_eq!(state.active_field, FindFileField::Content);
-        assert_eq!(state.content_query, "x");
+        assert_eq!(state.content_query.text(), "x");
         assert!(state.query.is_empty(), "typing after Tab should not still reach the name field");
     }
 
@@ -289,7 +279,7 @@ mod tests {
         handle_typing_key(&mut app, key(KeyCode::Up)).unwrap();
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
-        assert_eq!(state.query, "recent.txt", "Up on the name field should recall the name history, not the content one");
+        assert_eq!(state.query.text(), "recent.txt", "Up on the name field should recall the name history, not the content one");
 
         // Switch to the content field -- Up there should recall its own
         // history, untouched by whatever the name field just did.
@@ -300,7 +290,7 @@ mod tests {
         handle_typing_key(&mut app, key(KeyCode::Up)).unwrap();
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
-        assert_eq!(state.content_query, "needle");
+        assert_eq!(state.content_query.text(), "needle");
     }
 
     /// Typing after recalling a history entry with `Up` should leave
@@ -315,7 +305,7 @@ mod tests {
         handle_typing_key(&mut app, key(KeyCode::Char('!'))).unwrap();
 
         let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
-        assert_eq!(state.query, "recalled.txt!");
+        assert_eq!(state.query.text(), "recalled.txt!");
         assert_eq!(state.name_history_index, None, "typing should leave history-browsing mode");
     }
 
@@ -325,8 +315,8 @@ mod tests {
     #[test]
     fn enter_records_both_fields_into_their_own_separate_history() {
         let mut state = FindFileState::new();
-        state.query = "*.rs".to_string();
-        state.content_query = "TODO".to_string();
+        state.query.set_text("*.rs");
+        state.content_query.set_text("TODO");
         let mut app = app_with_find_file(state);
 
         handle_typing_key(&mut app, key(KeyCode::Enter)).unwrap();
@@ -342,7 +332,7 @@ mod tests {
     #[test]
     fn enter_with_only_a_content_query_still_searches() {
         let mut state = FindFileState::new();
-        state.content_query = "needle".to_string();
+        state.content_query.set_text("needle");
         state.active_field = FindFileField::Content;
         let mut app = app_with_find_file(state);
         fs::write(app.panels[0].path.join("a.txt"), b"needle here").unwrap();
@@ -359,8 +349,7 @@ mod tests {
     #[test]
     fn enter_on_a_real_query_runs_a_search_and_switches_to_results() {
         let mut state = FindFileState::new();
-        state.query = "sou".to_string();
-        state.cursor = 3;
+        state.query = TextField::at("sou", 3, None);
         let mut app = app_with_find_file(state);
         fs::write(app.panels[0].path.join("source.txt"), b"hi").unwrap();
 
@@ -379,7 +368,7 @@ mod tests {
     #[test]
     fn enter_on_a_real_query_switches_to_searching_before_the_background_thread_finishes() {
         let mut state = FindFileState::new();
-        state.query = "sou".to_string();
+        state.query.set_text("sou");
         let mut app = app_with_find_file(state);
 
         handle_typing_key(&mut app, key(KeyCode::Enter)).unwrap();

@@ -11,6 +11,7 @@ use crate::explorer::{
     AddUserMenuItemState, DriveMenu, FindFileState, ImagePreviewState, MarkdownLinkSearchState, MarkdownPreviewState, Panel, UserMenuCommandEdit, UserMenuPromptState,
     UserMenuState,
 };
+use crate::text_field::TextField;
 use crate::theming::{MainMenu, PopupStyle, PopupStyleMenu, Theme, ThemeMenu};
 
 
@@ -145,14 +146,8 @@ pub struct PendingTransfer {
     /// panel's directory + its name; its own directory for rename).
     /// Several entries default to a target *directory*, each name joined
     /// on at transfer time (`confirm::run_confirmed_transfer`). Edited
-    /// with full cursor movement (`text_field`).
-    pub destination: String,
-    /// Character index (not byte offset) into `destination` — see
-    /// `text_field.rs`.
-    pub cursor: usize,
-    /// `Shift+Left`/`Shift+Right` selection anchor, `None` when nothing
-    /// is selected — see `text_field.rs`'s selection section.
-    pub selection_anchor: Option<usize>,
+    /// with full cursor movement.
+    pub destination: TextField,
 }
 
 
@@ -192,16 +187,12 @@ pub struct App {
     /// `popup_style`.
     pub compare_line_ending_display: LineEndingDisplay,
     /// The always-live command line at the bottom of the browser (Far
-    /// Manager-style) — see `command_line.rs` for the editing logic
-    /// and `.claude/rules/litastum-command-line.md` for the design.
-    pub command_line: String,
-    /// Character index into `command_line`. At the end except while a
-    /// selection is active -- bare `Left`/`Right` belong to panel
-    /// navigation, so only `Shift`/`Ctrl+Shift`+arrows move it
-    /// (`text_field`'s selection functions).
-    pub command_line_cursor: usize,
-    /// Selection anchor in `command_line`; `None` = no selection.
-    pub command_line_selection_anchor: Option<usize>,
+    /// Manager-style) -- see `command_line::browsing` for the editing
+    /// logic and `.claude/rules/litastum-command-line.md` for the design.
+    /// The cursor stays at the end except while a selection is active:
+    /// bare `Left`/`Right` belong to panel navigation, so only
+    /// `Shift`/`Ctrl`+arrows move it.
+    pub command_line: TextField,
     /// A live `Tab`-cycling session over `command_line`'s current word,
     /// if one's in progress — `None` whenever nothing's being cycled.
     /// See `command_line::CompletionCycle`.
@@ -283,9 +274,7 @@ impl App {
             popup_style: PopupStyle::default(),
             editor_keymap_mode: EditorKeymapMode::default(),
             compare_line_ending_display: LineEndingDisplay::default(),
-            command_line: String::new(),
-            command_line_cursor: 0,
-            command_line_selection_anchor: None,
+            command_line: TextField::new(),
             command_line_completion: None,
             command_line_suggestion_selected: 0,
             command_line_suggestion_dismissed: false,

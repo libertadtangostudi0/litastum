@@ -1,8 +1,7 @@
 use color_eyre::eyre::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Mode};
-use crate::text_field;
 
 /// Key handling on the `Ins` add-item form (`Mode::AddUserMenuItem`):
 /// `Esc` cancels back to browsing the menu untouched at any stage;
@@ -40,61 +39,10 @@ pub fn handle_add_user_menu_item_key(app: &mut App, key: KeyEvent) -> Result<()>
     let Mode::AddUserMenuItem(_, form) = &mut app.mode else {
         return Ok(());
     };
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    if form.is_title_stage() {
-        edit_field(&mut form.title, &mut form.title_cursor, &mut form.title_selection_anchor, key, ctrl);
-    } else {
-        edit_field(&mut form.command, &mut form.command_cursor, &mut form.command_selection_anchor, key, ctrl);
-    }
+    let field = if form.is_title_stage() { &mut form.title } else { &mut form.command };
+    field.apply_key(key);
 
     Ok(())
-}
-
-
-/// Shared single-line text-field editing (insert/backspace/delete/
-/// selection/word-movement) -- same behavior as `confirm.rs`'s own
-/// transfer-destination field and `input::prompt::handle_user_menu_prompt_key`,
-/// factored out here since the add-item form has two independent
-/// fields (title, command) that both need exactly this.
-fn edit_field(value: &mut String, cursor: &mut usize, selection_anchor: &mut Option<usize>, key: KeyEvent, ctrl: bool) {
-    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-    match key.code {
-        KeyCode::Backspace => {
-            if !text_field::delete_selection(value, cursor, selection_anchor) {
-                text_field::backspace(value, cursor);
-            }
-        }
-        KeyCode::Delete => {
-            if !text_field::delete_selection(value, cursor, selection_anchor) {
-                text_field::delete_forward(value, cursor);
-            }
-        }
-        KeyCode::Left if shift => text_field::extend_selection_left(cursor, selection_anchor),
-        KeyCode::Right if shift => text_field::extend_selection_right(value, cursor, selection_anchor),
-        KeyCode::Left if ctrl => {
-            *selection_anchor = None;
-            text_field::move_word_left(value, cursor);
-        }
-        KeyCode::Right if ctrl => {
-            *selection_anchor = None;
-            text_field::move_word_right(value, cursor);
-        }
-        KeyCode::Left => text_field::collapse_selection_left(cursor, selection_anchor),
-        KeyCode::Right => text_field::collapse_selection_right(value, cursor, selection_anchor),
-        KeyCode::Home => {
-            *selection_anchor = None;
-            text_field::move_home(cursor);
-        }
-        KeyCode::End => {
-            *selection_anchor = None;
-            text_field::move_end(value, cursor);
-        }
-        KeyCode::Char(c) if !ctrl => {
-            text_field::delete_selection(value, cursor, selection_anchor);
-            text_field::insert_char(value, cursor, c);
-        }
-        _ => {}
-    }
 }
 
 
@@ -121,7 +69,7 @@ mod tests {
         handle_add_user_menu_item_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 
         let Mode::AddUserMenuItem(_, form) = &app.mode else { panic!("expected Mode::AddUserMenuItem") };
-        assert_eq!(form.title, "x");
+        assert_eq!(form.title.text(), "x");
     }
 
     #[test]
@@ -144,7 +92,7 @@ mod tests {
 
         let Mode::AddUserMenuItem(_, form) = &app.mode else { panic!("expected Mode::AddUserMenuItem") };
         assert!(!form.is_title_stage());
-        assert_eq!(form.command, "c");
+        assert_eq!(form.command.text(), "c");
     }
 
     /// The actual end-to-end point of the whole feature: a leaf

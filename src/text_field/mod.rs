@@ -1,26 +1,20 @@
-//! Cursor-aware text editing for a single-line field — the F5/F6/
-//! Shift+F6 destination path (`app::PendingTransfer`), Find file's
-//! fields, the editor's `Ctrl+F` box, the user-menu prompts, and the
-//! command line's own selection. `apply_edit_key` is the shared key
-//! layout for fields that take the whole standard set.
+//! Single-line text fields: `TextField` (text + cursor + selection) and
+//! the standard key layout it applies (`apply_edit_key`). Used by the
+//! command line, the F5/F6 destination, Find file's fields, the editor's
+//! `Ctrl+F` box and the F2 menu's forms. The command line takes only
+//! part of the layout -- bare arrows there are panel navigation
+//! (`.claude/rules/litastum-command-line.md`).
 //!
-//! Deliberately a separate module from `command_line.rs`, not a
-//! generalization of it: the always-live command line keeps its
-//! append/backspace-only, no-cursor-movement scope cut on purpose
-//! (arrow keys there are needed for panel navigation even while typing
-//! — see `.claude/rules/litastum-command-line.md`). The transfer
-//! prompt is a modal popup with no panel navigation happening under
-//! it, so arrows are free to mean "move within the text" there, and a
-//! real cursor is what makes editing a filename in the middle of a
-//! full path (the actual `Shift+F6` rename use case) usable at all.
-//!
-//! Positions are character indices (not byte offsets) into the
-//! `String`, so multi-byte UTF-8 filenames don't panic on a split at a
-//! non-boundary; `byte_index` is the one place that converts between
-//! the two.
+//! Positions are character indices (not byte offsets), so multi-byte
+//! UTF-8 text never splits mid-character; `byte_index` is the one place
+//! that converts between the two.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::warn;
+
+mod field;
+
+pub use field::TextField;
 
 /// Byte offset of the `char_idx`-th character in `text` (or `text`'s
 /// full length, for `char_idx == text.chars().count()` — the
@@ -31,7 +25,7 @@ fn byte_index(text: &str, char_idx: usize) -> usize {
 
 
 /// Inserts `c` at `*cursor` and advances the cursor past it.
-pub fn insert_char(text: &mut String, cursor: &mut usize, c: char) {
+fn insert_char(text: &mut String, cursor: &mut usize, c: char) {
     let byte = byte_index(text, *cursor);
     text.insert(byte, c);
     *cursor += 1;
@@ -39,7 +33,7 @@ pub fn insert_char(text: &mut String, cursor: &mut usize, c: char) {
 
 
 /// Deletes the character just before `*cursor` (a no-op at the start).
-pub fn backspace(text: &mut String, cursor: &mut usize) {
+fn backspace(text: &mut String, cursor: &mut usize) {
     if *cursor == 0 {
         return;
     }
@@ -52,7 +46,7 @@ pub fn backspace(text: &mut String, cursor: &mut usize) {
 
 /// Deletes the character at `*cursor` (a no-op at the end); the cursor
 /// itself doesn't move, matching a normal editor's `Delete` key.
-pub fn delete_forward(text: &mut String, cursor: &mut usize) {
+fn delete_forward(text: &mut String, cursor: &mut usize) {
     let len = text.chars().count();
     if *cursor >= len {
         return;
@@ -64,13 +58,13 @@ pub fn delete_forward(text: &mut String, cursor: &mut usize) {
 
 
 /// Moves the cursor one character left, clamped at the start.
-pub fn move_left(cursor: &mut usize) {
+fn move_left(cursor: &mut usize) {
     *cursor = cursor.saturating_sub(1);
 }
 
 
 /// Moves the cursor one character right, clamped at the end.
-pub fn move_right(text: &str, cursor: &mut usize) {
+fn move_right(text: &str, cursor: &mut usize) {
     let len = text.chars().count();
     if *cursor < len {
         *cursor += 1;
@@ -78,12 +72,12 @@ pub fn move_right(text: &str, cursor: &mut usize) {
 }
 
 
-pub fn move_home(cursor: &mut usize) {
+fn move_home(cursor: &mut usize) {
     *cursor = 0;
 }
 
 
-pub fn move_end(text: &str, cursor: &mut usize) {
+fn move_end(text: &str, cursor: &mut usize) {
     *cursor = text.chars().count();
 }
 
@@ -117,7 +111,7 @@ fn is_path_sep(c: char) -> bool {
 /// cursor is its own stop instead (`is_path_sep`'s own doc comment) —
 /// checked first, before the general run-skip, so it doesn't get
 /// swallowed into either side of it.
-pub fn move_word_left(text: &str, cursor: &mut usize) {
+fn move_word_left(text: &str, cursor: &mut usize) {
     let chars: Vec<char> = text.chars().collect();
     let mut i = *cursor;
 
@@ -138,7 +132,7 @@ pub fn move_word_left(text: &str, cursor: &mut usize) {
 
 /// Moves the cursor to the start of the next word (`Ctrl+Right`) —
 /// mirror of `move_word_left`.
-pub fn move_word_right(text: &str, cursor: &mut usize) {
+fn move_word_right(text: &str, cursor: &mut usize) {
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len();
     let mut i = *cursor;
@@ -160,22 +154,19 @@ pub fn move_word_right(text: &str, cursor: &mut usize) {
 
 // -- Selection (Shift+Left/Right) --------------------------------------
 //
-// A selection is `anchor..cursor` (order-independent — `selection_range`
+// A selection is `anchor..cursor` (order-independent -- `selection_range`
 // normalizes it): `anchor` is where Shift+arrow started, `cursor` is the
-// live end that keeps moving. `None` means no selection. Kept as a
-// separate `Option<usize>` on `PendingTransfer` rather than folded into
-// `cursor` itself, since most of the plain movement/editing functions
-// above have no notion of a selection at all and shouldn't need one.
+// live end that keeps moving. `None` means no selection.
 
 /// The selected char-range, `start <= end`, regardless of which
 /// direction the selection was extended in.
-pub fn selection_range(anchor: usize, cursor: usize) -> (usize, usize) {
+fn selection_range(anchor: usize, cursor: usize) -> (usize, usize) {
     if anchor <= cursor { (anchor, cursor) } else { (cursor, anchor) }
 }
 
 
 /// Removes chars `start..end` from `text` (char indices, `start <= end`).
-pub fn delete_range(text: &mut String, start: usize, end: usize) {
+fn delete_range(text: &mut String, start: usize, end: usize) {
     let start_b = byte_index(text, start);
     let end_b = byte_index(text, end);
     text.replace_range(start_b..end_b, "");
@@ -184,7 +175,7 @@ pub fn delete_range(text: &mut String, start: usize, end: usize) {
 
 /// `Shift+Left`: starts a selection at the current cursor if none is
 /// active yet, then moves the cursor (the selection's live end) left.
-pub fn extend_selection_left(cursor: &mut usize, anchor: &mut Option<usize>) {
+fn extend_selection_left(cursor: &mut usize, anchor: &mut Option<usize>) {
     if anchor.is_none() {
         *anchor = Some(*cursor);
     }
@@ -193,7 +184,7 @@ pub fn extend_selection_left(cursor: &mut usize, anchor: &mut Option<usize>) {
 
 
 /// `Shift+Right` — mirror of `extend_selection_left`.
-pub fn extend_selection_right(text: &str, cursor: &mut usize, anchor: &mut Option<usize>) {
+fn extend_selection_right(text: &str, cursor: &mut usize, anchor: &mut Option<usize>) {
     if anchor.is_none() {
         *anchor = Some(*cursor);
     }
@@ -204,7 +195,7 @@ pub fn extend_selection_right(text: &str, cursor: &mut usize, anchor: &mut Optio
 /// `Ctrl+Shift+Left` — word-wise version of `extend_selection_left`,
 /// same anchor-starting behavior, extending by a whole word
 /// (`move_word_left`) instead of one character.
-pub fn extend_selection_word_left(text: &str, cursor: &mut usize, anchor: &mut Option<usize>) {
+fn extend_selection_word_left(text: &str, cursor: &mut usize, anchor: &mut Option<usize>) {
     if anchor.is_none() {
         *anchor = Some(*cursor);
     }
@@ -213,7 +204,7 @@ pub fn extend_selection_word_left(text: &str, cursor: &mut usize, anchor: &mut O
 
 
 /// `Ctrl+Shift+Right` — mirror of `extend_selection_word_left`.
-pub fn extend_selection_word_right(text: &str, cursor: &mut usize, anchor: &mut Option<usize>) {
+fn extend_selection_word_right(text: &str, cursor: &mut usize, anchor: &mut Option<usize>) {
     if anchor.is_none() {
         *anchor = Some(*cursor);
     }
@@ -224,7 +215,7 @@ pub fn extend_selection_word_right(text: &str, cursor: &mut usize, anchor: &mut 
 /// Plain `Left` with a selection active: collapses to the selection's
 /// start instead of moving one more character, matching a standard
 /// text editor. With no selection, just moves left as usual.
-pub fn collapse_selection_left(cursor: &mut usize, anchor: &mut Option<usize>) {
+fn collapse_selection_left(cursor: &mut usize, anchor: &mut Option<usize>) {
     match anchor.take() {
         Some(a) => *cursor = (*cursor).min(a),
         None => move_left(cursor),
@@ -234,7 +225,7 @@ pub fn collapse_selection_left(cursor: &mut usize, anchor: &mut Option<usize>) {
 
 /// Plain `Right` with a selection active — mirror of
 /// `collapse_selection_left`, collapsing to the selection's end.
-pub fn collapse_selection_right(text: &str, cursor: &mut usize, anchor: &mut Option<usize>) {
+fn collapse_selection_right(text: &str, cursor: &mut usize, anchor: &mut Option<usize>) {
     match anchor.take() {
         Some(a) => *cursor = (*cursor).max(a),
         None => move_right(text, cursor),
@@ -246,7 +237,7 @@ pub fn collapse_selection_right(text: &str, cursor: &mut usize, anchor: &mut Opt
 /// started, and clears `anchor` — returns `true`. Otherwise leaves
 /// everything untouched and returns `false`, so callers can fall back
 /// to their own single-character `backspace`/`delete_forward`.
-pub fn delete_selection(text: &mut String, cursor: &mut usize, anchor: &mut Option<usize>) -> bool {
+fn delete_selection(text: &mut String, cursor: &mut usize, anchor: &mut Option<usize>) -> bool {
     let Some(a) = anchor.take() else {
         return false;
     };
@@ -264,7 +255,7 @@ pub fn delete_selection(text: &mut String, cursor: &mut usize, anchor: &mut Opti
 /// `editor::clipboard`'s own tests never call a real `Clipboard::new()`
 /// either, since it isn't guaranteed to be available wherever the test
 /// suite happens to run).
-pub fn selected_text(text: &str, cursor: usize, anchor: Option<usize>) -> Option<String> {
+fn selected_text(text: &str, cursor: usize, anchor: Option<usize>) -> Option<String> {
     let anchor = anchor?;
     let (start, end) = selection_range(anchor, cursor);
     let selected: String = text.chars().skip(start).take(end - start).collect();
@@ -277,7 +268,7 @@ pub fn selected_text(text: &str, cursor: usize, anchor: Option<usize>) -> Option
 /// environment, or the OS call itself failing) is only logged, same
 /// "don't fail the keystroke over it" rule
 /// `editor::clipboard::OsClipboardBridge` already follows.
-pub fn copy_selection(text: &str, cursor: usize, anchor: Option<usize>) {
+fn copy_selection(text: &str, cursor: usize, anchor: Option<usize>) {
     let Some(selected) = selected_text(text, cursor, anchor) else {
         return;
     };
@@ -296,7 +287,7 @@ pub fn copy_selection(text: &str, cursor: usize, anchor: Option<usize>) {
 /// are dropped: every user of this is a single-line field. A missing/
 /// unavailable clipboard or non-text contents is only logged, same as
 /// `copy_selection`.
-pub fn paste_clipboard(text: &mut String, cursor: &mut usize, anchor: &mut Option<usize>) {
+fn paste_clipboard(text: &mut String, cursor: &mut usize, anchor: &mut Option<usize>) {
     let Some(mut clipboard) = os_clipboard() else {
         return;
     };
@@ -360,7 +351,7 @@ pub enum EditOutcome {
 /// plain `Shift` (both have `SHIFT` set -- reported directly once as
 /// word-wise selection silently doing character-wise selection instead),
 /// and `Shift` before `Ctrl` and plain arrows.
-pub fn apply_edit_key(text: &mut String, cursor: &mut usize, anchor: &mut Option<usize>, key: KeyEvent) -> EditOutcome {
+fn apply_edit_key(text: &mut String, cursor: &mut usize, anchor: &mut Option<usize>, key: KeyEvent) -> EditOutcome {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     match key.code {

@@ -1,4 +1,5 @@
 use crate::explorer::user_menu::parse::{self, Prompt};
+use crate::text_field::TextField;
 
 /// `Mode::UserMenuPrompt`: collecting answers to a `Commands` item's
 /// own `!?Label?Default!` placeholders (`parse::extract_prompts`)
@@ -14,9 +15,7 @@ pub struct UserMenuPromptState {
     prompts: Vec<Prompt>,
     current: usize,
     answers: Vec<(String, String)>,
-    pub value: String,
-    pub cursor: usize,
-    pub selection_anchor: Option<usize>,
+    pub value: TextField,
 }
 
 impl UserMenuPromptState {
@@ -26,9 +25,8 @@ impl UserMenuPromptState {
     /// instead (`explorer::user_menu::input`).
     pub fn new(commands: Vec<String>, prompts: Vec<Prompt>) -> Self {
         assert!(!prompts.is_empty(), "UserMenuPromptState needs at least one prompt to collect");
-        let value = prompts[0].default.clone();
-        let cursor = value.chars().count();
-        Self { commands, prompts, current: 0, answers: Vec::new(), value, cursor, selection_anchor: None }
+        let value = TextField::with_text(prompts[0].default.clone());
+        Self { commands, prompts, current: 0, answers: Vec::new(), value }
     }
 
     /// The label to show above the input field for whichever prompt is
@@ -49,13 +47,11 @@ impl UserMenuPromptState {
     /// substitutes them all into `commands` and returns the finished,
     /// ready-to-run list instead.
     pub fn accept_current(&mut self) -> Option<Vec<String>> {
-        self.answers.push((self.prompts[self.current].label.clone(), self.value.clone()));
+        self.answers.push((self.prompts[self.current].label.clone(), self.value.text().to_string()));
         self.current += 1;
 
         if self.current < self.prompts.len() {
-            self.value = self.prompts[self.current].default.clone();
-            self.cursor = self.value.chars().count();
-            self.selection_anchor = None;
+            self.value.set_text(self.prompts[self.current].default.clone());
             None
         } else {
             Some(self.commands.iter().map(|command| parse::substitute_prompts(command, &self.answers)).collect())
@@ -72,7 +68,7 @@ mod tests {
     fn starts_prefilled_with_the_first_prompts_default() {
         let prompts = vec![Prompt { label: "Branch".to_string(), default: "Master".to_string() }];
         let state = UserMenuPromptState::new(vec!["git checkout !?Branch?Master!".to_string()], prompts);
-        assert_eq!(state.value, "Master");
+        assert_eq!(state.value.text(), "Master");
         assert_eq!(state.current_label(), "Branch");
         assert_eq!(state.progress(), (1, 1));
     }
@@ -89,14 +85,14 @@ mod tests {
 
         assert_eq!(result, None, "should not finish yet -- one prompt left");
         assert_eq!(state.current_label(), "Second");
-        assert_eq!(state.value, "b", "pre-filled with the next prompt's own default");
+        assert_eq!(state.value.text(), "b", "pre-filled with the next prompt's own default");
     }
 
     #[test]
     fn accept_current_returns_the_substituted_commands_once_every_prompt_is_answered() {
         let prompts = vec![Prompt { label: "Branch".to_string(), default: "Master".to_string() }];
         let mut state = UserMenuPromptState::new(vec!["git checkout !?Branch?Master!".to_string()], prompts);
-        state.value = "feature/x".to_string();
+        state.value.set_text("feature/x");
 
         let result = state.accept_current();
 

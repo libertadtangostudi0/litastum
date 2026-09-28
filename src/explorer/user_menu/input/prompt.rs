@@ -1,17 +1,15 @@
 use std::io::Stdout;
 
 use color_eyre::eyre::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{prelude::CrosstermBackend, Terminal};
 
 use crate::app::{App, Mode};
 use crate::command_line;
-use crate::text_field;
 
 /// Key handling on a user-menu item's own `!?Label?Default!` prompt
-/// popup (`Mode::UserMenuPrompt`) -- a single-line text field
-/// (`text_field.rs`, same editing surface as `confirm.rs`'s transfer-
-/// destination field), one prompt at a time. `Enter` accepts the
+/// popup (`Mode::UserMenuPrompt`) -- a standard single-line text field
+/// (`TextField::apply_key`), one prompt at a time. `Enter` accepts the
 /// current field's value and either advances to the next prompt or, if
 /// that was the last one, runs the finished, fully-substituted command
 /// list (same `run_shell_command_lines` path `handle_user_menu_key`
@@ -36,48 +34,7 @@ pub fn handle_user_menu_prompt_key(app: &mut App, key: KeyEvent, terminal: &mut 
     let Mode::UserMenuPrompt(prompt) = &mut app.mode else {
         return Ok(());
     };
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-
-    match key.code {
-        KeyCode::Backspace => {
-            let removed_selection = text_field::delete_selection(&mut prompt.value, &mut prompt.cursor, &mut prompt.selection_anchor);
-            if !removed_selection {
-                text_field::backspace(&mut prompt.value, &mut prompt.cursor);
-            }
-        }
-        KeyCode::Delete => {
-            let removed_selection = text_field::delete_selection(&mut prompt.value, &mut prompt.cursor, &mut prompt.selection_anchor);
-            if !removed_selection {
-                text_field::delete_forward(&mut prompt.value, &mut prompt.cursor);
-            }
-        }
-        KeyCode::Left if shift => text_field::extend_selection_left(&mut prompt.cursor, &mut prompt.selection_anchor),
-        KeyCode::Right if shift => text_field::extend_selection_right(&prompt.value, &mut prompt.cursor, &mut prompt.selection_anchor),
-        KeyCode::Left if ctrl => {
-            prompt.selection_anchor = None;
-            text_field::move_word_left(&prompt.value, &mut prompt.cursor);
-        }
-        KeyCode::Right if ctrl => {
-            prompt.selection_anchor = None;
-            text_field::move_word_right(&prompt.value, &mut prompt.cursor);
-        }
-        KeyCode::Left => text_field::collapse_selection_left(&mut prompt.cursor, &mut prompt.selection_anchor),
-        KeyCode::Right => text_field::collapse_selection_right(&prompt.value, &mut prompt.cursor, &mut prompt.selection_anchor),
-        KeyCode::Home => {
-            prompt.selection_anchor = None;
-            text_field::move_home(&mut prompt.cursor);
-        }
-        KeyCode::End => {
-            prompt.selection_anchor = None;
-            text_field::move_end(&prompt.value, &mut prompt.cursor);
-        }
-        KeyCode::Char(c) if !ctrl => {
-            text_field::delete_selection(&mut prompt.value, &mut prompt.cursor, &mut prompt.selection_anchor);
-            text_field::insert_char(&mut prompt.value, &mut prompt.cursor, c);
-        }
-        _ => {}
-    }
+    prompt.value.apply_key(key);
 
     Ok(())
 }
@@ -106,7 +63,7 @@ mod tests {
         handle_user_menu_prompt_key(&mut app, key(KeyCode::Char('x')), &mut terminal).unwrap();
 
         let Mode::UserMenuPrompt(prompt) = &app.mode else { panic!("expected Mode::UserMenuPrompt") };
-        assert_eq!(prompt.value, "x");
+        assert_eq!(prompt.value.text(), "x");
     }
 
     #[test]

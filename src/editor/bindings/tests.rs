@@ -396,7 +396,7 @@ fn esc_cancels_selection_and_returns_to_insert() {
 }
 
 /// Reported missing: the command line already had word-wise
-/// `Ctrl+Left`/`Right` (`text_field.rs`), the built-in editor never
+/// `Ctrl+Left`/`Right` (`text_field`), the built-in editor never
 /// did -- unlike a real shell, `edtui`'s custom keymap has no
 /// built-in fallback for an unbound key, so this was a silent
 /// no-op rather than falling back to single-character movement.

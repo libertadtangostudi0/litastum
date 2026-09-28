@@ -138,18 +138,18 @@ mod history_key_handling_tests {
         handle_history_key(&mut app, key(KeyCode::Enter), &mut dummy_terminal()).unwrap();
 
         assert_eq!(app.panels[app.active].path, target, "Enter should have actually run the recalled cd, not just copied it");
-        assert_eq!(app.command_line, "", "run_command_line clears the line once it's actually run");
+        assert_eq!(app.command_line.text(), "", "run_command_line clears the line once it's actually run");
         assert!(matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
     fn handle_history_key_esc_cancels_without_changing_the_command_line() {
         let mut app = app_in_history_menu(vec!["dir"]);
-        app.command_line = "untouched".to_string();
+        app.command_line.set_text("untouched");
 
         handle_history_key(&mut app, key(KeyCode::Esc), &mut dummy_terminal()).unwrap();
 
-        assert_eq!(app.command_line, "untouched");
+        assert_eq!(app.command_line.text(), "untouched");
         assert!(matches!(app.mode, Mode::Browsing));
     }
 
@@ -171,7 +171,7 @@ mod history_key_handling_tests {
         handle_history_key(&mut app, key(KeyCode::Enter), &mut dummy_terminal()).unwrap();
 
         assert!(matches!(app.mode, Mode::Browsing));
-        assert_eq!(app.command_line, "");
+        assert_eq!(app.command_line.text(), "");
     }
 
     /// The actual reported behavior: typing narrows the popup's list
@@ -186,7 +186,7 @@ mod history_key_handling_tests {
         handle_history_key(&mut app, key(KeyCode::Char('v')), &mut dummy_terminal()).unwrap();
         handle_history_key(&mut app, key(KeyCode::Char('n')), &mut dummy_terminal()).unwrap();
 
-        assert_eq!(app.command_line, "svn");
+        assert_eq!(app.command_line.text(), "svn");
         let Mode::CommandHistory(menu) = &app.mode else { panic!("expected Mode::CommandHistory") };
         assert_eq!(menu.selected, 0, "selection should reset once the filter narrows the list");
     }
@@ -226,7 +226,7 @@ mod history_key_handling_tests {
 
         handle_history_key(&mut app, key(KeyCode::Tab), &mut dummy_terminal()).unwrap();
 
-        assert_eq!(app.command_line, "cd nonexistent-dir");
+        assert_eq!(app.command_line.text(), "cd nonexistent-dir");
         assert_eq!(app.panels[app.active].path, original_path, "Tab must not run the command");
         assert!(matches!(app.mode, Mode::Browsing));
     }

@@ -42,12 +42,10 @@ already handle the key):
   only": `Shift+Left`/`Right` and `Ctrl+Shift+Left`/`Right` (character-
   and word-wise) *do* select within the command line now — panel
   navigation never claimed those modifier combinations, only bare
-  arrows. `App::command_line_cursor`/`command_line_selection_anchor`
-  plus `command_line/browsing.rs`'s handling directly reuse
-  `text_field.rs`'s selection functions (built first for the Copy/Move
-  destination field) rather than duplicating that logic — including two
-  new word-wise ones, `extend_selection_word_left`/`_right`, added
-  alongside this. Reported as a real gap: fixing a typo in the middle
+  arrows. `App::command_line` is a `text_field::TextField`, the same
+  type every other text field uses; `command_line/browsing`'s handling
+  calls its selection/word methods directly rather than its full
+  `apply_key` layout. Reported as a real gap: fixing a typo in the middle
   of a typed command (`"go info"` meant to be `"svn info"`) had no way
   to select and replace just the wrong word. Plain `Ctrl+Left`/`Right`
   (no `Shift`) came right after — cursor movement by a word with no

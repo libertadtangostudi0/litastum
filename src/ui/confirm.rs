@@ -6,7 +6,6 @@ use ratatui::{
 };
 
 use crate::app::{DeleteEntry, PendingDelete, PendingTransfer, TransferOp};
-use crate::text_field;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
@@ -146,7 +145,7 @@ pub fn draw_confirm_transfer_popup(frame: &mut Frame, area: Rect, pending: &Pend
     ));
     frame.render_widget(source_line, rows[0]);
 
-    frame.render_widget(destination_line(pending, theme), rows[1]);
+    frame.render_widget(super::text_field::field_line(&pending.destination, theme), rows[1]);
 
     let hint = Line::from(vec![
         Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
@@ -157,33 +156,10 @@ pub fn draw_confirm_transfer_popup(frame: &mut Frame, area: Rect, pending: &Pend
     frame.render_widget(hint, rows[3]);
 
     Position {
-        x: rows[1].x + pending.cursor as u16,
+        x: rows[1].x + pending.destination.cursor() as u16,
         y: rows[1].y,
     }
 }
-
-/// Renders the destination text with its `Shift+Left`/`Shift+Right`
-/// selection (`text_field::selection_range`), if any, picked out with
-/// the same highlight background used for the active row in a panel
-/// (`theme.current_row_bg`) — no selection just renders as plain text.
-fn destination_line(pending: &PendingTransfer, theme: &Theme) -> Line<'static> {
-    let Some(anchor) = pending.selection_anchor else {
-        return Line::from(Span::styled(pending.destination.clone(), Style::default().fg(theme.text)));
-    };
-
-    let (start, end) = text_field::selection_range(anchor, pending.cursor);
-    let chars: Vec<char> = pending.destination.chars().collect();
-    let before: String = chars[..start].iter().collect();
-    let selected: String = chars[start..end].iter().collect();
-    let after: String = chars[end..].iter().collect();
-
-    Line::from(vec![
-        Span::styled(before, Style::default().fg(theme.text)),
-        Span::styled(selected, popup::selected_text_style(theme)),
-        Span::styled(after, Style::default().fg(theme.text)),
-    ])
-}
-
 
 #[cfg(test)]
 mod tests {

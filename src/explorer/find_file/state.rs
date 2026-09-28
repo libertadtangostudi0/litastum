@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::text_field::TextField;
+
 use super::background::PendingSearch;
 
 /// Which part of the popup is showing — the typed query, a search
@@ -34,16 +36,9 @@ pub enum FindFileField {
 
 pub struct FindFileState {
     pub phase: FindFilePhase,
-    pub query: String,
-    /// Character index into `query` — see `text_field.rs`.
-    pub cursor: usize,
-    /// `query`'s own active text selection, if any — see
-    /// `text_field.rs`'s own selection functions and
-    /// `PendingTransfer::selection_anchor`'s doc comment for the
-    /// convention this follows (`None` = no selection, `Some(anchor)` =
-    /// selecting between `anchor` and `cursor`).
-    pub selection_anchor: Option<usize>,
-    /// Far Manager's own "Text to find" — an optional substring
+    /// "File name to find" -- a name or glob mask.
+    pub query: TextField,
+    /// Far Manager's own "Text to find" -- an optional substring
     /// (case-insensitive, plain substring only, no glob/regex) a
     /// matching file's own *content* must also contain, on top of
     /// `query`'s name/mask match. Empty means "don't filter by
@@ -51,14 +46,7 @@ pub struct FindFileState {
     /// shape real Far's dialog uses. Never applies to directory
     /// results -- a directory has no content to search inside, so one
     /// only ever shows up when this is empty.
-    pub content_query: String,
-    /// Character index into `content_query` — see `text_field.rs`.
-    pub content_cursor: usize,
-    /// `content_query`'s own active text selection -- same shape as
-    /// `selection_anchor` above, independent of it (each field owns its
-    /// own selection, same as each field already owns its own cursor
-    /// and history).
-    pub content_selection_anchor: Option<usize>,
+    pub content_query: TextField,
     /// Which of `query`/`content_query` `Tab` and typed characters
     /// currently reach.
     pub active_field: FindFileField,
@@ -134,12 +122,8 @@ impl FindFileState {
     pub fn new() -> Self {
         Self {
             phase: FindFilePhase::Typing,
-            query: String::new(),
-            cursor: 0,
-            selection_anchor: None,
-            content_query: String::new(),
-            content_cursor: 0,
-            content_selection_anchor: None,
+            query: TextField::new(),
+            content_query: TextField::new(),
             active_field: FindFileField::Name,
             name_history_index: None,
             content_history_index: None,
@@ -158,38 +142,34 @@ impl FindFileState {
     /// press shows the most recent past query, each further press steps
     /// one entry further back). A no-op with nothing to recall (`history`
     /// empty, or already at the oldest entry). Mirrors
-    /// `Editor::search_history_up` exactly, just against `query`/`cursor`/
+    /// `Editor::search_history_up` exactly, just against `query`/
     /// `name_history_index` instead of the editor's own search box.
     pub fn name_history_up(&mut self, history: &[String]) {
-        Self::history_up(history, &mut self.name_history_index, &mut self.query, &mut self.cursor, &mut self.selection_anchor);
+        Self::history_up(history, &mut self.name_history_index, &mut self.query);
     }
 
     /// `Down` -- the other half of `name_history_up`: steps back toward
     /// the most recent entry, and past it clears the field entirely. A
     /// no-op while not currently browsing history at all.
     pub fn name_history_down(&mut self, history: &[String]) {
-        Self::history_down(history, &mut self.name_history_index, &mut self.query, &mut self.cursor, &mut self.selection_anchor);
+        Self::history_down(history, &mut self.name_history_index, &mut self.query);
     }
 
-    /// Same as `name_history_up`, for `content_query`/`content_cursor`/
-    /// `content_history_index`.
+    /// Same as `name_history_up`, for `content_query`/`content_history_index`.
     pub fn content_history_up(&mut self, history: &[String]) {
-        Self::history_up(history, &mut self.content_history_index, &mut self.content_query, &mut self.content_cursor, &mut self.content_selection_anchor);
+        Self::history_up(history, &mut self.content_history_index, &mut self.content_query);
     }
 
-    /// Same as `name_history_down`, for `content_query`/`content_cursor`/
-    /// `content_history_index`.
+    /// Same as `name_history_down`, for `content_query`/`content_history_index`.
     pub fn content_history_down(&mut self, history: &[String]) {
-        Self::history_down(history, &mut self.content_history_index, &mut self.content_query, &mut self.content_cursor, &mut self.content_selection_anchor);
+        Self::history_down(history, &mut self.content_history_index, &mut self.content_query);
     }
 
-    /// Shared mechanics for `name_history_up`/`content_history_up` --
-    /// also clears `selection_anchor` (added alongside real cursor/
-    /// selection editing for this field): a stale selection from before
-    /// recalling a history entry could otherwise point past the end of
-    /// the newly recalled (possibly shorter) text.
-    fn history_up(history: &[String], index: &mut Option<usize>, field: &mut String, cursor: &mut usize, selection_anchor: &mut Option<usize>) {
-        *selection_anchor = None;
+    /// Shared mechanics for `name_history_up`/`content_history_up`. The
+    /// selection is always dropped -- a stale one could point past the
+    /// end of a shorter recalled entry.
+    fn history_up(history: &[String], index: &mut Option<usize>, field: &mut TextField) {
+        field.clear_selection();
         if history.is_empty() {
             return;
         }
@@ -198,26 +178,22 @@ impl FindFileState {
             Some(current) => current.saturating_sub(1),
         };
         *index = Some(next_index);
-        *field = history[next_index].clone();
-        *cursor = field.chars().count();
+        field.set_text(history[next_index].clone());
     }
 
-    /// Shared mechanics for `name_history_down`/`content_history_down`
-    /// -- see `history_up`'s own doc comment for why this also clears
-    /// `selection_anchor`.
-    fn history_down(history: &[String], index: &mut Option<usize>, field: &mut String, cursor: &mut usize, selection_anchor: &mut Option<usize>) {
-        *selection_anchor = None;
+    /// Shared mechanics for `name_history_down`/`content_history_down`.
+    fn history_down(history: &[String], index: &mut Option<usize>, field: &mut TextField) {
+        field.clear_selection();
         let Some(current) = *index else {
             return;
         };
         if current + 1 < history.len() {
             *index = Some(current + 1);
-            *field = history[current + 1].clone();
+            field.set_text(history[current + 1].clone());
         } else {
             *index = None;
             field.clear();
         }
-        *cursor = field.chars().count();
     }
 
     /// `Shift+Down` on the results list -- toggles the mark on the
@@ -279,8 +255,8 @@ mod tests {
 
         state.name_history_up(&history);
 
-        assert_eq!(state.query, "recent.txt");
-        assert_eq!(state.cursor, "recent.txt".chars().count());
+        assert_eq!(state.query.text(), "recent.txt");
+        assert_eq!(state.query.cursor(), "recent.txt".chars().count());
     }
 
     #[test]
@@ -291,7 +267,7 @@ mod tests {
         state.name_history_up(&history);
         state.name_history_up(&history);
 
-        assert_eq!(state.query, "old.txt");
+        assert_eq!(state.query.text(), "old.txt");
     }
 
     #[test]
@@ -302,17 +278,17 @@ mod tests {
         state.name_history_up(&history);
         state.name_history_up(&history);
 
-        assert_eq!(state.query, "only.txt");
+        assert_eq!(state.query.text(), "only.txt");
     }
 
     #[test]
     fn name_history_up_is_a_noop_with_empty_history() {
         let mut state = FindFileState::new();
-        state.query = "untouched".to_string();
+        state.query.set_text("untouched");
 
         state.name_history_up(&[]);
 
-        assert_eq!(state.query, "untouched");
+        assert_eq!(state.query.text(), "untouched");
     }
 
     #[test]
@@ -324,7 +300,7 @@ mod tests {
 
         state.name_history_down(&history);
 
-        assert_eq!(state.query, "recent.txt");
+        assert_eq!(state.query.text(), "recent.txt");
     }
 
     #[test]
@@ -335,18 +311,18 @@ mod tests {
 
         state.name_history_down(&history);
 
-        assert_eq!(state.query, "");
+        assert_eq!(state.query.text(), "");
         assert_eq!(state.name_history_index, None);
     }
 
     #[test]
     fn name_history_down_is_a_noop_when_not_currently_browsing() {
         let mut state = FindFileState::new();
-        state.query = "still typing".to_string();
+        state.query.set_text("still typing");
 
         state.name_history_down(&["recalled.txt".to_string()]);
 
-        assert_eq!(state.query, "still typing");
+        assert_eq!(state.query.text(), "still typing");
     }
 
     /// `content_history_up`/`_down` are the same mechanics as
@@ -357,17 +333,17 @@ mod tests {
     #[test]
     fn content_history_up_and_down_operate_on_the_content_field_independently() {
         let mut state = FindFileState::new();
-        state.query = "name field untouched".to_string();
+        state.query.set_text("name field untouched");
         let history = vec!["needle".to_string()];
 
         state.content_history_up(&history);
 
-        assert_eq!(state.content_query, "needle");
-        assert_eq!(state.query, "name field untouched", "browsing the content field's history shouldn't touch the name field");
+        assert_eq!(state.content_query.text(), "needle");
+        assert_eq!(state.query.text(), "name field untouched", "browsing the content field's history shouldn't touch the name field");
 
         state.content_history_down(&history);
 
-        assert_eq!(state.content_query, "");
+        assert_eq!(state.content_query.text(), "");
     }
 
     mod marking_tests {

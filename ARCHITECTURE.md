@@ -221,8 +221,10 @@ command_line.rs         — the always-live Far-style command line
                               autosuggestion
   command_line/shell.rs  —   Ctrl+P shell-profile picker
 
-text_field.rs           — shared cursor/selection editing (transfer
-                           destination field, command line's selection)
+text_field/             — TextField (text + cursor + selection) and the
+                           standard single-line key layout; every text
+                           field in the app (command line, F5/F6
+                           destination, Find file, Ctrl+F box, F2 forms)
 
 ui/mod.rs               — pure(ish) rendering: App -> ratatui widgets;
                            draw() itself, the one central dispatcher.

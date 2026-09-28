@@ -1,5 +1,6 @@
 use crate::app::{App, DeleteEntry, Mode, PendingDelete, PendingTransfer, TransferOp, TransferSource};
 use crate::explorer::Panel;
+use crate::text_field::TextField;
 
 /// F8: opens the "delete this?" prompt (`Mode::ConfirmDelete`) for
 /// every entry marked in the active panel if any are, otherwise the
@@ -51,14 +52,7 @@ pub(super) fn request_transfer(app: &mut App, operation: TransferOp) {
     } else {
         destination_dir.to_string_lossy().into_owned()
     };
-    let cursor = destination.chars().count();
-    let pending = PendingTransfer {
-        operation,
-        sources,
-        destination,
-        cursor,
-        selection_anchor: None,
-    };
+    let pending = PendingTransfer { operation, sources, destination: TextField::with_text(destination) };
     app.mode = Mode::ConfirmTransfer(pending);
 }
 
@@ -96,9 +90,7 @@ pub(super) fn request_rename(app: &mut App) {
     let pending = PendingTransfer {
         operation: TransferOp::Move,
         sources: vec![TransferSource { path, name: entry.name.clone(), is_dir: entry.is_dir }],
-        destination,
-        cursor,
-        selection_anchor: None,
+        destination: TextField::with_cursor_at(destination, cursor),
     };
     app.mode = Mode::ConfirmTransfer(pending);
 }
@@ -185,9 +177,9 @@ mod tests {
             panic!("expected Mode::ConfirmTransfer");
         };
         assert_eq!(pending.operation, TransferOp::Copy);
-        assert_eq!(pending.destination, other_dir.join("source.txt").to_string_lossy());
-        assert_eq!(pending.cursor, pending.destination.chars().count(), "cursor starts at the end");
-        assert_eq!(pending.selection_anchor, None);
+        assert_eq!(pending.destination.text(), other_dir.join("source.txt").to_string_lossy());
+        assert_eq!(pending.destination.cursor(), pending.destination.text().chars().count(), "cursor starts at the end");
+        assert_eq!(pending.destination.anchor(), None);
         assert_eq!(pending.sources.len(), 1);
         assert_eq!(pending.sources[0].name, "source.txt");
     }
@@ -220,7 +212,7 @@ mod tests {
         let mut names: Vec<&str> = pending.sources.iter().map(|s| s.name.as_str()).collect();
         names.sort();
         assert_eq!(names, vec!["a.txt", "b.txt"], "the marked entries, not the cursor entry (c.txt)");
-        assert_eq!(pending.destination, other_dir.to_string_lossy(), "several sources default to just the target directory");
+        assert_eq!(pending.destination.text(), other_dir.to_string_lossy(), "several sources default to just the target directory");
     }
 
     #[test]
@@ -256,7 +248,7 @@ mod tests {
             panic!("expected Mode::ConfirmTransfer");
         };
         assert_eq!(pending.operation, TransferOp::Move);
-        assert_eq!(pending.destination, same_dir.join("source.txt").to_string_lossy());
+        assert_eq!(pending.destination.text(), same_dir.join("source.txt").to_string_lossy());
     }
 
     #[test]
@@ -268,9 +260,9 @@ mod tests {
         let Mode::ConfirmTransfer(pending) = &app.mode else {
             panic!("expected Mode::ConfirmTransfer");
         };
-        let expected = pending.destination.chars().count() - "source.txt".chars().count();
-        assert_eq!(pending.cursor, expected);
-        assert_eq!(&pending.destination[pending.destination.char_indices().nth(pending.cursor).unwrap().0..], "source.txt");
+        let expected = pending.destination.text().chars().count() - "source.txt".chars().count();
+        assert_eq!(pending.destination.cursor(), expected);
+        assert_eq!(&pending.destination.text()[pending.destination.text().char_indices().nth(pending.destination.cursor()).unwrap().0..], "source.txt");
     }
 
     /// Regression guard for the cursor-position arithmetic in
@@ -290,7 +282,7 @@ mod tests {
         let Mode::ConfirmTransfer(pending) = &app.mode else {
             panic!("expected Mode::ConfirmTransfer");
         };
-        let expected = pending.destination.chars().count() - "café_résumé.txt".chars().count();
-        assert_eq!(pending.cursor, expected);
+        let expected = pending.destination.text().chars().count() - "café_résumé.txt".chars().count();
+        assert_eq!(pending.destination.cursor(), expected);
     }
 }

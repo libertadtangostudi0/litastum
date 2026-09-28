@@ -190,7 +190,7 @@ mod tests {
 
         handle_paste_event(&mut app, &mut dummy_terminal(), "svn st\r\n--quiet").unwrap();
 
-        assert_eq!(app.command_line, "svn st--quiet");
+        assert_eq!(app.command_line.text(), "svn st--quiet");
     }
 
     /// Real bug, found while routing both paste paths through

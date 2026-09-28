@@ -16,7 +16,6 @@ use crossterm::event::{KeyCode, KeyEvent};
 use tracing::debug;
 
 use crate::app::{App, Mode, TransferOp};
-use crate::text_field;
 use super::{fs_ops, keymap};
 
 
@@ -66,13 +65,8 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
 
 /// Key handling on the F5/F6 "copy/move to?" prompt: the destination
-/// line gets a real cursor (`text_field.rs`, not the command line's
-/// own append/backspace-only editing — see that module's doc for why
-/// this popup gets one and the always-live command line doesn't) —
-/// `Left`/`Right` move a character, `Ctrl+Left`/`Ctrl+Right` a word,
-/// `Home`/`End` to the edges, `Backspace`/`Delete` remove around the
-/// cursor, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` copy/cut/paste the active
-/// selection against the real OS clipboard. `Enter` performs the transfer (`fs_ops::copy_entry`/
+/// is a standard text field (`TextField::apply_key` -- cursor, word
+/// moves, selection, OS clipboard). `Enter` performs the transfer (`fs_ops::copy_entry`/
 /// `move_entry`) and reloads *both* panels (the destination side
 /// always needs it, and a move also changes the source side); `Esc`
 /// cancels with nothing touched. A failed transfer is only logged, same
@@ -92,7 +86,7 @@ pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let Mode::ConfirmTransfer(pending) = &mut app.mode else {
         return Ok(());
     };
-    text_field::apply_edit_key(&mut pending.destination, &mut pending.cursor, &mut pending.selection_anchor, key);
+    pending.destination.apply_key(key);
 
     Ok(())
 }
@@ -119,7 +113,7 @@ fn run_confirmed_transfer(app: &mut App) -> Result<()> {
     let Mode::ConfirmTransfer(pending) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
         return Ok(());
     };
-    let destination_input = PathBuf::from(pending.destination.trim());
+    let destination_input = PathBuf::from(pending.destination.text().trim());
 
     for source in &pending.sources {
         let destination = if pending.sources.len() == 1 {

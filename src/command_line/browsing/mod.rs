@@ -7,16 +7,13 @@ use tracing::debug;
 
 use crate::app::{App, Mode, ShellMenu};
 use crate::explorer::{execute, resolve, Command, DriveMenu, FindFileState};
-use crate::text_field;
 
 use super::completion::complete;
 use super::history::{suggest_history, CommandHistoryMenu};
 
-mod editing;
 mod hidden_console;
 mod shell_exec;
 
-pub use editing::{backspace, insert_char};
 pub use shell_exec::run_shell_command_lines;
 pub(crate) use shell_exec::run_command_line;
 
@@ -98,35 +95,33 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     // Ctrl+Shift+Left/Right -- word-wise selection in the command line
     // (`text_field`).
     if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::SHIFT) && key.modifiers.contains(KeyModifiers::CONTROL) {
-        text_field::extend_selection_word_left(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
+        app.command_line.extend_selection_word_left();
         return Ok(());
     }
     if key.code == KeyCode::Right && key.modifiers.contains(KeyModifiers::SHIFT) && key.modifiers.contains(KeyModifiers::CONTROL) {
-        text_field::extend_selection_word_right(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
+        app.command_line.extend_selection_word_right();
         return Ok(());
     }
 
     // Shift+Left/Right -- character selection while something is typed;
     // on an empty line they fall through to panel marking below.
     if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::SHIFT) && !key.modifiers.contains(KeyModifiers::CONTROL) && !app.command_line.is_empty() {
-        text_field::extend_selection_left(&mut app.command_line_cursor, &mut app.command_line_selection_anchor);
+        app.command_line.extend_selection_left();
         return Ok(());
     }
     if key.code == KeyCode::Right && key.modifiers.contains(KeyModifiers::SHIFT) && !key.modifiers.contains(KeyModifiers::CONTROL) && !app.command_line.is_empty() {
-        text_field::extend_selection_right(&app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
+        app.command_line.extend_selection_right();
         return Ok(());
     }
 
     // Ctrl+Left/Right -- move by a word and drop any selection (like a
     // real editor, not collapse to its nearer edge).
     if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) {
-        app.command_line_selection_anchor = None;
-        text_field::move_word_left(&app.command_line, &mut app.command_line_cursor);
+        app.command_line.move_word_left();
         return Ok(());
     }
     if key.code == KeyCode::Right && key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT) {
-        app.command_line_selection_anchor = None;
-        text_field::move_word_right(&app.command_line, &mut app.command_line_cursor);
+        app.command_line.move_word_right();
         return Ok(());
     }
 
@@ -155,7 +150,7 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     // While history suggestions are showing, Up/Down/Tab work on them
     // (ahead of path completion). `Enter` always runs exactly what's
     // typed, so accepting a suggestion never runs something unexpected.
-    let suggestions = suggest_history(&app.command_history, &app.command_line);
+    let suggestions = suggest_history(&app.command_history, app.command_line.text());
     if !app.command_line.is_empty() && !suggestions.is_empty() && !app.command_line_suggestion_dismissed {
         match key.code {
             KeyCode::Up => {
@@ -170,10 +165,8 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
             }
             KeyCode::Tab => {
                 if let Some(&entry) = suggestions.get(app.command_line_suggestion_selected) {
-                    app.command_line = entry.to_string();
+                    app.command_line.set_text(entry);
                     app.command_line_completion = None;
-                    app.command_line_cursor = app.command_line.chars().count();
-                    app.command_line_selection_anchor = None;
                 }
                 app.command_line_suggestion_selected = 0;
                 // See `App::command_line_suggestion_dismissed`.
@@ -188,9 +181,9 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
     // switches panels (the table below).
     if key.code == KeyCode::Tab && !app.command_line.is_empty() {
         let cwd = app.active_panel().path.clone();
-        complete(&mut app.command_line, &cwd, &mut app.command_line_completion);
-        app.command_line_cursor = app.command_line.chars().count();
-        app.command_line_selection_anchor = None;
+        let mut line = app.command_line.text().to_string();
+        complete(&mut line, &cwd, &mut app.command_line_completion);
+        app.command_line.set_text(line);
         return Ok(());
     }
 
@@ -201,41 +194,31 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal
         app.command_line_completion = None;
         app.command_line_suggestion_selected = 0;
         // Focus moved to the panels -- drop the command-line selection.
-        app.command_line_selection_anchor = None;
+        app.command_line.clear_selection();
         return execute(cmd, app);
     }
 
     match key.code {
         KeyCode::Esc => {
             app.command_line.clear();
-            app.command_line_cursor = 0;
-            app.command_line_selection_anchor = None;
             app.command_line_completion = None;
             app.command_line_suggestion_selected = 0;
             app.command_line_suggestion_dismissed = false;
         }
         KeyCode::Backspace => {
-            // Deletes the selection if any, else one character.
-            if !text_field::delete_selection(&mut app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor) {
-                text_field::backspace(&mut app.command_line, &mut app.command_line_cursor);
-            }
+            app.command_line.backspace();
             app.command_line_completion = None;
             app.command_line_suggestion_selected = 0;
             app.command_line_suggestion_dismissed = false;
         }
-        // Same as Backspace, deleting forward.
         KeyCode::Delete => {
-            if !text_field::delete_selection(&mut app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor) {
-                text_field::delete_forward(&mut app.command_line, &mut app.command_line_cursor);
-            }
+            app.command_line.delete_forward();
             app.command_line_completion = None;
             app.command_line_suggestion_selected = 0;
             app.command_line_suggestion_dismissed = false;
         }
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // Typing over a selection replaces it.
-            text_field::delete_selection(&mut app.command_line, &mut app.command_line_cursor, &mut app.command_line_selection_anchor);
-            text_field::insert_char(&mut app.command_line, &mut app.command_line_cursor, c);
+            app.command_line.insert_char(c);
             app.command_line_completion = None;
             app.command_line_suggestion_selected = 0;
             app.command_line_suggestion_dismissed = false;

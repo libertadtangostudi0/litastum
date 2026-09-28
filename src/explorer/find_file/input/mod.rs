@@ -12,7 +12,7 @@ mod typing;
 mod test_support;
 
 /// Key handling for all three phases of the popup: typing the query
-/// (`typing::handle_typing_key` — full-cursor editing, `text_field.rs`,
+/// (`typing::handle_typing_key` — full-cursor editing, `text_field`,
 /// same reasoning as the F5/F6 transfer prompt, this is a modal popup
 /// with no panel navigation happening under it), a search actually
 /// running in the background (`Searching`, see `background.rs` — a
@@ -82,7 +82,7 @@ mod tests {
         use std::fs;
 
         let mut state = FindFileState::new();
-        state.query = "file".to_string();
+        state.query.set_text("file");
         let mut app = app_with_find_file(state);
         for i in 0..500 {
             fs::write(app.panels[0].path.join(format!("file_{i}.txt")), b"hi").unwrap();

@@ -1,6 +1,7 @@
 use super::*;
 use crate::app::{App, DeleteEntry, PendingDelete, PendingTransfer, TransferSource};
 use crate::test_support::{key, test_app, unique_scratch_dir};
+use crate::text_field::TextField;
 
 fn scratch_dir() -> PathBuf {
     unique_scratch_dir("confirm")
@@ -90,13 +91,10 @@ fn confirm_delete_ignores_unrelated_keys_and_stays_open() {
 }
 
 fn pending_transfer(operation: TransferOp, source: PathBuf, destination: String) -> PendingTransfer {
-    let cursor = destination.chars().count();
     PendingTransfer {
         operation,
         sources: vec![TransferSource { path: source, name: "irrelevant".into(), is_dir: false }],
-        destination,
-        cursor,
-        selection_anchor: None,
+        destination: TextField::with_text(destination),
     }
 }
 
@@ -154,8 +152,8 @@ fn confirm_transfer_typing_edits_the_destination_in_place() {
     let Mode::ConfirmTransfer(pending) = &app.mode else {
         panic!("should stay in ConfirmTransfer");
     };
-    assert_eq!(pending.destination, "dest!");
-    assert_eq!(pending.cursor, 5);
+    assert_eq!(pending.destination.text(), "dest!");
+    assert_eq!(pending.destination.cursor(), 5);
 }
 
 #[test]
@@ -189,9 +187,7 @@ fn confirm_transfer_enter_copies_every_marked_source_into_the_destination_direct
             TransferSource { path: src_dir.join("a.txt"), name: "a.txt".into(), is_dir: false },
             TransferSource { path: src_dir.join("b.txt"), name: "b.txt".into(), is_dir: false },
         ],
-        destination: dst_dir.to_string_lossy().into_owned(),
-        cursor: 0,
-        selection_anchor: None,
+        destination: TextField::with_cursor_at(dst_dir.to_string_lossy(), 0),
     });
 
     handle_confirm_transfer_key(&mut app, key(KeyCode::Enter)).unwrap();

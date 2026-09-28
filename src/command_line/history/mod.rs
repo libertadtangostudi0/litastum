@@ -9,7 +9,7 @@ use tracing::{debug, warn};
 use crate::app::{App, Mode};
 use crate::history_dir::history_dir;
 
-use super::browsing::{backspace, insert_char, run_command_line};
+use super::browsing::run_command_line;
 
 /// The file name persisted history is stored under, inside
 /// `history_dir()`'s own directory.
@@ -171,67 +171,56 @@ pub fn handle_history_key(app: &mut App, key: KeyEvent, terminal: &mut Terminal<
             crate::list_cursor::move_up(&mut menu.selected);
         }
         KeyCode::Down => {
-            let count = matching_history(&app.command_history, &app.command_line).len();
+            let count = matching_history(&app.command_history, app.command_line.text()).len();
             let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
             crate::list_cursor::move_down(&mut menu.selected, count);
         }
         KeyCode::Enter => {
             let Mode::CommandHistory(menu) = &app.mode else { unreachable!() };
             let selected = menu.selected;
-            let entry = matching_history(&app.command_history, &app.command_line).get(selected).map(|entry| (*entry).clone());
+            let entry = matching_history(&app.command_history, app.command_line.text()).get(selected).map(|entry| (*entry).clone());
             app.command_line_completion = None;
-            app.command_line_selection_anchor = None;
             app.mode = Mode::Browsing;
             if let Some(entry) = entry {
-                app.command_line = entry;
-                app.command_line_cursor = app.command_line.chars().count();
+                app.command_line.set_text(entry);
                 return run_command_line(app, terminal);
             }
-            app.command_line_cursor = app.command_line.chars().count();
+            app.command_line.move_to_end();
         }
         KeyCode::Tab => {
             let Mode::CommandHistory(menu) = &app.mode else { unreachable!() };
             let selected = menu.selected;
-            if let Some(entry) = matching_history(&app.command_history, &app.command_line).get(selected) {
-                app.command_line = (*entry).clone();
+            if let Some(entry) = matching_history(&app.command_history, app.command_line.text()).get(selected) {
+                app.command_line.set_text((*entry).clone());
                 app.command_line_completion = None;
             }
-            app.command_line_cursor = app.command_line.chars().count();
-            app.command_line_selection_anchor = None;
+            app.command_line.move_to_end();
             app.mode = Mode::Browsing;
         }
         KeyCode::F(8) => {
             let Mode::CommandHistory(menu) = &app.mode else { unreachable!() };
             let selected = menu.selected;
-            let indices = matching_history_indices(&app.command_history, &app.command_line);
+            let indices = matching_history_indices(&app.command_history, app.command_line.text());
             if let Some(&index) = indices.get(selected) {
                 app.command_history.remove(index);
                 save_history(&app.command_history);
             }
-            let new_count = matching_history(&app.command_history, &app.command_line).len();
+            let new_count = matching_history(&app.command_history, app.command_line.text()).len();
             let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
             menu.selected = menu.selected.min(new_count.saturating_sub(1));
         }
         KeyCode::Esc => {
-            // A selection could have been left active from before Alt+F8
-            // opened this popup (`command_line_cursor`/
-            // `_selection_anchor` are `Mode::Browsing`-only state, but
-            // this popup edits the same `app.command_line` underneath
-            // it) -- clear it so `Mode::Browsing` doesn't come back to
-            // a stale mid-line cursor or selection the command line here
-            // never touched.
-            app.command_line_cursor = app.command_line.chars().count();
-            app.command_line_selection_anchor = None;
+            // This popup edits `app.command_line` as a plain filter, so
+            // don't return to a stale mid-line cursor or selection.
+            app.command_line.move_to_end();
             app.mode = Mode::Browsing;
         }
         KeyCode::Backspace => {
-            backspace(&mut app.command_line);
-            app.command_line_cursor = app.command_line.chars().count();
+            app.command_line.pop_char();
             reset_selection(app);
         }
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            insert_char(&mut app.command_line, c);
-            app.command_line_cursor = app.command_line.chars().count();
+            app.command_line.push_char(c);
             reset_selection(app);
         }
         _ => {}

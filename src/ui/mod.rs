@@ -26,6 +26,7 @@ mod popup;
 mod preview;
 mod popup_style_menu;
 mod shell;
+mod text_field;
 mod theme_menu;
 mod user_menu;
 
@@ -310,7 +311,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme)
     };
     let cwd = app.panels[app.active].path.clone();
-    let prefix_len = command_line::draw_command_line(frame, root[1], &cwd, &app.command_line, app.command_line_selection_anchor, app.command_line_cursor, &theme);
+    let prefix_len = command_line::draw_command_line(frame, root[1], &cwd, &app.command_line, &theme);
     draw_function_keys(frame, root[2], &theme, app.alt_held);
 
     // Auto-popping history suggestions, Far Manager-style: shown right
@@ -321,7 +322,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     // for the command line (or none at all), this shouldn't also be
     // showing over it.
     if matches!(app.mode, Mode::Browsing) && !app.command_line_suggestion_dismissed {
-        let suggestions = crate::command_line::suggest_history(&app.command_history, &app.command_line);
+        let suggestions = crate::command_line::suggest_history(&app.command_history, app.command_line.text());
         if !suggestions.is_empty() {
             command_line::draw_history_suggestions(frame, root[1], &suggestions, app.command_line_suggestion_selected, &theme);
         }
@@ -338,7 +339,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     // still belongs down here, visible under the popup.
     let mut cursor = if matches!(app.mode, Mode::Browsing | Mode::CommandHistory(_)) {
         Some(Position {
-            x: root[1].x + prefix_len + app.command_line_cursor as u16,
+            x: root[1].x + prefix_len + app.command_line.cursor() as u16,
             y: root[1].y,
         })
     } else {
@@ -362,7 +363,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
             cursor = find_file::draw_find_file(frame, area, state, &theme, popup_style);
         }
         Mode::CommandHistory(menu) => {
-            command_line::draw_command_history(frame, area, menu, &app.command_history, &app.command_line, &theme, popup_style);
+            command_line::draw_command_history(frame, area, menu, &app.command_history, app.command_line.text(), &theme, popup_style);
         }
         Mode::ChangeDrive(menu) => drive_menu::draw_drive_menu(frame, area, menu, &theme, popup_style),
         Mode::UserMenu(menu) => user_menu::draw_user_menu(frame, area, menu, &theme, popup_style),

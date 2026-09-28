@@ -189,7 +189,7 @@ mod tests {
         std::fs::write(dir.join("readme.txt"), b"hi").unwrap();
         let mut app = crate::test_support::test_app(dir.clone());
         let mut state = super::super::state::FindFileState::new();
-        state.query = "read".to_string();
+        state.query.set_text("read");
         state.phase = FindFilePhase::Searching;
         state.pending = Some(spawn_search(dir.clone(), "read".to_string(), String::new()));
         app.mode = Mode::FindFile(state);

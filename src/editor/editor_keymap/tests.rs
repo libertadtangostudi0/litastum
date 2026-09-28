@@ -721,7 +721,7 @@ mod handle_search_key_tests {
 
         let Mode::Editing(editor) = &app.mode else { unreachable!() };
         assert_eq!(editor.search_query(), "cat");
-        assert_eq!(editor.search_selection(), None, "nothing left selected after a cut");
+        assert_eq!(editor.search_field().unwrap().selection(), None, "nothing left selected after a cut");
         assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 0 }, "the shorter query matches the first \"cat\"");
     }
 
@@ -752,7 +752,7 @@ mod handle_search_key_tests {
         handle_editor_key(&mut app, key(KeyCode::End)).unwrap();
         let Mode::Editing(editor) = &app.mode else { unreachable!() };
         assert_eq!(editor.search_query(), "wo", "first End only moves the cursor");
-        assert_eq!(editor.search_cursor(), 2);
+        assert_eq!(editor.search_field().unwrap().cursor(), 2);
 
         handle_editor_key(&mut app, key(KeyCode::End)).unwrap();
         let Mode::Editing(editor) = &app.mode else { unreachable!() };
@@ -871,7 +871,7 @@ mod handle_search_key_tests {
         handle_editor_key(&mut app, ctrl_key('f')).unwrap();
         let Mode::Editing(editor) = &app.mode else { unreachable!() };
         assert!(editor.is_searching());
-        assert_eq!(editor.search_selection(), Some((0, 5)), "the whole query is selected");
+        assert_eq!(editor.search_field().unwrap().selection(), Some((0, 5)), "the whole query is selected");
 
         handle_editor_key(&mut app, key(KeyCode::Char('h'))).unwrap();
         let Mode::Editing(editor) = &app.mode else { unreachable!() };

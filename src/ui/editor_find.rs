@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::editor::Editor;
+use crate::text_field::TextField;
 use crate::theming::Theme;
 
 /// Margin between the popup and the editor area's own top/right edges.
@@ -40,30 +41,20 @@ pub fn draw_find_popup(frame: &mut Frame, area: Rect, editor: &Editor, search_hi
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let query = editor.search_query();
-    // Char-based, not a byte slice -- unlike a shell command line, a
-    // search query can easily contain non-ASCII text (searching for a
-    // Cyrillic string, a Unicode identifier, ...), where slicing by
-    // `query.len()` (byte count) could land mid-character and panic.
-    let suggestion_suffix = crate::editor::find_history::suggest(search_history, &query)
-        .map(|full| full.chars().skip(query.chars().count()).collect::<String>());
+    let empty = TextField::new();
+    let field = editor.search_field().unwrap_or(&empty);
+    // Char-based, not a byte slice -- a query can easily contain
+    // non-ASCII text, where slicing by `len()` could split a character.
+    let suggestion_suffix = crate::editor::find_history::suggest(search_history, field.text())
+        .map(|full| full.chars().skip(field.text().chars().count()).collect::<String>());
 
-    // The query's own selection, if any, in the same selected-text style
-    // every other text field uses (`popup::selected_text_style`).
-    let chars: Vec<char> = query.chars().collect();
-    let (selection_start, selection_end) = editor.search_selection().unwrap_or((chars.len(), chars.len()));
-    let text_style = Style::default().fg(theme.text);
-    let mut spans = vec![
-        Span::styled(chars[..selection_start].iter().collect::<String>(), text_style),
-        Span::styled(chars[selection_start..selection_end].iter().collect::<String>(), crate::ui::popup::selected_text_style(theme)),
-        Span::styled(chars[selection_end..].iter().collect::<String>(), text_style),
-    ];
+    let mut spans = super::text_field::field_spans(field, theme);
     if let Some(suffix) = suggestion_suffix {
         spans.push(Span::styled(suffix, Style::default().fg(theme.text_dim)));
     }
     frame.render_widget(Line::from(spans), inner);
 
-    Position { x: inner.x + editor.search_cursor() as u16, y: inner.y }
+    Position { x: inner.x + field.cursor() as u16, y: inner.y }
 }
 
 
