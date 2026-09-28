@@ -163,6 +163,7 @@ pub fn draw_confirm_transfer_popup(frame: &mut Frame, area: Rect, pending: &Pend
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::buffer_text;
     use std::path::PathBuf;
 
     use ratatui::{backend::TestBackend, Terminal};
@@ -222,11 +223,4 @@ mod tests {
         assert!(contents.contains("23.3 kB"));
     }
 
-    fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
-        let area = buffer.area;
-        (0..area.height)
-            .map(|y| (0..area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
 }

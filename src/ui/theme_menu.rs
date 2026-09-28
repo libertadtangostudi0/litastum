@@ -171,6 +171,7 @@ fn theme_row<'a>(entry: &'a ThemeMenuEntry, menu: &ThemeMenu, theme: &Theme, wid
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::buffer_text;
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
@@ -196,11 +197,7 @@ mod tests {
                 draw_theme_menu(frame, frame.area(), menu, &theme, PopupStyle::Rounded);
             })
             .unwrap();
-        let buffer = terminal.backend().buffer();
-        (0..buffer.area.height)
-            .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
+        buffer_text(terminal.backend().buffer())
     }
 
     #[test]
@@ -298,11 +295,7 @@ mod tests {
                 draw_theme_menu(frame, frame.area(), &menu, &theme, PopupStyle::Classic);
             })
             .unwrap();
-        let buffer = terminal.backend().buffer();
-        let text: String = (0..buffer.area.height)
-            .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let text = buffer_text(terminal.backend().buffer());
         assert!(text.contains("dracula"));
         assert!(text.contains("Color scheme"));
     }

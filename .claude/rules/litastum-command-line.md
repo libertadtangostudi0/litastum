@@ -162,7 +162,7 @@ handling (which also only ever touches paths, not commands).
 Windows Terminal's own "new tab" dropdown (PowerShell / Command Prompt
 / Azure Cloud Shell / Git Bash / ...) was the reference for this —
 `shell.rs::ShellProfile` + `App::shell_profiles`/`active_shell`, a
-`theme_menu.rs`-shaped popup (`Mode::ShellMenu`, `Up`/`Down`/`Enter`/
+`theme_menu.rs`-shaped popup (`Overlay::ShellMenu`, `Up`/`Down`/`Enter`/
 `Esc`). The active profile's name shows at the command line's right
 edge, since which one a typed command runs against is otherwise
 invisible.

@@ -1,7 +1,7 @@
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::app::{App, Mode};
+use crate::app::{App, Overlay};
 
 use super::state::FindFilePhase;
 
@@ -28,16 +28,16 @@ mod test_support;
 /// identical except for that one extra cancel step.
 pub fn handle_find_file_key(app: &mut App, key: KeyEvent) -> Result<()> {
     if key.code == KeyCode::Esc {
-        if let Mode::FindFile(state) = &app.mode {
+        if let Some(Overlay::FindFile(state)) = &app.overlay {
             if let Some(pending) = &state.pending {
                 pending.cancel();
             }
         }
-        app.mode = Mode::Browsing;
+        app.overlay = None;
         return Ok(());
     }
 
-    let Mode::FindFile(state) = &app.mode else {
+    let Some(Overlay::FindFile(state)) = &app.overlay else {
         return Ok(());
     };
 
@@ -53,6 +53,7 @@ pub fn handle_find_file_key(app: &mut App, key: KeyEvent) -> Result<()> {
 mod tests {
     use super::test_support::app_with_find_file;
     use super::*;
+    use crate::app::Mode;
     use crate::explorer::FindFileState;
     use crate::test_support::key;
 
@@ -60,13 +61,13 @@ mod tests {
     fn esc_closes_from_any_phase() {
         let mut app = app_with_find_file(FindFileState::new());
         handle_find_file_key(&mut app, key(KeyCode::Esc)).unwrap();
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
 
         let mut results_state = FindFileState::new();
         results_state.phase = FindFilePhase::Results;
         let mut app = app_with_find_file(results_state);
         handle_find_file_key(&mut app, key(KeyCode::Esc)).unwrap();
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     /// `Esc` during `FindFilePhase::Searching` should cancel the
@@ -91,6 +92,6 @@ mod tests {
         handle_find_file_key(&mut app, key(KeyCode::Enter)).unwrap();
         handle_find_file_key(&mut app, key(KeyCode::Esc)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing), "Esc should still close the popup, same as every other phase");
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing), "Esc should still close the popup, same as every other phase");
     }
 }

@@ -62,22 +62,14 @@ pub fn handle_editor_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use crossterm::event::KeyCode;
 
     use super::*;
-    use crate::editor::{Editor, EditorKeymapMode};
-    use crate::test_support::{key, test_app};
+    use crate::editor::EditorKeymapMode;
+    use crate::test_support::{editing_app, key};
 
     fn app_in_editor_menu() -> App {
-        let dir = crate::test_support::unique_scratch_dir("editor-menu");
-        let path = dir.join("file.txt");
-        fs::write(&path, "hello").expect("write test fixture file");
-        let editor = Editor::open(path, None, EditorKeymapMode::Standard).expect("open test fixture file");
-
-        let mut app = test_app(dir);
-        app.mode = Mode::Editing(editor);
+        let mut app = editing_app("hello", EditorKeymapMode::Standard);
         app.overlay = Some(Overlay::EditorMenu(open_editor_menu()));
         app
     }

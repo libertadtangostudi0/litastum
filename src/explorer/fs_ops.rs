@@ -5,7 +5,7 @@ use std::path::Path;
 
 /// Copies `src` to `dst` — a plain `fs::copy` for a file, or a full
 /// recursive tree copy for a directory (`std::fs` has no built-in for
-/// that, unlike `remove_dir_all`). Used by F5 (`Mode::ConfirmTransfer`
+/// that, unlike `remove_dir_all`). Used by F5 (`Overlay::ConfirmTransfer`
 /// with `TransferOp::Copy`).
 pub fn copy_entry(src: &Path, dst: &Path, is_dir: bool) -> io::Result<()> {
     if is_dir {
@@ -36,7 +36,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
 /// delete only if that fails (e.g. `rename` across drives on Windows,
 /// which always errors rather than transparently copying like Unix
 /// `rename(2)` sometimes does across bind mounts). Used by F6
-/// (`Mode::ConfirmTransfer` with `TransferOp::Move`).
+/// (`Overlay::ConfirmTransfer` with `TransferOp::Move`).
 pub fn move_entry(src: &Path, dst: &Path, is_dir: bool) -> io::Result<()> {
     if fs::rename(src, dst).is_ok() {
         return Ok(());

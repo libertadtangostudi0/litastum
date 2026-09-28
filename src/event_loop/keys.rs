@@ -240,6 +240,9 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
     app.alt_held = key.modifiers.contains(KeyModifiers::ALT);
 
     // An open overlay gets every key; the screen underneath gets none.
+    // Most handlers need nothing from the terminal and return `()`; the
+    // ones that can (history, the F2 menu, the browser) return their
+    // `Effect` directly.
     if let Some(overlay) = &app.overlay {
         let handled = match overlay {
             Overlay::ConfirmDiscard if matches!(app.mode, Mode::CompareFiles(_)) => compare::handle_compare_confirm_discard_key(app, key),
@@ -248,13 +251,33 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
             Overlay::EditorKeymapMenu(_) => editor::handle_editor_keymap_menu_key(app, key),
             Overlay::CompareMenu(_) => compare::handle_compare_menu_key(app, key),
             Overlay::CompareLineEndingMenu(_) => compare::handle_compare_line_ending_menu_key(app, key),
+            Overlay::ConfirmDelete(_) => explorer::handle_confirm_delete_key(app, key),
+            Overlay::ConfirmTransfer(_) => explorer::handle_confirm_transfer_key(app, key),
+            Overlay::MainMenu(_) => theming::handle_main_menu_key(app, key),
+            Overlay::ThemeMenu(_) => theming::handle_theme_menu_key(app, key),
+            Overlay::ShellMenu(_) => command_line::handle_shell_menu_key(app, key),
+            Overlay::PopupStyleMenu(_) => theming::handle_popup_style_menu_key(app, key),
+            Overlay::FindFile(_) => explorer::handle_find_file_key(app, key),
+            Overlay::CommandHistory(_) => return command_line::handle_history_key(app, key),
+            Overlay::ChangeDrive(_) => explorer::handle_drive_menu_key(app, key),
+            Overlay::UserMenu(_) => return explorer::handle_user_menu_key(app, key),
+            Overlay::UserMenuPrompt(_) => return explorer::handle_user_menu_prompt_key(app, key),
+            Overlay::ConfirmPortFarMenu(_) => explorer::handle_confirm_port_far_menu_key(app, key),
+            Overlay::AddUserMenuItem(..) => explorer::handle_add_user_menu_item_key(app, key),
+            Overlay::MarkdownLinkSearch(_) => {
+                explorer::handle_markdown_link_search_key(app, key);
+                Ok(())
+            }
+            // Any key dismisses -- there's nothing to answer, just
+            // something to acknowledge having read.
+            Overlay::Info(_) => {
+                app.overlay = None;
+                Ok(())
+            }
         };
         return handled.map(|()| Effect::None);
     }
 
-    // Most handlers need nothing from the terminal and return `()`; the
-    // ones that can (the browser, history, the F2 menu) return their
-    // `Effect` directly.
     let handled = match &app.mode {
         // `Tab` toggles which half of a combined editor+preview session
         // (`App::markdown_edit_preview`) keyboard input reaches -- `0`
@@ -271,31 +294,8 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
         Mode::Editing(_) if app.markdown_edit_preview.is_some() && app.active == 1 => explorer::handle_markdown_edit_preview_key(app, key),
         Mode::Editing(_) => editor::handle_editor_key(app, key),
         Mode::CompareFiles(_) => compare::handle_compare_key(app, key),
-        Mode::ConfirmDelete(_) => explorer::handle_confirm_delete_key(app, key),
-        Mode::ConfirmTransfer(_) => explorer::handle_confirm_transfer_key(app, key),
-        Mode::MainMenu(_) => theming::handle_main_menu_key(app, key),
-        Mode::ThemeMenu(_) => theming::handle_theme_menu_key(app, key),
-        Mode::ShellMenu(_) => command_line::handle_shell_menu_key(app, key),
-        Mode::PopupStyleMenu(_) => theming::handle_popup_style_menu_key(app, key),
-        Mode::FindFile(_) => explorer::handle_find_file_key(app, key),
-        Mode::CommandHistory(_) => return command_line::handle_history_key(app, key),
-        Mode::ChangeDrive(_) => explorer::handle_drive_menu_key(app, key),
-        Mode::UserMenu(_) => return explorer::handle_user_menu_key(app, key),
-        Mode::UserMenuPrompt(_) => return explorer::handle_user_menu_prompt_key(app, key),
-        Mode::ConfirmPortFarMenu(_) => explorer::handle_confirm_port_far_menu_key(app, key),
-        Mode::AddUserMenuItem(..) => explorer::handle_add_user_menu_item_key(app, key),
         Mode::ImagePreview(_) => {
             explorer::handle_image_preview_key(app, key);
-            Ok(())
-        }
-        Mode::MarkdownLinkSearch(..) => {
-            explorer::handle_markdown_link_search_key(app, key);
-            Ok(())
-        }
-        // Any key dismisses -- there's nothing to answer, just
-        // something to acknowledge having read.
-        Mode::Info(_) => {
-            app.mode = Mode::Browsing;
             Ok(())
         }
         Mode::Browsing => return command_line::handle_browsing_key(app, key),
@@ -310,17 +310,12 @@ mod tests {
 
     use super::*;
     use crate::app::Overlay;
-    use crate::editor::{Editor, EditorKeymapMode};
-    use crate::test_support::{key, test_app, unique_scratch_dir};
+    use crate::editor::EditorKeymapMode;
+    use crate::test_support::{editing_app, key};
 
     fn editor_app() -> App {
-        let dir = unique_scratch_dir("key-routing");
-        let path = dir.join("file.txt");
-        std::fs::write(&path, "hello
-").unwrap();
-        let mut app = test_app(dir);
-        app.mode = Mode::Editing(Editor::open(path, None, EditorKeymapMode::Standard).unwrap());
-        app
+        editing_app("hello
+", EditorKeymapMode::Standard)
     }
 
     #[test]

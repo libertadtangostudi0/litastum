@@ -1,8 +1,8 @@
 //! `input.rs` split into one file per `Mode` once it passed the
 //! project's own ~500-line decomposition threshold ([[code-conventions]])
 //! -- 979 lines, mixing key handling for four different popups
-//! (`Mode::UserMenu` browsing/running, `Mode::UserMenuPrompt`,
-//! `Mode::ConfirmPortFarMenu`, `Mode::AddUserMenuItem`) in one place.
+//! (`Overlay::UserMenu` browsing/running, `Overlay::UserMenuPrompt`,
+//! `Overlay::ConfirmPortFarMenu`, `Overlay::AddUserMenuItem`) in one place.
 //! Every symbol that was `pub` at the top of the old file is
 //! re-exported here unchanged, so `explorer/user_menu.rs`'s own
 //! `pub use input::{...}` list didn't need to change.

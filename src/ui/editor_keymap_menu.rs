@@ -15,6 +15,7 @@ pub fn draw_editor_keymap_menu(frame: &mut Frame, area: Rect, menu: &EditorKeyma
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::buffer_text;
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
@@ -29,11 +30,7 @@ mod tests {
                 draw_editor_keymap_menu(frame, frame.area(), menu, &theme, style, current);
             })
             .unwrap();
-        let buffer = terminal.backend().buffer();
-        (0..buffer.area.height)
-            .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
+        buffer_text(terminal.backend().buffer())
     }
 
     #[test]

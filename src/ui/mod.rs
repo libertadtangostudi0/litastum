@@ -144,24 +144,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
             draw_overlay(frame, area, app, &theme);
             return (unchanged_layout, cursor);
         }
-        Mode::Browsing
-        | Mode::MainMenu(_)
-        | Mode::ThemeMenu(_)
-        | Mode::ShellMenu(_)
-        | Mode::PopupStyleMenu(_)
-        | Mode::ConfirmDelete(_)
-        | Mode::ConfirmTransfer(_)
-        | Mode::FindFile(_)
-        | Mode::CommandHistory(_)
-        | Mode::ChangeDrive(_)
-        | Mode::UserMenu(_)
-        | Mode::UserMenuPrompt(_)
-        | Mode::ConfirmPortFarMenu(_)
-        | Mode::AddUserMenuItem(..)
-        | Mode::Info(_)
-        | Mode::ImagePreview(_)
-        | Mode::Editing(_)
-        | Mode::MarkdownLinkSearch(..) => {}
+        Mode::Browsing | Mode::ImagePreview(_) | Mode::Editing(_) => {}
     }
 
     let root = Layout::default()
@@ -223,15 +206,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     // `F3` on a `.md`/`.markdown` file draws the built-in editor into
     // the *left* slot (`App::markdown_edit_preview`'s own doc comment,
     // `Mode::Editing`'s doc comment) instead of that panel's own file
-    // listing -- `Mode::MarkdownLinkSearch` parks the editor in its own
-    // tuple while its popup is up (below), but the same editor, same
-    // slot, still underneath it.
+    // listing -- also under the link-search overlay.
     let left_columns = match &mut app.mode {
         Mode::Editing(editor) if has_linked_preview => {
-            draw_editor(frame, panels[0], editor, &theme);
-            (1, 1)
-        }
-        Mode::MarkdownLinkSearch(editor, _) => {
             draw_editor(frame, panels[0], editor, &theme);
             (1, 1)
         }
@@ -255,10 +232,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         state.poll();
         image_preview::draw_image_preview(frame, panels[1], state, &theme);
         (1, 1)
-    } else if has_linked_preview && matches!(&app.mode, Mode::Editing(_) | Mode::MarkdownLinkSearch(..)) {
-        // The link-search popup (below) is an overlay over this same
-        // underlying preview -- draw it exactly like the plain combined
-        // view here, so the document stays visible behind the popup.
+    } else if has_linked_preview && matches!(&app.mode, Mode::Editing(_)) {
         let preview = app.markdown_edit_preview.as_mut().expect("has_linked_preview just confirmed this is Some");
         markdown_preview::draw_markdown_preview(frame, panels[1], preview, &theme);
         (1, 1)
@@ -272,11 +246,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     // Auto-popping history suggestions, Far Manager-style: shown right
     // above the command line the instant there's a substring match,
     // no explicit key needed to open it (unlike the Alt+F8 popup,
-    // which stays as an always-available manual search). Only in
-    // Mode::Browsing -- once a popup/mode below has its own meaning
-    // for the command line (or none at all), this shouldn't also be
-    // showing over it.
-    if matches!(app.mode, Mode::Browsing) && !app.command_line_suggestion_dismissed {
+    // which stays as an always-available manual search). Only on the
+    // bare browser -- under a popup it would show through.
+    if matches!(app.mode, Mode::Browsing) && app.overlay.is_none() && !app.command_line_suggestion_dismissed {
         let suggestions = crate::command_line::suggest_history(&app.command_history, app.command_line.text());
         if !suggestions.is_empty() {
             command_line::draw_history_suggestions(frame, root[1], &suggestions, app.command_line_suggestion_selected, &theme);
@@ -292,7 +264,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     // command line rather than owning a text field of its own (Far
     // Manager's own `Alt+F8` behaves the same way), so the cursor
     // still belongs down here, visible under the popup.
-    let mut cursor = if matches!(app.mode, Mode::Browsing | Mode::CommandHistory(_)) {
+    let command_line_owns_cursor = matches!(app.overlay, None | Some(Overlay::CommandHistory(_)));
+    let mut cursor = if matches!(app.mode, Mode::Browsing) && command_line_owns_cursor {
         Some(Position {
             x: root[1].x + prefix_len + app.command_line.cursor() as u16,
             y: root[1].y,
@@ -301,61 +274,31 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         None
     };
 
-    // The F9/Ctrl+P popups show over the browser, like a Far Manager
-    // menu, not in place of it -- unlike Editing/Compare above, which
-    // replace the whole screen. `App::overlay` is drawn last of all.
-    let popup_style = app.popup_style;
-    match &app.mode {
-        Mode::MainMenu(state) => menu::draw_main_menu(frame, area, state, &theme, popup_style),
-        Mode::ThemeMenu(menu) => theme_menu::draw_theme_menu(frame, area, menu, &theme, popup_style),
-        Mode::ShellMenu(menu) => shell::draw_shell_menu(frame, area, menu, &app.shell_profiles, &theme, popup_style),
-        Mode::PopupStyleMenu(menu) => popup_style_menu::draw_popup_style_menu(frame, area, menu, &theme, popup_style),
-        Mode::ConfirmDelete(pending) => confirm::draw_confirm_delete_popup(frame, area, pending, &theme, popup_style),
-        Mode::ConfirmTransfer(pending) => {
-            cursor = Some(confirm::draw_confirm_transfer_popup(frame, area, pending, &theme, popup_style));
-        }
-        Mode::FindFile(state) => {
-            cursor = find_file::draw_find_file(frame, area, state, &theme, popup_style);
-        }
-        Mode::CommandHistory(menu) => {
-            command_line::draw_command_history(frame, area, menu, &app.command_history, app.command_line.text(), &theme, popup_style);
-        }
-        Mode::ChangeDrive(menu) => drive_menu::draw_drive_menu(frame, area, menu, &theme, popup_style),
-        Mode::UserMenu(menu) => user_menu::draw_user_menu(frame, area, menu, &theme, popup_style),
-        Mode::UserMenuPrompt(prompt) => {
-            cursor = Some(user_menu::draw_user_menu_prompt(frame, area, prompt, &theme, popup_style));
-        }
-        Mode::ConfirmPortFarMenu(far_path) => user_menu::draw_confirm_port_far_menu(frame, area, far_path, &theme, popup_style),
-        Mode::AddUserMenuItem(menu, form) => {
-            user_menu::draw_user_menu(frame, area, menu, &theme, popup_style);
-            cursor = Some(user_menu::draw_add_user_menu_item(frame, area, form, &theme, popup_style));
-        }
-        Mode::Info(message) => draw_info_popup(frame, area, message, &theme, popup_style),
-        Mode::MarkdownLinkSearch(_, search) => {
-            cursor = Some(markdown_preview::draw_markdown_link_search(frame, area, search, &theme, popup_style));
-        }
-        // Mirrors plain `F4`'s own search box (top of this function) --
-        // reached here because a linked preview sent `Editing` through
-        // the split-panel path instead of the full-screen return.
-        Mode::Editing(editor) if has_linked_preview && editor.search_box_open() => {
+    // Mirrors plain `F4`'s own search box (top of this function) --
+    // reached here because a linked preview sent `Editing` through the
+    // split-panel path instead of the full-screen return.
+    if let Mode::Editing(editor) = &app.mode {
+        if has_linked_preview && editor.search_box_open() {
             let box_cursor = editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme);
             if editor.is_searching() {
                 cursor = Some(box_cursor);
             }
         }
-        _ => {}
     }
-    draw_overlay(frame, area, app, &theme);
+    if let Some(overlay_cursor) = draw_overlay(frame, area, app, &theme) {
+        cursor = Some(overlay_cursor);
+    }
 
     ([left_columns, right_columns], cursor)
 }
 
 
-/// Draws `app.overlay`, if any, over whatever screen was just drawn.
-fn draw_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
-    let Some(overlay) = &app.overlay else {
-        return;
-    };
+/// Draws `app.overlay`, if any, over whatever screen was just drawn --
+/// popups show over the browser, editor or Compare like a Far menu, not
+/// in place of them. Returns where the terminal cursor goes when the
+/// overlay has a text field of its own.
+fn draw_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) -> Option<Position> {
+    let overlay = app.overlay.as_ref()?;
     let style = app.popup_style;
     match overlay {
         Overlay::ConfirmDiscard => draw_confirm_discard_popup(frame, area, theme),
@@ -371,7 +314,29 @@ fn draw_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         Overlay::CompareLineEndingMenu(menu) => {
             compare_line_ending_menu::draw_compare_line_ending_menu(frame, area, menu, theme, style, app.compare_line_ending_display);
         }
+        Overlay::MainMenu(state) => menu::draw_main_menu(frame, area, state, theme, style),
+        Overlay::ThemeMenu(menu) => theme_menu::draw_theme_menu(frame, area, menu, theme, style),
+        Overlay::ShellMenu(menu) => shell::draw_shell_menu(frame, area, menu, &app.shell_profiles, theme, style),
+        Overlay::PopupStyleMenu(menu) => popup_style_menu::draw_popup_style_menu(frame, area, menu, theme, style),
+        Overlay::ConfirmDelete(pending) => confirm::draw_confirm_delete_popup(frame, area, pending, theme, style),
+        Overlay::ConfirmTransfer(pending) => return Some(confirm::draw_confirm_transfer_popup(frame, area, pending, theme, style)),
+        Overlay::FindFile(state) => return find_file::draw_find_file(frame, area, state, theme, style),
+        // Filters against the command line underneath, whose cursor stays.
+        Overlay::CommandHistory(menu) => {
+            command_line::draw_command_history(frame, area, menu, &app.command_history, app.command_line.text(), theme, style);
+        }
+        Overlay::ChangeDrive(menu) => drive_menu::draw_drive_menu(frame, area, menu, theme, style),
+        Overlay::UserMenu(menu) => user_menu::draw_user_menu(frame, area, menu, theme, style),
+        Overlay::UserMenuPrompt(prompt) => return Some(user_menu::draw_user_menu_prompt(frame, area, prompt, theme, style)),
+        Overlay::ConfirmPortFarMenu(far_path) => user_menu::draw_confirm_port_far_menu(frame, area, far_path, theme, style),
+        Overlay::AddUserMenuItem(menu, form) => {
+            user_menu::draw_user_menu(frame, area, menu, theme, style);
+            return Some(user_menu::draw_add_user_menu_item(frame, area, form, theme, style));
+        }
+        Overlay::Info(message) => draw_info_popup(frame, area, message, theme, style),
+        Overlay::MarkdownLinkSearch(search) => return Some(markdown_preview::draw_markdown_link_search(frame, area, search, theme, style)),
     }
+    None
 }
 
 

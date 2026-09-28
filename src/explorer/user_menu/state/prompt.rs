@@ -1,7 +1,7 @@
 use crate::explorer::user_menu::parse::{self, Prompt};
 use crate::text_field::TextField;
 
-/// `Mode::UserMenuPrompt`: collecting answers to a `Commands` item's
+/// `Overlay::UserMenuPrompt`: collecting answers to a `Commands` item's
 /// own `!?Label?Default!` placeholders (`parse::extract_prompts`)
 /// before running it -- one text field shown at a time, in
 /// first-appearance order, same as real Far Manager's own "each

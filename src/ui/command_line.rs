@@ -188,6 +188,7 @@ pub fn draw_history_suggestions(frame: &mut Frame, command_line_area: Rect, sugg
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::buffer_text;
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
@@ -203,11 +204,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let theme = Theme::dark();
         terminal.draw(|frame| draw_command_history(frame, frame.area(), menu, history, "", &theme, style)).unwrap();
-        let buffer = terminal.backend().buffer();
-        (0..buffer.area.height)
-            .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
+        buffer_text(terminal.backend().buffer())
     }
 
     /// Regression test for the actual reported bug: a history far past

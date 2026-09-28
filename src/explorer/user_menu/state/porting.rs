@@ -10,7 +10,7 @@ use crate::explorer::user_menu::toml_format;
 
 /// Ports `far_path` (a real `FarMenu.ini`) into a `LitastumMenu.toml`
 /// alongside it -- called only once the user has confirmed it
-/// (`Mode::ConfirmPortFarMenu`). Returns the parsed items regardless of
+/// (`Overlay::ConfirmPortFarMenu`). Returns the parsed items regardless of
 /// whether either write below actually succeeded (best-effort
 /// persistence, same "never block on a failed write" rule
 /// `theming::config` already follows for theme/setup persistence).

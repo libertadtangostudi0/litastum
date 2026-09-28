@@ -60,7 +60,7 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             sort (natural_sort.rs)
   explorer/entry.rs     —   Entry, HighlightRole (file-type coloring)
   explorer/fs_ops.rs    —   actual copy/move/delete filesystem calls
-  explorer/confirm/     —   Mode::ConfirmDelete/ConfirmTransfer key handling
+  explorer/confirm/     —   Overlay::ConfirmDelete/ConfirmTransfer key handling
   explorer/drive_menu.rs—   Alt+F1/F2 "change drive" popup state
   explorer/find_file/   —   F9 -> Commands -> Find file (search, state,
                             input handling, .txt export)
@@ -129,7 +129,7 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             draws into the right panel's own area, same
                             replacement convention as image_preview.rs.
                             Links: Ctrl+click (exact hit-test) or `l` ->
-                            Mode::MarkdownLinkSearch (a filterable list
+                            Overlay::MarkdownLinkSearch (a filterable list
                             from MarkdownPreviewState::links(), parking
                             the Editor in its own tuple meanwhile) -- both
                             resolve/open through the same open_link/
@@ -165,12 +165,12 @@ explorer.rs            — dual-pane browser: Panel, F-key commands,
                             outside this directory needed to change;
                             input/ -- key handling, also split by
                             concern once the old flat input.rs passed
-                            ~500 lines: browsing.rs (Mode::UserMenu --
+                            ~500 lines: browsing.rs (Overlay::UserMenu --
                             navigation, running an item, the `F4`/
                             `Right` command-edit entry points),
-                            prompt.rs (Mode::UserMenuPrompt),
-                            confirm_port.rs (Mode::ConfirmPortFarMenu),
-                            add_item.rs (Mode::AddUserMenuItem) -- hands
+                            prompt.rs (Overlay::UserMenuPrompt),
+                            confirm_port.rs (Overlay::ConfirmPortFarMenu),
+                            add_item.rs (Overlay::AddUserMenuItem) -- hands
                             finished commands off to
                             command_line::run_shell_command_lines)
 
@@ -242,7 +242,7 @@ ui/mod.rs               — pure(ish) rendering: App -> ratatui widgets;
                            passed ~500 lines: panel.rs (draw_panel/
                            draw_entry_grid/build_list_item), editor_pane.rs
                            (draw_editor, the ConfirmDiscard popup over
-                           it), info.rs (Mode::Info), function_keys.rs
+                           it), info.rs (Overlay::Info), function_keys.rs
                            (the F-key hint row); draw_command_line moved
                            into the already-existing command_line.rs
                            alongside draw_command_history/
@@ -299,15 +299,16 @@ crossterm::event::read()
    picks Classic vs Rounded chrome for every popup
 ```
 
-`App::overlay` holds a popup drawn over the current `Mode` without
-replacing it -- the editor's and Compare's F9 menus and pickers, and
-the discard prompt -- so the editor or `CompareState` underneath never
-moves. An open overlay gets every key (`event_loop::keys::key_effect`),
-and mouse and paste ignore the screen underneath; `ui::draw_overlay`
-draws it last, over any screen (the editor+preview split view too).
-Browser popups are still `Mode` variants -- moving them is the next step.
+`App::mode` is the screen (the browser, the editor, Compare, an image
+preview); `App::overlay` is a popup drawn over it without replacing it
+-- every menu, picker, prompt and Find file -- so the editor or
+`CompareState` underneath never moves. An open overlay gets every key
+(`event_loop::keys::key_effect`), and mouse and paste ignore the screen
+underneath; `ui::draw_overlay` draws it last, over any screen. Changing
+the screen must also close the overlay (`app.overlay = None`) -- a
+popup left open would hang over the new screen.
 
-Each non-`Browsing` `Mode` (there are a dozen — see `app.rs::Mode`) is
+Each `Overlay` (see `app.rs::Overlay`) is
 a self-contained `{State struct, Command enum, resolve(), handle_*_key,
 draw_*}` group, split across its owning module (`theming::theme_menu`,
 `explorer::find_file`, ...) and a matching `ui::*` rendering module —

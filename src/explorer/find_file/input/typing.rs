@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Overlay};
 use crate::text_field;
 
 use super::super::background::spawn_search;
@@ -20,8 +20,8 @@ pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<()> {
         return run_search(app);
     }
 
-    let Mode::FindFile(state) = &mut app.mode else {
-        unreachable!("handle_find_file_key only dispatches here while Mode::FindFile(_) is active");
+    let Some(Overlay::FindFile(state)) = &mut app.overlay else {
+        unreachable!("handle_find_file_key only dispatches here while Overlay::FindFile(_) is active");
     };
     if key.code == KeyCode::Tab {
         state.active_field = match state.active_field {
@@ -84,7 +84,7 @@ pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<()> {
 /// clean exit, keeping this function's own extensive unit tests
 /// filesystem-free.
 fn run_search(app: &mut App) -> Result<()> {
-    let Mode::FindFile(state) = &app.mode else {
+    let Some(Overlay::FindFile(state)) = &app.overlay else {
         return Ok(());
     };
     if state.query.is_empty() && state.content_query.is_empty() {
@@ -98,8 +98,8 @@ fn run_search(app: &mut App) -> Result<()> {
     history::record_history(&mut app.find_file_content_history, &content_query);
     let pending = spawn_search(root, query, content_query);
 
-    let Mode::FindFile(state) = &mut app.mode else {
-        unreachable!("just matched Mode::FindFile above");
+    let Some(Overlay::FindFile(state)) = &mut app.overlay else {
+        unreachable!("just matched Overlay::FindFile above");
     };
     state.pending = Some(pending);
     state.phase = FindFilePhase::Searching;
@@ -127,7 +127,7 @@ mod tests {
         handle_typing_key(&mut app, key(KeyCode::Char('a'))).unwrap();
         handle_typing_key(&mut app, key(KeyCode::Char('b'))).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.query.text(), "ab");
     }
 
@@ -144,7 +144,7 @@ mod tests {
 
         handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.query.anchor(), Some(3));
         assert_eq!(state.query.cursor(), 2);
     }
@@ -162,7 +162,7 @@ mod tests {
 
         handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.query.anchor(), Some(7));
         assert_eq!(state.query.cursor(), 4, "should have jumped back a whole word (\"two\"), not just one character");
     }
@@ -175,7 +175,7 @@ mod tests {
 
         handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.query.anchor(), Some(0));
         assert_eq!(state.query.cursor(), 3, "should have jumped forward a whole word (\"one\")");
     }
@@ -191,7 +191,7 @@ mod tests {
 
         handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.content_query.anchor(), Some(7));
         assert_eq!(state.content_query.cursor(), 4);
         assert_eq!(state.query.anchor(), None, "the name field's own selection shouldn't be touched");
@@ -205,7 +205,7 @@ mod tests {
 
         handle_typing_key(&mut app, key(KeyCode::Backspace)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.query.text(), "a", "should have removed \"bc\" (the whole selection), not just \"c\"");
         assert_eq!(state.query.anchor(), None);
     }
@@ -218,7 +218,7 @@ mod tests {
 
         handle_typing_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.query.text(), "x");
     }
 
@@ -235,7 +235,7 @@ mod tests {
 
         handle_typing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.content_query.anchor(), Some(7));
         assert_eq!(state.query.anchor(), Some(0), "the name field's own selection shouldn't be touched");
     }
@@ -246,7 +246,7 @@ mod tests {
 
         handle_typing_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.phase, FindFilePhase::Typing);
     }
 
@@ -261,7 +261,7 @@ mod tests {
         handle_typing_key(&mut app, key(KeyCode::Tab)).unwrap();
         handle_typing_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.active_field, FindFileField::Content);
         assert_eq!(state.content_query.text(), "x");
         assert!(state.query.is_empty(), "typing after Tab should not still reach the name field");
@@ -278,7 +278,7 @@ mod tests {
 
         handle_typing_key(&mut app, key(KeyCode::Up)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.query.text(), "recent.txt", "Up on the name field should recall the name history, not the content one");
 
         // Switch to the content field -- Up there should recall its own
@@ -289,7 +289,7 @@ mod tests {
 
         handle_typing_key(&mut app, key(KeyCode::Up)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.content_query.text(), "needle");
     }
 
@@ -304,7 +304,7 @@ mod tests {
         handle_typing_key(&mut app, key(KeyCode::Up)).unwrap();
         handle_typing_key(&mut app, key(KeyCode::Char('!'))).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.query.text(), "recalled.txt!");
         assert_eq!(state.name_history_index, None, "typing should leave history-browsing mode");
     }
@@ -341,7 +341,7 @@ mod tests {
         handle_typing_key(&mut app, key(KeyCode::Enter)).unwrap();
         wait_for_search(&mut app);
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.phase, FindFilePhase::Results);
         assert_eq!(state.results, vec![app.panels[0].path.join("a.txt")]);
     }
@@ -356,7 +356,7 @@ mod tests {
         handle_typing_key(&mut app, key(KeyCode::Enter)).unwrap();
         wait_for_search(&mut app);
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.phase, FindFilePhase::Results);
         assert_eq!(state.results, vec![app.panels[0].path.join("source.txt")]);
     }
@@ -373,7 +373,7 @@ mod tests {
 
         handle_typing_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.phase, FindFilePhase::Searching);
         assert!(state.pending.is_some());
     }

@@ -47,15 +47,12 @@ pub fn file_title(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::buffer_text;
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
     use crate::theming::Theme;
 
-    fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
-        let area = buffer.area;
-        (0..area.height).map(|y| (0..area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>().join("\n")
-    }
 
     #[test]
     fn file_title_returns_just_the_file_name() {

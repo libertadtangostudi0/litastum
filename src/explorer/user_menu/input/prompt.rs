@@ -1,11 +1,11 @@
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::app::{App, Mode};
+use crate::app::{App, Overlay};
 use crate::command_line::Effect;
 
 /// Key handling on a user-menu item's own `!?Label?Default!` prompt
-/// popup (`Mode::UserMenuPrompt`) -- a standard single-line text field
+/// popup (`Overlay::UserMenuPrompt`) -- a standard single-line text field
 /// (`TextField::apply_key`), one prompt at a time. `Enter` accepts the
 /// current field's value and either advances to the next prompt or, if
 /// that was the last one, runs the finished, fully-substituted command
@@ -14,21 +14,21 @@ use crate::command_line::Effect;
 /// the whole item -- no partial run of some-but-not-all commands.
 pub fn handle_user_menu_prompt_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if key.code == KeyCode::Esc {
-        app.mode = Mode::Browsing;
+        app.overlay = None;
         return Ok(Effect::None);
     }
     if key.code == KeyCode::Enter {
-        let Mode::UserMenuPrompt(prompt) = &mut app.mode else {
+        let Some(Overlay::UserMenuPrompt(prompt)) = &mut app.overlay else {
             return Ok(Effect::None);
         };
         if let Some(commands) = prompt.accept_current() {
-            app.mode = Mode::Browsing;
+            app.overlay = None;
             return Ok(Effect::RunShell(commands));
         }
         return Ok(Effect::None);
     }
 
-    let Mode::UserMenuPrompt(prompt) = &mut app.mode else {
+    let Some(Overlay::UserMenuPrompt(prompt)) = &mut app.overlay else {
         return Ok(Effect::None);
     };
     prompt.value.apply_key(key);
@@ -40,6 +40,7 @@ pub fn handle_user_menu_prompt_key(app: &mut App, key: KeyEvent) -> Result<Effec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Mode;
     use crate::explorer::user_menu::input::scratch_dir;
     use crate::explorer::user_menu::parse::Prompt;
     use crate::explorer::user_menu::state::UserMenuPromptState;
@@ -48,7 +49,7 @@ mod tests {
     fn app_in_prompt() -> App {
         let prompts = vec![Prompt { label: "Name".to_string(), default: String::new() }];
         let mut app = test_app(scratch_dir());
-        app.mode = Mode::UserMenuPrompt(UserMenuPromptState::new(vec!["echo !?Name?!".to_string()], prompts));
+        app.overlay = Some(Overlay::UserMenuPrompt(UserMenuPromptState::new(vec!["echo !?Name?!".to_string()], prompts)));
         app
     }
 
@@ -58,7 +59,7 @@ mod tests {
 
         handle_user_menu_prompt_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 
-        let Mode::UserMenuPrompt(prompt) = &app.mode else { panic!("expected Mode::UserMenuPrompt") };
+        let Some(Overlay::UserMenuPrompt(prompt)) = &app.overlay else { panic!("expected Overlay::UserMenuPrompt") };
         assert_eq!(prompt.value.text(), "x");
     }
 
@@ -70,7 +71,7 @@ mod tests {
         let effect = handle_user_menu_prompt_key(&mut app, key(KeyCode::Enter)).unwrap();
 
         assert_eq!(effect, Effect::RunShell(vec!["echo x".to_string()]));
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
@@ -79,16 +80,16 @@ mod tests {
 
         handle_user_menu_prompt_key(&mut app, key(KeyCode::Esc)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
     fn is_a_noop_outside_prompt_mode() {
         let mut app = app_in_prompt();
-        app.mode = Mode::Browsing;
+        app.overlay = None;
 
         handle_user_menu_prompt_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 }

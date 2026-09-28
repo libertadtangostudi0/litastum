@@ -6,7 +6,7 @@ mod scheme;
 mod theme;
 mod theme_menu;
 
-pub use menu::{handle_main_menu_key, MainMenu, MenuLevel};
+pub use menu::{handle_main_menu_key, MainMenu};
 pub use popup_style::PopupStyle;
 pub use popup_style_menu::{handle_popup_style_menu_key, PopupStyleMenu};
 pub use theme::Theme;

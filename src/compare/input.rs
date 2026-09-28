@@ -3,7 +3,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
-use crate::editor::{edtui_supports_key, resolve_confirm_discard, ConfirmDiscardCommand};
+use crate::editor::edtui_supports_key;
+use crate::yes_no::{self, Answer};
 
 use super::menu::open_compare_menu;
 
@@ -104,20 +105,18 @@ fn close_compare_or_confirm(app: &mut App) -> Result<()> {
     Ok(())
 }
 
-/// Key handling on Compare's own "discard unsaved changes?" prompt --
-/// reuses `editor::resolve_confirm_discard`'s Y/N/Esc shape directly
-/// rather than a near-duplicate local copy.
+/// Key handling on Compare's own "discard unsaved changes?" prompt.
 pub fn handle_compare_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<()> {
-    let command = resolve_confirm_discard(key);
-    debug!(?key, ?command, "compare confirm-discard key");
+    let answer = yes_no::answer(key);
+    debug!(?key, ?answer, "compare confirm-discard key");
 
-    match command {
-        ConfirmDiscardCommand::Discard => {
+    match answer {
+        Answer::Yes => {
             app.overlay = None;
             app.mode = Mode::Browsing;
         }
-        ConfirmDiscardCommand::Cancel => app.overlay = None,
-        ConfirmDiscardCommand::Ignore => {}
+        Answer::No => app.overlay = None,
+        Answer::Ignore => {}
     }
 
     Ok(())

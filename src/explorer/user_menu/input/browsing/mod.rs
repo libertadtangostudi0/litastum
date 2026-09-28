@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
 use crate::editor::Editor;
 use crate::explorer::Panel;
@@ -10,10 +10,10 @@ use crate::explorer::user_menu::parse::{self, MacroContext, MenuItemBody, PanelM
 use crate::explorer::user_menu::state::{self, AddUserMenuItemState, UserMenuCommandEdit, UserMenuPromptState};
 
 /// Key handling while browsing a (possibly nested) user menu
-/// (`Mode::UserMenu`): `Up`/`Down` move. `Enter` on a submenu descends
+/// (`Overlay::UserMenu`): `Up`/`Down` move. `Enter` on a submenu descends
 /// into it, on a `Commands` item substitutes `!&` (the entry under the
 /// cursor) and, if any `!?Label?Default!` placeholders remain, opens
-/// `Mode::UserMenuPrompt` to collect them before running -- otherwise
+/// `Overlay::UserMenuPrompt` to collect them before running -- otherwise
 /// runs immediately. A plain letter matching some item's own `hotkey`
 /// at the current level does the exact same thing `Enter` would once
 /// the cursor is sitting on that item (`UserMenuState::select_by_hotkey`) --
@@ -30,7 +30,7 @@ use crate::explorer::user_menu::state::{self, AddUserMenuItemState, UserMenuComm
 /// as `theming::handle_main_menu_key` -- `Right`/`Left` alongside
 /// `Enter`/`Esc` for navigation was requested directly, matching real
 /// Far Manager's own menu navigation, where either key works. `Ins`
-/// opens the add-item form (`Mode::AddUserMenuItem`); `Delete` removes
+/// opens the add-item form (`Overlay::AddUserMenuItem`); `Delete` removes
 /// the highlighted item immediately (no confirmation -- this edits a
 /// config file, not real user data, same reasoning `F8`'s own confirm-
 /// before-delete doesn't extend to); `F4` opens a `Commands` item's
@@ -52,18 +52,18 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     }
 
     // `Ins` also needs to *replace* `app.mode` entirely (moving the
-    // current `UserMenuState` into `Mode::AddUserMenuItem` alongside a
+    // current `UserMenuState` into `Overlay::AddUserMenuItem` alongside a
     // fresh form, so `Esc` on the form can hand it straight back) --
-    // same "needs `&mut App`, not just a borrow of `Mode::UserMenu`'s
+    // same "needs `&mut App`, not just a borrow of `Overlay::UserMenu`'s
     // own payload" reasoning as `Enter` above.
     if key.code == KeyCode::Insert {
-        if !matches!(&app.mode, Mode::UserMenu(_)) {
+        if !matches!(&app.overlay, Some(Overlay::UserMenu(_))) {
             return Ok(Effect::None);
         }
-        let Mode::UserMenu(menu) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+        let Some(Overlay::UserMenu(menu)) = app.overlay.take() else {
             unreachable!("just matched above");
         };
-        app.mode = Mode::AddUserMenuItem(menu, AddUserMenuItemState::new());
+        app.overlay = Some(Overlay::AddUserMenuItem(menu, AddUserMenuItemState::new()));
         return Ok(Effect::None);
     }
 
@@ -100,7 +100,7 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     // silent no-op past this point, same as before this was added.
     if let KeyCode::Char(c) = key.code {
         let matched = {
-            let Mode::UserMenu(menu) = &mut app.mode else {
+            let Some(Overlay::UserMenu(menu)) = &mut app.overlay else {
                 return Ok(Effect::None);
             };
             menu.select_by_hotkey(c)
@@ -111,7 +111,7 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         return Ok(Effect::None);
     }
 
-    let Mode::UserMenu(menu) = &mut app.mode else {
+    let Some(Overlay::UserMenu(menu)) = &mut app.overlay else {
         return Ok(Effect::None);
     };
     match key.code {
@@ -120,7 +120,7 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         KeyCode::Delete => menu.delete_selected(),
         KeyCode::Esc | KeyCode::Left => {
             if !menu.back() {
-                app.mode = Mode::Browsing;
+                app.overlay = None;
             }
         }
         _ => {}
@@ -135,10 +135,10 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
 /// litastum-native (`{{cursor}}`) macro (`parse::substitute_macros`),
 /// and either runs the result immediately (`Effect::RunShell`) or, if any
 /// `!?Label?Default!`/`{{prompt:...}}` placeholders remain, opens
-/// `Mode::UserMenuPrompt` to collect them first.
+/// `Overlay::UserMenuPrompt` to collect them first.
 fn run_selected_user_menu_item(app: &mut App) -> Result<Effect> {
     let entered = {
-        let Mode::UserMenu(menu) = &mut app.mode else {
+        let Some(Overlay::UserMenu(menu)) = &mut app.overlay else {
             return Ok(Effect::None);
         };
         menu.enter_submenu()
@@ -148,7 +148,7 @@ fn run_selected_user_menu_item(app: &mut App) -> Result<Effect> {
     }
 
     let (raw_commands, item_title) = {
-        let Mode::UserMenu(menu) = &app.mode else {
+        let Some(Overlay::UserMenu(menu)) = &app.overlay else {
             return Ok(Effect::None);
         };
         let Some(item) = menu.selected_item() else {
@@ -166,10 +166,10 @@ fn run_selected_user_menu_item(app: &mut App) -> Result<Effect> {
 
     debug!(item = %item_title, prompt_count = prompts.len(), "user menu: running item");
     if prompts.is_empty() {
-        app.mode = Mode::Browsing;
+        app.overlay = None;
         return Ok(Effect::RunShell(commands));
     }
-    app.mode = Mode::UserMenuPrompt(UserMenuPromptState::new(commands, prompts));
+    app.overlay = Some(Overlay::UserMenuPrompt(UserMenuPromptState::new(commands, prompts)));
     Ok(Effect::None)
 }
 
@@ -215,7 +215,7 @@ fn panel_macro_context(panel: &Panel) -> PanelMacroContext {
 /// second way to run it.
 fn open_selected_item(app: &mut App) {
     let entered = {
-        let Mode::UserMenu(menu) = &mut app.mode else { return };
+        let Some(Overlay::UserMenu(menu)) = &mut app.overlay else { return };
         menu.enter_submenu()
     };
     if entered {
@@ -237,7 +237,7 @@ fn open_selected_item(app: &mut App) {
 /// bespoke single-line UI form -- both missed the actual ask, a real
 /// editor session scoped to just this item's own command(s).
 fn open_edit_selected_command(app: &mut App) {
-    let Mode::UserMenu(menu) = &app.mode else { return };
+    let Some(Overlay::UserMenu(menu)) = &app.overlay else { return };
     let Some(item) = menu.selected_item() else { return };
     let MenuItemBody::Commands(commands) = &item.body else { return };
 
@@ -247,9 +247,10 @@ fn open_edit_selected_command(app: &mut App) {
         return;
     };
 
-    let Mode::UserMenu(menu) = std::mem::replace(&mut app.mode, Mode::Editing(editor)) else {
-        unreachable!("just matched Mode::UserMenu above");
+    let Some(Overlay::UserMenu(menu)) = app.overlay.take() else {
+        unreachable!("just matched Overlay::UserMenu above");
     };
+    app.mode = Mode::Editing(editor);
     app.user_menu_command_edit = Some(UserMenuCommandEdit { menu, temp_path });
 }
 

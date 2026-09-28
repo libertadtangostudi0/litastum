@@ -11,7 +11,7 @@ mod syntax;
 mod word_highlight;
 
 pub use editor::Editor;
-pub use editor_keymap::{handle_confirm_discard_key, handle_editor_key, resolve_confirm_discard, ConfirmDiscardCommand};
+pub use editor_keymap::{handle_confirm_discard_key, handle_editor_key};
 pub use keymap_menu::{handle_editor_keymap_menu_key, EditorKeymapMenu};
 pub use keymap_mode::EditorKeymapMode;
 pub use menu::{handle_editor_menu_key, EditorMenu};

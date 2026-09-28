@@ -25,7 +25,7 @@ pub enum MenuFile {
     /// this particular menu actually came from.
     Own(PathBuf, Vec<MenuItem>),
     /// A `FarMenu.ini` is here -- offer to port it
-    /// (`Mode::ConfirmPortFarMenu`) rather than reading or converting
+    /// (`Overlay::ConfirmPortFarMenu`) rather than reading or converting
     /// it silently. Reported *even if* `LitastumMenu.toml` also
     /// exists already -- dropping a `FarMenu.ini` into an already-
     /// configured directory should still surface the choice (port and
@@ -112,7 +112,7 @@ fn resolve_menu_with_fallback(dir: &Path, common_dir: Option<&Path>) -> MenuFile
 /// first. Never writes anything itself -- porting (`port_far_menu`) or
 /// backing `FarMenu.ini` out of the way (`backup_far_menu_without_porting`)
 /// only happens once the user actually answers the prompt this
-/// produces (`Mode::ConfirmPortFarMenu`). `None` if `dir` has neither
+/// produces (`Overlay::ConfirmPortFarMenu`). `None` if `dir` has neither
 /// file, letting `resolve_menu_with_fallback` try the next directory.
 fn resolve_menu_in(dir: &Path) -> Option<MenuFile> {
     let far = dir.join(FAR_FILE_NAME);

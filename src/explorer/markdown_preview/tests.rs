@@ -2,7 +2,7 @@ use std::fs;
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Overlay};
 use crate::test_support::unique_scratch_dir;
 
 use super::links::{resolve_link_target, LinkTarget};
@@ -559,15 +559,15 @@ mod handle_markdown_edit_preview_key_tests {
     }
 
     /// The actual point of the whole keyboard-search feature: `l` opens
-    /// it, parking the editor so `Esc`/`Enter` can hand it straight
-    /// back.
+    /// it over the editor, which stays open underneath.
     #[test]
     fn l_opens_the_link_search_when_the_document_has_links() {
         let mut app = app_in_preview("[Anthropic](https://anthropic.com)\n");
 
         handle_markdown_edit_preview_key(&mut app, key(KeyCode::Char('l'))).unwrap();
 
-        assert!(matches!(app.mode, Mode::MarkdownLinkSearch(..)));
+        assert!(matches!(app.overlay, Some(Overlay::MarkdownLinkSearch(..))));
+        assert!(matches!(app.mode, Mode::Editing(_)));
     }
 
     #[test]
@@ -576,7 +576,7 @@ mod handle_markdown_edit_preview_key_tests {
 
         handle_markdown_edit_preview_key(&mut app, key(KeyCode::Char('l'))).unwrap();
 
-        assert!(matches!(app.mode, Mode::Editing(_)), "should stay put, nothing to search");
+        assert!(app.overlay.is_none(), "should stay put, nothing to search");
     }
 }
 
@@ -661,10 +661,7 @@ mod handle_markdown_link_search_key_tests {
     use crate::editor::{Editor, EditorKeymapMode};
     use crate::test_support::{key, test_app};
 
-    /// `Mode::MarkdownLinkSearch` "parks" the `Editor` in its own tuple
-    /// (see its own doc comment) -- `App::markdown_edit_preview` is
-    /// untouched throughout, exactly as it is during ordinary
-    /// `Mode::Editing`.
+    /// The link search open over an editor+preview session.
     fn app_in_search() -> App {
         let dir = unique_scratch_dir("markdown-link-search-keys");
         let path = dir.join("readme.md");
@@ -674,7 +671,8 @@ mod handle_markdown_link_search_key_tests {
         let links = preview.links();
         let editor = Editor::open(path, None, EditorKeymapMode::Standard).unwrap();
         app.markdown_edit_preview = Some(preview);
-        app.mode = Mode::MarkdownLinkSearch(editor, MarkdownLinkSearchState::new(links));
+        app.mode = Mode::Editing(editor);
+        app.overlay = Some(Overlay::MarkdownLinkSearch(MarkdownLinkSearchState::new(links)));
         app
     }
 
@@ -684,7 +682,7 @@ mod handle_markdown_link_search_key_tests {
 
         handle_markdown_link_search_key(&mut app, key(KeyCode::Char('a')));
 
-        let Mode::MarkdownLinkSearch(_, search) = &app.mode else { panic!("expected Mode::MarkdownLinkSearch") };
+        let Some(Overlay::MarkdownLinkSearch(search)) = &app.overlay else { panic!("expected Overlay::MarkdownLinkSearch") };
         assert_eq!(search.query(), "a");
     }
 

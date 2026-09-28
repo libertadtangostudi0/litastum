@@ -19,7 +19,7 @@
 //! - `prompts`: the `!?Label?Default!`/`{{prompt:...}}` placeholder --
 //!   asks the user for a value once per unique label before running,
 //!   shared machinery for both macro syntaxes since the interactive
-//!   part (`Mode::UserMenuPrompt`) doesn't care which one was used.
+//!   part (`Overlay::UserMenuPrompt`) doesn't care which one was used.
 //!
 //! `MenuItem`/`MenuItemBody` live here, at the top, since they're the
 //! one shape all three submodules (and `toml_format.rs`, `state.rs`,

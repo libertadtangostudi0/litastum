@@ -115,3 +115,24 @@ pub fn shift_key(code: KeyCode) -> KeyEvent {
 pub fn test_app(dir: PathBuf) -> App {
     App::new(dir, Theme::dark(), None).expect("build app")
 }
+
+
+/// Every row of a rendered buffer, joined with newlines -- what a test
+/// asserts against after drawing onto a `TestBackend`.
+pub fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
+    let area = buffer.area;
+    (0..area.height).map(|y| (0..area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>().join("\n")
+}
+
+
+/// An `App` in `dir` with `contents` open in the built-in editor
+/// (`keymap_mode`), as if `F4` had been pressed on it.
+pub fn editing_app(contents: &str, keymap_mode: crate::editor::EditorKeymapMode) -> App {
+    let dir = unique_scratch_dir("editing-app");
+    let path = dir.join("file.txt");
+    std::fs::write(&path, contents).expect("write test fixture file");
+    let editor = crate::editor::Editor::open(path, None, keymap_mode).expect("open test fixture file");
+    let mut app = test_app(dir);
+    app.mode = crate::app::Mode::Editing(editor);
+    app
+}

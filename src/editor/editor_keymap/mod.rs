@@ -4,6 +4,7 @@ use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
 use crate::explorer;
+use crate::yes_no::{self, Answer};
 
 use super::find_history;
 use super::keymap_mode::EditorKeymapMode;
@@ -85,28 +86,6 @@ pub(crate) fn edtui_supports_key(code: KeyCode) -> bool {
             | KeyCode::PageUp
             | KeyCode::PageDown
     )
-}
-
-
-/// The choice on the "discard unsaved changes?" prompt (`Overlay::ConfirmDiscard`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConfirmDiscardCommand {
-    Discard,
-    Cancel,
-    /// Anything else — the prompt only understands these two answers,
-    /// so unrecognized keys are ignored rather than forwarded anywhere
-    /// (there's no text area to forward them to while it's showing).
-    Ignore,
-}
-
-
-/// Resolves a raw key press on the discard-confirmation prompt.
-pub fn resolve_confirm_discard(key: KeyEvent) -> ConfirmDiscardCommand {
-    match key.code {
-        KeyCode::Char('y' | 'Y') => ConfirmDiscardCommand::Discard,
-        KeyCode::Char('n' | 'N') | KeyCode::Esc => ConfirmDiscardCommand::Cancel,
-        _ => ConfirmDiscardCommand::Ignore,
-    }
 }
 
 
@@ -247,21 +226,19 @@ pub(crate) fn close_editor_or_confirm(app: &mut App) -> Result<()> {
 
 
 /// The editor is closing for good: reloads the active panel and returns
-/// to wherever `F4` came from -- `Mode::FindFile` (`editor_return_to`),
-/// `Mode::UserMenu` after writing the scratch file back
+/// to wherever `F4` came from -- `Overlay::FindFile` (`editor_return_to`),
+/// `Overlay::UserMenu` after writing the scratch file back
 /// (`user_menu_command_edit`), else browsing. Clears a linked Markdown
 /// preview; mouse capture follows the mode. Cancelling the discard
 /// prompt doesn't come here -- the editor hasn't closed.
 fn return_from_editor(app: &mut App) -> Result<()> {
     app.active_panel().reload()?;
     app.markdown_edit_preview = None;
-    app.overlay = None;
-    app.mode = if let Some(state) = app.editor_return_to.take() {
-        Mode::FindFile(state)
-    } else if let Some(edit) = app.user_menu_command_edit.take() {
-        Mode::UserMenu(explorer::finish_command_edit(edit))
+    app.mode = Mode::Browsing;
+    app.overlay = if let Some(state) = app.editor_return_to.take() {
+        Some(Overlay::FindFile(state))
     } else {
-        Mode::Browsing
+        app.user_menu_command_edit.take().map(|edit| Overlay::UserMenu(explorer::finish_command_edit(edit)))
     };
     Ok(())
 }
@@ -271,13 +248,13 @@ fn return_from_editor(app: &mut App) -> Result<()> {
 /// and returns to browsing, `N`/`Esc` cancels back into the editor with
 /// nothing lost, anything else is ignored.
 pub fn handle_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<()> {
-    let command = resolve_confirm_discard(key);
-    debug!(?key, ?command, "confirm-discard key");
+    let answer = yes_no::answer(key);
+    debug!(?key, ?answer, "confirm-discard key");
 
-    match command {
-        ConfirmDiscardCommand::Discard => return return_from_editor(app),
-        ConfirmDiscardCommand::Cancel => app.overlay = None,
-        ConfirmDiscardCommand::Ignore => {}
+    match answer {
+        Answer::Yes => return return_from_editor(app),
+        Answer::No => app.overlay = None,
+        Answer::Ignore => {}
     }
 
     Ok(())

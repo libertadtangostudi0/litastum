@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::KeyEvent;
 use tracing::debug;
 
-use crate::app::{App, Mode, ShellMenu};
+use crate::app::{App, Overlay, ShellMenu};
 use crate::choice_menu::{ChoiceMenu, MenuOutcome};
 
 
@@ -66,7 +66,7 @@ pub fn open_shell_menu(app: &App) -> ShellMenu {
 /// `app.active_shell`, `Esc` cancels. Not persisted automatically (F9 ->
 /// Options -> Save setup does that).
 pub fn handle_shell_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
-    let Mode::ShellMenu(menu) = &mut app.mode else {
+    let Some(Overlay::ShellMenu(menu)) = &mut app.overlay else {
         return Ok(());
     };
 
@@ -74,10 +74,10 @@ pub fn handle_shell_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
     debug!(?key, ?outcome, "shell menu key");
     match outcome {
         MenuOutcome::Open => {}
-        MenuOutcome::Closed => app.mode = Mode::Browsing,
+        MenuOutcome::Closed => app.overlay = None,
         MenuOutcome::Chosen(index) => {
             app.active_shell = index;
-            app.mode = Mode::Browsing;
+            app.overlay = None;
         }
     }
     Ok(())
@@ -89,6 +89,7 @@ mod tests {
     use crossterm::event::KeyCode;
 
     use super::*;
+    use crate::app::Mode;
     use crate::test_support::{key, test_app, unique_scratch_dir};
 
     #[test]
@@ -96,12 +97,12 @@ mod tests {
         assert!(!builtin_profiles().is_empty());
     }
 
-    /// A real `App` (no terminal needed) in `Mode::ShellMenu`, cursor on
+    /// A real `App` (no terminal needed) in `Overlay::ShellMenu`, cursor on
     /// row 0 — `App::new` always seeds at least one built-in profile, so
     /// there's always something to navigate.
     fn app_in_shell_menu() -> App {
         let mut app = test_app(unique_scratch_dir("shell-menu"));
-        app.mode = Mode::ShellMenu(open_shell_menu(&app));
+        app.overlay = Some(Overlay::ShellMenu(open_shell_menu(&app)));
         app
     }
 
@@ -114,7 +115,7 @@ mod tests {
             handle_shell_menu_key(&mut app, key(KeyCode::Down)).unwrap();
         }
 
-        let Mode::ShellMenu(menu) = &app.mode else { panic!("expected Mode::ShellMenu") };
+        let Some(Overlay::ShellMenu(menu)) = &app.overlay else { panic!("expected Overlay::ShellMenu") };
         assert_eq!(menu.selected(), profile_count - 1);
     }
 
@@ -124,7 +125,7 @@ mod tests {
 
         handle_shell_menu_key(&mut app, key(KeyCode::Up)).unwrap();
 
-        let Mode::ShellMenu(menu) = &app.mode else { panic!("expected Mode::ShellMenu") };
+        let Some(Overlay::ShellMenu(menu)) = &app.overlay else { panic!("expected Overlay::ShellMenu") };
         assert_eq!(menu.selected(), 0);
     }
 
@@ -134,13 +135,13 @@ mod tests {
         if app.shell_profiles.len() > 1 {
             handle_shell_menu_key(&mut app, key(KeyCode::Down)).unwrap();
         }
-        let Mode::ShellMenu(menu) = &app.mode else { unreachable!() };
+        let Some(Overlay::ShellMenu(menu)) = &app.overlay else { unreachable!() };
         let expected = menu.selected();
 
         handle_shell_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
         assert_eq!(app.active_shell, expected);
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
@@ -151,16 +152,16 @@ mod tests {
         handle_shell_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
 
         assert_eq!(app.active_shell, original_shell);
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
     fn handle_shell_menu_key_is_a_noop_outside_shell_menu_mode() {
         let mut app = app_in_shell_menu();
-        app.mode = Mode::Browsing;
+        app.overlay = None;
 
         handle_shell_menu_key(&mut app, key(KeyCode::Down)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 }

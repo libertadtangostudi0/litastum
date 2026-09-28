@@ -1,6 +1,6 @@
 //! Key handling *and rendering* for the two ephemeral filesystem-action
-//! popups: F8's "delete this?" (`Mode::ConfirmDelete`) and
-//! F5/F6/Shift+F6's "copy/move/rename to?" (`Mode::ConfirmTransfer`).
+//! popups: F8's "delete this?" (`Overlay::ConfirmDelete`) and
+//! F5/F6/Shift+F6's "copy/move/rename to?" (`Overlay::ConfirmTransfer`).
 //! Grouped in one module since both are small, short-lived
 //! confirmations over a `Pending*` struct from `app.rs`, and neither
 //! owns a whole subsystem the way `theme_menu.rs`/`menu.rs`/
@@ -15,8 +15,9 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use tracing::debug;
 
-use crate::app::{App, Mode, TransferOp};
-use super::{fs_ops, keymap};
+use crate::app::{App, Overlay, TransferOp};
+use crate::yes_no::{self, Answer};
+use super::fs_ops;
 
 
 /// Key handling on the F8 "delete this?" prompt: `Y` actually deletes
@@ -30,19 +31,17 @@ use super::{fs_ops, keymap};
 /// message surface yet to show it to the user (see `TODO/editor.md`'s
 /// non-UTF-8-file gap, same underlying limitation).
 pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
-    use keymap::ConfirmDeleteCommand;
-
-    let Mode::ConfirmDelete(pending) = &app.mode else {
+    let Some(Overlay::ConfirmDelete(pending)) = &app.overlay else {
         return Ok(());
     };
 
-    let command = keymap::resolve_confirm_delete(key);
-    debug!(?key, ?command, count = pending.entries.len(), "confirm-delete key");
+    let answer = yes_no::answer(key);
+    debug!(?key, ?answer, count = pending.entries.len(), "confirm-delete key");
 
-    match command {
-        ConfirmDeleteCommand::Confirm => {
-            let Mode::ConfirmDelete(pending) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-                unreachable!("just matched Mode::ConfirmDelete above");
+    match answer {
+        Answer::Yes => {
+            let Some(Overlay::ConfirmDelete(pending)) = app.overlay.take() else {
+                unreachable!("just matched Overlay::ConfirmDelete above");
             };
             for entry in &pending.entries {
                 let result = if entry.is_dir {
@@ -56,8 +55,8 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
             }
             app.active_panel().reload()?;
         }
-        ConfirmDeleteCommand::Cancel => app.mode = Mode::Browsing,
-        ConfirmDeleteCommand::Ignore => {}
+        Answer::No => app.overlay = None,
+        Answer::Ignore => {}
     }
 
     Ok(())
@@ -76,14 +75,14 @@ pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<()> {
         return run_confirmed_transfer(app);
     }
     if key.code == KeyCode::Esc {
-        app.mode = Mode::Browsing;
+        app.overlay = None;
         return Ok(());
     }
 
     // Everything past this point only edits the destination field, so
-    // borrow `pending` once instead of re-matching `Mode::ConfirmTransfer`
+    // borrow `pending` once instead of re-matching `Overlay::ConfirmTransfer`
     // per key (each of the arms below used to do its own `if let`).
-    let Mode::ConfirmTransfer(pending) = &mut app.mode else {
+    let Some(Overlay::ConfirmTransfer(pending)) = &mut app.overlay else {
         return Ok(());
     };
     pending.destination.apply_key(key);
@@ -110,7 +109,7 @@ pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<()> {
 /// same as the single-entry case, and doesn't stop the rest from being
 /// attempted.
 fn run_confirmed_transfer(app: &mut App) -> Result<()> {
-    let Mode::ConfirmTransfer(pending) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+    let Some(Overlay::ConfirmTransfer(pending)) = app.overlay.take() else {
         return Ok(());
     };
     let destination_input = PathBuf::from(pending.destination.text().trim());

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use ratatui::{backend::TestBackend, Terminal};
 
 use super::*;
+use crate::test_support::buffer_text;
 use crate::text_field::TextField;
 
 fn state_with(count: usize, selected: usize) -> FindFileState {
@@ -30,11 +31,7 @@ fn rendered(state: &FindFileState) -> String {
     terminal.draw(|frame| {
         draw_find_file(frame, frame.area(), state, &theme, PopupStyle::Rounded);
     }).unwrap();
-    let buffer = terminal.backend().buffer();
-    (0..buffer.area.height)
-        .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n")
+    buffer_text(terminal.backend().buffer())
 }
 
 /// Regression test for the real report: a result count far past
@@ -100,11 +97,7 @@ fn rounded_style_typing_shows_a_separator_under_the_title() {
     terminal.draw(|frame| {
         draw_find_file(frame, frame.area(), &state, &theme, PopupStyle::Rounded);
     }).unwrap();
-    let buffer = terminal.backend().buffer();
-    let text: String = (0..buffer.area.height)
-        .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = buffer_text(terminal.backend().buffer());
     let title_line_index = text.lines().position(|line| line.contains("Find file")).expect("title should render");
     let line_below = text.lines().nth(title_line_index + 1).unwrap();
     assert!(line_below.contains('─'), "a separator should sit right below the title: {line_below:?}");
@@ -127,11 +120,7 @@ fn rounded_style_typing_phase_shows_the_label_and_hint_not_just_an_empty_box() {
     terminal.draw(|frame| {
         draw_find_file(frame, frame.area(), &state, &theme, PopupStyle::Rounded);
     }).unwrap();
-    let buffer = terminal.backend().buffer();
-    let text: String = (0..buffer.area.height)
-        .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = buffer_text(terminal.backend().buffer());
     assert!(text.contains("File name to find"), "label should be visible: {text}");
     assert!(text.contains("abc"), "typed query should be visible: {text}");
     assert!(text.contains("search"), "hint row should be visible: {text}");
@@ -150,11 +139,7 @@ fn typing_phase_shows_both_fields_and_the_cursor_follows_the_active_one() {
     terminal.draw(|frame| {
         cursor = draw_find_file(frame, frame.area(), &state, &theme, PopupStyle::Rounded);
     }).unwrap();
-    let buffer = terminal.backend().buffer();
-    let text: String = (0..buffer.area.height)
-        .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = buffer_text(terminal.backend().buffer());
     assert!(text.contains("File name to find"), "name label should be visible: {text}");
     assert!(text.contains("Text to find"), "content label should be visible: {text}");
     assert!(text.contains("read"), "typed name query should be visible: {text}");
@@ -171,11 +156,7 @@ fn typing_phase_shows_both_fields_and_the_cursor_follows_the_active_one() {
         cursor_on_name = draw_find_file(frame, frame.area(), &state, &theme, PopupStyle::Rounded);
     }).unwrap();
     let name_label_y = {
-        let buffer = terminal.backend().buffer();
-        let text: String = (0..buffer.area.height)
-            .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let text = buffer_text(terminal.backend().buffer());
         text.lines().position(|line| line.contains("File name to find")).unwrap() as u16
     };
     assert_eq!(cursor_on_name.unwrap().y, name_label_y + 1, "cursor should follow active_field back to the name row");
@@ -267,11 +248,7 @@ fn results_title_includes_the_content_query_when_set() {
     terminal.draw(|frame| {
         draw_find_file(frame, frame.area(), &state, &theme, PopupStyle::Rounded);
     }).unwrap();
-    let buffer = terminal.backend().buffer();
-    let text: String = (0..buffer.area.height)
-        .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = buffer_text(terminal.backend().buffer());
     assert!(text.contains("needle"), "the content query should show up in the title: {text}");
 }
 
@@ -297,11 +274,7 @@ fn searching_phase_shows_live_progress_and_a_cancel_hint() {
     terminal.draw(|frame| {
         draw_find_file(frame, frame.area(), &state, &theme, PopupStyle::Rounded);
     }).unwrap();
-    let buffer = terminal.backend().buffer();
-    let text: String = (0..buffer.area.height)
-        .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = buffer_text(terminal.backend().buffer());
     assert!(text.contains("Searching"), "should show a searching status: {text}");
     assert!(text.contains("visited"), "should show live progress: {text}");
     assert!(text.contains("cancel"), "should hint that Esc cancels: {text}");
@@ -366,11 +339,7 @@ fn classic_style_still_shows_the_query_and_results() {
     terminal.draw(|frame| {
         draw_find_file(frame, frame.area(), &state, &theme, PopupStyle::Classic);
     }).unwrap();
-    let buffer = terminal.backend().buffer();
-    let text: String = (0..buffer.area.height)
-        .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = buffer_text(terminal.backend().buffer());
     assert!(text.contains("file_0000"));
     assert!(text.contains("Find file"));
 }

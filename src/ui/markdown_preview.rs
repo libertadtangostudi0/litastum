@@ -100,9 +100,9 @@ fn row_link_hitboxes(row: &MarkdownLine) -> Vec<(u16, u16, String)> {
 }
 
 
-/// Renders `l`'s keyboard-driven link browser (`Mode::MarkdownLinkSearch`)
+/// Renders `l`'s keyboard-driven link browser (`Overlay::MarkdownLinkSearch`)
 /// as a popup over the still-visible preview (`ui::draw`'s own
-/// `Mode::MarkdownLinkSearch` arm draws `draw_markdown_preview`
+/// `Overlay::MarkdownLinkSearch` arm draws `draw_markdown_preview`
 /// underneath first) -- a query field, the filtered link list with the
 /// selected one highlighted, and a footer hint, same shared chrome
 /// (`ui/popup.rs`) every other popup in this app builds on. Returns
@@ -207,15 +207,12 @@ fn span_style(kind: MarkdownSpanKind, theme: &Theme) -> Style {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::buffer_text;
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
     use crate::explorer::MarkdownLink;
 
-    fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
-        let area = buffer.area;
-        (0..area.height).map(|y| (0..area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>().join("\n")
-    }
 
     #[test]
     fn shows_the_query_and_every_matching_link() {

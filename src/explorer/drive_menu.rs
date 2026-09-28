@@ -8,7 +8,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Overlay};
 
 /// One drive/root a panel could be pointed at.
 pub struct DriveInfo {
@@ -129,7 +129,7 @@ pub fn format_bytes(bytes: u64) -> String {
 /// `Enter` itself navigates `target_panel` to the highlighted drive's
 /// root and closes, `Esc` cancels with nothing touched.
 pub fn handle_drive_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
-    let Mode::ChangeDrive(menu) = &mut app.mode else {
+    let Some(Overlay::ChangeDrive(menu)) = &mut app.overlay else {
         return Ok(());
     };
 
@@ -147,7 +147,7 @@ pub fn handle_drive_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
             select_drive(app, index)
         }
         KeyCode::Esc => {
-            app.mode = Mode::Browsing;
+            app.overlay = None;
             Ok(())
         }
         KeyCode::Char(c) => {
@@ -161,12 +161,12 @@ pub fn handle_drive_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
     }
 }
 
-/// Navigates `Mode::ChangeDrive`'s `target_panel` to `drives[index]`'s
+/// Navigates `Overlay::ChangeDrive`'s `target_panel` to `drives[index]`'s
 /// root and closes the popup — shared by `Enter` and by typing a
 /// letter that matches a drive directly.
 fn select_drive(app: &mut App, index: usize) -> Result<()> {
-    let Mode::ChangeDrive(menu) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-        unreachable!("only called while Mode::ChangeDrive is active");
+    let Some(Overlay::ChangeDrive(menu)) = app.overlay.take() else {
+        unreachable!("only called while Overlay::ChangeDrive is active");
     };
     if let Some(drive) = menu.drives.get(index) {
         debug!(root = %drive.root, panel = menu.target_panel, "change drive");
@@ -178,6 +178,7 @@ fn select_drive(app: &mut App, index: usize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Mode;
     use crate::test_support::{key, test_app, unique_scratch_dir};
 
     #[test]
@@ -203,7 +204,7 @@ mod tests {
 
     fn app_with_drive_menu(target_panel: usize, labels: &[&str]) -> App {
         let mut app = test_app(unique_scratch_dir("drive-menu"));
-        app.mode = Mode::ChangeDrive(DriveMenu { drives: drives(labels), selected: 0, target_panel });
+        app.overlay = Some(Overlay::ChangeDrive(DriveMenu { drives: drives(labels), selected: 0, target_panel }));
         app
     }
 
@@ -213,7 +214,7 @@ mod tests {
         for _ in 0..3 {
             handle_drive_menu_key(&mut app, key(KeyCode::Down)).unwrap();
         }
-        let Mode::ChangeDrive(menu) = &app.mode else { panic!("expected Mode::ChangeDrive") };
+        let Some(Overlay::ChangeDrive(menu)) = &app.overlay else { panic!("expected Overlay::ChangeDrive") };
         assert_eq!(menu.selected, 1);
     }
 
@@ -228,18 +229,18 @@ mod tests {
         let mut app = test_app(unique_scratch_dir("drive-menu-letter"));
         let c_root = unique_scratch_dir("drive-menu-letter-c");
         let w_root = unique_scratch_dir("drive-menu-letter-w");
-        app.mode = Mode::ChangeDrive(DriveMenu {
+        app.overlay = Some(Overlay::ChangeDrive(DriveMenu {
             drives: vec![
                 DriveInfo { root: c_root.display().to_string(), label: "C:".to_string(), kind: "fixed", total_bytes: None, free_bytes: None },
                 DriveInfo { root: w_root.display().to_string(), label: "W:".to_string(), kind: "fixed", total_bytes: None, free_bytes: None },
             ],
             selected: 0,
             target_panel: 0,
-        });
+        }));
 
         handle_drive_menu_key(&mut app, key(KeyCode::Char('w'))).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing), "typing a matching letter should close the popup, not just move the cursor");
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing), "typing a matching letter should close the popup, not just move the cursor");
         assert_eq!(app.panels[0].path, w_root, "lowercase 'w' should match and select 'W:' case-insensitively");
     }
 
@@ -249,7 +250,7 @@ mod tests {
 
         handle_drive_menu_key(&mut app, key(KeyCode::Char('z'))).unwrap();
 
-        let Mode::ChangeDrive(menu) = &app.mode else { panic!("expected Mode::ChangeDrive") };
+        let Some(Overlay::ChangeDrive(menu)) = &app.overlay else { panic!("expected Overlay::ChangeDrive") };
         assert_eq!(menu.selected, 0);
     }
 
@@ -257,7 +258,7 @@ mod tests {
     fn up_is_clamped_at_zero() {
         let mut app = app_with_drive_menu(0, &["C:", "D:"]);
         handle_drive_menu_key(&mut app, key(KeyCode::Up)).unwrap();
-        let Mode::ChangeDrive(menu) = &app.mode else { panic!("expected Mode::ChangeDrive") };
+        let Some(Overlay::ChangeDrive(menu)) = &app.overlay else { panic!("expected Overlay::ChangeDrive") };
         assert_eq!(menu.selected, 0);
     }
 
@@ -268,7 +269,7 @@ mod tests {
 
         handle_drive_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
         assert_eq!(app.panels[0].path, original_path);
     }
 
@@ -283,7 +284,7 @@ mod tests {
         // drive letters the test machine actually has.
         let mut app = test_app(unique_scratch_dir("drive-menu-target"));
         let target_dir = unique_scratch_dir("drive-menu-real-root");
-        app.mode = Mode::ChangeDrive(DriveMenu {
+        app.overlay = Some(Overlay::ChangeDrive(DriveMenu {
             drives: vec![DriveInfo {
                 root: target_dir.display().to_string(),
                 label: "X:".to_string(),
@@ -293,13 +294,13 @@ mod tests {
             }],
             selected: 0,
             target_panel: 1, // the right panel
-        });
+        }));
         app.active = 0; // left panel has focus
         let original_left_path = app.panels[0].path.clone();
 
         handle_drive_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
         assert_eq!(app.panels[1].path, target_dir, "target_panel (right) should have navigated");
         assert_eq!(app.panels[0].path, original_left_path, "the merely-active left panel should be untouched");
     }
@@ -307,10 +308,10 @@ mod tests {
     #[test]
     fn handle_drive_menu_key_is_a_noop_outside_change_drive_mode() {
         let mut app = app_with_drive_menu(0, &["C:"]);
-        app.mode = Mode::Browsing;
+        app.overlay = None;
 
         handle_drive_menu_key(&mut app, key(KeyCode::Down)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::Mode;
 use crate::test_support::{key, test_app, unique_scratch_dir};
 
 fn app_with_history(history: Vec<&str>) -> App {
@@ -9,7 +10,7 @@ fn app_with_history(history: Vec<&str>) -> App {
 
 fn app_in_history_menu(history: Vec<&str>) -> App {
     let mut app = app_with_history(history);
-    app.mode = Mode::CommandHistory(CommandHistoryMenu::open());
+    app.overlay = Some(Overlay::CommandHistory(CommandHistoryMenu::open()));
     app
 }
 
@@ -116,7 +117,7 @@ mod history_key_handling_tests {
         let mut app = app_in_history_menu(vec!["dir", "cd nowhere"]);
         let target = app.panels[app.active].path.join("sub");
         fs::create_dir_all(&target).unwrap();
-        let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
+        let Some(Overlay::CommandHistory(menu)) = &mut app.overlay else { unreachable!() };
         menu.selected = 1;
         // Overwrite the second entry with a target that actually
         // exists, so the effect of running it is observable.
@@ -126,7 +127,7 @@ mod history_key_handling_tests {
 
         assert_eq!(app.panels[app.active].path, target, "Enter should have actually run the recalled cd, not just copied it");
         assert_eq!(app.command_line.text(), "", "submitting clears the line");
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
@@ -136,7 +137,7 @@ mod history_key_handling_tests {
         let effect = handle_history_key(&mut app, key(KeyCode::Enter)).unwrap();
 
         assert_eq!(effect, crate::command_line::Effect::RunShell(vec!["svn status".to_string()]));
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
@@ -147,7 +148,7 @@ mod history_key_handling_tests {
         handle_history_key(&mut app, key(KeyCode::Esc)).unwrap();
 
         assert_eq!(app.command_line.text(), "untouched");
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
@@ -156,18 +157,18 @@ mod history_key_handling_tests {
         for _ in 0..5 {
             handle_history_key(&mut app, key(KeyCode::Down)).unwrap();
         }
-        let Mode::CommandHistory(menu) = &app.mode else { panic!("expected Mode::CommandHistory") };
+        let Some(Overlay::CommandHistory(menu)) = &app.overlay else { panic!("expected Overlay::CommandHistory") };
         assert_eq!(menu.selected, 1);
     }
 
     #[test]
     fn handle_history_key_is_a_noop_outside_command_history_mode() {
         let mut app = app_in_history_menu(vec!["dir"]);
-        app.mode = Mode::Browsing;
+        app.overlay = None;
 
         handle_history_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
         assert_eq!(app.command_line.text(), "");
     }
 
@@ -176,7 +177,7 @@ mod history_key_handling_tests {
     #[test]
     fn typing_filters_the_list_and_resets_the_selection() {
         let mut app = app_in_history_menu(vec!["svn merge -c 1", "cargo build", "svn status"]);
-        let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
+        let Some(Overlay::CommandHistory(menu)) = &mut app.overlay else { unreachable!() };
         menu.selected = 1; // "cargo build", before any filtering
 
         handle_history_key(&mut app, key(KeyCode::Char('s'))).unwrap();
@@ -184,7 +185,7 @@ mod history_key_handling_tests {
         handle_history_key(&mut app, key(KeyCode::Char('n'))).unwrap();
 
         assert_eq!(app.command_line.text(), "svn");
-        let Mode::CommandHistory(menu) = &app.mode else { panic!("expected Mode::CommandHistory") };
+        let Some(Overlay::CommandHistory(menu)) = &app.overlay else { panic!("expected Overlay::CommandHistory") };
         assert_eq!(menu.selected, 0, "selection should reset once the filter narrows the list");
     }
 
@@ -208,7 +209,7 @@ mod history_key_handling_tests {
         handle_history_key(&mut app, key(KeyCode::Enter)).unwrap();
 
         assert_eq!(app.panels[app.active].path, base.join("sub2"), "Enter should have run the highlighted filtered match (\"cd sub2\"), not the first entry");
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     /// `Tab` is the old `Enter` behavior, moved rather than removed
@@ -217,7 +218,7 @@ mod history_key_handling_tests {
     #[test]
     fn handle_history_key_tab_copies_the_selected_entry_without_running_it() {
         let mut app = app_in_history_menu(vec!["dir", "cd nonexistent-dir"]);
-        let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
+        let Some(Overlay::CommandHistory(menu)) = &mut app.overlay else { unreachable!() };
         menu.selected = 1;
         let original_path = app.panels[app.active].path.clone();
 
@@ -225,7 +226,7 @@ mod history_key_handling_tests {
 
         assert_eq!(app.command_line.text(), "cd nonexistent-dir");
         assert_eq!(app.panels[app.active].path, original_path, "Tab must not run the command");
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     /// Real requested behavior: `F8` deletes the highlighted entry,
@@ -234,13 +235,13 @@ mod history_key_handling_tests {
     #[test]
     fn handle_history_key_f8_deletes_the_selected_entry() {
         let mut app = app_in_history_menu(vec!["dir", "cargo build", "git status"]);
-        let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
+        let Some(Overlay::CommandHistory(menu)) = &mut app.overlay else { unreachable!() };
         menu.selected = 1;
 
         handle_history_key(&mut app, key(KeyCode::F(8))).unwrap();
 
         assert_eq!(app.command_history, vec!["dir", "git status"]);
-        assert!(matches!(app.mode, Mode::CommandHistory(_)), "F8 should delete in place, not close the popup");
+        assert!(matches!(app.overlay, Some(Overlay::CommandHistory(_))), "F8 should delete in place, not close the popup");
     }
 
     /// `F8` operates on the *filtered* list's own indices, not the
@@ -269,13 +270,13 @@ mod history_key_handling_tests {
     #[test]
     fn handle_history_key_f8_reclamps_selection_after_deleting_the_last_match() {
         let mut app = app_in_history_menu(vec!["dir", "cargo build"]);
-        let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
+        let Some(Overlay::CommandHistory(menu)) = &mut app.overlay else { unreachable!() };
         menu.selected = 1;
 
         handle_history_key(&mut app, key(KeyCode::F(8))).unwrap();
 
         assert_eq!(app.command_history, vec!["dir"]);
-        let Mode::CommandHistory(menu) = &app.mode else { panic!("expected Mode::CommandHistory") };
+        let Some(Overlay::CommandHistory(menu)) = &app.overlay else { panic!("expected Overlay::CommandHistory") };
         assert_eq!(menu.selected, 0);
     }
 }

@@ -15,7 +15,7 @@ mod transfer;
 
 use color_eyre::eyre::Result;
 
-use crate::app::{App, Mode, TransferOp};
+use crate::app::{App, Overlay, TransferOp};
 use crate::theming::MainMenu;
 use super::keymap::Command;
 
@@ -50,7 +50,7 @@ pub fn execute(command: Command, app: &mut App) -> Result<()> {
         Command::EditSelected => open_editor(app),
         Command::PreviewSelected => preview_selected(app),
         Command::OpenUserMenu => open_user_menu(app),
-        Command::OpenMenu => app.mode = Mode::MainMenu(MainMenu::open()),
+        Command::OpenMenu => app.overlay = Some(Overlay::MainMenu(MainMenu::open())),
         Command::CopySelected => request_transfer(app, TransferOp::Copy),
         Command::MoveSelected => request_transfer(app, TransferOp::Move),
         Command::RenameSelected => request_rename(app),

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Overlay};
 
 use super::search::{search_cancelable, SearchProgress};
 use super::state::FindFilePhase;
@@ -92,7 +92,7 @@ impl PendingSearch {
 }
 
 
-/// Whether `Mode::FindFile`'s own search is currently running on a
+/// Whether `Overlay::FindFile`'s own search is currently running on a
 /// background thread -- `event_loop::wait_for_event` polls more often than
 /// its own default idle cadence while this is `true`, mirroring
 /// `explorer::image_preview::is_image_decode_pending`'s own reasoning
@@ -100,15 +100,15 @@ impl PendingSearch {
 /// tick, not wait for the next real keyboard/mouse event to happen to
 /// wake the main loop up anyway.
 pub fn is_find_file_search_pending(app: &App) -> bool {
-    matches!(&app.mode, Mode::FindFile(state) if state.pending.is_some())
+    matches!(&app.overlay, Some(Overlay::FindFile(state)) if state.pending.is_some())
 }
 
-/// Checks whether `Mode::FindFile`'s pending background search has
+/// Checks whether `Overlay::FindFile`'s pending background search has
 /// finished, applying the results in place and switching to
 /// `FindFilePhase::Results` if so -- see `PendingSearch::poll`. `false`
-/// (a no-op) outside `Mode::FindFile` or with nothing pending.
+/// (a no-op) outside `Overlay::FindFile` or with nothing pending.
 pub fn poll_pending_find_file_search(app: &mut App) -> bool {
-    let Mode::FindFile(state) = &mut app.mode else {
+    let Some(Overlay::FindFile(state)) = &mut app.overlay else {
         return false;
     };
     let Some(pending) = &state.pending else {
@@ -192,7 +192,7 @@ mod tests {
         state.query.set_text("read");
         state.phase = FindFilePhase::Searching;
         state.pending = Some(spawn_search(dir.clone(), "read".to_string(), String::new()));
-        app.mode = Mode::FindFile(state);
+        app.overlay = Some(Overlay::FindFile(state));
 
         assert!(is_find_file_search_pending(&app), "should start pending");
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -200,7 +200,7 @@ mod tests {
             poll_pending_find_file_search(&mut app);
         }
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.phase, FindFilePhase::Results);
         assert_eq!(state.results, vec![dir.join("readme.txt")]);
         assert!(state.pending.is_none());

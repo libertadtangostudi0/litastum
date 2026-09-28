@@ -7,7 +7,7 @@ enum AddItemStage {
     Command,
 }
 
-/// `Mode::AddUserMenuItem`: a small two-field form (`Ins` while
+/// `Overlay::AddUserMenuItem`: a small two-field form (`Ins` while
 /// browsing the user menu) for adding a new item without leaving the
 /// popup to hand-edit `LitastumMenu.toml`. Deliberately minimal -- no
 /// hotkey field, no multi-command items, no authoring help for `!&`/

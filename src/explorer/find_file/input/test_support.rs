@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::app::{App, Mode};
+use crate::app::{App, Overlay};
 use crate::explorer::FindFileState;
 use crate::test_support::{test_app, unique_scratch_dir};
 
@@ -14,11 +14,11 @@ use super::super::state::FindFilePhase;
 /// than duplicating this in each file.
 pub(super) fn app_with_find_file(state: FindFileState) -> App {
     let mut app = test_app(unique_scratch_dir("find-file-app"));
-    app.mode = Mode::FindFile(state);
+    app.overlay = Some(Overlay::FindFile(state));
     app
 }
 
-/// Polls `Mode::FindFile`'s pending background search
+/// Polls `Overlay::FindFile`'s pending background search
 /// (`background::poll_pending_find_file_search`) until it leaves
 /// `FindFilePhase::Searching` -- `run_search` (triggered by `Enter`)
 /// only *starts* a search now, on a real background thread, rather
@@ -28,8 +28,8 @@ pub(super) fn app_with_find_file(state: FindFileState) -> App {
 pub(super) fn wait_for_search(app: &mut App) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let Mode::FindFile(state) = &app.mode else {
-            panic!("expected Mode::FindFile while waiting for a search");
+        let Some(Overlay::FindFile(state)) = &app.overlay else {
+            panic!("expected Overlay::FindFile while waiting for a search");
         };
         if state.phase != FindFilePhase::Searching {
             return;

@@ -16,10 +16,11 @@ mod text_field;
 mod theming;
 mod ui;
 mod windows_terminal;
+mod yes_no;
 
 use color_eyre::eyre::Result;
 
-use app::{App, Mode};
+use app::{App, Overlay};
 use terminal_setup::{install_ctrl_c_handler, restore_terminal, setup_terminal};
 
 
@@ -90,13 +91,13 @@ fn main() -> Result<()> {
     // One-time startup check, requested directly: a FarMenu.ini sitting
     // in the directory litastum was launched from should be offered for
     // porting immediately, not only once the user happens to press F2
-    // there -- same Mode::ConfirmPortFarMenu popup either way
+    // there -- same Overlay::ConfirmPortFarMenu popup either way
     // (`explorer::user_menu::state::resolve_menu` reports a FarMenu.ini's
     // presence unconditionally, even over an already-configured
     // LitastumMenu.toml, so this also covers "I already have a menu and
     // just dropped a new FarMenu.ini in").
     if let explorer::MenuFile::FarMenuFound(far_path) = explorer::resolve_menu(&app.panels[0].path) {
-        app.mode = Mode::ConfirmPortFarMenu(far_path);
+        app.overlay = Some(Overlay::ConfirmPortFarMenu(far_path));
     }
     let result = event_loop::run(&mut terminal, &mut app);
     restore_terminal(&mut terminal, app.mouse_capture_enabled)?;

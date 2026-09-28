@@ -4,7 +4,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::{debug, warn};
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Overlay};
 use crate::editor::Editor;
 
 use super::super::export::export_results;
@@ -26,26 +26,26 @@ use super::super::export::export_results;
 pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<()> {
     match key.code {
         KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
-            let Mode::FindFile(state) = &mut app.mode else {
-                unreachable!("handle_find_file_key only dispatches here while Mode::FindFile(_) is active");
+            let Some(Overlay::FindFile(state)) = &mut app.overlay else {
+                unreachable!("handle_find_file_key only dispatches here while Overlay::FindFile(_) is active");
             };
             state.toggle_mark_move_up();
         }
         KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
-            let Mode::FindFile(state) = &mut app.mode else {
-                unreachable!("handle_find_file_key only dispatches here while Mode::FindFile(_) is active");
+            let Some(Overlay::FindFile(state)) = &mut app.overlay else {
+                unreachable!("handle_find_file_key only dispatches here while Overlay::FindFile(_) is active");
             };
             state.toggle_mark_move_down();
         }
         KeyCode::Up => {
-            let Mode::FindFile(state) = &mut app.mode else {
-                unreachable!("handle_find_file_key only dispatches here while Mode::FindFile(_) is active");
+            let Some(Overlay::FindFile(state)) = &mut app.overlay else {
+                unreachable!("handle_find_file_key only dispatches here while Overlay::FindFile(_) is active");
             };
             state.selected = state.selected.saturating_sub(1);
         }
         KeyCode::Down => {
-            let Mode::FindFile(state) = &mut app.mode else {
-                unreachable!("handle_find_file_key only dispatches here while Mode::FindFile(_) is active");
+            let Some(Overlay::FindFile(state)) = &mut app.overlay else {
+                unreachable!("handle_find_file_key only dispatches here while Overlay::FindFile(_) is active");
             };
             if state.selected + 1 < state.results.len() {
                 state.selected += 1;
@@ -80,7 +80,7 @@ pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<()> {
 /// `compare_targets` already follows for the panel version of this
 /// action.
 fn compare_marked_results(app: &mut App) -> Result<()> {
-    let Mode::FindFile(state) = &app.mode else {
+    let Some(Overlay::FindFile(state)) = &app.overlay else {
         return Ok(());
     };
     let Some((left_path, right_path)) = state.two_marked_results() else {
@@ -92,6 +92,7 @@ fn compare_marked_results(app: &mut App) -> Result<()> {
 
     let syntax_theme = app.syntax_theme.clone();
     if let Ok(compare_state) = crate::compare::CompareState::open(left_path, right_path, syntax_theme, app.editor_keymap_mode) {
+        app.overlay = None;
         app.mode = Mode::CompareFiles(compare_state);
     }
     Ok(())
@@ -104,7 +105,7 @@ fn compare_marked_results(app: &mut App) -> Result<()> {
 /// clipboard or a failed OS call is only logged, same "don't fail the
 /// keystroke over it" rule those two already follow.
 fn copy_selected_result_path(app: &mut App) {
-    let Mode::FindFile(state) = &app.mode else {
+    let Some(Overlay::FindFile(state)) = &app.overlay else {
         return;
     };
     let Some(path) = selected_result_path(state) else {
@@ -135,7 +136,7 @@ fn selected_result_path(state: &crate::explorer::FindFileState) -> Option<String
 /// status-bar surface to report a failure on yet) in
 /// `state.export_message` for `draw_results` to show.
 fn run_export(app: &mut App) -> Result<()> {
-    let Mode::FindFile(state) = &app.mode else {
+    let Some(Overlay::FindFile(state)) = &app.overlay else {
         return Ok(());
     };
     let message = match export_results(state) {
@@ -149,8 +150,8 @@ fn run_export(app: &mut App) -> Result<()> {
         }
     };
 
-    let Mode::FindFile(state) = &mut app.mode else {
-        unreachable!("just matched Mode::FindFile above");
+    let Some(Overlay::FindFile(state)) = &mut app.overlay else {
+        unreachable!("just matched Overlay::FindFile above");
     };
     state.export_message = Some(message);
     Ok(())
@@ -160,14 +161,14 @@ fn run_export(app: &mut App) -> Result<()> {
 /// the result's directory with it selected, same as double-clicking a
 /// search hit in a real file manager would.
 fn open_selected_result(app: &mut App) -> Result<()> {
-    let Mode::FindFile(state) = &app.mode else {
+    let Some(Overlay::FindFile(state)) = &app.overlay else {
         return Ok(());
     };
     let Some(path) = state.results.get(state.selected).cloned() else {
         return Ok(());
     };
 
-    app.mode = Mode::Browsing;
+    app.overlay = None;
     navigate_active_panel_to_result(app, &path)
 }
 
@@ -178,7 +179,7 @@ fn open_selected_result(app: &mut App) -> Result<()> {
 /// again on a different one) keeps updating the panel in the background
 /// without having to reopen Find file each time.
 fn goto_selected_result_directory(app: &mut App) -> Result<()> {
-    let Mode::FindFile(state) = &app.mode else {
+    let Some(Overlay::FindFile(state)) = &app.overlay else {
         return Ok(());
     };
     let Some(path) = state.results.get(state.selected).cloned() else {
@@ -218,13 +219,13 @@ fn navigate_active_panel_to_result(app: &mut App, path: &Path) -> Result<()> {
 /// finishing the edit used to always land back in plain browsing,
 /// losing the search results even though nothing about them was
 /// actually done with yet. `editor_keymap::return_from_editor` restores
-/// `Mode::FindFile` from it once the editor genuinely closes (`Esc`
+/// `Overlay::FindFile` from it once the editor genuinely closes (`Esc`
 /// with no unsaved changes, or discarding them) -- moved via
 /// `mem::replace` rather than cloned, so a large result set (the very
 /// case the popup's own scrolling exists for) doesn't get deep-copied
 /// just to park it here.
 fn edit_selected_result(app: &mut App) -> Result<()> {
-    let Mode::FindFile(state) = &app.mode else {
+    let Some(Overlay::FindFile(state)) = &app.overlay else {
         return Ok(());
     };
     let Some(path) = state.results.get(state.selected).cloned() else {
@@ -239,9 +240,10 @@ fn edit_selected_result(app: &mut App) -> Result<()> {
         return Ok(());
     };
 
-    let Mode::FindFile(state) = std::mem::replace(&mut app.mode, Mode::Editing(editor)) else {
-        unreachable!("just matched Mode::FindFile above");
+    let Some(Overlay::FindFile(state)) = app.overlay.take() else {
+        unreachable!("just matched Overlay::FindFile above");
     };
+    app.mode = Mode::Editing(editor);
     app.editor_return_to = Some(state);
     Ok(())
 }
@@ -268,11 +270,11 @@ mod tests {
         let mut results_state = FindFileState::new();
         results_state.phase = FindFilePhase::Results;
         results_state.results = vec![target_dir.join("target.txt")];
-        app.mode = Mode::FindFile(results_state);
+        app.overlay = Some(Overlay::FindFile(results_state));
 
         handle_results_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
         assert_eq!(app.panels[0].path, target_dir);
         let selected_name = &app.panels[0].entries[app.panels[0].selected].name;
         assert_eq!(selected_name, "target.txt");
@@ -287,7 +289,7 @@ mod tests {
 
         handle_results_key(&mut app, key(KeyCode::Down)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.selected, 1);
     }
 
@@ -306,7 +308,7 @@ mod tests {
 
         handle_results_key(&mut app, shift_key(KeyCode::Down)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else { panic!("expected Mode::FindFile") };
+        let Some(Overlay::FindFile(state)) = &app.overlay else { panic!("expected Overlay::FindFile") };
         assert_eq!(state.marked, std::collections::HashSet::from([0]));
         assert_eq!(state.selected, 1);
     }
@@ -329,7 +331,7 @@ mod tests {
         let mut results_state = FindFileState::new();
         results_state.phase = FindFilePhase::Results;
         results_state.results = vec![left, right];
-        app.mode = Mode::FindFile(results_state);
+        app.overlay = Some(Overlay::FindFile(results_state));
 
         handle_results_key(&mut app, shift_key(KeyCode::Down)).unwrap(); // marks index 0, moves to 1
         handle_results_key(&mut app, shift_key(KeyCode::Down)).unwrap(); // marks index 1
@@ -337,6 +339,7 @@ mod tests {
         handle_results_key(&mut app, KeyEvent::new(KeyCode::F(5), KeyModifiers::ALT)).unwrap();
 
         assert!(matches!(app.mode, Mode::CompareFiles(_)), "Alt+F5 with exactly two results marked should open the compare view");
+        assert!(app.overlay.is_none(), "the Find file popup must not stay open over Compare");
     }
 
     /// A silent no-op, matching `compare_targets`'s own convention --
@@ -351,7 +354,7 @@ mod tests {
 
         handle_results_key(&mut app, KeyEvent::new(KeyCode::F(5), KeyModifiers::ALT)).unwrap();
 
-        assert!(matches!(app.mode, Mode::FindFile(_)), "nothing marked yet, so Alt+F5 should do nothing");
+        assert!(matches!(app.overlay, Some(Overlay::FindFile(_))), "nothing marked yet, so Alt+F5 should do nothing");
     }
 
     /// Regression coverage for the real request: `Tab` should perform
@@ -367,14 +370,14 @@ mod tests {
         let mut results_state = FindFileState::new();
         results_state.phase = FindFilePhase::Results;
         results_state.results = vec![target_dir.join("target.txt")];
-        app.mode = Mode::FindFile(results_state);
+        app.overlay = Some(Overlay::FindFile(results_state));
 
         handle_results_key(&mut app, key(KeyCode::Tab)).unwrap();
 
         assert_eq!(app.panels[0].path, target_dir);
         let selected_name = &app.panels[0].entries[app.panels[0].selected].name;
         assert_eq!(selected_name, "target.txt");
-        let Mode::FindFile(state) = &app.mode else {
+        let Some(Overlay::FindFile(state)) = &app.overlay else {
             panic!("Tab should leave the popup open, unlike Enter");
         };
         assert_eq!(state.phase, FindFilePhase::Results);
@@ -392,7 +395,7 @@ mod tests {
         let mut results_state = FindFileState::new();
         results_state.phase = FindFilePhase::Results;
         results_state.results = vec![target];
-        app.mode = Mode::FindFile(results_state);
+        app.overlay = Some(Overlay::FindFile(results_state));
 
         handle_results_key(&mut app, KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE)).unwrap();
 
@@ -413,15 +416,15 @@ mod tests {
         let mut results_state = FindFileState::new();
         results_state.phase = FindFilePhase::Results;
         results_state.results = vec![target];
-        app.mode = Mode::FindFile(results_state);
+        app.overlay = Some(Overlay::FindFile(results_state));
 
         handle_results_key(&mut app, KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE)).unwrap();
         assert!(matches!(app.mode, Mode::Editing(_)), "sanity");
 
         crate::editor::handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
 
-        let Mode::FindFile(state) = &app.mode else {
-            panic!("closing the editor should return to Mode::FindFile, not Mode::Browsing");
+        let Some(Overlay::FindFile(state)) = &app.overlay else {
+            panic!("closing the editor should return to Overlay::FindFile, not Mode::Browsing");
         };
         assert_eq!(state.phase, FindFilePhase::Results);
         assert_eq!(state.results.len(), 1);
@@ -439,11 +442,11 @@ mod tests {
         let mut results_state = FindFileState::new();
         results_state.phase = FindFilePhase::Results;
         results_state.results = vec![target_dir];
-        app.mode = Mode::FindFile(results_state);
+        app.overlay = Some(Overlay::FindFile(results_state));
 
         handle_results_key(&mut app, KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE)).unwrap();
 
-        assert!(matches!(app.mode, Mode::FindFile(_)));
+        assert!(matches!(app.overlay, Some(Overlay::FindFile(_))));
     }
 
     mod selected_result_path_tests {

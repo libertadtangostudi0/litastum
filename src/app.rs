@@ -16,8 +16,8 @@ use crate::text_field::TextField;
 use crate::theming::{MainMenu, PopupStyle, PopupStyleMenu, Theme, ThemeMenu};
 
 
-/// What the app is currently showing. Only one at a time — there's no
-/// split-screen browse-while-editing yet.
+/// The screen: what the app is showing underneath any popup
+/// (`App::overlay`). Only one at a time.
 pub enum Mode {
     /// The dual-pane browser.
     Browsing,
@@ -26,6 +26,32 @@ pub enum Mode {
     /// preview right -- the same variant, so Save/Close/discard logic
     /// doesn't care why an `Editor` is open.
     Editing(Editor),
+    /// `F3` on an image file: the right panel shows a preview.
+    /// `Left`/`Right` cycle through the directory's images; `Esc`/`F3`
+    /// close it.
+    ImagePreview(ImagePreviewState),
+    /// `Alt+F5`: side-by-side compare of two files, both panes editable
+    /// and kept row-aligned live. Design: `TODO/file-compare.md`.
+    CompareFiles(CompareState),
+}
+
+
+/// A popup drawn over the current screen (`App::mode`) without replacing
+/// it: the browser, editor or `CompareState` underneath stays where it
+/// is. Keys go to the overlay while one is open
+/// (`event_loop::keys::key_effect`); mouse and paste ignore the screen.
+pub enum Overlay {
+    /// "Discard unsaved changes?" -- over `Mode::Editing` or
+    /// `Mode::CompareFiles`.
+    ConfirmDiscard,
+    /// The editor's own F9 menu.
+    EditorMenu(EditorMenu),
+    /// Editor F9 -> Keybindings.
+    EditorKeymapMenu(EditorKeymapMenu),
+    /// Compare's own F9 menu.
+    CompareMenu(CompareMenu),
+    /// Compare F9 -> Line endings.
+    CompareLineEndingMenu(CompareLineEndingMenu),
     /// The browser's F9 menu (`theming::menu`): Commands / Options.
     MainMenu(MainMenu),
     /// F8 was pressed on a real entry: shown as a "delete this?" prompt
@@ -42,9 +68,9 @@ pub enum Mode {
     ShellMenu(ShellMenu),
     /// F9 → Options → UI -- which popup chrome style is active.
     PopupStyleMenu(PopupStyleMenu),
-    /// F9 → Commands → Find file.
+    /// F9 → Commands → Find file (`Alt+F7`).
     FindFile(FindFileState),
-    /// F9 → Commands → History.
+    /// F9 → Commands → History (`Alt+F8`).
     CommandHistory(CommandHistoryMenu),
     /// `Alt+F1`/`Alt+F2` — the per-panel "change drive" popup.
     ChangeDrive(DriveMenu),
@@ -59,43 +85,17 @@ pub enum Mode {
     ConfirmPortFarMenu(PathBuf),
     /// `Ins` on the user menu -- the add-item form. Holds the menu
     /// being edited so `Esc`/a finished add hands it straight back to
-    /// `Mode::UserMenu`.
+    /// `Overlay::UserMenu`.
     AddUserMenuItem(UserMenuState, AddUserMenuItemState),
     /// A one-line, dismiss-on-any-key notification (e.g. where
     /// `FarMenu.ini` ended up after declining to port it). Generic on
     /// purpose -- there's no status-bar message surface otherwise.
     Info(String),
-    /// `F3` on an image file: the right panel shows a preview.
-    /// `Left`/`Right` cycle through the directory's images; `Esc`/`F3`
-    /// close it.
-    ImagePreview(ImagePreviewState),
-    /// `l` in the embedded Markdown preview: a filterable list of the
-    /// document's links -- a reliable alternative to `Ctrl`+click, whose
-    /// row hit-testing drifts with word-wrap. Parks the `Editor` here;
-    /// the preview state stays in `App::markdown_edit_preview`.
-    MarkdownLinkSearch(Editor, MarkdownLinkSearchState),
-    /// `Alt+F5`: side-by-side compare of two files, both panes editable
-    /// and kept row-aligned live. Design: `TODO/file-compare.md`.
-    CompareFiles(CompareState),
-}
-
-
-/// A popup drawn over the current screen (`App::mode`) without replacing
-/// it: the editor or `CompareState` underneath stays where it is instead
-/// of being moved into a `Mode` variant and back. Keys go to the overlay
-/// while one is open (`event_loop::keys::key_effect`).
-pub enum Overlay {
-    /// "Discard unsaved changes?" -- over `Mode::Editing` or
-    /// `Mode::CompareFiles`.
-    ConfirmDiscard,
-    /// The editor's own F9 menu.
-    EditorMenu(EditorMenu),
-    /// Editor F9 -> Keybindings.
-    EditorKeymapMenu(EditorKeymapMenu),
-    /// Compare's own F9 menu.
-    CompareMenu(CompareMenu),
-    /// Compare F9 -> Line endings.
-    CompareLineEndingMenu(CompareLineEndingMenu),
+    /// `l` in the embedded Markdown preview (over `Mode::Editing`): a
+    /// filterable list of the document's links -- a reliable
+    /// alternative to `Ctrl`+click, whose row hit-testing drifts with
+    /// word-wrap.
+    MarkdownLinkSearch(MarkdownLinkSearchState),
 }
 
 
@@ -120,7 +120,7 @@ pub struct PendingDelete {
 }
 
 
-/// Which of F5/F6 opened `Mode::ConfirmTransfer`.
+/// Which of F5/F6 opened `Overlay::ConfirmTransfer`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferOp {
     Copy,
@@ -232,12 +232,12 @@ pub struct App {
     pub paste_flood: crate::windows_terminal::PasteFlood,
     /// `Some` when the editor was opened from Find file results: closing
     /// it for good (`editor_keymap::return_from_editor`) restores
-    /// `Mode::FindFile` instead of plain browsing. Cancelling a discard
+    /// `Overlay::FindFile` instead of plain browsing. Cancelling a discard
     /// prompt doesn't consume it.
     pub editor_return_to: Option<FindFileState>,
     /// Like `editor_return_to`, for `F4` on an `F2` menu item's commands:
     /// the editor works on a scratch file, and closing it both restores
-    /// `Mode::UserMenu` and writes the result back into the item
+    /// `Overlay::UserMenu` and writes the result back into the item
     /// (`explorer::user_menu::state::finish_command_edit`).
     pub user_menu_command_edit: Option<UserMenuCommandEdit>,
     /// Image rendering protocol the terminal supports (Sixel/Kitty/iTerm2,

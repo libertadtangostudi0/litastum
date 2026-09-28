@@ -4,7 +4,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::{debug, warn};
 
-use crate::app::{App, Mode};
+use crate::app::{App, Overlay};
 use crate::history_dir::history_dir;
 
 use super::browsing::submit_command_line;
@@ -160,26 +160,26 @@ fn matching_history_indices(history: &[String], query: &str) -> Vec<usize> {
 /// else in this app (the file panel's own F8). `Esc` closes without
 /// changing the command line.
 pub fn handle_history_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
-    if !matches!(app.mode, Mode::CommandHistory(_)) {
+    if !matches!(app.overlay, Some(Overlay::CommandHistory(_))) {
         return Ok(Effect::None);
     }
 
     match key.code {
         KeyCode::Up => {
-            let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
+            let Some(Overlay::CommandHistory(menu)) = &mut app.overlay else { unreachable!() };
             crate::list_cursor::move_up(&mut menu.selected);
         }
         KeyCode::Down => {
             let count = matching_history(&app.command_history, app.command_line.text()).len();
-            let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
+            let Some(Overlay::CommandHistory(menu)) = &mut app.overlay else { unreachable!() };
             crate::list_cursor::move_down(&mut menu.selected, count);
         }
         KeyCode::Enter => {
-            let Mode::CommandHistory(menu) = &app.mode else { unreachable!() };
+            let Some(Overlay::CommandHistory(menu)) = &app.overlay else { unreachable!() };
             let selected = menu.selected;
             let entry = matching_history(&app.command_history, app.command_line.text()).get(selected).map(|entry| (*entry).clone());
             app.command_line_completion = None;
-            app.mode = Mode::Browsing;
+            app.overlay = None;
             if let Some(entry) = entry {
                 app.command_line.set_text(entry);
                 return submit_command_line(app);
@@ -187,17 +187,17 @@ pub fn handle_history_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
             app.command_line.move_to_end();
         }
         KeyCode::Tab => {
-            let Mode::CommandHistory(menu) = &app.mode else { unreachable!() };
+            let Some(Overlay::CommandHistory(menu)) = &app.overlay else { unreachable!() };
             let selected = menu.selected;
             if let Some(entry) = matching_history(&app.command_history, app.command_line.text()).get(selected) {
                 app.command_line.set_text((*entry).clone());
                 app.command_line_completion = None;
             }
             app.command_line.move_to_end();
-            app.mode = Mode::Browsing;
+            app.overlay = None;
         }
         KeyCode::F(8) => {
-            let Mode::CommandHistory(menu) = &app.mode else { unreachable!() };
+            let Some(Overlay::CommandHistory(menu)) = &app.overlay else { unreachable!() };
             let selected = menu.selected;
             let indices = matching_history_indices(&app.command_history, app.command_line.text());
             if let Some(&index) = indices.get(selected) {
@@ -205,14 +205,14 @@ pub fn handle_history_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
                 save_history(&app.command_history);
             }
             let new_count = matching_history(&app.command_history, app.command_line.text()).len();
-            let Mode::CommandHistory(menu) = &mut app.mode else { unreachable!() };
+            let Some(Overlay::CommandHistory(menu)) = &mut app.overlay else { unreachable!() };
             menu.selected = menu.selected.min(new_count.saturating_sub(1));
         }
         KeyCode::Esc => {
             // This popup edits `app.command_line` as a plain filter, so
             // don't return to a stale mid-line cursor or selection.
             app.command_line.move_to_end();
-            app.mode = Mode::Browsing;
+            app.overlay = None;
         }
         KeyCode::Backspace => {
             app.command_line.pop_char();
@@ -234,7 +234,7 @@ pub fn handle_history_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
 /// back to the top of whatever the new filter shows, same as a typical
 /// incremental search box.
 fn reset_selection(app: &mut App) {
-    if let Mode::CommandHistory(menu) = &mut app.mode {
+    if let Some(Overlay::CommandHistory(menu)) = &mut app.overlay {
         menu.selected = 0;
     }
 }

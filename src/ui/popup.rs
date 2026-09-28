@@ -223,6 +223,7 @@ pub fn choice_labels<T: Copy + PartialEq>(menu: &ChoiceMenu<T>, label: impl Fn(T
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::buffer_text;
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
@@ -236,11 +237,7 @@ mod tests {
                 draw_list_popup(frame, frame.area(), &theme, style, " Test ", 30, labels, selected, "pick", "cancel");
             })
             .unwrap();
-        let buffer = terminal.backend().buffer();
-        (0..buffer.area.height)
-            .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
+        buffer_text(terminal.backend().buffer())
     }
 
     #[test]
@@ -375,13 +372,6 @@ mod tests {
         assert_eq!(pill.content, " y delete ");
     }
 
-    fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
-        let area = buffer.area;
-        (0..area.height)
-            .map(|y| (0..area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
 
     /// `Classic` bakes the title into the border line itself -- no
     /// separate content row consumed for it, unlike `Rounded` below.

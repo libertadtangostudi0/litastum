@@ -2,7 +2,7 @@
 //! shortcuts to shell commands, defined in litastum's own
 //! `LitastumMenu.toml` (structured, serde-backed) or ported from a
 //! compatible `FarMenu.ini` on explicit confirmation
-//! (`Mode::ConfirmPortFarMenu`) if that's all a directory has. Split
+//! (`Overlay::ConfirmPortFarMenu`) if that's all a directory has. Split
 //! into `parse`/`toml_format`/`state`/`input` by concern, same shape
 //! as `find_file.rs`:
 //! - `parse`: `FarMenu.ini`'s own nested-block DSL (only used to *read*

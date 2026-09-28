@@ -1,8 +1,9 @@
 use color_eyre::eyre::Result;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyEvent;
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Overlay};
+use crate::choice_menu::{ChoiceMenu, MenuOutcome};
 use crate::command_line::CommandHistoryMenu;
 use crate::explorer::FindFileState;
 use super::config;
@@ -11,7 +12,7 @@ use super::theme_menu::ThemeMenu;
 
 /// F9's top menu. Enough structure to reach what's actually been asked
 /// for so far (Commands → Find file/History, Options → Color schemes/
-/// Save setup) — not Far Manager's full Left/Files/Commands/Options/
+/// UI/Save setup) — not Far Manager's full Left/Files/Commands/Options/
 /// View/Right top-menu bar; see `TODO/f9-menu.md` for what a real one would
 /// still need.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,14 +23,51 @@ pub enum MenuLevel {
 }
 
 
-impl MenuLevel {
-    /// The items shown at this level, in order — `MainMenu::selected`
-    /// indexes into this.
-    pub fn items(self) -> &'static [&'static str] {
+/// An item of the F9 menu. Items are matched by variant, never by label,
+/// so renaming or reordering one can't silently unwire it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainMenuItem {
+    Commands,
+    Options,
+    FindFile,
+    History,
+    ColorSchemes,
+    Ui,
+    SaveSetup,
+}
+
+
+impl MainMenuItem {
+    pub fn label(self) -> &'static str {
         match self {
-            MenuLevel::Main => &["Commands", "Options"],
-            MenuLevel::Commands => &["Find file", "History"],
-            MenuLevel::Options => &["Color schemes", "UI", "Save setup"],
+            Self::Commands => "Commands",
+            Self::Options => "Options",
+            Self::FindFile => "Find file",
+            Self::History => "History",
+            Self::ColorSchemes => "Color schemes",
+            Self::Ui => "UI",
+            Self::SaveSetup => "Save setup",
+        }
+    }
+}
+
+
+impl MenuLevel {
+    /// The items shown at this level, in order.
+    pub fn items(self) -> &'static [MainMenuItem] {
+        match self {
+            MenuLevel::Main => &[MainMenuItem::Commands, MainMenuItem::Options],
+            MenuLevel::Commands => &[MainMenuItem::FindFile, MainMenuItem::History],
+            MenuLevel::Options => &[MainMenuItem::ColorSchemes, MainMenuItem::Ui, MainMenuItem::SaveSetup],
+        }
+    }
+
+
+    pub fn title(self) -> &'static str {
+        match self {
+            MenuLevel::Main => " Menu ",
+            MenuLevel::Commands => " Commands ",
+            MenuLevel::Options => " Options ",
         }
     }
 }
@@ -37,30 +75,21 @@ impl MenuLevel {
 
 pub struct MainMenu {
     pub level: MenuLevel,
-    pub selected: usize,
+    /// The current level's items.
+    pub list: ChoiceMenu<MainMenuItem>,
 }
 
 
 impl MainMenu {
     pub fn open() -> Self {
-        Self { level: MenuLevel::Main, selected: 0 }
+        Self { level: MenuLevel::Main, list: ChoiceMenu::new(MenuLevel::Main.items(), None) }
     }
 
 
-    pub fn move_up(&mut self) {
-        crate::list_cursor::move_up(&mut self.selected);
-    }
-
-
-    pub fn move_down(&mut self) {
-        crate::list_cursor::move_down(&mut self.selected, self.level.items().len());
-    }
-
-
-    /// Descends into `level`, resetting the cursor.
+    /// Descends into `level`, cursor on its first item.
     pub fn enter(&mut self, level: MenuLevel) {
         self.level = level;
-        self.selected = 0;
+        self.list = ChoiceMenu::new(level.items(), None);
     }
 
 
@@ -68,13 +97,11 @@ impl MainMenu {
     /// caller stays in the menu); `false` if already at the top level
     /// (the caller should close the menu entirely). Every non-`Main`
     /// level's parent is `Main` — fine while the menu stays two levels
-    /// deep; would need each level to know its own parent if a third
-    /// level is ever added.
+    /// deep.
     pub fn back(&mut self) -> bool {
         match self.level {
             MenuLevel::Commands | MenuLevel::Options => {
-                self.level = MenuLevel::Main;
-                self.selected = 0;
+                self.enter(MenuLevel::Main);
                 true
             }
             MenuLevel::Main => false,
@@ -83,77 +110,41 @@ impl MainMenu {
 }
 
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MenuCommand {
-    Up,
-    Down,
-    Select,
-    Back,
-    Ignore,
-}
-
-
-pub fn resolve(key: KeyEvent) -> MenuCommand {
-    match key.code {
-        KeyCode::Up => MenuCommand::Up,
-        KeyCode::Down => MenuCommand::Down,
-        KeyCode::Enter => MenuCommand::Select,
-        KeyCode::Esc => MenuCommand::Back,
-        _ => MenuCommand::Ignore,
-    }
-}
-
-
 /// Key handling on the F9 top menu: `Up`/`Down` move, `Enter` descends
-/// into a submenu or, at a leaf item, runs whatever that item does;
-/// `Esc` backs up one level, or closes the menu entirely if already at
-/// the top. Moved here from `main.rs` so this module owns its own state
-/// (`MainMenu`) *and* handling, the same way `theme_menu.rs` does for
-/// its own picker.
+/// into a submenu or runs a leaf item; `Esc` backs up one level, or
+/// closes the menu from the top.
 pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
-    let Mode::MainMenu(menu_state) = &mut app.mode else {
+    let Some(Overlay::MainMenu(menu)) = &mut app.overlay else {
         return Ok(());
     };
 
-    let command = resolve(key);
-    debug!(?key, ?command, "main menu key");
+    let outcome = menu.list.handle_key(key);
+    debug!(?key, ?outcome, "main menu key");
 
-    match command {
-        MenuCommand::Up => menu_state.move_up(),
-        MenuCommand::Down => menu_state.move_down(),
-        MenuCommand::Back => {
-            if !menu_state.back() {
-                app.mode = Mode::Browsing;
+    match outcome {
+        MenuOutcome::Open => {}
+        MenuOutcome::Closed => {
+            if !menu.back() {
+                app.overlay = None;
             }
         }
-        // Matched on (level, item label) rather than a positional
-        // index, so adding/reordering an item in `MenuLevel::items`
-        // can't silently wire Select up to the wrong action.
-        MenuCommand::Select => {
-            let level = menu_state.level;
-            let item = level.items().get(menu_state.selected).copied();
-            match (level, item) {
-                (MenuLevel::Main, Some("Commands")) => menu_state.enter(MenuLevel::Commands),
-                (MenuLevel::Main, Some("Options")) => menu_state.enter(MenuLevel::Options),
-                (MenuLevel::Commands, Some("Find file")) => app.mode = Mode::FindFile(FindFileState::new()),
-                (MenuLevel::Commands, Some("History")) => app.mode = Mode::CommandHistory(CommandHistoryMenu::open()),
-                (MenuLevel::Options, Some("Color schemes")) => app.mode = Mode::ThemeMenu(ThemeMenu::open()),
-                (MenuLevel::Options, Some("UI")) => app.mode = Mode::PopupStyleMenu(open_popup_style_menu(app.popup_style)),
-                (MenuLevel::Options, Some("Save setup")) => {
-                    // Far Manager's own Shift+F9 -- persists the
-                    // current session's choices (so far, just which
-                    // shell profile is active) rather than every
-                    // choice auto-persisting the moment it's made, the
-                    // way the theme picker's own choices already do.
-                    let name = app.shell_profiles[app.active_shell].name.clone();
-                    config::save_setup(&name);
-                    debug!(shell = name, "save setup: persisted active shell profile");
-                    app.mode = Mode::Browsing;
-                }
-                _ => {}
+        MenuOutcome::Chosen(item) => match item {
+            MainMenuItem::Commands => menu.enter(MenuLevel::Commands),
+            MainMenuItem::Options => menu.enter(MenuLevel::Options),
+            MainMenuItem::FindFile => app.overlay = Some(Overlay::FindFile(FindFileState::new())),
+            MainMenuItem::History => app.overlay = Some(Overlay::CommandHistory(CommandHistoryMenu::open())),
+            MainMenuItem::ColorSchemes => app.overlay = Some(Overlay::ThemeMenu(ThemeMenu::open())),
+            MainMenuItem::Ui => app.overlay = Some(Overlay::PopupStyleMenu(open_popup_style_menu(app.popup_style))),
+            MainMenuItem::SaveSetup => {
+                // Far Manager's own Shift+F9 -- persists the current
+                // session's choices (so far, the active shell profile)
+                // on demand, unlike the theme picker's auto-persist.
+                let name = app.shell_profiles[app.active_shell].name.clone();
+                config::save_setup(&name);
+                debug!(shell = name, "save setup: persisted active shell profile");
+                app.overlay = None;
             }
-        }
-        MenuCommand::Ignore => {}
+        },
     }
 
     Ok(())
@@ -162,90 +153,67 @@ pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::KeyCode;
+
     use super::*;
+    use crate::app::Mode;
     use crate::test_support::{key, unique_scratch_dir};
 
     mod main_menu_state_tests {
         use super::*;
 
-    #[test]
-    fn move_down_steps_through_main_level_items() {
-        let mut menu = MainMenu::open(); // Main level: ["Commands", "Options"]
-        menu.move_down();
-        assert_eq!(menu.selected, 1);
-        menu.move_down();
-        assert_eq!(menu.selected, 1, "clamped at the last item");
-    }
+        #[test]
+        fn opens_at_the_main_level() {
+            let menu = MainMenu::open();
+            assert_eq!(menu.level, MenuLevel::Main);
+            assert_eq!(menu.list.selected(), MainMenuItem::Commands);
+        }
 
-    #[test]
-    fn move_up_clamped_at_first_item() {
-        let mut menu = MainMenu::open();
-        menu.move_up();
-        assert_eq!(menu.selected, 0);
-    }
+        #[test]
+        fn enter_switches_level_and_resets_cursor() {
+            let mut menu = MainMenu::open();
+            menu.list.move_down();
+            menu.enter(MenuLevel::Options);
+            assert_eq!(menu.level, MenuLevel::Options);
+            assert_eq!(menu.list.selected_index(), 0);
+            assert_eq!(menu.list.options(), &[MainMenuItem::ColorSchemes, MainMenuItem::Ui, MainMenuItem::SaveSetup]);
+        }
 
-    #[test]
-    fn enter_switches_level_and_resets_cursor() {
-        let mut menu = MainMenu::open();
-        menu.selected = 1;
-        menu.enter(MenuLevel::Options);
-        assert_eq!(menu.level, MenuLevel::Options);
-        assert_eq!(menu.selected, 0);
-        assert_eq!(menu.level.items(), &["Color schemes", "UI", "Save setup"]);
-    }
+        #[test]
+        fn back_from_options_returns_to_main() {
+            let mut menu = MainMenu::open();
+            menu.enter(MenuLevel::Options);
 
-    #[test]
-    fn back_from_options_returns_to_main() {
-        let mut menu = MainMenu::open();
-        menu.enter(MenuLevel::Options);
+            assert!(menu.back());
+            assert_eq!(menu.level, MenuLevel::Main);
+        }
 
-        let stayed_in_menu = menu.back();
+        #[test]
+        fn back_from_commands_returns_to_main() {
+            let mut menu = MainMenu::open();
+            menu.enter(MenuLevel::Commands);
 
-        assert!(stayed_in_menu);
-        assert_eq!(menu.level, MenuLevel::Main);
-    }
+            assert!(menu.back());
+            assert_eq!(menu.level, MenuLevel::Main);
+        }
 
-    #[test]
-    fn back_from_commands_returns_to_main() {
-        let mut menu = MainMenu::open();
-        menu.enter(MenuLevel::Commands);
-
-        let stayed_in_menu = menu.back();
-
-        assert!(stayed_in_menu);
-        assert_eq!(menu.level, MenuLevel::Main);
-    }
-
-    #[test]
-    fn back_from_main_signals_close() {
-        let mut menu = MainMenu::open();
-        assert!(!menu.back());
-    }
-    }
-
-    mod resolve_tests {
-        use super::*;
-
-    #[test]
-    fn resolve_maps_keys() {
-        assert_eq!(resolve(key(KeyCode::Up)), MenuCommand::Up);
-        assert_eq!(resolve(key(KeyCode::Down)), MenuCommand::Down);
-        assert_eq!(resolve(key(KeyCode::Enter)), MenuCommand::Select);
-        assert_eq!(resolve(key(KeyCode::Esc)), MenuCommand::Back);
-        assert_eq!(resolve(key(KeyCode::Char('z'))), MenuCommand::Ignore);
-    }
+        #[test]
+        fn back_from_main_signals_close() {
+            let mut menu = MainMenu::open();
+            assert!(!menu.back());
+        }
     }
 
     mod handle_main_menu_key_tests {
         use super::*;
 
     /// A real `App` (no terminal needed — `App::new` just wants a
-    /// directory) in `Mode::MainMenu`, for exercising
+    /// directory) in `Overlay::MainMenu`, for exercising
     /// `handle_main_menu_key` end to end rather than just `MainMenu`'s
     /// own methods.
     fn app_in_main_menu() -> App {
         let mut app = crate::test_support::test_app(unique_scratch_dir("menu"));
-        app.mode = Mode::MainMenu(MainMenu::open());
+        app.overlay = Some(Overlay::MainMenu(MainMenu::open()));
         app
     }
 
@@ -255,31 +223,31 @@ mod tests {
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        let Mode::MainMenu(menu) = &app.mode else { panic!("expected Mode::MainMenu") };
+        let Some(Overlay::MainMenu(menu)) = &app.overlay else { panic!("expected Overlay::MainMenu") };
         assert_eq!(menu.level, MenuLevel::Commands, "first item at Main level");
     }
 
     #[test]
     fn handle_main_menu_key_select_at_main_level_second_item_enters_options() {
         let mut app = app_in_main_menu();
-        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
-        menu.move_down();
+        let Some(Overlay::MainMenu(menu)) = &mut app.overlay else { unreachable!() };
+        menu.list.move_down();
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        let Mode::MainMenu(menu) = &app.mode else { panic!("expected Mode::MainMenu") };
+        let Some(Overlay::MainMenu(menu)) = &app.overlay else { panic!("expected Overlay::MainMenu") };
         assert_eq!(menu.level, MenuLevel::Options);
     }
 
     #[test]
     fn handle_main_menu_key_select_color_schemes_opens_theme_menu() {
         let mut app = app_in_main_menu();
-        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
-        menu.enter(MenuLevel::Options); // ["Color schemes", "Save setup"]
+        let Some(Overlay::MainMenu(menu)) = &mut app.overlay else { unreachable!() };
+        menu.enter(MenuLevel::Options); // Color schemes, UI, Save setup
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert!(matches!(app.mode, Mode::ThemeMenu(_)));
+        assert!(matches!(app.overlay, Some(Overlay::ThemeMenu(_))));
     }
 
     #[test]
@@ -290,60 +258,60 @@ mod tests {
         // that module). This only pins down the app-visible effect:
         // the action runs (doesn't panic) and the menu closes.
         let mut app = app_in_main_menu();
-        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
+        let Some(Overlay::MainMenu(menu)) = &mut app.overlay else { unreachable!() };
         menu.enter(MenuLevel::Options);
-        menu.move_down();
-        menu.move_down(); // "Save setup"
+        menu.list.move_down();
+        menu.list.move_down(); // "Save setup"
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
     fn handle_main_menu_key_select_ui_opens_popup_style_menu() {
         let mut app = app_in_main_menu();
-        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
+        let Some(Overlay::MainMenu(menu)) = &mut app.overlay else { unreachable!() };
         menu.enter(MenuLevel::Options);
-        menu.move_down(); // "UI"
+        menu.list.move_down(); // "UI"
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert!(matches!(app.mode, Mode::PopupStyleMenu(_)));
+        assert!(matches!(app.overlay, Some(Overlay::PopupStyleMenu(_))));
     }
 
     #[test]
     fn handle_main_menu_key_select_find_file_opens_find_file_mode() {
         let mut app = app_in_main_menu();
-        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
+        let Some(Overlay::MainMenu(menu)) = &mut app.overlay else { unreachable!() };
         menu.enter(MenuLevel::Commands); // ["Find file", "History"]
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert!(matches!(app.mode, Mode::FindFile(_)));
+        assert!(matches!(app.overlay, Some(Overlay::FindFile(_))));
     }
 
     #[test]
     fn handle_main_menu_key_select_history_opens_command_history_mode() {
         let mut app = app_in_main_menu();
-        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
+        let Some(Overlay::MainMenu(menu)) = &mut app.overlay else { unreachable!() };
         menu.enter(MenuLevel::Commands);
-        menu.move_down(); // "History"
+        menu.list.move_down(); // "History"
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert!(matches!(app.mode, Mode::CommandHistory(_)));
+        assert!(matches!(app.overlay, Some(Overlay::CommandHistory(_))));
     }
 
     #[test]
     fn handle_main_menu_key_back_at_options_level_returns_to_main() {
         let mut app = app_in_main_menu();
-        let Mode::MainMenu(menu) = &mut app.mode else { unreachable!() };
+        let Some(Overlay::MainMenu(menu)) = &mut app.overlay else { unreachable!() };
         menu.enter(MenuLevel::Options);
 
         handle_main_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
 
-        let Mode::MainMenu(menu) = &app.mode else { panic!("expected Mode::MainMenu") };
+        let Some(Overlay::MainMenu(menu)) = &app.overlay else { panic!("expected Overlay::MainMenu") };
         assert_eq!(menu.level, MenuLevel::Main, "should back up a level, not close");
     }
 
@@ -353,17 +321,17 @@ mod tests {
 
         handle_main_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
     fn handle_main_menu_key_is_a_noop_outside_main_menu_mode() {
         let mut app = app_in_main_menu();
-        app.mode = Mode::Browsing;
+        app.overlay = None;
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
     }
 }

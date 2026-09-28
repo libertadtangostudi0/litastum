@@ -157,28 +157,6 @@ mod resolve_editor_key_tests {
     }
 }
 
-mod resolve_confirm_discard_tests {
-    use super::*;
-
-    #[test]
-    fn y_or_uppercase_y_confirms_discard() {
-        assert_eq!(resolve_confirm_discard(key(KeyCode::Char('y'))), ConfirmDiscardCommand::Discard);
-        assert_eq!(resolve_confirm_discard(key(KeyCode::Char('Y'))), ConfirmDiscardCommand::Discard);
-    }
-
-    #[test]
-    fn n_or_esc_cancels_discard() {
-        assert_eq!(resolve_confirm_discard(key(KeyCode::Char('n'))), ConfirmDiscardCommand::Cancel);
-        assert_eq!(resolve_confirm_discard(key(KeyCode::Esc)), ConfirmDiscardCommand::Cancel);
-    }
-
-    #[test]
-    fn other_keys_are_ignored_on_the_discard_prompt() {
-        assert_eq!(resolve_confirm_discard(key(KeyCode::Char('x'))), ConfirmDiscardCommand::Ignore);
-        assert_eq!(resolve_confirm_discard(key(KeyCode::Enter)), ConfirmDiscardCommand::Ignore);
-    }
-}
-
 mod handle_editor_key_tests {
     use super::*;
 

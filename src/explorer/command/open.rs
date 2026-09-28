@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use tracing::warn;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Overlay};
 use crate::editor::Editor;
 use crate::explorer::{image_preview, markdown_preview, system_open, user_menu, Panel};
 
@@ -32,7 +32,7 @@ pub(super) fn preview_selected(app: &mut App) {
 /// `F2`: opens the active panel's own user menu. Three cases, per
 /// `user_menu::resolve_menu`:
 /// - A `FarMenu.ini` exists -- ask before touching anything
-///   (`Mode::ConfirmPortFarMenu`), rather than converting or reading it
+///   (`Overlay::ConfirmPortFarMenu`), rather than converting or reading it
 ///   silently; `handle_confirm_port_far_menu_key` does the actual port
 ///   once confirmed. Takes priority even over an already-existing
 ///   `LitastumMenu.toml` (`resolve_menu`'s own doc comment) -- the same
@@ -62,10 +62,10 @@ pub(super) fn open_user_menu(app: &mut App) {
     let dir = app.active_panel().path.clone();
     match user_menu::resolve_menu(&dir) {
         user_menu::MenuFile::Own(menu_dir, items) => {
-            app.mode = Mode::UserMenu(user_menu::UserMenuState::from_items(menu_dir, items));
+            app.overlay = Some(Overlay::UserMenu(user_menu::UserMenuState::from_items(menu_dir, items)));
         }
         user_menu::MenuFile::FarMenuFound(far_path) => {
-            app.mode = Mode::ConfirmPortFarMenu(far_path);
+            app.overlay = Some(Overlay::ConfirmPortFarMenu(far_path));
         }
         user_menu::MenuFile::NotFound => {
             let Some(common_dir) = user_menu::common_menu_dir() else {
@@ -315,7 +315,7 @@ mod tests {
 
             execute(Command::OpenUserMenu, &mut app).unwrap();
 
-            assert!(matches!(app.mode, Mode::UserMenu(_)));
+            assert!(matches!(app.overlay, Some(Overlay::UserMenu(_))));
         }
 
         /// Regression coverage for the real report this originally
@@ -364,7 +364,7 @@ mod tests {
 
             execute(Command::OpenUserMenu, &mut app).unwrap();
 
-            assert!(matches!(app.mode, Mode::ConfirmPortFarMenu(_)));
+            assert!(matches!(app.overlay, Some(Overlay::ConfirmPortFarMenu(_))));
             assert!(!dir.join("LitastumMenu.toml").exists(), "must not convert until confirmed");
         }
     }

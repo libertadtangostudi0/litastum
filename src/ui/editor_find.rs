@@ -60,6 +60,7 @@ pub fn draw_find_popup(frame: &mut Frame, area: Rect, editor: &Editor, search_hi
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::buffer_text;
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
@@ -170,11 +171,4 @@ mod tests {
         assert_eq!(buffer[(area.width / 2, area.height / 2)].symbol(), " ", "should not be drawn centered");
     }
 
-    fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
-        let area = buffer.area;
-        (0..area.height)
-            .map(|y| (0..area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
 }

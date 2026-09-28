@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Overlay};
 use crate::editor::{self, Editor};
 
 use super::links::{open_link, MarkdownLinkSearchState};
@@ -48,7 +48,7 @@ pub fn open_edit_preview(app: &mut App) {
 /// (`event_loop::keys::handle_key_event` is what routes here instead of
 /// `editor::handle_editor_key`, based on `app.active`). `Up`/`Down`
 /// scroll one line, `PageUp`/`PageDown` a fixed chunk (`PAGE_SIZE`);
-/// `l` opens the keyboard-driven link search (`Mode::MarkdownLinkSearch`,
+/// `l` opens the keyboard-driven link search (`Overlay::MarkdownLinkSearch`,
 /// `open_link_search`'s own doc comment). `Esc`/`F3` close the *whole*
 /// session, not just the preview half -- reusing
 /// `editor::close_editor_or_confirm` so an unsaved editor buffer still
@@ -78,18 +78,15 @@ pub fn handle_markdown_edit_preview_key(app: &mut App, key: KeyEvent) -> Result<
 
 
 /// `l` on the embedded preview: opens the keyboard-driven link browser
-/// (`Mode::MarkdownLinkSearch`), requested directly as a more reliable
+/// (`Overlay::MarkdownLinkSearch`), requested directly as a more reliable
 /// alternative to `Ctrl`+click (`MarkdownPreviewState::link_at`'s own
 /// doc comment on why that's only ever an approximation once word-wrap
 /// is involved) -- exact by construction, since it works from the same
 /// parsed `MarkdownLink` list `links::resolve_link_target` already
 /// trusts, not from guessing which on-screen row a click landed on.
 /// A no-op if the document has no links at all (nothing to search).
-/// "Parks" the `Editor` inside `Mode::MarkdownLinkSearch` itself --
-/// `Mode` can only ever hold one thing at a time, so the editor can't
-/// stay in `Mode::Editing` while this popup is up -- `App::markdown_edit_preview`
-/// (the `MarkdownPreviewState` this list was built from) is untouched,
-/// still sitting on `App` throughout.
+/// Opened as an overlay over `Mode::Editing`; the editor and
+/// `App::markdown_edit_preview` (the list's source) stay where they are.
 fn open_link_search(app: &mut App) {
     if !matches!(&app.mode, Mode::Editing(_)) {
         return;
@@ -102,45 +99,37 @@ fn open_link_search(app: &mut App) {
         return;
     }
 
-    let Mode::Editing(editor) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-        unreachable!("just matched Mode::Editing above");
-    };
-    app.mode = Mode::MarkdownLinkSearch(editor, MarkdownLinkSearchState::new(links));
+    app.overlay = Some(Overlay::MarkdownLinkSearch(MarkdownLinkSearchState::new(links)));
 }
 
 
-/// Key handling on `Mode::MarkdownLinkSearch`: typing filters the list,
-/// `Up`/`Down` move within it, `Enter` opens the highlighted link
+/// Key handling on `Overlay::MarkdownLinkSearch`: typing filters the
+/// list, `Up`/`Down` move within it, `Enter` opens the highlighted link
 /// (`links::open_link`, against `App::markdown_edit_preview`) and
-/// returns to `Mode::Editing` with the parked editor restored, `Esc`
-/// cancels back to it unchanged.
+/// closes, `Esc` just closes.
 pub fn handle_markdown_link_search_key(app: &mut App, key: KeyEvent) {
     if key.code == KeyCode::Esc {
-        let Mode::MarkdownLinkSearch(editor, _) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-            return;
-        };
-        app.mode = Mode::Editing(editor);
+        if matches!(app.overlay, Some(Overlay::MarkdownLinkSearch(_))) {
+            app.overlay = None;
+        }
         return;
     }
 
     if key.code == KeyCode::Enter {
-        let Mode::MarkdownLinkSearch(_, search) = &app.mode else {
+        let Some(Overlay::MarkdownLinkSearch(search)) = &app.overlay else {
             return;
         };
         let selected = search.selected_link();
-        let Mode::MarkdownLinkSearch(editor, _) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
-            unreachable!("just matched Mode::MarkdownLinkSearch above");
-        };
+        app.overlay = None;
         if let Some(link) = selected {
             if let Some(preview) = &mut app.markdown_edit_preview {
                 open_link(preview, &link.url);
             }
         }
-        app.mode = Mode::Editing(editor);
         return;
     }
 
-    let Mode::MarkdownLinkSearch(_, search) = &mut app.mode else {
+    let Some(Overlay::MarkdownLinkSearch(search)) = &mut app.overlay else {
         return;
     };
     match key.code {

@@ -1,6 +1,3 @@
-use crossterm::event::{KeyCode, KeyEvent};
-
-
 /// A panel-level action. Bound to keys in the browser's binding table
 /// (`command_line::browsing::bindings`), and the typed value scripting
 /// (stage 4 of the roadmap) can emit instead of a raw key.
@@ -43,7 +40,7 @@ pub enum Command {
     /// `F2` — Far Manager's own "user menu" (`explorer::user_menu`): a
     /// per-directory list of shell-command shortcuts, read from
     /// `LitastumMenu.toml`. If only a compatible `FarMenu.ini` exists,
-    /// offers to port it first (`Mode::ConfirmPortFarMenu`); if neither
+    /// offers to port it first (`Overlay::ConfirmPortFarMenu`); if neither
     /// exists, creates an empty `LitastumMenu.toml` there and opens it
     /// in the built-in editor instead of browsing an empty menu.
     OpenUserMenu,
@@ -52,18 +49,18 @@ pub enum Command {
     /// Manager's F9 menu, scoped to just that path for now.
     OpenMenu,
     /// F5 — asks to copy the entry under the cursor into the *other*
-    /// panel's directory (`Mode::ConfirmTransfer`), Far Manager-style.
+    /// panel's directory (`Overlay::ConfirmTransfer`), Far Manager-style.
     CopySelected,
     /// F6 — same as `CopySelected` but moves instead of copying.
     MoveSelected,
     /// `Shift+F6` — Far Manager's own "Rename or move" binding: opens
-    /// the same `Mode::ConfirmTransfer` prompt as `MoveSelected`, but
+    /// the same `Overlay::ConfirmTransfer` prompt as `MoveSelected`, but
     /// defaulting the destination to the entry's *own* directory
     /// (rather than the other panel's) so editing just the trailing
     /// name renames it in place.
     RenameSelected,
     /// F8 — asks to delete the entry under the cursor
-    /// (`Mode::ConfirmDelete`), never deletes directly. Matches Far
+    /// (`Overlay::ConfirmDelete`), never deletes directly. Matches Far
     /// Manager's own F8 binding.
     DeleteSelected,
     /// `Shift+A` (only on an empty command line -- see the binding table)
@@ -87,52 +84,4 @@ pub enum Command {
     /// Manager's own Ctrl+U.
     SwapPanels,
     Quit,
-}
-
-
-/// The choice on the "delete this?" prompt (`Mode::ConfirmDelete`) —
-/// same Y/N/Esc shape as the editor's `ConfirmDiscardCommand`
-/// (`editor_keymap.rs`), kept as its own type rather than shared since
-/// this one lives in browsing mode, not the editor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConfirmDeleteCommand {
-    Confirm,
-    Cancel,
-    /// Anything else — the prompt only understands these two answers.
-    Ignore,
-}
-
-
-/// Resolves a raw key press on the delete-confirmation prompt.
-pub fn resolve_confirm_delete(key: KeyEvent) -> ConfirmDeleteCommand {
-    match key.code {
-        KeyCode::Char('y' | 'Y') => ConfirmDeleteCommand::Confirm,
-        KeyCode::Char('n' | 'N') | KeyCode::Esc => ConfirmDeleteCommand::Cancel,
-        _ => ConfirmDeleteCommand::Ignore,
-    }
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_support::key;
-
-    #[test]
-    fn y_or_uppercase_y_confirms_delete() {
-        assert_eq!(resolve_confirm_delete(key(KeyCode::Char('y'))), ConfirmDeleteCommand::Confirm);
-        assert_eq!(resolve_confirm_delete(key(KeyCode::Char('Y'))), ConfirmDeleteCommand::Confirm);
-    }
-
-    #[test]
-    fn n_or_esc_cancels_delete() {
-        assert_eq!(resolve_confirm_delete(key(KeyCode::Char('n'))), ConfirmDeleteCommand::Cancel);
-        assert_eq!(resolve_confirm_delete(key(KeyCode::Esc)), ConfirmDeleteCommand::Cancel);
-    }
-
-    #[test]
-    fn other_keys_are_ignored_on_the_delete_prompt() {
-        assert_eq!(resolve_confirm_delete(key(KeyCode::Char('x'))), ConfirmDeleteCommand::Ignore);
-        assert_eq!(resolve_confirm_delete(key(KeyCode::Enter)), ConfirmDeleteCommand::Ignore);
-    }
 }

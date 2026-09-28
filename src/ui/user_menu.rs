@@ -71,7 +71,7 @@ pub fn draw_user_menu(frame: &mut Frame, area: Rect, menu: &UserMenuState, theme
 }
 
 
-/// Renders the `Ins` add-item form (`Mode::AddUserMenuItem`) -- one
+/// Renders the `Ins` add-item form (`Overlay::AddUserMenuItem`) -- one
 /// field at a time, title then command, same sequential shape as
 /// `draw_user_menu_prompt` below. An empty command builds a submenu
 /// instead of a leaf item (`AddUserMenuItemState::finish`'s own doc
@@ -137,7 +137,7 @@ pub fn draw_user_menu_prompt(frame: &mut Frame, area: Rect, prompt: &UserMenuPro
 }
 
 
-/// Renders `Mode::ConfirmPortFarMenu`'s "port this?" prompt -- `F2`
+/// Renders `Overlay::ConfirmPortFarMenu`'s "port this?" prompt -- `F2`
 /// found `far_path` (a real `FarMenu.ini`) but no `LitastumMenu.toml`
 /// yet. `Y` converts and browses it (`explorer::user_menu::input::
 /// handle_confirm_port_far_menu_key`), `N`/`Esc` cancels with nothing
@@ -165,18 +165,12 @@ pub fn draw_confirm_port_far_menu(frame: &mut Frame, area: Rect, far_path: &Path
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::buffer_text;
     use ratatui::{backend::TestBackend, Terminal};
 
     use super::*;
     use crate::test_support::unique_scratch_dir;
 
-    fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
-        let area = buffer.area;
-        (0..area.height)
-            .map(|y| (0..area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
 
     fn rendered_menu(menu: &UserMenuState, style: PopupStyle) -> String {
         let backend = TestBackend::new(80, 24);

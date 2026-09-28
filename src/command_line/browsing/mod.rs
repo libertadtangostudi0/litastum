@@ -2,7 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Overlay};
 use crate::explorer::{execute, DriveMenu, FindFileState};
 
 use super::completion::complete;
@@ -73,10 +73,10 @@ fn perform(app: &mut App, action: BrowserAction) -> Result<Effect> {
             execute(command, app)?;
         }
         BrowserAction::ToggleHiddenPanels => return Ok(Effect::ToggleHiddenPanels),
-        BrowserAction::OpenShellMenu => app.mode = Mode::ShellMenu(super::open_shell_menu(app)),
-        BrowserAction::OpenFindFile => app.mode = Mode::FindFile(FindFileState::new()),
-        BrowserAction::OpenDriveMenu(panel) => app.mode = Mode::ChangeDrive(DriveMenu::open(panel)),
-        BrowserAction::OpenHistory => app.mode = Mode::CommandHistory(CommandHistoryMenu::open()),
+        BrowserAction::OpenShellMenu => app.overlay = Some(Overlay::ShellMenu(super::open_shell_menu(app))),
+        BrowserAction::OpenFindFile => app.overlay = Some(Overlay::FindFile(FindFileState::new())),
+        BrowserAction::OpenDriveMenu(panel) => app.overlay = Some(Overlay::ChangeDrive(DriveMenu::open(panel))),
+        BrowserAction::OpenHistory => app.overlay = Some(Overlay::CommandHistory(CommandHistoryMenu::open())),
         BrowserAction::CompareFiles => open_compare(app),
         BrowserAction::SelectWordLeft => app.command_line.extend_selection_word_left(),
         BrowserAction::SelectWordRight => app.command_line.extend_selection_word_right(),

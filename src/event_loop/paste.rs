@@ -1,7 +1,7 @@
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Overlay};
 
 use crate::command_line::Effect;
 
@@ -76,9 +76,16 @@ enum PasteTarget {
 /// this is an explicit allow-list, not "every mode but the editor's"
 /// (what bracketed paste used to do before this existed).
 fn paste_target(app: &App) -> Option<PasteTarget> {
-    // No overlay has a text field.
-    if app.overlay.is_some() {
-        return None;
+    if let Some(overlay) = &app.overlay {
+        return match overlay {
+            Overlay::FindFile(state) if state.phase == crate::explorer::FindFilePhase::Typing => Some(PasteTarget::TextField),
+            Overlay::CommandHistory(_)
+            | Overlay::ConfirmTransfer(_)
+            | Overlay::UserMenuPrompt(_)
+            | Overlay::AddUserMenuItem(..)
+            | Overlay::MarkdownLinkSearch(_) => Some(PasteTarget::TextField),
+            _ => None,
+        };
     }
     match &app.mode {
         // The embedded Markdown preview half of an editor+preview
@@ -86,13 +93,7 @@ fn paste_target(app: &App) -> Option<PasteTarget> {
         Mode::Editing(_) if app.markdown_edit_preview.is_some() && app.active == 1 => None,
         Mode::Editing(editor) if editor.is_searching() => Some(PasteTarget::TextField),
         Mode::Editing(_) => Some(PasteTarget::EditorBuffer),
-        Mode::FindFile(state) if state.phase == crate::explorer::FindFilePhase::Typing => Some(PasteTarget::TextField),
-        Mode::Browsing
-        | Mode::CommandHistory(_)
-        | Mode::ConfirmTransfer(_)
-        | Mode::UserMenuPrompt(_)
-        | Mode::AddUserMenuItem(..)
-        | Mode::MarkdownLinkSearch(..) => Some(PasteTarget::TextField),
+        Mode::Browsing => Some(PasteTarget::TextField),
         _ => None,
     }
 }
@@ -143,16 +144,11 @@ pub(super) fn handle_paste_event(app: &mut App, text: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::{Editor, EditorKeymapMode};
-    use crate::test_support::{test_app, unique_scratch_dir};
+    use crate::editor::EditorKeymapMode;
+    use crate::test_support::{editing_app, test_app, unique_scratch_dir};
 
     fn editor_app(contents: &str) -> App {
-        let dir = unique_scratch_dir("paste-routing");
-        let path = dir.join("file.txt");
-        std::fs::write(&path, contents).unwrap();
-        let mut app = test_app(dir);
-        app.mode = Mode::Editing(Editor::open(path, None, EditorKeymapMode::Standard).unwrap());
-        app
+        editing_app(contents, EditorKeymapMode::Standard)
     }
 
     #[test]
@@ -160,12 +156,12 @@ mod tests {
         let mut app = test_app(unique_scratch_dir("paste-routing"));
         assert_eq!(paste_target(&app), Some(PasteTarget::TextField), "the always-live command line");
 
-        app.mode = Mode::FindFile(crate::explorer::FindFileState::new());
+        app.overlay = Some(Overlay::FindFile(crate::explorer::FindFileState::new()));
         assert_eq!(paste_target(&app), Some(PasteTarget::TextField), "Find file's own fields while typing");
 
         let mut results = crate::explorer::FindFileState::new();
         results.phase = crate::explorer::FindFilePhase::Results;
-        app.mode = Mode::FindFile(results);
+        app.overlay = Some(Overlay::FindFile(results));
         assert_eq!(paste_target(&app), None, "the results list has no text field");
 
         let app = editor_app("hello");
@@ -178,11 +174,11 @@ mod tests {
     #[test]
     fn a_mode_without_a_text_field_ignores_a_paste() {
         let mut app = test_app(unique_scratch_dir("paste-routing"));
-        app.mode = Mode::Info("read me".to_string());
+        app.overlay = Some(Overlay::Info("read me".to_string()));
 
         handle_paste_event(&mut app, "anything").unwrap();
 
-        assert!(matches!(app.mode, Mode::Info(_)), "any key dismisses Info -- the paste must not have been replayed as keys");
+        assert!(matches!(app.overlay, Some(Overlay::Info(_))), "any key dismisses Info -- the paste must not have been replayed as keys");
     }
 
     #[test]

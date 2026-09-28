@@ -16,7 +16,7 @@ pub struct MarkdownLink {
 }
 
 
-/// `Mode::MarkdownLinkSearch`: a filterable list of every link in the
+/// `Overlay::MarkdownLinkSearch`: a filterable list of every link in the
 /// document (`MarkdownPreviewState::links`), opened via `l` on the
 /// preview -- typing narrows `filtered()` to labels/URLs containing the
 /// typed text (case-insensitively), `Up`/`Down` move within it, `Enter`
@@ -155,7 +155,7 @@ fn label_for_url(state: &MarkdownPreviewState, url: &str) -> String {
 }
 
 /// Resolves and opens `url` (a link's raw target, from either
-/// `Ctrl`+click or `Mode::MarkdownLinkSearch`'s own `Enter`), and always
+/// `Ctrl`+click or `Overlay::MarkdownLinkSearch`'s own `Enter`), and always
 /// leaves a visible record of what happened on `state`
 /// (`set_link_message`) -- "Opened: ...", "Failed to open ...: ...", or
 /// "Can't open yet: ..." for anything `resolve_link_target` won't vouch

@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::style::Color;
 use tracing::debug;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Overlay};
 use super::config;
 
 
@@ -116,7 +116,7 @@ pub fn resolve(key: KeyEvent) -> ThemeMenuCommand {
 /// preview still applies). Moved here from `main.rs` so this module
 /// owns its own state (`ThemeMenu`) *and* handling.
 pub fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
-    let Mode::ThemeMenu(menu) = &mut app.mode else {
+    let Some(Overlay::ThemeMenu(menu)) = &mut app.overlay else {
         return Ok(());
     };
 
@@ -126,7 +126,7 @@ pub fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
     match command {
         ThemeMenuCommand::Up => menu.move_up(),
         ThemeMenuCommand::Down => menu.move_down(),
-        ThemeMenuCommand::Close => app.mode = Mode::Browsing,
+        ThemeMenuCommand::Close => app.overlay = None,
         ThemeMenuCommand::ApplyBoth | ThemeMenuCommand::ApplyInterfaceOnly | ThemeMenuCommand::ApplyEditorOnly => {
             let Some(name) = menu.selected_theme().map(str::to_string) else {
                 return Ok(());
@@ -141,7 +141,7 @@ pub fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
                     app.syntax_theme = Some(syntax_theme);
                 }
             }
-            app.mode = Mode::Browsing;
+            app.overlay = None;
         }
         ThemeMenuCommand::Ignore => {}
     }
@@ -153,6 +153,7 @@ pub fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Mode;
     use crate::test_support::key;
 
     fn menu_with(themes: Vec<&str>) -> ThemeMenu {
@@ -225,7 +226,7 @@ mod tests {
     mod handle_theme_menu_key_tests {
         use super::*;
 
-    /// A real `App` (no terminal needed) in `Mode::ThemeMenu`, for
+    /// A real `App` (no terminal needed) in `Overlay::ThemeMenu`, for
     /// exercising `handle_theme_menu_key` end to end.
     ///
     /// Deliberately does *not* cover the `Enter`/`I`/`E` apply branches
@@ -238,7 +239,7 @@ mod tests {
     /// tests have the same limitation, for the same reason.
     fn app_in_theme_menu(themes: Vec<&str>) -> App {
         let mut app = crate::test_support::test_app(crate::test_support::unique_scratch_dir("theme-menu"));
-        app.mode = Mode::ThemeMenu(menu_with(themes));
+        app.overlay = Some(Overlay::ThemeMenu(menu_with(themes)));
         app
     }
 
@@ -248,7 +249,7 @@ mod tests {
 
         handle_theme_menu_key(&mut app, key(KeyCode::Down)).unwrap();
 
-        let Mode::ThemeMenu(menu) = &app.mode else { panic!("expected Mode::ThemeMenu") };
+        let Some(Overlay::ThemeMenu(menu)) = &app.overlay else { panic!("expected Overlay::ThemeMenu") };
         assert_eq!(menu.selected, 1);
     }
 
@@ -258,7 +259,7 @@ mod tests {
 
         handle_theme_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
@@ -267,7 +268,7 @@ mod tests {
 
         handle_theme_menu_key(&mut app, key(KeyCode::Char('z'))).unwrap();
 
-        assert!(matches!(app.mode, Mode::ThemeMenu(_)));
+        assert!(matches!(app.overlay, Some(Overlay::ThemeMenu(_))));
     }
 
     #[test]
@@ -279,17 +280,17 @@ mod tests {
         // Guarded by ThemeMenu::selected_theme() returning None before
         // config::set_interface_theme is ever reached -- safe to test
         // without touching the real config dir.
-        assert!(matches!(app.mode, Mode::ThemeMenu(_)), "nothing to apply, should stay open");
+        assert!(matches!(app.overlay, Some(Overlay::ThemeMenu(_))), "nothing to apply, should stay open");
     }
 
     #[test]
     fn handle_theme_menu_key_is_a_noop_outside_theme_menu_mode() {
         let mut app = app_in_theme_menu(vec!["a"]);
-        app.mode = Mode::Browsing;
+        app.overlay = None;
 
         handle_theme_menu_key(&mut app, key(KeyCode::Down)).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
     }
 }

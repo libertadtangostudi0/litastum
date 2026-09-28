@@ -1,9 +1,9 @@
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::app::{App, Mode};
+use crate::app::{App, Overlay};
 
-/// Key handling on the `Ins` add-item form (`Mode::AddUserMenuItem`):
+/// Key handling on the `Ins` add-item form (`Overlay::AddUserMenuItem`):
 /// `Esc` cancels back to browsing the menu untouched at any stage;
 /// `Enter` on the title field advances to the command field (a no-op
 /// on a blank title); `Enter` on the command field inserts the
@@ -12,15 +12,15 @@ use crate::app::{App, Mode};
 /// whichever field is currently active.
 pub fn handle_add_user_menu_item_key(app: &mut App, key: KeyEvent) -> Result<()> {
     if key.code == KeyCode::Esc {
-        let Mode::AddUserMenuItem(menu, _) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+        let Some(Overlay::AddUserMenuItem(menu, _)) = app.overlay.take() else {
             return Ok(());
         };
-        app.mode = Mode::UserMenu(menu);
+        app.overlay = Some(Overlay::UserMenu(menu));
         return Ok(());
     }
 
     if key.code == KeyCode::Enter {
-        let Mode::AddUserMenuItem(_, form) = &mut app.mode else {
+        let Some(Overlay::AddUserMenuItem(_, form)) = &mut app.overlay else {
             return Ok(());
         };
         if form.is_title_stage() {
@@ -28,15 +28,15 @@ pub fn handle_add_user_menu_item_key(app: &mut App, key: KeyEvent) -> Result<()>
             return Ok(());
         }
 
-        let Mode::AddUserMenuItem(mut menu, form) = std::mem::replace(&mut app.mode, Mode::Browsing) else {
+        let Some(Overlay::AddUserMenuItem(mut menu, form)) = app.overlay.take() else {
             unreachable!("just matched above");
         };
         menu.insert_item(form.finish());
-        app.mode = Mode::UserMenu(menu);
+        app.overlay = Some(Overlay::UserMenu(menu));
         return Ok(());
     }
 
-    let Mode::AddUserMenuItem(_, form) = &mut app.mode else {
+    let Some(Overlay::AddUserMenuItem(_, form)) = &mut app.overlay else {
         return Ok(());
     };
     let field = if form.is_title_stage() { &mut form.title } else { &mut form.command };
@@ -49,6 +49,7 @@ pub fn handle_add_user_menu_item_key(app: &mut App, key: KeyEvent) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::Mode;
     use crate::explorer::user_menu::parse::{self, MenuItemBody};
     use crate::explorer::user_menu::input::scratch_dir;
     use crate::explorer::user_menu::state::{AddUserMenuItemState, UserMenuState};
@@ -58,7 +59,7 @@ mod tests {
         let dir = scratch_dir();
         let menu = UserMenuState::from_items(dir.clone(), parse::parse(existing_content));
         let mut app = test_app(dir);
-        app.mode = Mode::AddUserMenuItem(menu, AddUserMenuItemState::new());
+        app.overlay = Some(Overlay::AddUserMenuItem(menu, AddUserMenuItemState::new()));
         app
     }
 
@@ -68,7 +69,7 @@ mod tests {
 
         handle_add_user_menu_item_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 
-        let Mode::AddUserMenuItem(_, form) = &app.mode else { panic!("expected Mode::AddUserMenuItem") };
+        let Some(Overlay::AddUserMenuItem(_, form)) = &app.overlay else { panic!("expected Overlay::AddUserMenuItem") };
         assert_eq!(form.title.text(), "x");
     }
 
@@ -78,7 +79,7 @@ mod tests {
 
         handle_add_user_menu_item_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        let Mode::AddUserMenuItem(_, form) = &app.mode else { panic!("expected Mode::AddUserMenuItem") };
+        let Some(Overlay::AddUserMenuItem(_, form)) = &app.overlay else { panic!("expected Overlay::AddUserMenuItem") };
         assert!(form.is_title_stage());
     }
 
@@ -90,7 +91,7 @@ mod tests {
 
         handle_add_user_menu_item_key(&mut app, key(KeyCode::Char('c'))).unwrap();
 
-        let Mode::AddUserMenuItem(_, form) = &app.mode else { panic!("expected Mode::AddUserMenuItem") };
+        let Some(Overlay::AddUserMenuItem(_, form)) = &app.overlay else { panic!("expected Overlay::AddUserMenuItem") };
         assert!(!form.is_title_stage());
         assert_eq!(form.command.text(), "c");
     }
@@ -110,7 +111,7 @@ mod tests {
 
         handle_add_user_menu_item_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        let Mode::UserMenu(menu) = &app.mode else { panic!("expected Mode::UserMenu") };
+        let Some(Overlay::UserMenu(menu)) = &app.overlay else { panic!("expected Overlay::UserMenu") };
         let titles: Vec<&str> = menu.current_level().items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, vec!["A", "n"], "the new item should be inserted right after the selected one");
         assert!(dir.join("LitastumMenu.toml").is_file(), "should have persisted the change");
@@ -127,7 +128,7 @@ mod tests {
 
         handle_add_user_menu_item_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        let Mode::UserMenu(menu) = &app.mode else { panic!("expected Mode::UserMenu") };
+        let Some(Overlay::UserMenu(menu)) = &app.overlay else { panic!("expected Overlay::UserMenu") };
         let new_item = menu.current_level().items.iter().find(|i| i.title == "git").unwrap();
         assert_eq!(new_item.body, MenuItemBody::Submenu(Vec::new()));
     }
@@ -139,18 +140,18 @@ mod tests {
 
         handle_add_user_menu_item_key(&mut app, key(KeyCode::Esc)).unwrap();
 
-        let Mode::UserMenu(menu) = &app.mode else { panic!("expected Mode::UserMenu") };
+        let Some(Overlay::UserMenu(menu)) = &app.overlay else { panic!("expected Overlay::UserMenu") };
         assert_eq!(menu.current_level().items.len(), 1, "nothing should have been added");
     }
 
     #[test]
     fn is_a_noop_outside_add_item_mode() {
         let mut app = app_in_add_form("a: A\necho a\n");
-        app.mode = Mode::Browsing;
+        app.overlay = None;
 
         handle_add_user_menu_item_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     /// `app_in_add_form` above always builds a fresh scratch dir;
@@ -159,7 +160,7 @@ mod tests {
     fn app_in_add_form_at(dir: &std::path::Path, existing_content: &str) -> App {
         let menu = UserMenuState::from_items(dir.to_path_buf(), parse::parse(existing_content));
         let mut app = test_app(dir.to_path_buf());
-        app.mode = Mode::AddUserMenuItem(menu, AddUserMenuItemState::new());
+        app.overlay = Some(Overlay::AddUserMenuItem(menu, AddUserMenuItemState::new()));
         app
     }
 }

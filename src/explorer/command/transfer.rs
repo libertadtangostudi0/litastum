@@ -1,8 +1,8 @@
-use crate::app::{App, DeleteEntry, Mode, PendingDelete, PendingTransfer, TransferOp, TransferSource};
+use crate::app::{App, DeleteEntry, Overlay, PendingDelete, PendingTransfer, TransferOp, TransferSource};
 use crate::explorer::Panel;
 use crate::text_field::TextField;
 
-/// F8: opens the "delete this?" prompt (`Mode::ConfirmDelete`) for
+/// F8: opens the "delete this?" prompt (`Overlay::ConfirmDelete`) for
 /// every entry marked in the active panel if any are, otherwise the
 /// entry under the cursor (`Panel::marked_or_current`), same "marked
 /// set wins" rule F5/F6 use. Does nothing if there's nothing to act on
@@ -20,11 +20,11 @@ pub(super) fn request_delete(app: &mut App) {
         return;
     }
 
-    app.mode = Mode::ConfirmDelete(PendingDelete { entries });
+    app.overlay = Some(Overlay::ConfirmDelete(PendingDelete { entries }));
 }
 
 
-/// F5/F6: opens the "copy/move to?" prompt (`Mode::ConfirmTransfer`)
+/// F5/F6: opens the "copy/move to?" prompt (`Overlay::ConfirmTransfer`)
 /// for every entry `transfer_sources` picks (the marked set if
 /// anything's marked, the cursor entry otherwise), pre-filled with the
 /// *other* panel's directory as the destination — Far Manager's own
@@ -53,7 +53,7 @@ pub(super) fn request_transfer(app: &mut App, operation: TransferOp) {
         destination_dir.to_string_lossy().into_owned()
     };
     let pending = PendingTransfer { operation, sources, destination: TextField::with_text(destination) };
-    app.mode = Mode::ConfirmTransfer(pending);
+    app.overlay = Some(Overlay::ConfirmTransfer(pending));
 }
 
 
@@ -65,7 +65,7 @@ fn transfer_sources(panel: &Panel) -> Vec<TransferSource> {
 }
 
 
-/// `Shift+F6`: opens the same `Mode::ConfirmTransfer` prompt as
+/// `Shift+F6`: opens the same `Overlay::ConfirmTransfer` prompt as
 /// `request_transfer(_, Move)`, but the destination defaults to the
 /// entry's own directory instead of the other panel's — so confirming
 /// with the destination untouched is a no-op, and the actual use case
@@ -92,7 +92,7 @@ pub(super) fn request_rename(app: &mut App) {
         sources: vec![TransferSource { path, name: entry.name.clone(), is_dir: entry.is_dir }],
         destination: TextField::with_cursor_at(destination, cursor),
     };
-    app.mode = Mode::ConfirmTransfer(pending);
+    app.overlay = Some(Overlay::ConfirmTransfer(pending));
 }
 
 
@@ -101,6 +101,7 @@ mod tests {
     use std::fs;
 
     use super::*;
+    use crate::app::Mode;
     use crate::explorer::command::{app_with_selected_file, scratch_dir};
     use crate::test_support::test_app;
 
@@ -111,8 +112,8 @@ mod tests {
 
         request_delete(&mut app);
 
-        let Mode::ConfirmDelete(pending) = &app.mode else {
-            panic!("expected Mode::ConfirmDelete");
+        let Some(Overlay::ConfirmDelete(pending)) = &app.overlay else {
+            panic!("expected Overlay::ConfirmDelete");
         };
         assert_eq!(pending.entries.len(), 1);
         assert_eq!(pending.entries[0].path, expected_path);
@@ -139,8 +140,8 @@ mod tests {
 
         request_delete(&mut app);
 
-        let Mode::ConfirmDelete(pending) = &app.mode else {
-            panic!("expected Mode::ConfirmDelete");
+        let Some(Overlay::ConfirmDelete(pending)) = &app.overlay else {
+            panic!("expected Overlay::ConfirmDelete");
         };
         let mut names: Vec<&str> = pending.entries.iter().map(|e| e.name.as_str()).collect();
         names.sort();
@@ -154,7 +155,7 @@ mod tests {
 
         request_delete(&mut app);
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
@@ -163,7 +164,7 @@ mod tests {
 
         request_delete(&mut app);
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
@@ -173,8 +174,8 @@ mod tests {
 
         request_transfer(&mut app, TransferOp::Copy);
 
-        let Mode::ConfirmTransfer(pending) = &app.mode else {
-            panic!("expected Mode::ConfirmTransfer");
+        let Some(Overlay::ConfirmTransfer(pending)) = &app.overlay else {
+            panic!("expected Overlay::ConfirmTransfer");
         };
         assert_eq!(pending.operation, TransferOp::Copy);
         assert_eq!(pending.destination.text(), other_dir.join("source.txt").to_string_lossy());
@@ -206,8 +207,8 @@ mod tests {
 
         request_transfer(&mut app, TransferOp::Copy);
 
-        let Mode::ConfirmTransfer(pending) = &app.mode else {
-            panic!("expected Mode::ConfirmTransfer");
+        let Some(Overlay::ConfirmTransfer(pending)) = &app.overlay else {
+            panic!("expected Overlay::ConfirmTransfer");
         };
         let mut names: Vec<&str> = pending.sources.iter().map(|s| s.name.as_str()).collect();
         names.sort();
@@ -221,8 +222,8 @@ mod tests {
 
         request_transfer(&mut app, TransferOp::Move);
 
-        let Mode::ConfirmTransfer(pending) = &app.mode else {
-            panic!("expected Mode::ConfirmTransfer");
+        let Some(Overlay::ConfirmTransfer(pending)) = &app.overlay else {
+            panic!("expected Overlay::ConfirmTransfer");
         };
         assert_eq!(pending.operation, TransferOp::Move);
     }
@@ -234,7 +235,7 @@ mod tests {
 
         request_transfer(&mut app, TransferOp::Copy);
 
-        assert!(matches!(app.mode, Mode::Browsing));
+        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]
@@ -244,8 +245,8 @@ mod tests {
 
         request_rename(&mut app);
 
-        let Mode::ConfirmTransfer(pending) = &app.mode else {
-            panic!("expected Mode::ConfirmTransfer");
+        let Some(Overlay::ConfirmTransfer(pending)) = &app.overlay else {
+            panic!("expected Overlay::ConfirmTransfer");
         };
         assert_eq!(pending.operation, TransferOp::Move);
         assert_eq!(pending.destination.text(), same_dir.join("source.txt").to_string_lossy());
@@ -257,8 +258,8 @@ mod tests {
 
         request_rename(&mut app);
 
-        let Mode::ConfirmTransfer(pending) = &app.mode else {
-            panic!("expected Mode::ConfirmTransfer");
+        let Some(Overlay::ConfirmTransfer(pending)) = &app.overlay else {
+            panic!("expected Overlay::ConfirmTransfer");
         };
         let expected = pending.destination.text().chars().count() - "source.txt".chars().count();
         assert_eq!(pending.destination.cursor(), expected);
@@ -279,8 +280,8 @@ mod tests {
 
         request_rename(&mut app);
 
-        let Mode::ConfirmTransfer(pending) = &app.mode else {
-            panic!("expected Mode::ConfirmTransfer");
+        let Some(Overlay::ConfirmTransfer(pending)) = &app.overlay else {
+            panic!("expected Overlay::ConfirmTransfer");
         };
         let expected = pending.destination.text().chars().count() - "café_résumé.txt".chars().count();
         assert_eq!(pending.destination.cursor(), expected);
