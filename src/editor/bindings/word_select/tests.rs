@@ -195,7 +195,7 @@ fn ctrl_shift_left_retracts_a_whole_word_onto_the_separating_space() {
 /// completely, landing back exactly where the `Right` press started,
 /// with no selection at all -- not `" "` (the space before
 /// "architecture"), which an earlier version of the retraction fix
-/// (see `extend_word_selection`'s own doc comment, "Eleventh") produced
+/// (see `docs/history/word-select.md`, "Eleventh") produced
 /// instead.
 #[test]
 fn ctrl_shift_right_then_left_returns_to_nothing_selected() {
@@ -397,7 +397,7 @@ fn ctrl_shift_left_retracting_the_first_word_of_the_buffer_selects_nothing_on_ot
 
 /// Regression test for the real, fifteenth-attempt report -- and its
 /// own predecessor, the eleventh-attempt fix this one revised (see
-/// `extend_word_selection`'s own doc comment for the full story).
+/// `docs/history/word-select.md` for the full story).
 /// Retracting *past* a mid-buffer selection's own anchor must close the
 /// selection entirely -- nothing is left to give back once
 /// `MoveWordBackward` lands exactly on the anchor. `"Draft architecture
@@ -484,7 +484,7 @@ fn pure_backward_selection_is_unaffected_by_the_retraction_fix() {
 // column further back, onto the separator itself.
 
 /// Regression test for the real, reported bug ("Seventeenth" in
-/// `extend_word_selection`'s own doc comment): forward extension used
+/// `docs/history/word-select.md`): forward extension used
 /// to get permanently stuck the instant the very next real character
 /// was non-ASCII (an em dash here) -- every further `Ctrl+Shift+Right`
 /// press did nothing at all once the selection reached it. Reported

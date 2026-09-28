@@ -247,7 +247,7 @@ fn select_copy_paste_roundtrip() {
 
 /// Independent regression test requested directly after a report
 /// that copying "broke" alongside the word-select retraction work
-/// (`extend_word_selection`'s "Eighth" doc comment) -- that report
+/// (`docs/history/word-select.md` ("Eighth")) -- that report
 /// turned out to be about the *selection itself* landing wrong, not
 /// about `Copy` mishandling a correct selection (confirmed by
 /// tracing `CopySelection`, which just reads `state.selection`
@@ -325,7 +325,7 @@ fn word_select_retraction_across_punctuation_matches_what_gets_copied() {
 }
 
 /// Regression test for the real, fifteenth-attempt report (see
-/// `word_select::extend_word_selection`'s own doc comment for the full
+/// `docs/history/word-select.md` for the full
 /// story, including the eleventh-attempt fix this one revised):
 /// retracting *past* a mid-buffer selection's own anchor must close the
 /// selection entirely, not leave a stale one-character selection (the

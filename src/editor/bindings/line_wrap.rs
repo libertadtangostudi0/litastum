@@ -20,7 +20,7 @@ use edtui::{EditorState, Index2};
 /// `MoveBackward(1)` with an unconditional "then go up and to the end
 /// of that line" would wrap on *every* `Left` press, not just the ones
 /// already at column 0. Same shape of limitation as
-/// `word_select::extend_word_selection`'s own doc comment describes for
+/// `docs/history/word-select.md` describes for
 /// `Ctrl+Shift+Left`/`Right` -- solved the same way: call `Editor::input`
 /// (the table, completely unmodified) first, then a check-and-correct
 /// pass here, on the real state, only when the table's own handling

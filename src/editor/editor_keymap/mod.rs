@@ -28,7 +28,7 @@ pub enum EditorCommand {
     /// combination of `bindings.rs`'s declarative `Action` table could
     /// give both "repeated presses keep progressing" and "`Left` undoes
     /// exactly what `Right` just did" -- see
-    /// `bindings::extend_word_selection`'s own doc comment for the full
+    /// `docs/history/word-select.md` for the full
     /// story of why. `handle_editor_key`'s own match arm for this only
     /// calls that method under `EditorKeymapMode::Standard` -- it's
     /// exactly the kind of hand-rolled, Standard-tuned correction pass

@@ -69,14 +69,14 @@ impl Editor {
     ///   some other way, or this is the very first backward touch of
     ///   it) and `Touched` (word-wise selection has gone forward, or
     ///   already retracted, at least once) count, which is exactly what
-    ///   lets both real reports in `extend_word_selection`'s own doc
-    ///   comment ("Eighth") retract correctly -- one starting from a
+    ///   lets both real reports in `docs/history/word-select.md`
+    ///   ("Eighth") retract correctly -- one starting from a
     ///   word-wise `Right`-built selection, the other from one built
     ///   some other way entirely.
     /// - A forward (`forward`) press against an existing selection
     ///   (`!fresh`) that *is* a pure `NativeBackward` walk -- the mirror
-    ///   case added for `extend_word_selection`'s own "Fourteenth"
-    ///   report (`Ctrl+Shift+Right` undoing a selection built purely by
+    ///   case added for the "Fourteenth" report in
+    ///   `docs/history/word-select.md` (`Ctrl+Shift+Right` undoing a selection built purely by
     ///   `Ctrl+Shift+Left`).
     ///
     /// `word_select_touch` stays `NativeBackward` across a *retracing*

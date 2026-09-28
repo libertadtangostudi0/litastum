@@ -162,8 +162,7 @@ fn shift_left_selects_exactly_one_character_mid_buffer() {
 }
 
 /// Real, integration-level regression test for the reported bug
-/// (`bindings/word_select.rs::extend_word_selection`'s own doc
-/// comment, "Fourteenth", has the full story): a selection built
+/// (`docs/history/word-select.md`, "Fourteenth", has the full story): a selection built
 /// purely by walking backward (`Ctrl+Shift+Left` twice) must retrace
 /// correctly when a `Ctrl+Shift+Right` follows -- undoing exactly the
 /// most recent `Left`, not blindly extending forward from wherever the
@@ -206,8 +205,7 @@ fn ctrl_shift_right_closes_the_selection_once_the_backward_walk_is_fully_retrace
 }
 
 /// Real, integration-level regression test for the reported bug
-/// (`bindings/word_select.rs::extend_word_selection`'s own doc
-/// comment, "Sixteenth", has the full story): retracing a backward
+/// (`docs/history/word-select.md`, "Sixteenth", has the full story): retracing a backward
 /// selection must return the cursor to the exact column it started
 /// at, not the trimmed anchor. Goes through the real `Editor::
 /// extend_word_selection`, confirming `word_select_true_anchor` is
