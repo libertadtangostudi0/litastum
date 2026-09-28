@@ -376,9 +376,9 @@ pub struct App {
     /// Console backend never delivers a standalone press/release event
     /// for a bare modifier key on its own (only modifier flags riding
     /// along with an actual keypress), so `event_loop::wait_for_event`
-    /// polls the OS directly (`alt_key::is_physically_down`,
+    /// polls the OS directly (`windows_terminal::alt_key::is_physically_down`,
     /// `GetAsyncKeyState`) while otherwise idle and updates this the
-    /// instant the physical key state changes — see `alt_key.rs`'s own
+    /// instant the physical key state changes — see `windows_terminal/alt_key.rs`'s own
     /// doc for the full story.
     ///
     /// On other platforms there's no equivalent poll, so this falls
@@ -389,44 +389,11 @@ pub struct App {
     /// reverts on the *next* key press without `Alt`, not the instant
     /// `Alt` itself is released.
     pub alt_held: bool,
-    /// Real physical `Ctrl+V` state, tracked the same way `alt_held`
-    /// is (`paste_hotkey.rs`, `GetAsyncKeyState` -- Windows only,
-    /// always `false` elsewhere) -- an edge-triggered "was it *just*
-    /// pressed" flag, not "is it held," used only to detect a fresh
-    /// press. See `event_loop::paste::try_intercept_paste_hotkey`'s own doc
-    /// comment for why a real terminal `Ctrl+V` keystroke needs its own
-    /// bypass at all.
-    pub ctrl_v_physically_held: bool,
-    /// The remaining characters `try_intercept_paste_hotkey`'s own fast
-    /// paste expects Windows Terminal's own (much slower) keystroke-
-    /// simulated paste to inject right afterward, front = next expected
-    /// -- `'\n'` means the next expected key is a bare `Enter`, anything
-    /// else means that exact `Char`. `event_loop::paste::should_swallow_paste_tail`
-    /// discards an incoming key only when it actually *matches* the
-    /// front of this queue, popping it off; a real keystroke that
-    /// doesn't match (most of the time, if it happens at all -- see its
-    /// own doc comment for why content-matching, not just "is it
-    /// character-shaped," is what fixed a real report of genuine typing
-    /// getting delayed several seconds) clears the whole queue instead
-    /// of being swallowed. Empty means "nothing pending," the normal,
-    /// overwhelmingly common state.
-    pub pending_paste_swallow: std::collections::VecDeque<char>,
-    /// Wall-clock deadline for `pending_paste_swallow` -- a safety
-    /// valve, not the primary stop condition (that's either the queue
-    /// draining naturally or a mismatched key clearing it). Guards
-    /// against Windows Terminal's own flood simply never arriving (or
-    /// stalling) for some reason: without this, a queue that's actually
-    /// still correct but just very slow to drain would keep swallowing
-    /// indefinitely instead of eventually giving up.
-    pub pending_paste_swallow_deadline: Option<std::time::Instant>,
-    /// The last few characters actually typed through ordinary key
-    /// handling, with when they arrived -- lets the Windows `Ctrl+V`
-    /// bypass notice that Windows Terminal's own keystroke flood already
-    /// delivered the start of the paste before the physical key press
-    /// was seen (`event_loop::paste::already_typed_prefix_len`'s own doc
-    /// comment has the real report). Cleared by any other key, since the
-    /// characters before it are no longer where a paste would continue.
-    pub recently_typed: std::collections::VecDeque<(char, std::time::Instant)>,
+    /// Windows Terminal's own paste handling -- the physical `Ctrl+V`
+    /// edge, the keystroke flood that follows this app's own instant
+    /// paste, and the recently typed characters that flood may have
+    /// already delivered. See `windows_terminal::PasteFlood`.
+    pub paste_flood: crate::windows_terminal::PasteFlood,
     /// Where the built-in editor (F4) should hand control back once it
     /// closes, if that's somewhere other than the ordinary browser --
     /// `None` (the common case: F4 pressed from `Mode::Browsing`)
@@ -536,10 +503,7 @@ impl App {
             find_file_name_history: Vec::new(),
             find_file_content_history: Vec::new(),
             alt_held: false,
-            ctrl_v_physically_held: false,
-            pending_paste_swallow: std::collections::VecDeque::new(),
-            pending_paste_swallow_deadline: None,
-            recently_typed: std::collections::VecDeque::new(),
+            paste_flood: crate::windows_terminal::PasteFlood::default(),
             editor_return_to: None,
             user_menu_command_edit: None,
             image_picker: Picker::halfblocks(),

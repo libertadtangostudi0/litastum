@@ -97,16 +97,16 @@ app's normal `crossterm` event handling has no influence at all.
 **The actual fix**: stop waiting for `crossterm` to ever report a real
 `Ctrl+V` `KeyEvent`, and poll the *physical* key state directly via the
 Windows API instead — `GetAsyncKeyState`, the exact same technique
-`alt_key.rs` already uses for tracking real `Alt` hold/release (see its
+`windows_terminal/alt_key.rs` already uses for tracking real `Alt` hold/release (see its
 own module doc for why `crossterm` can't report a bare modifier key on
-Windows either). `paste_hotkey.rs` + `event_loop::paste::try_intercept_paste_hotkey`:
+Windows either). `windows_terminal/paste_hotkey.rs` + `event_loop::paste::try_intercept_paste_hotkey`:
 the instant a real physical `Ctrl+V` is detected, read the OS clipboard
 directly and apply `Editor::paste_text` immediately — full speed,
 independent of whatever Windows Terminal does next. Windows Terminal's
 own (now redundant, still-slow) keystroke flood keeps arriving right
 afterward regardless — there's no way to tell it to stop — so
-`App::pending_paste_swallow`/`_deadline` silently discard that
-predictable tail (`event_loop::paste::should_swallow_paste_tail`) instead of
+`windows_terminal::PasteFlood` silently discards that
+predictable tail (`PasteFlood::should_swallow`) instead of
 typing the same text a second time. The swallow count is an *estimate*
 (pasted-text length, `\r`-stripped), not a guarantee the flood matches
 exactly, which is why the deadline safety valve exists: undercounting

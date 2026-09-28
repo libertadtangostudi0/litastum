@@ -21,16 +21,25 @@ event_loop/           — run(), wait_for_event (background-task polling,
   event_loop/keys.rs   —   handle_key_event/dispatch_key_event (by Mode to
                             each area's own handle_*_key), key-burst
                             draining (held navigation, queued typing)
-  event_loop/paste.rs  —   bracketed paste, Windows Ctrl+V bypass, the
-                            swallow queue for Windows Terminal's own
-                            redundant keystroke flood
-paste_hotkey.rs       — Windows-only: GetAsyncKeyState for a real
-                        physical Ctrl+V (see event_loop/paste.rs)
+  event_loop/paste.rs  —   where a paste goes (allow-listed text fields
+                            vs the editor buffer), bracketed paste, and
+                            the glue for the Windows Ctrl+V bypass
+windows_terminal/     — how Windows Terminal and the Windows console
+                        deliver input differently from what crossterm
+                        assumes, in one place:
+  windows_terminal/alt_key.rs      — Windows-only: GetAsyncKeyState for
+                                     real Alt hold/release
+                                     (ui::draw_function_keys)
+  windows_terminal/paste_hotkey.rs — Windows-only: GetAsyncKeyState for a
+                                     real physical Ctrl+V
+  windows_terminal/paste_flood.rs  — PasteFlood: the Ctrl+V edge, the
+                                     swallow queue for Windows Terminal's
+                                     own redundant keystroke flood, and
+                                     the flood head that can arrive
+                                     before the press is seen
 app.rs                — App: panels, active index, Mode, theme,
                         popup_style, command/search history, ...
 test_support.rs       — shared test fixtures (test_app, key(), scratch dirs)
-alt_key.rs            — Windows-only: polls GetAsyncKeyState for real
-                        Alt hold/release tracking (ui::draw_function_keys)
 logging.rs            — tracing setup
 
 explorer.rs            — dual-pane browser: Panel, F-key commands,

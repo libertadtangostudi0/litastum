@@ -8,7 +8,6 @@ use crate::app::{App, Mode};
 use crate::{command_line, compare, editor, explorer, keyboard_layout, theming};
 
 use super::drain_pending_mouse_events;
-use super::paste::{record_typed_key, should_swallow_paste_tail};
 
 /// `Up`/`Down`/`PageUp`/`PageDown`, held down, generate a rapid burst of
 /// distinct `KeyEventKind::Press` events via the OS's own key-repeat --
@@ -72,11 +71,11 @@ pub(super) fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, t
     // Normalized first so a `Ctrl+V` typed under a non-Latin layout is
     // still recognized by the swallow's own double-paste guard.
     let normalized = keyboard_layout::normalize_ctrl_shortcut(key);
-    if key.kind == KeyEventKind::Press && should_swallow_paste_tail(app, normalized.code, normalized.modifiers) {
+    if key.kind == KeyEventKind::Press && app.paste_flood.should_swallow(normalized.code, normalized.modifiers) {
         return Ok(false);
     }
     if key.kind == KeyEventKind::Press {
-        record_typed_key(app, normalized.code, normalized.modifiers);
+        app.paste_flood.record_typed_key(normalized.code, normalized.modifiers);
     }
 
     dispatch_key_event(app, key, terminal)?;
@@ -157,7 +156,7 @@ fn drain_pending_editor_typing(app: &mut App, terminal: &mut Terminal<CrosstermB
                 if let KeyCode::Char(c) = key.code {
                     batch.push(c);
                 }
-                record_typed_key(app, key.code, key.modifiers);
+                app.paste_flood.record_typed_key(key.code, key.modifiers);
             }
             Event::Key(key) => {
                 flush_editor_typing_batch(app, &mut batch);

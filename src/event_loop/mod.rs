@@ -122,10 +122,10 @@ fn poll_background_tasks(app: &mut App) -> bool {
 /// Blocks until either a real terminal event arrives (dispatched via
 /// `handle_event`), a pending background task finishes
 /// (`BACKGROUND_TASK_POLL_INTERVAL`, above), or -- Windows only -- the
-/// physical `Alt` key's actual held state (`alt_key::is_physically_down`)
+/// physical `Alt` key's actual held state (`windows_terminal::alt_key::is_physically_down`)
 /// changes, so the alt-labels F-key row can react to `Alt` genuinely
 /// being held down, not just to the next keypress that happens to carry
-/// the `Alt` modifier. See `alt_key.rs`'s own doc for why that
+/// the `Alt` modifier. See `windows_terminal/alt_key.rs`'s own doc for why that
 /// distinction matters: `crossterm`'s Windows backend never emits an
 /// event for a bare modifier key on its own, so relying on keypress
 /// modifiers alone means the row only ever updates in the same frame an
@@ -142,12 +142,12 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
         // Windows-Terminal-injected paste flood, this loop keeps
         // finding a real `crossterm` event (one flooded character)
         // almost every time, so an idle-only check would never run
-        // until the flood was already over. See `paste_hotkey.rs`'s own
+        // until the flood was already over. See `windows_terminal`'s own
         // module doc comment for the full story.
         if try_intercept_paste_hotkey(app, terminal)? {
             return Ok(());
         }
-        let poll_interval = if background_task_pending(app) { BACKGROUND_TASK_POLL_INTERVAL } else { crate::alt_key::POLL_INTERVAL };
+        let poll_interval = if background_task_pending(app) { BACKGROUND_TASK_POLL_INTERVAL } else { crate::windows_terminal::alt_key::POLL_INTERVAL };
         if event::poll(poll_interval)? {
             // A key event `handle_event` never actually dispatched
             // anything for (see `handle_key_event`'s own doc comment)
@@ -161,7 +161,7 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
         if poll_background_tasks(app) {
             return Ok(());
         }
-        let alt_down = crate::alt_key::is_physically_down();
+        let alt_down = crate::windows_terminal::alt_key::is_physically_down();
         if alt_down != app.alt_held {
             app.alt_held = alt_down;
             return Ok(());

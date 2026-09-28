@@ -1,5 +1,3 @@
-#[cfg(windows)]
-mod alt_key;
 mod app;
 mod command_line;
 mod compare;
@@ -10,14 +8,13 @@ mod history_dir;
 mod keyboard_layout;
 mod list_cursor;
 mod logging;
-#[cfg(windows)]
-mod paste_hotkey;
+mod terminal_setup;
 #[cfg(test)]
 mod test_support;
 mod text_field;
 mod theming;
-mod terminal_setup;
 mod ui;
+mod windows_terminal;
 
 use color_eyre::eyre::Result;
 
