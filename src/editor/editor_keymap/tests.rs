@@ -126,12 +126,18 @@ mod resolve_editor_key_tests {
     #[test]
     fn every_function_key_is_ignored_not_forwarded() {
         for n in 1..=12 {
-            if n == 9 {
-                continue; // F9 opens the editor's own settings menu -- see its own dedicated test below.
+            if n == 9 || n == 3 {
+                continue; // F9 opens the editor's own settings menu, F3 is next search match -- see their own tests below.
             }
             let key = KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE);
             assert_eq!(resolve(key), EditorCommand::Ignore, "F{n} should be ignored, not forwarded to edtui");
         }
+    }
+
+    #[test]
+    fn f3_and_shift_f3_step_through_search_matches() {
+        assert_eq!(resolve(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE)), EditorCommand::FindNext);
+        assert_eq!(resolve(KeyEvent::new(KeyCode::F(3), KeyModifiers::SHIFT)), EditorCommand::FindPrevious);
     }
 
     #[test]
@@ -751,6 +757,125 @@ mod handle_search_key_tests {
         handle_editor_key(&mut app, key(KeyCode::End)).unwrap();
         let Mode::Editing(editor) = &app.mode else { unreachable!() };
         assert_eq!(editor.search_query(), "world", "second End accepts the suggestion");
+    }
+
+    /// Draws the editor once, the way `ui::draw` would -- `edtui` maps a
+    /// mouse position through the screen area it recorded while drawing.
+    fn render(app: &mut App) {
+        let Mode::Editing(editor) = &mut app.mode else { unreachable!() };
+        let theme = crate::theming::Theme::dark();
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 8)).unwrap();
+        terminal.draw(|frame| frame.render_widget(editor.view(&theme, frame.area()), frame.area())).unwrap();
+    }
+
+    /// Clicks the cell holding buffer column `col` on the caret's own row
+    /// -- found relative to where the caret itself renders, so the
+    /// border/line-number gutter widths never have to be hardcoded here.
+    fn click_same_row_at_col(app: &mut App, col: u16) {
+        render(app);
+        let Mode::Editing(editor) = &mut app.mode else { unreachable!() };
+        let caret_col = editor.cursor().col as u16;
+        let caret_screen = editor.cursor_screen_position().expect("caret should be on screen");
+        let mouse = crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: caret_screen.x - caret_col + col,
+            row: caret_screen.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        editor.mouse(mouse);
+    }
+
+    fn search_for(app: &mut App, query: &str) {
+        handle_editor_key(app, ctrl_key('f')).unwrap();
+        for c in query.chars() {
+            handle_editor_key(app, key(KeyCode::Char(c))).unwrap();
+        }
+    }
+
+    /// Requested directly, matching VS Code: a click in the text moves
+    /// the caret and keyboard focus there, while the box stays open with
+    /// its match still highlighted -- and the arrows then move the caret,
+    /// not the box's own cursor.
+    #[test]
+    fn a_click_in_the_text_moves_focus_there_but_keeps_the_box_and_its_match() {
+        let (mut app, _path) = open_editor_app("hello world\n");
+        search_for(&mut app, "world");
+
+        click_same_row_at_col(&mut app, 2);
+
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert!(!editor.is_searching(), "keyboard focus moved to the text");
+        assert!(editor.search_box_open(), "the box itself stays open");
+        assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 2 });
+
+        handle_editor_key(&mut app, key(KeyCode::Right)).unwrap();
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 3 }, "arrows now move the caret");
+        assert_eq!(editor.search_query(), "world", "the query is untouched");
+    }
+
+    /// With the text focused, typing edits the text -- and the open box's
+    /// match follows the edit instead of pointing at a stale position.
+    #[test]
+    fn editing_the_text_with_the_box_open_keeps_its_match_in_step() {
+        let (mut app, _path) = open_editor_app("hello world\n");
+        search_for(&mut app, "world");
+        click_same_row_at_col(&mut app, 0);
+
+        handle_editor_key(&mut app, key(KeyCode::Char('X'))).unwrap();
+
+        let Mode::Editing(editor) = &mut app.mode else { unreachable!() };
+        assert!(editor.is_dirty(), "the keystroke went to the text, not the box");
+        editor.search_next();
+        assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 7 }, "\"world\" moved one column right, and the match with it");
+    }
+
+    #[test]
+    fn f3_and_shift_f3_step_through_matches_from_the_caret_while_the_text_has_focus() {
+        let (mut app, _path) = open_editor_app("cat dog cat dog cat\n");
+        search_for(&mut app, "cat");
+        click_same_row_at_col(&mut app, 5);
+
+        handle_editor_key(&mut app, key(KeyCode::F(3))).unwrap();
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 8 }, "the next match after the caret, not after the last selected one");
+
+        handle_editor_key(&mut app, KeyEvent::new(KeyCode::F(3), KeyModifiers::SHIFT)).unwrap();
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 0 });
+    }
+
+    /// `Esc` with the text focused closes just the box -- not the
+    /// editor -- and leaves the caret where it is.
+    #[test]
+    fn esc_with_the_text_focused_closes_only_the_box() {
+        let (mut app, _path) = open_editor_app("hello world\n");
+        search_for(&mut app, "world");
+        click_same_row_at_col(&mut app, 2);
+
+        handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        let Mode::Editing(editor) = &app.mode else { panic!("the editor must stay open") };
+        assert!(!editor.search_box_open());
+        assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 2 });
+    }
+
+    /// `Ctrl+F` while the text has focus gives it back to the box with
+    /// the query selected, VS Code-style -- typing replaces it.
+    #[test]
+    fn ctrl_f_with_the_text_focused_refocuses_the_box_with_the_query_selected() {
+        let (mut app, _path) = open_editor_app("hello world\n");
+        search_for(&mut app, "world");
+        click_same_row_at_col(&mut app, 0);
+
+        handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert!(editor.is_searching());
+        assert_eq!(editor.search_selection(), Some((0, 5)), "the whole query is selected");
+
+        handle_editor_key(&mut app, key(KeyCode::Char('h'))).unwrap();
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert_eq!(editor.search_query(), "h", "typing replaced the selected query");
     }
 
     #[test]

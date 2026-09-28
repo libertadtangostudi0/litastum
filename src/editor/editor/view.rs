@@ -27,6 +27,7 @@ impl Editor {
     /// render size ahead of the `frame.render_widget` call that
     /// actually consumes the returned `EditorView`.
     pub fn view(&mut self, theme: &Theme, area: Rect) -> EditorView<'_, '_> {
+        self.view_area = area;
         // Computed once and reused below for the syntax highlighter and
         // for `bracket_match_highlights` -- both would otherwise pay an
         // O(remaining line length) cost against the same pathological
@@ -184,9 +185,10 @@ impl Editor {
     /// - **`Ctrl+F` search**: the current match is painted in
     ///   `selection_style` too (`view`'s own search highlight), but a
     ///   search jump puts the cursor on the match's *first* character --
-    ///   which then never looked highlighted. Reported back when `edtui`
-    ///   still drew the match itself; `search::SearchSession` keeps the
-    ///   same cursor placement, so the exception still applies.
+    ///   which then never looked highlighted. Checked by position (is the
+    ///   caret inside the highlighted match), not by "is the box focused":
+    ///   the box can stay open with the caret moved elsewhere in the
+    ///   text, and a caret outside the match must render normally.
     /// - **`extra_highlights`** (Compare's red/green diff rows,
     ///   `ui/compare.rs::row_highlights`): the cursor's cell on a
     ///   diff-colored line rendered as a plain patch cut out of it.
@@ -201,7 +203,9 @@ impl Editor {
     /// should be visible there, not edtui's own solid reverse-video
     /// block.
     fn cursor_cell_style(&self, selection_style: Style, highlight_style: Style, pathologically_long_line: bool) -> Option<Style> {
-        if self.state.selection.is_some() || self.is_searching() {
+        let caret_in_search_match =
+            self.search_match_span().is_some_and(|(start, end)| self.state.cursor.row == start.row && (start.col..=end.col).contains(&self.state.cursor.col));
+        if self.state.selection.is_some() || caret_in_search_match {
             return Some(selection_style);
         }
         if !pathologically_long_line && cursor_is_on_a_matched_bracket(&self.state.lines, self.state.cursor) {

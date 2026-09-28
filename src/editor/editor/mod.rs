@@ -14,6 +14,7 @@ use super::keymap_mode::EditorKeymapMode;
 
 mod fast_paste;
 mod input;
+mod mouse;
 mod search;
 mod undo;
 mod view;
@@ -172,6 +173,11 @@ pub struct Editor {
     /// before it, same convention every other editor's redo already
     /// follows.
     redo_stack: Vec<Snapshot>,
+    /// The whole screen area this editor was last drawn into
+    /// (`view()`'s own `area`) -- lets a mouse event be routed to the
+    /// editor only when it actually lands on it (`contains_screen_position`),
+    /// not to a linked Markdown preview drawn beside it.
+    view_area: ratatui::layout::Rect,
 }
 
 
@@ -242,6 +248,7 @@ impl Editor {
             syntax_highlighting_enabled: true,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            view_area: ratatui::layout::Rect::default(),
         })
     }
 
@@ -447,6 +454,18 @@ impl Editor {
                 Err(err)
             }
         }
+    }
+
+
+    /// Everything that has to follow a change to the buffer's contents:
+    /// the cached `dirty` flag (see its own doc comment) and, if the
+    /// `Ctrl+F` box is open, its matches -- the box can stay open while
+    /// the text is edited (`is_searching`'s own doc comment). One place
+    /// for every mutation path (typing, paste, undo/redo) so neither can
+    /// be forgotten on one of them.
+    fn buffer_changed(&mut self) {
+        self.dirty = self.state.lines != self.saved_snapshot;
+        self.refresh_search_matches();
     }
 
 

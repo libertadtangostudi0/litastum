@@ -117,13 +117,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     match &mut app.mode {
         Mode::Editing(editor) if !has_linked_preview => {
             let mut cursor = draw_editor(frame, area, editor, &theme);
-            if editor.is_searching() {
+            if editor.search_box_open() {
                 // Drawn on top, same "popup over a full-screen mode"
-                // shape as ConfirmDiscard below -- and takes over the
-                // real terminal cursor from draw_editor's own buffer-
-                // cursor placement, same reasoning as the command line's
-                // own cursor yielding to whichever popup is showing.
-                cursor = Some(editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme));
+                // shape as ConfirmDiscard below -- and, only while the
+                // box has keyboard focus, takes over the real terminal
+                // cursor from draw_editor's own buffer-cursor placement
+                // (with focus in the text, the caret there is the one
+                // that should show).
+                let box_cursor = editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme);
+                if editor.is_searching() {
+                    cursor = Some(box_cursor);
+                }
             }
             return (unchanged_layout, cursor);
         }
@@ -380,8 +384,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         // through the ordinary split-panel path above rather than the
         // early, full-screen return.
         Mode::ConfirmDiscard(_) if has_linked_preview => draw_confirm_discard_popup(frame, area, &theme),
-        Mode::Editing(editor) if has_linked_preview && editor.is_searching() => {
-            cursor = Some(editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme));
+        Mode::Editing(editor) if has_linked_preview && editor.search_box_open() => {
+            let box_cursor = editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme);
+            if editor.is_searching() {
+                cursor = Some(box_cursor);
+            }
         }
         _ => {}
     }

@@ -34,15 +34,25 @@ impl SearchBox {
 
 
 impl Editor {
-    /// `Ctrl+F` -- whether the built-in search box is currently open.
-    /// `EditorMode::Search` is still the flag for this (it's what
-    /// `editor_keymap::handle_search_key` routes on, and `edtui` itself
-    /// draws nothing extra for it while its own `SearchState` stays
-    /// empty), but the matching itself is this app's own
-    /// `SearchSession` -- see its doc comment for why `edtui`'s search
-    /// couldn't be kept.
+    /// Whether the `Ctrl+F` box has keyboard focus -- every key goes to
+    /// the box (`editor_keymap::handle_search_key`). `EditorMode::Search`
+    /// is the flag for this (`edtui` itself draws nothing extra for it
+    /// while its own `SearchState` stays empty); the matching itself is
+    /// this app's own `SearchSession` -- see its doc comment for why
+    /// `edtui`'s search couldn't be kept.
+    ///
+    /// Distinct from `search_box_open`, requested directly to match VS
+    /// Code: clicking into the text takes focus away from the box (the
+    /// caret moves, arrows and typing work on the text again) while the
+    /// box stays open and its match stays highlighted.
     pub fn is_searching(&self) -> bool {
         self.state.mode == EditorMode::Search
+    }
+
+    /// Whether the `Ctrl+F` box is open at all, focused or not -- drawn,
+    /// and its current match highlighted, the whole time.
+    pub fn search_box_open(&self) -> bool {
+        self.search.is_some()
     }
 
     /// The search box's current query text, for rendering the popup.
@@ -74,21 +84,54 @@ impl Editor {
     /// on one row, for `view()` to highlight -- `None` while the box is
     /// closed, the query is empty, or nothing matches.
     pub(super) fn search_match_span(&self) -> Option<(Index2, Index2)> {
-        if !self.is_searching() {
-            return None;
-        }
         let session = &self.search.as_ref()?.session;
         let start = session.selected_match()?;
         Some((start, Index2::new(start.row, start.col + session.pattern_len().saturating_sub(1))))
     }
 
-    /// Opens the search box, anchored at the cursor's current position
-    /// (what `stop_search` below restores if the box is cancelled with
-    /// nothing found).
+    /// `Ctrl+F`: opens the search box, anchored at the cursor's current
+    /// position (what `stop_search` below restores if the box is
+    /// cancelled with nothing found). If it's already open but the text
+    /// has focus, gives focus back to it instead, the way VS Code's own
+    /// `Ctrl+F` does: the query stays, fully selected so typing replaces
+    /// it, and searching continues from wherever the caret now is.
     pub fn start_search(&mut self) {
-        self.search = Some(SearchBox::new(self.state.cursor));
+        match &mut self.search {
+            Some(search_box) => {
+                search_box.selection_anchor = Some(0);
+                search_box.cursor = search_box.text.chars().count();
+                search_box.session.set_start_cursor(self.state.cursor);
+            }
+            None => self.search = Some(SearchBox::new(self.state.cursor)),
+        }
         SwitchMode(EditorMode::Search).execute(&mut self.state);
         self.search_history_index = None;
+    }
+
+    /// Takes keyboard focus away from the box and gives it to the text,
+    /// leaving the box open and its match highlighted -- a click in the
+    /// text (`Editor::mouse`). The caret stays wherever it is.
+    pub(super) fn blur_search_box(&mut self) {
+        if self.is_searching() {
+            SwitchMode(super::starting_mode(self.keymap_mode)).execute(&mut self.state);
+        }
+    }
+
+    /// `Esc` while the text has focus and the box is open -- closes the
+    /// box and leaves the caret exactly where it is (unlike `Esc` inside
+    /// the box, `stop_search`, which lands the caret after the match).
+    pub fn close_search_box(&mut self) {
+        self.search = None;
+    }
+
+    /// Keeps the open box's matches in step with an edited buffer -- the
+    /// text can be edited while the box stays open (focus in the text),
+    /// and every stored match position is stale after that. See
+    /// `Editor::buffer_changed`.
+    pub(super) fn refresh_search_matches(&mut self) {
+        if let Some(search_box) = &mut self.search {
+            search_box.session.rebuild(&self.state.lines);
+        }
     }
 
     /// One editing key in the search box (`text_field::apply_edit_key` --
@@ -118,21 +161,23 @@ impl Editor {
         self.search_edit_key(KeyEvent::new(crossterm::event::KeyCode::Char(c), crossterm::event::KeyModifiers::NONE));
     }
 
-    /// `Enter` -- jumps to the next match, VS Code's own `Ctrl+F`
-    /// convention (reported directly: `Up`/`Down` was tried for this
-    /// first and reported wrong -- those are for browsing *history*
-    /// instead, below, the same way a shell's own `Up`/`Down` work on
-    /// the command being typed, not on some other piece of state).
+    /// `Enter` in the box, or `F3` from the text -- jumps to the next
+    /// match after the caret, VS Code's own convention (reported
+    /// directly: `Up`/`Down` was tried for this first and reported wrong
+    /// -- those are for browsing *history* instead, below, the same way a
+    /// shell's own `Up`/`Down` work on the command being typed).
     pub fn search_next(&mut self) {
-        if let Some(start) = self.search.as_mut().and_then(|search_box| search_box.session.select_next()) {
+        let caret = self.state.cursor;
+        if let Some(start) = self.search.as_mut().and_then(|search_box| search_box.session.select_next_after(caret)) {
             self.state.cursor = start;
         }
     }
 
-    /// `Shift+Enter` -- jumps to the previous match, the other half of
-    /// the VS Code convention `search_next` follows.
+    /// `Shift+Enter` / `Shift+F3` -- the previous match before the caret,
+    /// the other half of the convention `search_next` follows.
     pub fn search_previous(&mut self) {
-        if let Some(start) = self.search.as_mut().and_then(|search_box| search_box.session.select_previous()) {
+        let caret = self.state.cursor;
+        if let Some(start) = self.search.as_mut().and_then(|search_box| search_box.session.select_previous_before(caret)) {
             self.state.cursor = start;
         }
     }

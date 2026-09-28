@@ -438,9 +438,10 @@ pub struct App {
     /// construction, same pattern those two already use.
     pub image_picker: Picker,
     /// Whether `crossterm`'s `EnableMouseCapture` is currently active --
-    /// set by `explorer::markdown_preview::open_preview` right after it
-    /// actually succeeds, cleared by `handle_markdown_preview_key`'s own
-    /// `Esc`/`F3` close path right after `DisableMouseCapture` succeeds.
+    /// true exactly while the built-in editor is open (`Mode::Editing`,
+    /// with or without a linked Markdown preview), kept in step once per
+    /// loop iteration by `event_loop::sync_mouse_capture`, and only ever
+    /// flipped after the terminal call actually succeeded.
     /// Exists specifically so `terminal_setup::restore_terminal` knows whether
     /// it's safe to send `DisableMouseCapture` at all when the app
     /// exits -- reported as a real crash on Windows

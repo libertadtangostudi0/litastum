@@ -1,7 +1,6 @@
 use color_eyre::eyre::Result;
-use crossterm::event::{DisableMouseCapture, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::execute;
-use tracing::{debug, warn};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tracing::debug;
 
 use crate::app::{App, Mode};
 use crate::explorer;
@@ -46,13 +45,16 @@ pub enum EditorCommand {
     /// motions instead, the same shape `WordSelect` above already uses
     /// for logic too involved for one table entry.
     SelectAll,
-    /// `Ctrl+F` -- opens the built-in search box (`Editor::start_search`).
-    /// Only ever resolved while the box *isn't* already open --
-    /// `handle_editor_key` intercepts every key ahead of `resolve`
-    /// entirely once `Editor::is_searching()` is true, routing to
-    /// `handle_search_key` below instead, so this variant is never
-    /// reached a second time to mean "close" or "next match".
+    /// `Ctrl+F` -- opens the built-in search box (`Editor::start_search`),
+    /// or gives it focus back if it's open but the text has focus. Never
+    /// resolved while the box itself has focus -- `handle_editor_key`
+    /// routes every key to `handle_search_key` then instead.
     Find,
+    /// `F3` / `Shift+F3` -- next/previous match of the open search box
+    /// from the caret, while the text has focus (VS Code's own keys for
+    /// this). A no-op with the box closed.
+    FindNext,
+    FindPrevious,
     /// `F9` -- opens the built-in editor's own settings menu
     /// (`Mode::EditorKeymapMenu`, currently just the `EditorKeymapMode`
     /// picker) over the editor, Far Manager-style. `F9` isn't among the
@@ -93,6 +95,8 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
         KeyCode::Left if ctrl && shift => EditorCommand::WordSelect { forward: false },
         KeyCode::Right if ctrl && shift => EditorCommand::WordSelect { forward: true },
         KeyCode::F(9) => EditorCommand::OpenMenu,
+        KeyCode::F(3) if shift => EditorCommand::FindPrevious,
+        KeyCode::F(3) => EditorCommand::FindNext,
         _ if edtui_supports_key(key.code) => EditorCommand::Forward,
         _ => EditorCommand::Ignore,
     }
@@ -196,6 +200,18 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let command = resolve(key);
     debug!(?key, ?command, "editor key");
 
+    // `Esc` with the search box open but the text focused closes just
+    // the box, VS Code-style, before it can mean "cancel the selection"
+    // or "close the editor" -- the caret stays where it is.
+    if command == EditorCommand::Close {
+        if let Mode::Editing(editor) = &mut app.mode {
+            if editor.search_box_open() {
+                editor.close_search_box();
+                return Ok(());
+            }
+        }
+    }
+
     if command == EditorCommand::Close {
         let has_selection = matches!(&app.mode, Mode::Editing(editor) if editor.has_selection());
         if has_selection {
@@ -250,6 +266,8 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
             }
         }
         EditorCommand::Find => active_editor.start_search(),
+        EditorCommand::FindNext => active_editor.search_next(),
+        EditorCommand::FindPrevious => active_editor.search_previous(),
         EditorCommand::SelectAll => active_editor.select_all(),
         // `Editor::extend_word_selection` is exactly the kind of
         // hand-rolled, Standard-keymap-tuned logic `EditorKeymapMode::Vim`'s
@@ -396,22 +414,16 @@ pub(crate) fn close_editor_or_confirm(app: &mut App) -> Result<()> {
 /// nothing lost) deliberately does *not* call this -- the editor hasn't
 /// actually closed there.
 ///
-/// Also clears `App::markdown_edit_preview` and turns mouse capture
-/// back off (`DisableMouseCapture`) whenever a linked preview was
-/// showing -- the embedded-preview half of a combined editor+preview
+/// Also clears `App::markdown_edit_preview` whenever a linked preview
+/// was showing -- the embedded-preview half of a combined editor+preview
 /// session (`explorer::markdown_preview::open_edit_preview`) has no
 /// close path of its own once this actually runs, since `Esc`/`F3` on
 /// either half funnels through `close_editor_or_confirm` into here.
-/// Plain `F4` editing never sets `markdown_edit_preview` at all, so
-/// this is a no-op for it.
+/// Mouse capture turns itself off with the editor
+/// (`event_loop::sync_mouse_capture`).
 fn return_from_editor(app: &mut App) -> Result<()> {
     app.active_panel().reload()?;
-    if app.markdown_edit_preview.take().is_some() && app.mouse_capture_enabled {
-        if let Err(err) = execute!(std::io::stdout(), DisableMouseCapture) {
-            warn!(%err, "failed to disable mouse capture after closing the markdown editor+preview session");
-        }
-        app.mouse_capture_enabled = false;
-    }
+    app.markdown_edit_preview = None;
     app.mode = if let Some(state) = app.editor_return_to.take() {
         Mode::FindFile(state)
     } else if let Some(edit) = app.user_menu_command_edit.take() {

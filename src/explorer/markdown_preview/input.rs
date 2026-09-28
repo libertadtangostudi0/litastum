@@ -1,7 +1,6 @@
 use color_eyre::eyre::Result;
-use crossterm::event::{EnableMouseCapture, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use crossterm::execute;
-use tracing::{debug, warn};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use tracing::debug;
 
 use crate::app::{App, Mode};
 use crate::editor::{self, Editor};
@@ -22,18 +21,9 @@ use super::state::MarkdownPreviewState;
 /// UTF-8 for the editor) -- same "couldn't act on this" convention
 /// `explorer::command::open_editor` already uses for plain `F4`.
 ///
-/// Also turns on mouse capture (`EnableMouseCapture`) -- requested
-/// directly, so a link can be opened with a click (touchpad or mouse),
-/// not just read. Scoped to exactly this session rather than enabled
-/// for the whole app: mouse capture takes over the terminal's own
-/// native text selection, which would otherwise get in the way of
-/// copying paths/output with the mouse everywhere else in this file
-/// manager -- `editor_keymap::return_from_editor` turns it back off the
-/// moment the whole editor+preview session actually closes. A failed
-/// `execute!` (a real write error to stdout) is logged, not surfaced --
-/// same "never blocks on this" rule as every other terminal-control
-/// call in this codebase; the session still opens either way, just
-/// without clickable links.
+/// Mouse capture (so a link can be opened with a click, requested
+/// directly) comes with the editor itself -- `event_loop::sync_mouse_capture`
+/// keeps it on for as long as any `Mode::Editing` session is open.
 pub fn open_edit_preview(app: &mut App) {
     let Some(path) = app.active_panel().selected_path() else {
         return;
@@ -46,16 +36,6 @@ pub fn open_edit_preview(app: &mut App) {
     let Ok(editor) = Editor::open(path, syntax_theme, app.editor_keymap_mode) else {
         return;
     };
-
-    match execute!(std::io::stdout(), EnableMouseCapture) {
-        // `app.mouse_capture_enabled` is what tells `terminal_setup::restore_terminal`
-        // it's safe to send `DisableMouseCapture` at all when the app
-        // exits -- only set once this actually succeeded, never
-        // unconditionally (see its own doc comment for the crash that
-        // came from assuming it was always safe).
-        Ok(()) => app.mouse_capture_enabled = true,
-        Err(err) => warn!(%err, "failed to enable mouse capture for the markdown preview"),
-    }
 
     app.markdown_edit_preview = Some(preview);
     app.active = 0;

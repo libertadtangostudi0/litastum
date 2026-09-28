@@ -67,7 +67,7 @@ impl Editor {
             self.state.mode = EditorMode::Insert;
         }
 
-        self.dirty = self.state.lines != self.saved_snapshot;
+        self.buffer_changed();
     }
 }
 

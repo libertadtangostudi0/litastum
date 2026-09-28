@@ -121,28 +121,52 @@ impl SearchSession {
         self.selected_match()
     }
 
-    /// `Enter`: the next match, wrapping past the last one. A no-op
-    /// (`None`) when nothing is selected, same as `edtui`'s own `next`.
-    pub(super) fn select_next(&mut self) -> Option<Index2> {
-        let selected = self.selected?;
-        let next = if selected + 1 >= self.matches.len() { 0 } else { selected + 1 };
-        self.selected = Some(next);
-        self.selected_match()
-    }
-
-    /// `Shift+Enter`: the previous match, wrapping past the first one
-    /// (and starting from the last one when nothing is selected yet),
-    /// same as `edtui`'s own `previous`.
-    pub(super) fn select_previous(&mut self) -> Option<Index2> {
+    /// `Enter`/`F3`: selects the first match starting after `caret`,
+    /// wrapping to the very first one past the last. Measured from the
+    /// caret, not from whichever match was selected last -- the caret can
+    /// move freely while the box stays open (focus in the text, VS
+    /// Code-style), and "next" should mean "next from here," exactly as
+    /// it does there. While the box itself has focus the caret sits on
+    /// the selected match's own start, so this is the same as stepping
+    /// to the next match.
+    pub(super) fn select_next_after(&mut self, caret: Index2) -> Option<Index2> {
         if self.matches.is_empty() {
             return None;
         }
-        let previous = match self.selected {
-            Some(0) | None => self.matches.len() - 1,
-            Some(index) => index - 1,
-        };
-        self.selected = Some(previous);
+        self.selected = Some(self.matches.iter().position(|&start| start > caret).unwrap_or(0));
         self.selected_match()
+    }
+
+    /// `Shift+Enter`/`Shift+F3`: the mirror of `select_next_after` -- the
+    /// last match starting before `caret`, wrapping to the very last one.
+    pub(super) fn select_previous_before(&mut self, caret: Index2) -> Option<Index2> {
+        if self.matches.is_empty() {
+            return None;
+        }
+        self.selected = Some(self.matches.iter().rposition(|&start| start < caret).unwrap_or(self.matches.len() - 1));
+        self.selected_match()
+    }
+
+    /// Moves where "search from here" starts -- refocusing the box
+    /// (`Ctrl+F` again) after the caret moved in the text.
+    pub(super) fn set_start_cursor(&mut self, start_cursor: Index2) {
+        self.start_cursor = start_cursor;
+    }
+
+    /// Recomputes every match against an edited buffer -- the box can
+    /// stay open while the text itself is edited, and every stored
+    /// candidate position is stale after that. A full rescan (every
+    /// level's candidates depend on the buffer), keeping the selection
+    /// on the same match if it still exists, or the first one after
+    /// where it was.
+    pub(super) fn rebuild(&mut self, lines: &Lines) {
+        let previous = self.selected_match();
+        let pattern = std::mem::take(&mut self.pattern);
+        self.candidates.clear();
+        for c in pattern {
+            self.push(lines, c);
+        }
+        self.selected = previous.and_then(|previous| self.matches.iter().position(|&start| start >= previous));
     }
 
     /// The currently selected match's own start, if any.
@@ -308,18 +332,33 @@ mod tests {
     }
 
     #[test]
-    fn next_and_previous_wrap_around() {
+    fn next_and_previous_are_measured_from_the_caret_and_wrap() {
         let (_, mut session) = session_for("a a a", "a");
-        session.select_first_from_start();
-        assert_eq!(session.select_next(), Some(Index2::new(0, 2)));
-        assert_eq!(session.select_next(), Some(Index2::new(0, 4)));
-        assert_eq!(session.select_next(), Some(Index2::new(0, 0)), "wraps past the last");
-        assert_eq!(session.select_previous(), Some(Index2::new(0, 4)), "wraps past the first");
+        assert_eq!(session.select_next_after(Index2::new(0, 0)), Some(Index2::new(0, 2)));
+        assert_eq!(session.select_next_after(Index2::new(0, 3)), Some(Index2::new(0, 4)), "from wherever the caret moved to");
+        assert_eq!(session.select_next_after(Index2::new(0, 4)), Some(Index2::new(0, 0)), "wraps past the last");
+        assert_eq!(session.select_previous_before(Index2::new(0, 3)), Some(Index2::new(0, 2)));
+        assert_eq!(session.select_previous_before(Index2::new(0, 0)), Some(Index2::new(0, 4)), "wraps past the first");
     }
 
     #[test]
-    fn next_does_nothing_until_something_is_selected() {
-        let (_, mut session) = session_for("a a", "a");
-        assert_eq!(session.select_next(), None);
+    fn next_with_no_matches_selects_nothing() {
+        let (_, mut session) = session_for("abc", "x");
+        assert_eq!(session.select_next_after(Index2::new(0, 0)), None);
+    }
+
+    /// The box stays open while the text is edited, so stored positions
+    /// go stale -- a rebuild finds the matches in the edited text and
+    /// keeps the selection on the same match.
+    #[test]
+    fn rebuild_after_an_edit_finds_the_moved_matches_and_keeps_the_selection() {
+        let (_, mut session) = session_for("cat cat", "cat");
+        session.select_next_after(Index2::new(0, 0)); // selects the second "cat", (0, 4)
+
+        let edited = Lines::from("xx cat cat");
+        session.rebuild(&edited);
+
+        assert_eq!(session.matches, vec![Index2::new(0, 3), Index2::new(0, 7)]);
+        assert_eq!(session.selected_match(), Some(Index2::new(0, 7)), "the first match at or after where the selected one was");
     }
 }

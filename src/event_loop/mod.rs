@@ -1,10 +1,12 @@
 use std::io::Stdout;
 
 use color_eyre::eyre::Result;
-use crossterm::event::{self, Event, MouseEventKind};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, MouseEvent, MouseEventKind};
+use crossterm::execute;
 use ratatui::{prelude::CrosstermBackend, Terminal};
+use tracing::warn;
 
-use crate::app::App;
+use crate::app::{App, Mode};
 use crate::{explorer, ui};
 
 mod keys;
@@ -72,6 +74,7 @@ pub(crate) fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut A
     }
 
     while !app.should_quit {
+        sync_mouse_capture(app);
         let layout = draw_and_apply_cursor(terminal, app)?;
         for (panel, (cols, rows)) in app.panels.iter_mut().zip(layout) {
             panel.set_columns(cols);
@@ -198,16 +201,11 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
 fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
     match event::read()? {
         Event::Key(key) => handle_key_event(app, key, terminal),
-        // Only ever arrives while `App::markdown_edit_preview` has
-        // turned capture on for itself
-        // (`explorer::markdown_preview::open_edit_preview`'s own doc
-        // comment) -- every other mode just never gets a mouse event to
-        // begin with, so no mode check is needed here the way
-        // `handle_key_event`'s own big match needs one per mode.
-        // `handle_markdown_preview_mouse` itself no-ops outside
-        // `Mode::Editing`/without a linked preview.
+        // Only ever arrives while the built-in editor is open
+        // (`sync_mouse_capture`) -- every other mode never gets a mouse
+        // event to begin with.
         Event::Mouse(mouse) => {
-            explorer::handle_markdown_preview_mouse(app, mouse);
+            handle_mouse(app, mouse);
             let last_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown).then_some(mouse.kind);
             drain_pending_mouse_events(app, terminal, last_scroll)?;
             Ok(true)
@@ -274,7 +272,7 @@ fn drain_pending_mouse_events(app: &mut App, terminal: &mut Terminal<CrosstermBa
             Event::Mouse(mouse) => {
                 let is_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown);
                 let reversed = is_scroll && last_scroll.is_some_and(|prev| prev != mouse.kind);
-                explorer::handle_markdown_preview_mouse(app, mouse);
+                handle_mouse(app, mouse);
                 if reversed {
                     return Ok(());
                 }
@@ -290,4 +288,57 @@ fn drain_pending_mouse_events(app: &mut App, terminal: &mut Terminal<CrosstermBa
         }
     }
     Ok(())
+}
+
+
+/// Mouse capture is on exactly while the built-in editor is open
+/// (`Mode::Editing`, with or without a linked Markdown preview) and off
+/// everywhere else -- checked once per loop iteration rather than
+/// toggled by hand at every place an editor opens or closes, of which
+/// there are several (`F4`, Find file's `F4`, the Markdown
+/// editor+preview, a user-menu command edit, ...).
+///
+/// Scoped this narrowly on purpose: capture takes over the terminal's
+/// own native text selection, which the panels and command line still
+/// need for copying paths and output with the mouse. Requested
+/// directly for the editor, so a click can move the caret -- including
+/// out of the `Ctrl+F` box into the text, VS Code-style (`Editor::mouse`).
+/// Windows Terminal still offers native selection there with
+/// `Shift`+drag.
+///
+/// `app.mouse_capture_enabled` only ever flips after the terminal call
+/// actually succeeded -- `terminal_setup::restore_terminal` relies on it
+/// to never send `DisableMouseCapture` without a successful
+/// `EnableMouseCapture` first (see its own doc comment for the crash
+/// that came from that).
+fn sync_mouse_capture(app: &mut App) {
+    let wanted = matches!(app.mode, Mode::Editing(_));
+    if wanted == app.mouse_capture_enabled {
+        return;
+    }
+    let result = if wanted { execute!(std::io::stdout(), EnableMouseCapture) } else { execute!(std::io::stdout(), DisableMouseCapture) };
+    match result {
+        Ok(()) => app.mouse_capture_enabled = wanted,
+        Err(err) => warn!(%err, wanted, "failed to toggle mouse capture"),
+    }
+}
+
+
+/// One mouse event: the editor gets it when it lands on the editor
+/// (`Editor::contains_screen_position`), a linked Markdown preview gets
+/// everything else (`explorer::handle_markdown_preview_mouse`, which
+/// no-ops without one) -- so the wheel scrolls whichever of the two is
+/// under the pointer, not both. A click into the editor half of an
+/// editor+preview session also gives it keyboard focus (`App::active`).
+fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    if let Mode::Editing(editor) = &mut app.mode {
+        if editor.contains_screen_position(mouse.column, mouse.row) {
+            editor.mouse(mouse);
+            if app.markdown_edit_preview.is_some() && matches!(mouse.kind, MouseEventKind::Down(_)) {
+                app.active = 0;
+            }
+            return;
+        }
+    }
+    explorer::handle_markdown_preview_mouse(app, mouse);
 }

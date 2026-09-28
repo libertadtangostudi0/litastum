@@ -164,7 +164,7 @@ fn drain_pending_editor_typing(app: &mut App, terminal: &mut Terminal<CrosstermB
             }
             Event::Mouse(mouse) => {
                 flush_editor_typing_batch(app, &mut batch);
-                explorer::handle_markdown_preview_mouse(app, mouse);
+                super::handle_mouse(app, mouse);
                 let last_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown).then_some(mouse.kind);
                 return drain_pending_mouse_events(app, terminal, last_scroll);
             }
@@ -208,7 +208,7 @@ fn drain_pending_navigation_keys(app: &mut App, terminal: &mut Terminal<Crosster
             }
             Event::Key(key) => return dispatch_key_event(app, key, terminal),
             Event::Mouse(mouse) => {
-                explorer::handle_markdown_preview_mouse(app, mouse);
+                super::handle_mouse(app, mouse);
                 let last_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown).then_some(mouse.kind);
                 return drain_pending_mouse_events(app, terminal, last_scroll);
             }

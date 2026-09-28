@@ -73,7 +73,7 @@ impl Editor {
     fn swap_in(&mut self, snapshot: Snapshot) -> Snapshot {
         let current = Snapshot { lines: std::mem::replace(&mut self.state.lines, snapshot.lines), cursor: self.state.cursor };
         self.state.cursor = snapshot.cursor;
-        self.dirty = self.state.lines != self.saved_snapshot;
+        self.buffer_changed();
         current
     }
 }

@@ -194,7 +194,7 @@ impl Editor {
         }
 
         if can_mutate_buffer(self.keymap_mode, mode_before, key.code) {
-            self.dirty = self.state.lines != self.saved_snapshot;
+            self.buffer_changed();
         }
     }
 
@@ -252,7 +252,7 @@ impl Editor {
                     DeleteSelection.execute(&mut self.state);
                     InsertChar(c).execute(&mut self.state);
                     self.state.mode = EditorMode::Insert;
-                    self.dirty = self.state.lines != self.saved_snapshot;
+                    self.buffer_changed();
                     return true;
                 }
             }
