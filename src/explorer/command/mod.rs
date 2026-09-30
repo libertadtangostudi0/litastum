@@ -1,14 +1,6 @@
-//! `command.rs` split into one file per concern once it passed the
-//! project's own ~500-line decomposition threshold ([[code-conventions]])
-//! -- 716 lines, mixing the central `execute` dispatcher with every
-//! command's own implementation. `execute` itself stays here since it
-//! needs to see every submodule's handlers; everything else moves to
-//! `open.rs` (`F2`/`F3`/`F4`/`Enter`/`Shift+Enter` -- opening something)
-//! or `transfer.rs` (`F5`/`F6`/`F8`/`Shift+F6` -- copy/move/delete/
-//! rename). Only `execute` was ever reachable from outside this module
-//! (`explorer.rs`'s own `pub use command::execute;`) -- every other
-//! function here was already a private implementation detail, so
-//! nothing needed re-exporting to keep external code working.
+//! Browser commands: `execute` dispatches here; opening things lives in
+//! `open.rs` (`F2`/`F3`/`F4`/`Enter`/`Shift+Enter`), copy/move/delete/
+//! rename in `transfer.rs`.
 
 mod open;
 mod transfer;

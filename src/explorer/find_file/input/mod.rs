@@ -11,21 +11,10 @@ mod typing;
 #[cfg(test)]
 mod test_support;
 
-/// Key handling for all three phases of the popup: typing the query
-/// (`typing::handle_typing_key` — full-cursor editing, `text_field`,
-/// same reasoning as the F5/F6 transfer prompt, this is a modal popup
-/// with no panel navigation happening under it), a search actually
-/// running in the background (`Searching`, see `background.rs` — a
-/// passive "please wait" screen, nothing bound here besides `Esc`
-/// below), and, once it finishes, picking a result
-/// (`results::handle_results_key` — `Up`/`Down`/`Enter`/`Tab`/`F4`).
-/// `Esc` closes from any phase -- during `Searching`, it also cancels
-/// the background search first (`PendingSearch::cancel`), so the
-/// thread stops promptly instead of continuing to churn on a search
-/// nothing's listening to the result of anymore. Handled once, here,
-/// ahead of the per-phase dispatch below, rather than duplicated in
-/// each of `typing`/`results` -- every phase's own `Esc` behavior is
-/// identical except for that one extra cancel step.
+/// Keys for the three phases: typing the query (`typing`, full text-field
+/// editing), `Searching` (only `Esc`), and picking a result (`results`).
+/// `Esc` closes from any phase, handled once here; while searching it
+/// also cancels the background search.
 pub fn handle_find_file_key(app: &mut App, key: KeyEvent) -> Result<()> {
     if key.code == KeyCode::Esc {
         if let Some(Overlay::FindFile(state)) = &app.overlay {
@@ -70,14 +59,8 @@ mod tests {
         assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
 
-    /// `Esc` during `FindFilePhase::Searching` should cancel the
-    /// background search (not just close the popup) -- confirmed
-    /// indirectly, since there's no synchronous way to observe the
-    /// background thread noticing: the search is spawned over a large
-    /// enough tree that, if cancellation weren't actually wired up, it
-    /// would still be running (and would eventually try to send its
-    /// full results into a channel this test's own `app`/`state` no
-    /// longer owns, silently, per `PendingSearch`'s own doc comment).
+    /// `Esc` while searching cancels the search -- observed indirectly: the
+    /// tree is large enough that an uncancelled search would still be running.
     #[test]
     fn esc_during_searching_cancels_the_background_search() {
         use std::fs;

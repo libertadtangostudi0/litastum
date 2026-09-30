@@ -26,14 +26,8 @@ fn render_function_keys(width: u16, alt: bool) -> String {
     rendered_row(&terminal, 0)
 }
 
-/// The actual reported bug: the row used to be one flowing `Line`
-/// with each label's own natural width, so switching `Alt` (e.g.
-/// `"Folder"` <-> `"Find"`, six characters vs. four) visibly
-/// reflowed every key from F7 onward. Column layout fixes this —
-/// this test renders both label sets into a real buffer and checks
-/// that every later key's own column (found by its own `"F<n> "`
-/// prefix) starts at the exact same `x` regardless of which set is
-/// showing, not just that the layout math looks right on paper.
+/// Switching to the `Alt` labels doesn't move any later key: each
+/// `"F<n> "` starts at the same `x` in the rendered buffer.
 #[test]
 fn switching_alt_labels_does_not_shift_later_columns() {
     let default_row = render_function_keys(120, false);
@@ -70,20 +64,10 @@ fn labels_stay_within_the_six_character_budget() {
     }
 }
 
-/// The actual reported bug: closing the built-in editor showed a
-/// single entry crammed into one narrow column for one whole extra
-/// frame. Root cause was `draw`'s own early-return branches (the
-/// editor, Compare, ...) reporting a hardcoded `(1, 1)` layout instead
-/// of each panel's own already-known `(columns, visible_rows)` --
-/// `event_loop::run`'s loop applies whatever this function returns
-/// straight onto both panels via `Panel::set_columns`/`set_visible_rows`
-/// on *every* frame, including every frame the editor stays open, so a
-/// hardcoded placeholder was clobbering the real values down to a
-/// forced single column/row the whole time, not just leaving them
-/// stale for one frame. This drives `draw` itself while in
-/// `Mode::Editing`, with the panels pre-seeded to real, multi-column
-/// values, and checks the returned layout still reports those same
-/// values back -- not `(1, 1)`.
+/// While the editor is open, `draw` reports the panels' real layout, not a
+/// `(1, 1)` placeholder -- it's applied every frame, so the placeholder
+/// crammed the panels into one column. History:
+/// docs/history/event-loop.md.
 #[test]
 fn editing_mode_reports_each_panels_own_unchanged_layout_not_a_placeholder() {
     use crate::app::Mode;

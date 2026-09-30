@@ -1,14 +1,8 @@
 use std::cmp::Ordering;
 
-/// Case-insensitive comparison that treats a run of digits as one
-/// number, not a run of individual characters -- `"2.txt"` sorts before
-/// `"10.txt"`, matching Far Manager's own panel and every other real
-/// file manager. Walks both strings in lockstep, comparing plain
-/// characters one at a time and digit runs (via `compare_digit_runs`)
-/// as a whole, so it never needs to buffer more than one run at a time
-/// or handle mixed content specially -- a name like `"v2.1.3"` still
-/// compares each numeric segment (`2`, `1`, `3`) independently, exactly
-/// as expected.
+/// Case-insensitive, with digit runs compared as numbers (`2.txt` before
+/// `10.txt`, like Far). Walks both strings together; each numeric segment
+/// of `v2.1.3` compares on its own.
 pub(super) fn natural_compare(a: &str, b: &str) -> Ordering {
     let mut a_chars = a.chars().peekable();
     let mut b_chars = b.chars().peekable();
@@ -52,14 +46,9 @@ fn take_digits(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
     digits
 }
 
-/// Numeric comparison of two digit runs, without parsing into an
-/// integer (a name could in principle have an absurdly long digit run —
-/// this stays correct rather than overflowing or silently truncating).
-/// Leading zeros are trimmed first so the comparison reflects the
-/// *value*, not the digit run's own literal length (`"007"` and `"7"`
-/// compare equal here) -- once trimmed, a longer digit run is always a
-/// larger number, and equal-length runs compare the same lexicographically
-/// as they would numerically.
+/// Compares two digit runs by value without parsing (no overflow on a huge
+/// run): leading zeros trimmed, then longer is larger and equal lengths
+/// compare lexicographically.
 fn compare_digit_runs(a: &str, b: &str) -> Ordering {
     let a_trimmed = a.trim_start_matches('0');
     let b_trimmed = b.trim_start_matches('0');

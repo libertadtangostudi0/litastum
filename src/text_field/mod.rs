@@ -87,18 +87,10 @@ fn is_word_char(c: char) -> bool {
 }
 
 
-/// `/` and `\` -- singled out from the generic "non-word character" run
-/// below so each one is its own word-movement stop, not silently
-/// chained together with an adjacent word into one jump. Reported
-/// directly against a real path (`/branches/Features/DataExtraction...`):
-/// with `/` treated the same as any other separator (spaces, dots, ...),
-/// Ctrl+Right from right before a `/` jumped straight through it *and*
-/// the whole next path segment in one press, so landing right after
-/// just the `/` needed bouncing Ctrl+Right then Ctrl+Left. Deliberately
-/// narrow (just these two characters, not every separator) so the
-/// already-established "skip a punctuation run, then the following
-/// word, in one press" behavior for everything else (spaces, dots, ...)
-/// stays exactly as documented/tested below.
+/// `/` and `\` are word stops of their own, not chained into the next
+/// word: `Ctrl+Right` before a `/` jumped the whole next path segment.
+/// Only these two -- other punctuation keeps "skip the run and the next
+/// word". `.claude/rules/litastum-command-line.md`.
 fn is_path_sep(c: char) -> bool {
     c == '/' || c == '\\'
 }
@@ -336,21 +328,13 @@ pub enum EditOutcome {
     Unhandled,
 }
 
-/// The standard single-line editing keys, in one place: `Backspace`/
-/// `Delete` (consuming a selection first if there is one), `Shift`/
-/// `Ctrl+Shift` + `Left`/`Right` to select by character/word, `Ctrl` +
-/// `Left`/`Right` to jump a word, plain `Left`/`Right` (collapsing a
-/// selection to its near edge first), `Home`/`End`, `Ctrl+C`/`Ctrl+X`/
-/// `Ctrl+V` against the real OS clipboard, and typing (which replaces a
-/// selection). Pulled out of Find file's own field handling
-/// when the editor's `Ctrl+F` box needed exactly the same keys --
-/// requested directly: "the same as in Find file" -- so both stay
-/// identical by construction instead of by copy.
-///
-/// Order matters for the arrow keys: `Ctrl+Shift` is checked before
-/// plain `Shift` (both have `SHIFT` set -- reported directly once as
-/// word-wise selection silently doing character-wise selection instead),
-/// and `Shift` before `Ctrl` and plain arrows.
+/// The standard single-line editing keys: `Backspace`/`Delete` (a
+/// selection first), `Shift`/`Ctrl+Shift` + arrows select, `Ctrl` + arrows
+/// jump words, plain arrows (collapsing a selection), `Home`/`End`,
+/// `Ctrl+C`/`X`/`V` with the OS clipboard, typing over a selection. Shared
+/// by Find file and the editor's `Ctrl+F` box ("the same as in Find
+/// file"). `Ctrl+Shift` is checked before `Shift` (both have `SHIFT`),
+/// which once made word selection character-wise.
 fn apply_edit_key(text: &mut String, cursor: &mut usize, anchor: &mut Option<usize>, key: KeyEvent) -> EditOutcome {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);

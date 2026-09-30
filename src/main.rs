@@ -33,29 +33,14 @@ fn main() -> Result<()> {
     let mut terminal = setup_terminal()?;
     let (theme, syntax_theme) = theming::config::load_active_theme();
     let mut app = App::new(start_dir, theme, syntax_theme)?;
-    // Queried once here -- after entering the alternate screen
-    // (`setup_terminal` above) but before `run()` starts reading
-    // keyboard events -- see `App::image_picker`'s own doc comment for
-    // why that ordering matters (the query writes/reads raw escape
-    // sequences on stdio that could otherwise collide with, or be
-    // swallowed by, crossterm's own event reader). Falls back to
-    // `App::new`'s own `Picker::halfblocks()` default on any error,
-    // same "never blocks startup" rule the rest of this function
-    // follows.
+    // Queried after entering the alternate screen but before `run()` reads
+    // events: the query uses raw escape sequences on stdio. On error,
+    // `App::new`'s half-blocks stay.
     if let Ok(picker) = ratatui_image::picker::Picker::from_query_stdio() {
         app.image_picker = picker;
     }
-    // The query above writes and reads raw escape sequences directly on
-    // stdio, bypassing `ratatui`'s own render buffer entirely -- reported
-    // directly as a real visible glitch (some stray text briefly shown
-    // in a panel before the real UI appears). `ratatui`'s own diffing
-    // render only rewrites cells that differ from its *own* last-known
-    // buffer, which starts out blank and has no idea the query just
-    // wrote real bytes to the actual screen -- so a query artifact
-    // sitting outside whatever the very first frame happens to redraw
-    // could otherwise linger. `Terminal::clear()` forces the next
-    // `draw()` to treat the whole screen as needing a full repaint,
-    // guaranteeing that first frame actually overwrites everything.
+    // The query wrote to the real screen behind `ratatui`'s buffer, and stray
+    // text showed in a panel before the UI; `clear()` forces a full repaint.
     terminal.clear()?;
     // Applies a shell profile saved via F9 -> Options -> Save setup, if
     // its name still matches one of the built-in profiles -- a name
@@ -86,14 +71,8 @@ fn main() -> Result<()> {
     // `CONTENT_HISTORY_FILE`'s own doc comments.
     app.find_file_name_history = explorer::find_file_history::load_history(explorer::find_file_history::NAME_HISTORY_FILE);
     app.find_file_content_history = explorer::find_file_history::load_history(explorer::find_file_history::CONTENT_HISTORY_FILE);
-    // One-time startup check, requested directly: a FarMenu.ini sitting
-    // in the directory litastum was launched from should be offered for
-    // porting immediately, not only once the user happens to press F2
-    // there -- same Overlay::ConfirmPortFarMenu popup either way
-    // (`explorer::user_menu::state::resolve_menu` reports a FarMenu.ini's
-    // presence unconditionally, even over an already-configured
-    // LitastumMenu.toml, so this also covers "I already have a menu and
-    // just dropped a new FarMenu.ini in").
+    // A `FarMenu.ini` in the launch directory is offered for porting right
+    // away, not only on `F2` (requested).
     if let explorer::MenuFile::FarMenuFound(far_path) = explorer::resolve_menu(&app.panels[0].path) {
         app.overlay = Some(Overlay::ConfirmPortFarMenu(far_path));
     }

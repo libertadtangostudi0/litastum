@@ -19,14 +19,9 @@ const MARGIN: u16 = 1;
 /// spelling out") and no footer hints.
 const WIDTH: u16 = 30;
 
-/// Renders the `Ctrl+F` search box -- reported too large and too
-/// labeled on a first pass (used the same chrome as the F8 delete
-/// popup, `popup::draw_frame`, with a dot+title row and a corner
-/// badge): redone as a single-row bordered field, anchored to the
-/// editor area's own top-right corner rather than centered, matching
-/// how VS Code/Sublime's own find widgets are positioned. Returns
-/// where the real terminal cursor should sit, same mechanism as the
-/// command line's own cursor (`ui::draw`).
+/// The `Ctrl+F` box: a single-row bordered field at the editor's top-right,
+/// like VS Code's (the first version, a full popup card, was too big).
+/// Returns the cursor position.
 pub fn draw_find_popup(frame: &mut Frame, area: Rect, editor: &Editor, search_history: &[String], theme: &Theme) -> Position {
     let width = WIDTH.min(area.width);
     let popup = Rect {

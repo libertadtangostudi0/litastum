@@ -1,14 +1,9 @@
 use ratatui::style::Color;
 
 
-/// Color palette for the whole UI. Values are lifted from the "color 2"
-/// GitHub Dark mockup agreed while planning — see
-/// `.claude/rules/litastum-ui-theme.md` for the source hex values.
-///
-/// `Copy` (all fields are `Color`, itself `Copy`): `App` owns the live
-/// theme so the F9 menu can swap it at runtime, and rendering copies it
-/// out once per frame rather than juggling a borrow of `App` alongside
-/// `&mut app.mode` for the whole draw call.
+/// The UI palette; `dark()` holds the "color 2" GitHub Dark values
+/// (`.claude/rules/litastum-ui-theme.md`). `Copy`, so drawing copies it
+/// once per frame instead of borrowing `App` next to `&mut app.mode`.
 #[derive(Clone, Copy)]
 pub struct Theme {
     pub bg: Color,
@@ -32,49 +27,18 @@ pub struct Theme {
     /// focus — `accent` blended over `bg` at ~15% alpha (ratatui has no
     /// real alpha blending, so this is precomputed).
     pub current_row_bg: Color,
-    /// Text color to use *over* `current_row_bg`, if a scheme's own
-    /// `current_row_bg` is bright/saturated enough that the ordinary
-    /// text color (or a file's own type color, in the panel) would read
-    /// poorly on it -- `None` (every built-in scheme, and any Windows
-    /// Terminal JSON downloaded as-is) means "don't override, keep
-    /// whatever color the text would already have," today's behavior
-    /// exactly. Requested directly, after setting a theme's own
-    /// `selectionBackground` to a vivid ANSI `green` swatch for a bolder
-    /// highlight than the theme's own real selection color, and asking
-    /// for black text inside it -- reusing the whole-buffer
-    /// text or a file's own type color unmodified over a bright green
-    /// background would be hard to read. See `ColorScheme::to_theme`/
-    /// `ColorScheme::selection_foreground` for the optional,
-    /// litastum-specific `selectionForeground` JSON extension this
-    /// comes from -- same shape as `command_line_prefix` below, just
-    /// with "leave it alone" as the fallback instead of a fixed color,
-    /// since forcing a uniform text color over every theme's own
-    /// current-row highlight would undo the deliberate "file-type color
-    /// survives being the selected row" convention
-    /// (`.claude/rules/litastum-theming.md`) for every scheme that
-    /// never asked for this.
+    /// Text color over `current_row_bg`, for a scheme whose selection color is
+    /// bright enough to need one (from `selectionForeground`). `None` keeps
+    /// whatever color the text already has -- forcing one would undo file-type
+    /// colors on the selected row for every other scheme.
     pub selection_text: Option<Color>,
-    /// The `"{cwd}> "` prefix shown before typed text on the command
-    /// line. Defaults to `accent` (and always did, before this field
-    /// existed) — kept as its own field rather than folded into
-    /// `accent` because a Windows Terminal scheme has no field this can
-    /// be derived from in general (real Far Manager uses a distinct,
-    /// bold, un-named accent color here — `CommandLine.Prefix` in its
-    /// own color scheme — that doesn't correspond to any of the 16
-    /// standard ANSI slots a WT scheme defines). See
-    /// `ColorScheme::to_theme`/`ColorScheme::command_line_prefix` for
-    /// the optional, litastum-specific `commandLinePrefix` JSON
-    /// extension this comes from.
+    /// The command line's `"{cwd}> "` prefix. Its own field because Far's
+    /// `CommandLine.Prefix` color matches no WT slot (from
+    /// `commandLinePrefix`, else `accent`).
     pub command_line_prefix: Color,
-    /// Background for a removed line in the Compare view (`Alt+F5`) --
-    /// deliberately its own field rather than reusing `danger` directly
-    /// as a `.bg()`: `danger` is used everywhere else in this codebase
-    /// as a small foreground accent, never a full-line background wash,
-    /// and GitHub's own diff colors this view is modeled on are
-    /// noticeably dimmer/desaturated than a raw accent-red would look
-    /// painted across an entire line against `bg`. Computed once, for
-    /// `Theme::dark()`, by hand -- see `diff_added_bg` below for the
-    /// same reasoning.
+    /// Background of a removed line in Compare: its own field, since `danger`
+    /// is a small foreground accent and a full-line wash needs a dimmer color,
+    /// like GitHub's. Precomputed for `dark()`; see `diff_added_bg`.
     pub diff_removed_bg: Color,
     /// Background for an added line in the Compare view -- the other
     /// half of `diff_removed_bg` above, same reasoning, dimmed from
@@ -98,18 +62,9 @@ impl Theme {
             current_row_bg: Color::Rgb(0x18, 0x27, 0x3a),
             selection_text: None,
             command_line_prefix: Color::Rgb(0x58, 0xa6, 0xff),
-            // `danger`/`success` blended ~30% over `bg` by hand (see
-            // `blend_over_bg` below for the same computation done at
-            // runtime, for a custom scheme) -- a plain `const fn` can't
-            // do the floating-point blend itself, so this is the
-            // precomputed result, same as `current_row_bg` above.
-            // Started at 20%, tried 13% after a report that
-            // `github-dark-default` read too burgundy/saturated --
-            // reverted the other way after *that* was reported as
-            // worse (too pale/washed-out across the themes actually
-            // tried) than the original 20%. Landed higher than either,
-            // at 30%, per that same follow-up request for a brighter
-            // highlight.
+            // `danger`/`success` blended 30% over `bg`, precomputed (`blend_over_bg`
+            // can't run in a `const fn`). 20% first, then 13% (too burgundy), then
+            // back up past 20% on request (13% was washed out). History: docs/history/theming.md.
             diff_removed_bg: Color::Rgb(0x54, 0x24, 0x26),
             diff_added_bg: Color::Rgb(0x1c, 0x43, 0x28),
         }
@@ -117,15 +72,9 @@ impl Theme {
 }
 
 
-/// Blends `fg` over `bg` at `alpha` (`0.0` = all `bg`, `1.0` = all
-/// `fg`) -- `ratatui` has no real alpha blending (`current_row_bg`'s
-/// own doc comment already notes this for the one hand-computed case
-/// that predates this function), so this is the general version, used
-/// by `ColorScheme::to_theme` to derive `diff_removed_bg`/`diff_added_bg`
-/// for a *custom* scheme from its own `danger`/`success` -- `Theme::dark()`'s
-/// own values above are this exact computation, done once by hand, at
-/// `alpha = 0.3`, since a `const fn` can't do floating-point work in a
-/// `const` context.
+/// Blends `fg` over `bg` at `alpha` (`0.0` all `bg`, `1.0` all `fg`) --
+/// `ratatui` has no alpha. Derives the diff backgrounds for custom
+/// schemes; `dark()`'s are this at 0.3, done by hand.
 pub fn blend_over_bg(fg: Color, bg: Color, alpha: f32) -> Color {
     let (Color::Rgb(fr, fg_, fb), Color::Rgb(br, bg_, bb)) = (fg, bg) else {
         return fg;

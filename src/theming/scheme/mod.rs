@@ -7,19 +7,10 @@ use serde::Deserialize;
 use super::theme::{blend_over_bg, Theme};
 
 
-/// A Windows Terminal-format color scheme — the exact JSON shape
-/// Windows Terminal itself uses for `colorSchemes`, and what
-/// <https://windowsterminalthemes.dev/> exports, so a downloaded file
-/// drops in unmodified. See `.claude/rules/litastum-theming.md` for the
-/// mapping this drives onto our own `Theme` and the editor's syntax
-/// theme, and the reasoning behind it.
-///
-/// `black`/`white`/most `bright*` fields aren't consumed by
-/// `to_theme`/`to_syntax_theme` yet (see the mapping table in
-/// `.claude/rules/litastum-theming.md`) — kept anyway, rather than
-/// dropped, for full round-trip fidelity with the WT JSON format and
-/// for future mapping expansion; `#[allow(dead_code)]` documents that
-/// as deliberate instead of silencing a real oversight.
+/// A Windows Terminal color scheme, in WT's own `colorSchemes` JSON (what
+/// <https://windowsterminalthemes.dev/> exports). Mapping:
+/// `.claude/rules/litastum-theming.md`. Fields not mapped yet are kept for
+/// round-trip fidelity; `#[allow(dead_code)]` marks that as deliberate.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct ColorScheme {
@@ -55,28 +46,12 @@ pub struct ColorScheme {
     pub selection_background: String,
     #[serde(rename = "cursorColor")]
     pub cursor_color: String,
-    /// Optional, litastum-specific extension to the standard Windows
-    /// Terminal JSON shape — not part of the format WT itself writes,
-    /// so absent from every scheme sourced from
-    /// <https://windowsterminalthemes.dev/>. Exists because real Far
-    /// Manager's own `CommandLine.Prefix` color (bold, a distinct
-    /// terracotta/orange in the "far-lts-alien" scheme) doesn't
-    /// correspond to any of the 16 standard ANSI slots above — there's
-    /// no principled way to derive it from them the way every other
-    /// `Theme` field is derived. `#[serde(default)]` so existing scheme
-    /// files without it keep parsing exactly as before; `to_theme`
-    /// falls back to the same `accent` color when it's absent.
+    /// litastum-specific, optional: Far's bold `CommandLine.Prefix` color,
+    /// which no ANSI slot holds. Absent -> `accent`.
     #[serde(default, rename = "commandLinePrefix")]
     pub command_line_prefix: Option<String>,
-    /// Optional, litastum-specific extension, same shape as
-    /// `command_line_prefix` above — absent from every scheme sourced
-    /// from <https://windowsterminalthemes.dev/>. Overrides the text
-    /// color drawn *over* `selectionBackground` (the panel's current
-    /// row, the editor's own text selection); `None` (the default for
-    /// every scheme that doesn't set this) leaves that text whatever
-    /// color it would already be — see `Theme::selection_text`'s own
-    /// field doc comment for why "leave it alone" is the fallback here,
-    /// unlike `command_line_prefix`'s fallback to `accent`.
+    /// litastum-specific, optional: text color over `selectionBackground`.
+    /// Absent -> leave the text color alone (see `Theme::selection_text`).
     #[serde(default, rename = "selectionForeground")]
     pub selection_foreground: Option<String>,
 }
@@ -137,43 +112,12 @@ impl ColorScheme {
     }
 
 
-    /// Derives a `syntect` theme for the editor's syntax highlighting
-    /// from the same 16 colors, base16-style — Windows Terminal's 8
-    /// base colors line up closely with base16's
-    /// keyword/string/comment/etc. roles (that mapping is base16's own
-    /// original design, not a stretch we're inventing). Deliberately
-    /// modest: common scopes only, not an exhaustive TextMate grammar.
-    ///
-    /// Includes `markup.*` (Markdown headings/bold/italic/lists/links/
-    /// quotes/code) alongside the original code-oriented scopes — found
-    /// missing after a report that `.md` files "have no highlighting"
-    /// under a custom `editor_theme`: `syntect`'s bundled default set
-    /// *does* include a Markdown grammar (unlike `.ps1` — see
-    /// `editor.rs`'s `syntect_bundles_rust_but_not_powershell` test),
-    /// so the highlighter was genuinely running, but every `markup.*`
-    /// scope it emitted fell through to this theme's plain `foreground`
-    /// with nothing here naming it — indistinguishable from "no
-    /// highlighting" even though it technically wasn't that. The
-    /// built-in `dracula` fallback theme (`editor.rs::SYNTAX_THEME`,
-    /// used with no `editor_theme` configured) already had real
-    /// `markup.*` rules of its own, which is why this gap only showed
-    /// up once a *custom* scheme was applied.
-    ///
-    /// Same exact gap, same fix, hit again for `.diff`/`.patch`: they
-    /// have a real grammar (`syntect`'s own bundled default already
-    /// resolves `.diff`/`.patch` to a "Diff" `SyntaxReference` —
-    /// confirmed directly, no `BUNDLED_GRAMMARS` entry needed), but its
-    /// `markup.inserted.diff`/`markup.deleted.diff`/`markup.changed.diff`/
-    /// `meta.diff.*` scopes (verified against sublimehq/Packages' own
-    /// `Diff/Diff.sublime-syntax`) had nothing here naming them either
-    /// — reported as "works when a prior build without a custom
-    /// `editor_theme` configured is run, not with a fresh build using
-    /// the configured one," which pointed straight at this same
-    /// custom-theme-only gap rather than a build issue. `markup.inserted`/
-    /// `markup.deleted`/`markup.changed` (no `.diff` suffix) are prefix
-    /// selectors -- they also match any *other* grammar using the same
-    /// convention (e.g. a unified-diff-shaped `gitcommit`/`patch`
-    /// grammar), not just this one.
+    /// Derives the editor's `syntect` theme from the 16 colors, base16-style
+    /// (WT's base colors map onto base16's roles). Common scopes only, plus
+    /// `markup.*` (Markdown) and the diff scopes -- both rendered plain under
+    /// a custom scheme until named here, while the `dracula` fallback colored
+    /// them. The un-suffixed diff selectors are prefix matches on purpose.
+    /// History: docs/history/theming.md.
     pub fn to_syntax_theme(&self) -> SynTheme {
         let settings = ThemeSettings {
             background: Some(syn_rgb(&self.background)),

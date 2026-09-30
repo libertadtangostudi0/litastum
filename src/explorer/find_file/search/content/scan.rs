@@ -192,15 +192,9 @@ mod tests {
         assert!(file_contains_with_chunk_size(&path, "needle", 4));
     }
 
-    /// Regression coverage for the real report (compared side by side
-    /// against real Far Manager on the same tree, "1783 vs 1778" -- a
-    /// handful of real files silently missing): an ASCII needle
-    /// (`"pragma"`) must still be found even when the *rest* of the file
-    /// isn't valid UTF-8 -- a legacy source file with e.g.
-    /// `Windows-1251`-encoded Cyrillic comments mixed into otherwise
-    /// ASCII/UTF-8 content, confirmed by hand as the actual root cause
-    /// of one of the missing files (a `#pragma managed(push, off)` line
-    /// that used to be silently skipped).
+    /// An ASCII needle is found in a file that isn't valid UTF-8 elsewhere
+    /// (Windows-1251 comments) -- one of the files missing against Far
+    /// ("1783 vs 1778"). History: docs/history/find-file-search.md.
     #[test]
     fn file_contains_finds_an_ascii_match_even_when_the_rest_of_the_file_is_not_valid_utf8() {
         let dir = scratch_dir();

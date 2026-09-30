@@ -171,14 +171,8 @@ fn resolve_style(theme: &SynTheme, scope: &str) -> edtui::syntect::highlighting:
     Highlighter::new(theme).style_for_stack(stack.as_slice())
 }
 
-/// Regression test for the "`.md` files have no highlighting under
-/// a custom theme" report: before `markup.*` scopes were added to
-/// `to_syntax_theme`, `markup.heading`/`markup.bold` resolved to the
-/// plain foreground color with no bold, indistinguishable from
-/// unstyled text — even though the highlighter itself was running
-/// (`syntect`'s bundled Markdown grammar *is* present; see
-/// `editor.rs`'s `syntect_bundles_rust_but_not_powershell` test for
-/// the contrasting case where the grammar itself is missing).
+/// Markdown headings/bold get real styles under a custom scheme -- the
+/// grammar ran, but its `markup.*` scopes fell through to plain text.
 #[test]
 fn to_syntax_theme_gives_markdown_headings_and_bold_a_real_style() {
     let scheme = ColorScheme::from_json_str(APPLE_SYSTEM_COLORS_JSON).unwrap();
@@ -198,16 +192,8 @@ fn to_syntax_theme_gives_markdown_headings_and_bold_a_real_style() {
     assert_eq!(link_style.foreground, syn_rgb(&scheme.blue));
 }
 
-/// Regression test for the "diff/patch files have no highlighting
-/// under a custom theme" report -- same shape as the Markdown gap
-/// above (a real grammar, `syntect`'s own bundled "Diff", genuinely
-/// runs, but nothing named its scopes), reported specifically as
-/// "works with a build that has no `editor_theme` configured, not
-/// with the one actually using it" -- confirming the built-in
-/// `dracula` fallback theme happened to already color these scopes
-/// while this hand-built one didn't, exactly like the Markdown case.
-/// Scope names taken from the real grammar
-/// (sublimehq/Packages' `Diff/Diff.sublime-syntax`), not guessed.
+/// Diff scopes get colors under a custom scheme (names from
+/// sublimehq/Packages' `Diff.sublime-syntax`) -- the same gap as Markdown.
 #[test]
 fn to_syntax_theme_gives_diff_added_removed_and_changed_lines_a_real_style() {
     let scheme = ColorScheme::from_json_str(APPLE_SYSTEM_COLORS_JSON).unwrap();

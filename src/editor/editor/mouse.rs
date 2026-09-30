@@ -14,20 +14,10 @@ impl Editor {
         column >= area.x && column < area.right() && row >= area.y && row < area.bottom()
     }
 
-    /// A mouse event over the editor: a click places the caret, a drag
-    /// selects, the wheel scrolls -- all `edtui`'s own mouse handling
-    /// (its `mouse-support` feature, already enabled), which maps the
-    /// screen position through its own viewport and line wrapping.
-    ///
-    /// Requested directly, to match VS Code: clicking into the text while
-    /// the `Ctrl+F` box is open moves keyboard focus to the text (so the
-    /// caret can be moved on from there with the arrows) without closing
-    /// the box or losing its match highlight -- `blur_search_box` first.
-    ///
-    /// `edtui` switches a click that ends a `Visual` selection to
-    /// `Normal` (its own vim-shaped default); the `Standard` keymap never
-    /// uses `Normal` at all, so that's corrected straight back to its own
-    /// `Insert`.
+    /// A mouse event over the editor -- click, drag-select and wheel are
+    /// `edtui`'s own handling. A click while the `Ctrl+F` box is open moves
+    /// focus to the text but keeps the box and its match (VS Code). `edtui`
+    /// ends a click-selection in `Normal`; `Standard` goes back to `Insert`.
     pub fn mouse(&mut self, mouse: MouseEvent) {
         if matches!(mouse.kind, MouseEventKind::Down(_)) {
             self.blur_search_box();

@@ -79,14 +79,8 @@ fn handle_editor_key_ctrl_a_selects_the_entire_buffer() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "", "deleting a Ctrl+A selection should clear the whole buffer");
 }
 
-/// Regression test for the real, reported bug: `Ctrl+A` then
-/// `Backspace` then a single `Ctrl+Z` did nothing at all -- only a
-/// *second* `Ctrl+Z` actually restored the deleted text. Root cause:
-/// the old table entry captured an undo checkpoint twice for one
-/// keypress (once correctly, inside `DeleteSelection`, and once more
-/// spuriously when returning to `Insert` mode afterward) -- see
-/// `bindings::is_selection_consuming_key`'s own doc comment for the
-/// full mechanism. One `Ctrl+Z` must restore everything now.
+/// `Ctrl+A`, `Backspace`, one `Ctrl+Z` restores everything -- a second
+/// undo checkpoint used to need a second `Ctrl+Z`. History: docs/history/editor-keymap.md.
 #[test]
 fn handle_editor_key_ctrl_z_undoes_a_select_all_delete_in_one_press() {
     let (mut app, path) = open_editor_app("hello\nworld\n");
@@ -173,14 +167,8 @@ fn handle_editor_key_vim_delete_undo_and_save_all_keep_is_dirty_correct() {
     assert_eq!(fs::read_to_string(&file_path).unwrap(), "ix\n");
 }
 
-/// Same as `handle_editor_key_esc_with_an_active_selection_cancels_the_selection_instead_of_closing`,
-/// but through a real Vim `Visual`-mode selection (opened with `v`,
-/// Vim's own binding, not `Shift+Right`) -- confirms `Close`'s own
-/// `editor.has_selection()` check and the subsequent forward-to-`input`
-/// both work correctly against `edtui`'s own Vim state too, not just
-/// `Standard`'s. `Esc` reaching `Editor::input` there hits Vim's own
-/// `v(Esc) -> SwitchMode(Normal)` binding, which is what actually
-/// clears the selection here -- not any of this project's own logic.
+/// `Esc` with a Vim `Visual` selection (from `v`) clears it rather than
+/// closing the editor; Vim's own `v(Esc)` binding does the clearing.
 #[test]
 fn handle_editor_key_esc_with_an_active_vim_visual_selection_cancels_it_instead_of_closing() {
     let dir = unique_scratch_dir("editor-keymap");
@@ -204,18 +192,9 @@ fn handle_editor_key_esc_with_an_active_vim_visual_selection_cancels_it_instead_
     assert_eq!(editor.mode(), edtui::EditorMode::Normal);
 }
 
-/// Regression test for a real bug found by hand while testing Vim
-/// mode directly: `Ctrl+Shift+Right` used to run
-/// `Editor::extend_word_selection` (this project's own hand-rolled,
-/// Standard-keymap-tuned word-selection logic) regardless of
-/// `keymap_mode`, forcing `state.mode` into `Visual` completely
-/// outside any of Vim's own bindings -- contradicting
-/// `EditorKeymapMode::Vim`'s own documented promise that none of
-/// this project's correction passes run while Vim is active.
-/// `edtui`'s own `vim_mode()` table has no entry for this key
-/// combination either, so the fix (forwarding the raw key instead)
-/// must leave the editor completely unaffected -- no selection, no
-/// mode change, cursor untouched.
+/// Under Vim, `Ctrl+Shift+Right` is forwarded raw (unbound in
+/// `vim_mode()`), not run through our word selection -- which forced
+/// `Visual`. Nothing may change. History: docs/history/editor-keymap.md.
 #[test]
 fn handle_editor_key_ctrl_shift_right_is_a_noop_in_vim_mode_not_word_select() {
     let dir = unique_scratch_dir("editor-keymap");

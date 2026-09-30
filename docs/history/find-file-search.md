@@ -36,6 +36,17 @@ Code: `src/explorer/find_file/search/` (`mod.rs::search_cancelable`,
    turning them on would change *what* a search finds.
    `threads(available_parallelism())` overrides `ignore`'s own cap of 12
    (requested: scale with the machine), matching the content pool.
+7. **Name matching without allocations** (`matching.rs`), requested
+   once the walk was parallel: every visited entry built a lowercased
+   `String` of its name, millions of short-lived allocations on a big
+   tree. When name and query are both ASCII, case folding is per byte
+   in place (`contains_ascii_case_insensitive`, `glob_match_ascii`);
+   anything non-ASCII takes the old full-Unicode path. Then
+   `ParsedQuery` moved the glob pattern's `Vec<char>` out of the
+   per-entry path, built once per search. It's built for *every* glob
+   query, not only a non-ASCII one: an ASCII `*.md` still reaches the
+   `char` path on a non-ASCII file name -- a test failure caught the
+   first version, which only covered a non-ASCII query.
 
 ## Reports since
 
@@ -64,6 +75,22 @@ Code: `src/explorer/find_file/search/` (`mod.rs::search_cancelable`,
   UTF-8 requirement (`scan_ascii_bytes`). A non-ASCII needle still
   needs real case folding and keeps the UTF-8 scan, with its "valid
   prefix only" limit.
+
+## The results popup
+
+- **No way to get one path out** short of exporting the whole list;
+  `Ctrl+C` copies the highlighted path.
+- **Comparing two results** (`Alt+F5` on two marked ones), requested:
+  search hits often live in directories that aren't in the panels.
+  Marks are indices, not names -- two results can share a name.
+- **`F4` then closing the editor lost the results**; they're parked in
+  `App::editor_return_to` and restored.
+- **The search duration** is shown on request.
+- **The two fields keep separate histories**, as requested.
+- **Content workers**: a fixed slice per thread starved on uneven file
+  sizes, so work comes from a shared counter; and checking "enough
+  found?" under the results `Mutex` on every iteration contended, so it
+  reads the `found` atomic instead.
 
 ## Still open
 

@@ -1,24 +1,13 @@
-//! `Alt+F5`: a two-file, side-by-side, **fully editable**, GitHub-diff-
-//! colored comparer, modeled loosely on Far Manager's own `merge.exe`
-//! but reusing this app's own `Editor`/themes -- see `TODO/file-compare.md`
-//! for the full design. Both files come from the two panels directly
-//! (the active panel's own selected file on the left, the *other*
-//! panel's own selected file on the right) -- no file picker.
-//!
-//! Split by concern like every other multi-file feature in this
-//! codebase: `diff` (the live, `similar`-backed line-level comparison,
-//! recomputed every frame from both panes' current text -- classifies
-//! rows and maps between the two sides, nothing more; neither pane's
-//! real buffer ever has synthetic filler lines injected into it),
-//! `line_ending` (the F9 -> Line endings feature and its own per-line
-//! `CRLF`/`LF` detection), `state` (`CompareState`, two real, independent
-//! `editor::Editor` sessions plus which one currently has focus -- see
-//! its own doc comment for how the *unfocused* pane's viewport stays
-//! diff-aligned with the focused one without ever touching either
-//! pane's real content), `input` (key handling: Compare-level commands
-//! first, everything else forwarded into the focused `Editor`),
-//! `menu`/`line_ending_menu` (the two-level F9 menu, mirroring
-//! `editor::menu`/`editor::keymap_menu`'s own shape).
+//! `Alt+F5`: a side-by-side, fully editable file comparer with GitHub-style
+//! diff colors, loosely after Far's `merge.exe`; design in
+//! `TODO/file-compare.md`. Left is the active panel's selected file,
+//! right the other panel's.
+//! - `diff`: the live line diff, recomputed every frame -- classifies rows
+//!   and maps between sides; never inserts filler into a buffer;
+//! - `line_ending`: per-line `CRLF`/`LF` detection (F9 -> Line endings);
+//! - `state`: two real `Editor`s and which has focus;
+//! - `input`: Compare commands first, the rest to the focused editor;
+//! - `menu`/`line_ending_menu`: the F9 menu.
 
 mod diff;
 mod input;

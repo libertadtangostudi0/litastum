@@ -11,35 +11,12 @@ use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 use crate::ui::preview::{draw_preview_frame, file_title};
 
-/// Renders `F3`'s currently-linked Markdown preview (`App::markdown_edit_preview`)
-/// into `area` -- replaces the right panel's own file listing entirely
-/// while it's `Some` (alongside the built-in editor in the left panel,
-/// `Mode::Editing`/`MarkdownLinkSearch`). Border/title
-/// chrome comes from `ui::preview::draw_preview_frame`, shared with
-/// `ui::image_preview::draw_image_preview` (same active-panel border
-/// styling for both).
-///
-/// Word-wraps each logical line *itself* (`explorer::wrap_markdown_line`)
-/// rather than handing `ratatui`'s own `Paragraph` a `Wrap` to do it --
-/// the two would look identical on screen, but only wrapping it here
-/// means the exact same rows handed to `Paragraph` can also be used to
-/// build `state`'s own click hitboxes (`set_visible_row_links`), so
-/// rendering and mouse hit-testing can never disagree (an earlier
-/// version approximated a click's row against `state.scroll()`
-/// directly, without knowing where `ratatui`'s own wrap points landed,
-/// and drifted once an earlier line had actually wrapped -- reported
-/// directly against a real link that sat right after a long paragraph).
-///
-/// Records `inner` on `state` (`set_content_area`) every frame -- the
-/// one place that actually knows where the content landed on screen,
-/// needed by `explorer::markdown_preview::handle_markdown_preview_mouse`
-/// to turn a raw mouse click position back into "which rendered row."
-///
-/// The bottom border shows `state.link_message()` (what the *last*
-/// `Ctrl`+click actually did -- opened, failed, or found nothing to
-/// open) once there's been one, or a static "how to do this at all"
-/// hint before that -- added after `Ctrl`+click was reported as giving
-/// no visible feedback at all, indistinguishable from not working.
+/// Draws the linked Markdown preview in place of the right panel's
+/// listing, in `preview::draw_preview_frame`. Wraps lines itself
+/// (`wrap_markdown_line`) so the click hitboxes
+/// (`set_visible_row_links`) come from the rows actually drawn, and
+/// records the content area for mouse handling. The bottom border shows
+/// the last link action's result, or a usage hint. History: docs/history/markdown-preview.md.
 pub fn draw_markdown_preview(frame: &mut Frame, area: Rect, state: &mut MarkdownPreviewState, theme: &Theme) {
     let title = file_title(state.path());
     let footer = state.link_message().map(str::to_string).unwrap_or_else(|| "l: search links  Ctrl+click: open one directly".to_string());
@@ -100,14 +77,8 @@ fn row_link_hitboxes(row: &MarkdownLine) -> Vec<(u16, u16, String)> {
 }
 
 
-/// Renders `l`'s keyboard-driven link browser (`Overlay::MarkdownLinkSearch`)
-/// as a popup over the still-visible preview (`ui::draw`'s own
-/// `Overlay::MarkdownLinkSearch` arm draws `draw_markdown_preview`
-/// underneath first) -- a query field, the filtered link list with the
-/// selected one highlighted, and a footer hint, same shared chrome
-/// (`ui/popup.rs`) every other popup in this app builds on. Returns
-/// where the real terminal cursor should sit, same mechanism as every
-/// other text-entry popup.
+/// The `l` link search popup over the preview: query field, filtered list,
+/// hints, on the shared popup chrome. Returns the cursor position.
 pub fn draw_markdown_link_search(frame: &mut Frame, area: Rect, search: &MarkdownLinkSearchState, theme: &Theme, style: PopupStyle) -> Position {
     let filtered = search.filtered();
     let extra = popup::chrome_extra_rows(style);
@@ -152,25 +123,11 @@ pub fn draw_markdown_link_search(frame: &mut Frame, area: Rect, search: &Markdow
 }
 
 
-/// Maps one `explorer::markdown_preview::MarkdownLine`'s spans into a
-/// real `ratatui::text::Line`, styled per `span_style` below -- the
-/// domain/rendering split `explorer::HighlightRole` already uses for
-/// file-type coloring in `ui.rs`'s own `build_list_item`. `highlighted`
-/// paints every span's background with `theme.current_row_bg` on top of
-/// its own kind-based color -- the row `MarkdownPreviewState::sync_to_editor_cursor`
-/// matched to the built-in editor's own cursor line, same "row
-/// background, not a full-width fill" convention `ui/mod.rs::build_list_item`
-/// already uses for a panel's own selected row (this codebase never
-/// pads a line out to its column width just to color the rest of it).
-/// `theme.selection_text`, when a scheme sets it, overrides the text
-/// color too -- reported directly from a screenshot of this exact
-/// highlighted line still showing light text after every *other*
-/// popup's own selected-row/text-selection styling got the same fix
-/// (`ui/popup.rs::selected_row_style`/`selected_text_style`); this
-/// preview's own highlighted line was the one place left still writing
-/// the old `Style::default().fg(...).bg(theme.current_row_bg)` shape by
-/// hand, since it needs to layer the background *on top of* each
-/// span's own kind-based color rather than starting from `theme.text`.
+/// One preview line as a `ratatui` `Line`, styled per span kind.
+/// `highlighted` (the line matching the editor cursor) layers
+/// `current_row_bg` over each span's own color -- only behind the text, no
+/// full-width fill -- and applies `selection_text` when set, like
+/// `popup::selected_row_style`. History: docs/history/theming.md.
 fn render_line<'a>(line: &'a [MarkdownSpan], theme: &Theme, highlighted: bool) -> Line<'a> {
     if line.is_empty() {
         return Line::default();

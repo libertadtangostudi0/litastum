@@ -1,19 +1,9 @@
 use super::*;
 
 
-/// Regression test for a real bug: `edtui` paints the cursor's own
-/// cell *after* selection styling (`EditorView::render`),
-/// unconditionally overwriting whatever color was there — even under
-/// `.hide_cursor()`, which just repaints it as `base` rather than
-/// leaving it alone. Since this keymap always keeps `state.cursor`
-/// exactly on the selection's live end, that cell is the last
-/// character of an active selection: left unfixed, it visually looks
-/// unselected even though `Copy` genuinely includes it — reported
-/// directly as pasted text having one more character than what
-/// looked highlighted. `Editor::view` now paints the cursor cell with
-/// `selection_style` whenever a selection is active, so this checks
-/// that the fix actually lands where it's rendered, not just that the
-/// selection's own data is correct (which was never the bug).
+/// The selection's last character (the cursor cell) renders selected --
+/// `edtui` paints the cursor cell last, and pasted text looked one
+/// character longer than the highlight. History: docs/history/editor-rendering.md.
 #[test]
 fn selection_end_cell_renders_with_selection_color_not_base() {
     use ratatui::backend::TestBackend;
@@ -55,18 +45,8 @@ fn selection_end_cell_renders_with_selection_color_not_base() {
 }
 
 
-/// Same bug as the test above, hit again for `Ctrl+F` search: the
-/// current match is painted in `selection_style` too, but a search
-/// jump (typing, `Enter`, ...) puts `state.cursor` on the match's
-/// *first* character, not its last (the
-/// opposite convention from this app's own selection, which always
-/// keeps the cursor on the trailing edge). With no exception for
-/// `is_searching()`, that first cell fell into the same "no selection,
-/// no matched bracket" branch as plain typing and got reset to `base`
-/// -- reported directly with two screenshots: a match's own first
-/// character never looked highlighted, and the correctly-highlighted
-/// rest of the match right after the cursor read as a separate block
-/// because of it.
+/// The same for `Ctrl+F`: a jump puts the cursor on the match's first
+/// character, which must render highlighted too.
 #[test]
 fn search_match_first_cell_renders_with_selection_color_not_base() {
     use ratatui::backend::TestBackend;
@@ -108,14 +88,8 @@ fn search_match_first_cell_renders_with_selection_color_not_base() {
 }
 
 
-/// Same bug a third time, for `Compare`'s own diff row backgrounds
-/// (`ui/compare.rs::row_highlights`, applied via
-/// `Editor::set_extra_highlights`): reported directly with a
-/// screenshot -- the cursor's own cell on an otherwise fully
-/// diff-colored line rendered as a visibly different, plain patch cut
-/// out of the middle of it, since neither selection, search, nor
-/// bracket-matching covered this case and the cell fell through to
-/// plain `base`.
+/// The same for Compare's diff rows: the cursor cell was a plain patch in
+/// a colored line.
 #[test]
 fn cursor_cell_on_a_diff_highlighted_row_keeps_the_diff_color_not_base() {
     use edtui::Highlight;
@@ -186,16 +160,9 @@ fn selection_uses_the_theme_override_color_when_set() {
 }
 
 
-/// Regression test for a real report: the selection's own end cell
-/// renders correctly (see the test above), but the real terminal's
-/// own blinking bar cursor is drawn at the *left* edge of whatever
-/// cell `cursor_screen_position()` reports -- left unshifted, that
-/// put the bar on the boundary *before* the last selected character
-/// rather than after it, reading as "the selection stopped one
-/// character early" even though the data (and the cell's own color)
-/// were already correct. `cursor_screen_position()` now shifts one
-/// column right whenever a selection is active, so the bar lands on
-/// the boundary *after* the last selected character instead.
+/// The bar cursor sits after the last selected character: it draws at
+/// its cell's left edge, so `cursor_screen_position` shifts one column
+/// right on a selection's trailing edge.
 #[test]
 fn cursor_screen_position_is_shifted_past_the_selection_end_while_selecting() {
     use ratatui::backend::TestBackend;
@@ -231,17 +198,9 @@ fn cursor_screen_position_is_shifted_past_the_selection_end_while_selecting() {
 }
 
 
-/// Regression test for a real, second report on the same underlying
-/// mechanism as the test above: the +1 shift is only correct while
-/// extending a selection *forward* (cursor at its trailing edge) --
-/// applying it unconditionally also shifted *backward* selections,
-/// whose cursor sits at the selection's *earliest* edge instead.
-/// Reported directly against real text ("loaded the"): a plain
-/// `Ctrl+Right` landing on the `'t'` of "the", followed by
-/// `Ctrl+Shift+Left`, retracted the cursor onto the `'l'` of
-/// "loaded" -- but the bar rendered one column too far right,
-/// between `'l'` and `'o'`, reading as if `'l'` itself weren't part
-/// of the selection even though it genuinely was.
+/// ...but not when extending backward, where the cursor is on the
+/// selection's first character: "loaded" retracted onto 'l' showed the
+/// bar between 'l' and 'o'.
 #[test]
 fn cursor_screen_position_is_not_shifted_for_a_backward_selection() {
     use ratatui::backend::TestBackend;

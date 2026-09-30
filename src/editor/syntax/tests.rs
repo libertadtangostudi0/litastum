@@ -83,19 +83,9 @@ fn resolve_syntax_highlighter_covers_cmake() {
     assert!(resolve_syntax_highlighter(&["CMAKE"], "", &None).is_some(), "should match case-insensitively");
 }
 
-/// A real report: a plain `CMakeLists.txt` rendered with zero
-/// highlighting. Root cause was `resolve_syntax_ref` trying every
-/// candidate against `SYNTAX_SET` before any candidate against
-/// `extra_set` -- `Editor::view`'s actual candidate list for this
-/// file is `["CMakeLists.txt", "txt"]` (`Path::extension()` returns
-/// the trailing "txt"), and the old code let the second, far less
-/// specific candidate match `syntect`'s own bundled Plain Text
-/// grammar before the first candidate ever got a chance to be tried
-/// against `extra_set`, where the real CMake grammar lives. This
-/// pins down the *combined* candidate list production actually
-/// builds (the isolated-candidate tests above didn't catch this),
-/// and inspects `SyntaxReference::name` to prove which grammar
-/// specifically won, not just that something did.
+/// `CMakeLists.txt` gets the CMake grammar with the real candidate list
+/// `["CMakeLists.txt", "txt"]` -- `txt` used to hit Plain Text first.
+/// Checks `SyntaxReference::name`, not just that something resolved.
 #[test]
 fn resolve_syntax_ref_prefers_the_more_specific_candidate_over_a_less_specific_collision() {
     let (_, syntax_ref) = resolve_syntax_ref(&["CMakeLists.txt", "txt"], "").expect("should resolve a grammar");
@@ -118,15 +108,8 @@ fn rc_files_fall_back_to_the_cpp_grammar() {
     assert_eq!(syntax_ref.name, "C++");
 }
 
-/// A real report: `.clang-format` rendered with zero highlighting.
-/// `Path::extension()` returns `None` for it (a leading dot with no
-/// further dot isn't an "extension" in Rust's own eyes -- the same
-/// dotfile gap `.gitignore` hit before the name-first lookup tier was
-/// added), so the only candidate ever tried is the literal file name
-/// itself, and no grammar declares that name. `.clang-format`/
-/// `.clang-tidy` are both genuinely YAML (clang's own documented
-/// config syntax), so `EXTENSION_ALIASES` points them at `syntect`'s
-/// own bundled YAML grammar rather than a borrowed close-enough one.
+/// `.clang-format` has no extension by `Path::extension()`, and no grammar
+/// declares the name; it's aliased to YAML, which it is.
 #[test]
 fn clang_format_files_fall_back_to_the_yaml_grammar() {
     let (_, syntax_ref) = resolve_syntax_ref(&[".clang-format"], "").expect("should resolve via the extension alias");
@@ -163,17 +146,9 @@ fn resolve_syntax_highlighter_finds_git_config_by_first_line_when_the_name_is_us
     assert!(resolve_syntax_highlighter(&["config"], "[core]", &None).is_some());
 }
 
-/// Regression test for a real bug found by hand after the fixes
-/// above shipped: `.gitignore` opened without a crash and name-based
-/// lookup returned `Some`, but the file rendered with *zero*
-/// color — Git Ignore's own grammar `include:`s rules from a
-/// separate `Git Common.sublime-syntax` (`hidden: true`) that
-/// hadn't been bundled alongside it, so every `include:` silently
-/// resolved to nothing. `syntect` doesn't treat an unresolved
-/// include as a load error, so a `SyntaxHighlighter` still resolved
-/// regardless — the only way to actually catch this is to run real
-/// highlighting and check it colors *something*, which
-/// `resolve_syntax_highlighter_covers_*` above doesn't do.
+/// `.gitignore` actually gets colored: its grammar `include:`s the hidden
+/// Git Common, which must be bundled too -- an unresolved include isn't a
+/// load error, so only running real highlighting catches it.
 #[test]
 fn gitignore_comments_are_actually_colored_not_just_resolvable() {
     use edtui::syntect::easy::HighlightLines;
@@ -237,14 +212,8 @@ fn resolve_syntax_highlighter_covers_groovy_and_jenkinsfile() {
     );
 }
 
-/// Basic sanity check that a single-line block comment colors at all --
-/// same "actually run highlighting and check it colors something, not
-/// just that it resolves" shape as `.gitignore`/CMake above. See
-/// `groovy_multiline_doc_comment_colors_every_line_as_comment` below for
-/// the real report this file's own `comments` context patch was for --
-/// this single-line case never exercised that bug, since opening and
-/// closing on the same call never risks losing track of state between
-/// lines.
+/// A single-line Groovy block comment colors at all. The multi-line case
+/// below is the one the grammar patch was for.
 #[test]
 fn groovy_comments_are_actually_colored_not_just_resolvable() {
     use edtui::syntect::easy::HighlightLines;
@@ -263,17 +232,9 @@ fn groovy_comments_are_actually_colored_not_just_resolvable() {
     );
 }
 
-/// Regression test for a real report: a genuine multi-line `/** ... */`
-/// doc comment (opening `/**` on its own line, several plain text lines
-/// in between, closing `*/` on its own line -- the single-line case
-/// above never exercises this, since it opens and closes on the same
-/// `highlight_line` call) rendered its *middle* lines as ordinary code
-/// (`*` colored as an operator, the following word colored as a plain
-/// identifier) instead of comment text throughout. Uses one shared
-/// `HighlightLines` instance across all five lines, exactly like real
-/// multi-line highlighting does (each call's internal `ParseState`
-/// carries into the next) -- the single-line test above can't catch a
-/// state-persistence problem at all, since there's only ever one call.
+/// Every line of a multi-line `/** ... */` in Groovy colors as comment,
+/// through one shared `HighlightLines` so parse state carries between
+/// lines. The middle lines used to render as code. History: docs/history/theming.md.
 #[test]
 fn groovy_multiline_doc_comment_colors_every_line_as_comment() {
     use edtui::syntect::easy::HighlightLines;
@@ -297,15 +258,9 @@ fn groovy_multiline_doc_comment_colors_every_line_as_comment() {
     }
 }
 
-/// Regression test for a real, second report on the same underlying
-/// fix as the doc-comment test above, using real project content: a
-/// pure decorative "banner" comment (every line just `***`, no leading
-/// space or trailing text on most of them) reported as still broken
-/// even after the `scope:text.html.javadoc` removal. Confirms this
-/// exact shape colors correctly too -- if this test passes but a real
-/// build still shows it broken, the running binary predates this fix
-/// (needs a rebuild), since this pins down the grammar/`syntect` layer
-/// in isolation, the same way the doc-comment test above does.
+/// A decorative banner comment (lines of `***`), reported still broken
+/// after the Javadoc-include removal -- passes here, so such a report
+/// means the running binary predates the fix.
 #[test]
 fn groovy_banner_comment_colors_every_line_as_comment() {
     use edtui::syntect::easy::HighlightLines;
@@ -342,14 +297,8 @@ fn groovy_banner_comment_colors_every_line_as_comment() {
     );
 }
 
-/// A real report: `base.dcl` (AutoCAD Dialog Control Language)
-/// rendered with zero highlighting -- confirmed no `.dcl` grammar
-/// exists anywhere (neither `syntect`'s default set nor
-/// `BUNDLED_GRAMMARS` before this). Unlike CMake/rc above, this
-/// grammar is self-authored (no suitable existing one found), so
-/// this test also stands in for "the grammar itself actually
-/// parses and highlights something", not just "some file resolved
-/// to it".
+/// `base.dcl` gets the self-authored DCL grammar, and the grammar really
+/// highlights something.
 #[test]
 fn dcl_grammar_resolves_and_actually_colors_a_comment() {
     use edtui::syntect::easy::HighlightLines;
@@ -370,14 +319,9 @@ fn dcl_grammar_resolves_and_actually_colors_a_comment() {
     );
 }
 
-/// `Editor::view`'s actual fallback path, end to end: a bundled-
-/// grammar file gets a working `syntax_highlighter` from
-/// `EditorView`, not just from calling `custom_extension_highlighter`
-/// directly. Includes dotfiles (`.gitignore`/`.gitattributes`) to
-/// pin down the file-name-first lookup fix in `view()` itself —
-/// `Path::extension()` returns `None` for those, so before that fix
-/// they'd never even have reached a highlighter lookup at all, let
-/// alone a successful one.
+/// `Editor::view`'s own path gives bundled-grammar files a working
+/// highlighter, dotfiles included (`.gitignore` has no
+/// `Path::extension()`).
 #[test]
 fn opening_a_bundled_grammar_file_gets_a_working_syntax_highlighter() {
     use crate::editor::{Editor, EditorKeymapMode};

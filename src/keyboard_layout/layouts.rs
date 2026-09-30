@@ -9,16 +9,10 @@ pub(super) struct LayoutTable {
     pub(super) table: &'static [(char, char)],
 }
 
-/// Every layout `normalize_ctrl_shortcut` checks a typed `Ctrl+<letter>`
-/// against, in order. **To add a layout**: write its own `const` table
-/// below (lowercase-only pairs, one per physical letter key actually
-/// used by a real binding in this app is enough -- no need to map
-/// punctuation-row keys no shortcut ever uses) and list it here; nothing
-/// else in this module or either call site (`event_loop::keys::dispatch_key_event`,
-/// `command_line::browsing::hidden_console::toggle_panels_hidden`) needs to
-/// change. Order only matters if two layouts ever mapped the *same*
-/// character to two *different* Latin letters (none do today) -- the
-/// first match in this list would win.
+/// Every layout `normalize_ctrl_shortcut` checks, in order. To add one:
+/// write its table below (lowercase pairs for the letter keys bindings
+/// use) and list it here. Order only matters if two layouts mapped one
+/// character to different letters -- the first wins.
 pub(super) static LAYOUTS: &[LayoutTable] = &[LayoutTable { name: "ЙЦУКЕН (Russian)", table: RUSSIAN_JCUKEN }];
 
 /// Standard Windows ЙЦУКЕН (Russian) layout -- confirmed directly

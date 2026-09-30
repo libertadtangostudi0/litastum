@@ -13,86 +13,36 @@ use crate::theming::config::config_dir;
 /// browsing, offering to port a `FarMenu.ini`, or creating a fresh
 /// file.
 pub enum MenuFile {
-    /// `LitastumMenu.toml` exists (and no `FarMenu.ini` is sitting next
-    /// to it -- see `resolve_menu`'s own doc comment for why that takes
-    /// priority) -- a malformed file still resolves to an empty item
-    /// list rather than an error (see `toml_format::parse_toml`'s own
-    /// doc comment), so this variant covers both cases. The `PathBuf`
-    /// is the *directory* it was found in -- the active panel's own
-    /// directory for a local menu, or the common config directory for
-    /// the fallback below -- passed straight through to
-    /// `UserMenuState::from_items` so edits persist back to wherever
-    /// this particular menu actually came from.
+    /// `LitastumMenu.toml` found (and no `FarMenu.ini` beside it); a malformed
+    /// file gives an empty list, not an error. The `PathBuf` is the directory
+    /// it was found in -- the panel's or the common one -- where edits persist.
     Own(PathBuf, Vec<MenuItem>),
-    /// A `FarMenu.ini` is here -- offer to port it
-    /// (`Overlay::ConfirmPortFarMenu`) rather than reading or converting
-    /// it silently. Reported *even if* `LitastumMenu.toml` also
-    /// exists already -- dropping a `FarMenu.ini` into an already-
-    /// configured directory should still surface the choice (port and
-    /// overwrite, backing up the old config first, or decline and just
-    /// have `FarMenu.ini` backed up out of the way) rather than being
-    /// silently ignored.
+    /// A `FarMenu.ini` is here: offer to port it, even if `LitastumMenu.toml`
+    /// exists too.
     FarMenuFound(PathBuf),
     /// Neither file exists anywhere `resolve_menu` looked (the active
     /// directory nor the common config directory).
     NotFound,
 }
 
-/// Looks for a user menu in `dir` -- either directly, or (if nothing is
-/// there at all) in the common config directory, so a menu set up once
-/// is available from any directory on any drive, not just the one it
-/// was created in. Real per-directory menus still always win: the
-/// common one is only consulted when `dir` itself has neither file,
-/// matching real Far Manager's own local-then-common precedence for
-/// its `menu.ini`. Reported directly, against a real Subversion working
-/// copy far from wherever the menu had actually been set up: switching
-/// to another directory/drive showed an empty menu -- `resolve_menu`
-/// used to only ever look at `dir`, so any directory without its own
-/// `LitastumMenu.toml` showed nothing no matter what.
-///
-/// `config_dir()` (`theming::config`, reused here rather than
-/// duplicated -- it's what every other per-user file, `config.json`/
-/// `themes/`, already resolves through) also doubles as this app's one
-/// local-development escape hatch: set `LITASTUM_CONFIG_DIR` to point
-/// it at the project checkout instead of the real
-/// `%APPDATA%\litastum\`, so testing this fallback doesn't mean
-/// creating files in the real per-user config directory by hand. See
-/// `config_dir`'s own doc comment.
-///
-/// The actual per-directory lookup (`resolve_menu_in`) is pulled out
-/// separately so `resolve_menu_with_fallback` -- and this function's
-/// own tests -- can exercise the local/common precedence with two
-/// plain scratch directories, without touching the real config
-/// directory at all (same "injectable path, untested wrapper" split
-/// `theming::config`'s own tests already use, for the same reason:
-/// exercising the real path would mutate whatever `LitastumMenu.toml`
-/// a developer running the test suite actually has sitting in it).
+/// Finds the menu for `dir`: `dir` itself first, else the common config
+/// directory, so one menu works from anywhere (Far's local-then-common
+/// precedence). `LITASTUM_CONFIG_DIR` can point the common directory at a
+/// checkout for development. The lookup is split out
+/// (`resolve_menu_with_fallback`) so tests use scratch directories, never
+/// the real config directory. History: docs/history/user-menu.md.
 pub fn resolve_menu(dir: &Path) -> MenuFile {
     resolve_menu_with_fallback(dir, config_dir().as_deref())
 }
 
-/// The one common menu location `resolve_menu` falls back to -- exposed
-/// so `explorer::command::open_user_menu` can create a fresh
-/// `LitastumMenu.toml` *there* (not in whichever directory happened to
-/// be active) when `F2` finds nothing anywhere, per its own doc
-/// comment. `None` if the platform gives us no config directory at
-/// all (see `config_dir`'s own doc comment) -- same "just don't create
-/// anything" fallback `create_menu_file`'s own failure case already
-/// has.
+/// The common menu directory, where `F2` creates a fresh menu when none
+/// exists anywhere. `None` without a config directory.
 pub fn common_menu_dir() -> Option<PathBuf> {
     config_dir()
 }
 
-/// An *empty* local `LitastumMenu.toml` (parses to zero items -- either
-/// genuinely blank, or just the commented-out-example template
-/// `create_menu_file` writes) doesn't count as "found" for fallback
-/// purposes either -- reported directly: a directory where `F2` had
-/// been pressed once before this fallback existed (creating that
-/// template and nothing else) permanently shadowed the common menu
-/// from then on, even though there was nothing real in the local file
-/// to prefer over it. A local `FarMenu.ini`, or a local
-/// `LitastumMenu.toml` with at least one real item, still always wins
-/// -- this only widens what counts as "nothing here yet."
+/// A local `LitastumMenu.toml` with no items (blank, or just the template)
+/// doesn't shadow the common menu. History: docs/history/user-menu.md.
 fn resolve_menu_with_fallback(dir: &Path, common_dir: Option<&Path>) -> MenuFile {
     match resolve_menu_in(dir) {
         Some(MenuFile::Own(local_dir, items)) if items.is_empty() => {
@@ -103,17 +53,8 @@ fn resolve_menu_with_fallback(dir: &Path, common_dir: Option<&Path>) -> MenuFile
     }
 }
 
-/// A `FarMenu.ini` takes priority over an already-existing
-/// `LitastumMenu.toml` -- reported directly: dropping a `FarMenu.ini`
-/// into a directory that already has a configured menu used to be
-/// silently ignored (this function returned `Own` without even
-/// checking for `FarMenu.ini`), which meant there was no way to
-/// deliberately re-import one short of deleting `LitastumMenu.toml`
-/// first. Never writes anything itself -- porting (`port_far_menu`) or
-/// backing `FarMenu.ini` out of the way (`backup_far_menu_without_porting`)
-/// only happens once the user actually answers the prompt this
-/// produces (`Overlay::ConfirmPortFarMenu`). `None` if `dir` has neither
-/// file, letting `resolve_menu_with_fallback` try the next directory.
+/// One directory's menu: `FarMenu.ini` wins over `LitastumMenu.toml`, so
+/// re-importing one is possible. Never writes. `None` if neither exists.
 fn resolve_menu_in(dir: &Path) -> Option<MenuFile> {
     let far = dir.join(FAR_FILE_NAME);
     if far.is_file() {
@@ -202,15 +143,9 @@ mod tests {
         }
     }
 
-    /// The actual point of this whole change: a menu set up once should
-    /// be reachable from any directory, not just the one it was created
-    /// in -- regression coverage for the real report (switching to
-    /// another directory made the menu unreadable). Exercises
-    /// `resolve_menu_with_fallback` directly with two plain scratch
-    /// directories standing in for "active panel dir" / "common config
-    /// dir", rather than the public `resolve_menu` -- see
-    /// `not_found_when_neither_file_exists`'s own comment on why the
-    /// real OS config directory isn't touched by these tests.
+    /// A menu set up once is reachable from other directories. Uses
+    /// `resolve_menu_with_fallback` with scratch directories, never the real
+    /// config directory.
     mod common_fallback_tests {
         use super::*;
 

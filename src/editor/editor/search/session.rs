@@ -1,43 +1,24 @@
 use edtui::{Index2, Lines, RowIndex};
 
-/// One `Ctrl+F` search session's own state -- this app's replacement
-/// for `edtui`'s `SearchState`/`AppendCharToSearch`/`RemoveCharFromSearch`.
+/// One `Ctrl+F` search session -- our replacement for `edtui`'s
+/// `SearchState`, whose case-insensitive compare allocates per character
+/// and reran over the whole buffer on every edit (2.46s per typed
+/// character on 100k lines; `SearchState` is `pub(crate)`, so it couldn't
+/// be fed a faster compare). Same semantics:
 ///
-/// Replaced rather than reused after a direct report ("pasting into
-/// the search box takes forever, and so does Backspace"), measured on a
-/// real-scale file (100k lines, docs/history/editor-performance.md):
-/// **2.46s per typed character and 0.59s per Backspace**, in a release
-/// build. Root cause, confirmed from `edtui-jagged` 0.1.13's own source
-/// (`jagged/match_indices.rs`): its case-insensitive character
-/// comparison is `a.to_lowercase().collect::<String>() ==
-/// b.to_lowercase().collect::<String>()` -- two heap allocations per
-/// *character comparison* -- inside a sliding window that re-compares
-/// the whole pattern at every buffer position, and `edtui` reruns that
-/// full scan from scratch on every single query edit. `SearchState`
-/// itself is `pub(crate)`, so there was no way to keep `edtui`'s
-/// matching but feed it a faster comparison; the whole mechanism is
-/// owned here instead, with the same observable semantics:
-///
-/// - case-insensitive (Unicode lowercase, same as `edtui`), without
-///   allocating (`chars_eq_ignore_case`);
+/// - case-insensitive (Unicode lowercase), allocation-free
+///   (`chars_eq_ignore_case`);
 /// - a match never spans a line break;
-/// - matches don't overlap -- scanned greedily left to right, the next
-///   one starting only after the previous one ends (`edtui`'s own
-///   `MatchIndices` restarts right after each match's last character);
-/// - typing jumps to the first match at or after where the search
-///   started, wrapping to the very first one if there's none after it.
+/// - matches don't overlap, scanned greedily left to right;
+/// - typing jumps to the first match at or after the search start,
+///   wrapping.
 ///
-/// **Incremental**, which is where the actual speedup comes from: every
-/// match of a longer pattern is also a match of its own prefix, so
-/// adding a character only has to *filter* the previous candidates by
-/// that one extra position, never rescan the buffer (only the very
-/// first character does a full scan). Each prefix length's own
-/// candidates are kept on a stack (`candidates`), so Backspace just
-/// drops the top level (`set_pattern`). Candidates deliberately include *overlapping* positions --
-/// dropping one because it overlapped a shorter pattern's earlier match
-/// could lose a real match once the pattern grows -- and the
-/// non-overlapping view (`matches`) is recomputed from the top of the
-/// stack after every edit, O(candidates).
+/// Incremental: a match of a longer pattern is a match of its prefix, so
+/// each added character only filters the previous candidates. Each prefix
+/// length's candidates stay on a stack, so Backspace pops. Candidates
+/// include overlapping positions (dropping them could lose a match as the
+/// pattern grows); `matches` is recomputed from the top after each edit.
+/// History: docs/history/editor-performance.md.
 #[derive(Default)]
 pub(super) struct SearchSession {
     pattern: Vec<char>,
@@ -93,14 +74,10 @@ impl SearchSession {
         self.recompute_matches();
     }
 
-    /// Brings the session in line with an arbitrarily edited query --
-    /// the box is a real text field (cursor, selection, typing over a
-    /// selection), so an edit isn't always "add or remove at the end."
-    /// Keeps every candidate level for the prefix the old and new query
-    /// still share, and only re-filters from there: appending/Backspace
-    /// at the end stay as cheap as `push`/`pop`, and the worst case (an
-    /// edit at the very first character) is one full scan, the same as
-    /// starting over.
+    /// Syncs with an arbitrarily edited query (the box is a real text field):
+    /// keeps the candidate levels for the shared prefix and re-filters from
+    /// there. Appending or Backspace at the end stay push/pop; an edit at the
+    /// first character is one full scan.
     pub(super) fn set_pattern(&mut self, lines: &Lines, new_pattern: &str) {
         let new_pattern: Vec<char> = new_pattern.chars().collect();
         let common = self.pattern.iter().zip(&new_pattern).take_while(|(old, new)| old == new).count();
@@ -121,14 +98,10 @@ impl SearchSession {
         self.selected_match()
     }
 
-    /// `Enter`/`F3`: selects the first match starting after `caret`,
-    /// wrapping to the very first one past the last. Measured from the
-    /// caret, not from whichever match was selected last -- the caret can
-    /// move freely while the box stays open (focus in the text, VS
-    /// Code-style), and "next" should mean "next from here," exactly as
-    /// it does there. While the box itself has focus the caret sits on
-    /// the selected match's own start, so this is the same as stepping
-    /// to the next match.
+    /// `Enter`/`F3`: the first match after `caret`, wrapping -- measured from
+    /// the caret, which can move while the box is open (VS Code). With focus
+    /// in the box the caret is on the selected match, so this steps to the
+    /// next one.
     pub(super) fn select_next_after(&mut self, caret: Index2) -> Option<Index2> {
         if self.matches.is_empty() {
             return None;

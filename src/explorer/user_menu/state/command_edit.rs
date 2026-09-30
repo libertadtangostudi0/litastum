@@ -6,24 +6,10 @@ use tracing::warn;
 
 use super::UserMenuState;
 
-/// `F4` on a highlighted `Commands` item: editing just that item's own
-/// command(s) in the real built-in editor, not a bespoke single-line UI
-/// form and not the whole `LitastumMenu.toml` file. Reported directly,
-/// twice: a first attempt opened the whole file
-/// (`explorer::user_menu::input::edit_menu_file`, since removed), a
-/// second opened a small in-popup text field
-/// (`EditUserMenuItemState`, since removed) -- both missed the actual
-/// ask (just this item's command(s), but in the real editor, with its
-/// own undo/syntax highlighting/multi-line editing, not a one-line
-/// form).
-///
-/// `temp_path` is a scratch file *outside* the project, holding just
-/// this item's commands, one per line -- opened in `Mode::Editing` like
-/// any other file. Held alongside `menu` (the same "park the state,
-/// hand it back once the editor really closes" shape
-/// `AddUserMenuItem` already uses) so
-/// `editor_keymap::return_from_editor` can finish the edit
-/// (`finish_command_edit`) once the editor session actually ends.
+/// `F4` on a `Commands` item: its commands in the real editor, one per
+/// line in a scratch file (`temp_path`, outside the project), with `menu`
+/// parked until `editor_keymap::return_from_editor` calls
+/// `finish_command_edit`. History: docs/history/user-menu.md.
 pub struct UserMenuCommandEdit {
     pub menu: UserMenuState,
     pub temp_path: PathBuf,
@@ -45,19 +31,11 @@ pub fn create_command_edit_file(commands: &[String]) -> io::Result<PathBuf> {
     Ok(path)
 }
 
-/// Finishes an `F4` command-edit session, once the real built-in editor
-/// has genuinely closed (`editor_keymap::return_from_editor`): reads
-/// back whatever `edit.temp_path` now contains (each non-blank line
-/// becomes one command), replaces the selected item's commands with it
-/// (`UserMenuState::replace_selected_commands`, which also persists),
-/// and deletes the scratch file. Reading rather than trusting an
-/// in-memory copy means this works the same whether the user actually
-/// saved (`Ctrl+S`) or the "unsaved changes, discard?" prompt discarded
-/// them -- either way the file on disk is the source of truth, same as
-/// opening any other file in this editor. A file that couldn't be read
-/// (deleted out from under us, or never wrote successfully) just leaves
-/// the item's commands untouched, same "never block on a failed
-/// read/write" rule the rest of this module follows.
+/// Ends an `F4` command edit once the editor has closed: reads the scratch
+/// file back (each non-blank line a command), replaces and persists the
+/// item's commands, deletes the file. Reading the file means saved and
+/// discarded edits both come out right; an unreadable file leaves the
+/// item unchanged.
 pub fn finish_command_edit(edit: UserMenuCommandEdit) -> UserMenuState {
     let commands = fs::read_to_string(&edit.temp_path)
         .map(|content| content.lines().map(str::trim).filter(|line| !line.is_empty()).map(str::to_string).collect::<Vec<_>>())

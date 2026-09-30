@@ -1,25 +1,6 @@
-//! `state.rs` split into one file per concern once it passed the
-//! project's own ~500-line decomposition threshold
-//! ([[code-conventions]]) -- 1493 lines, mixing file-resolution
-//! (`resolve`), one-time `FarMenu.ini` migration (`porting`), the
-//! fresh-file template (`template`), the actual browsing/editing tree
-//! (`browsing`), the `Ins` add-item form (`add_item`), the `F4`
-//! command-edit scratch-file flow (`command_edit`), and the
-//! `!?Label?Default!` prompt-collection popup (`prompt`) all in one
-//! place. Every symbol that was `pub` at the top of the old file is
-//! re-exported here unchanged, so nothing outside this directory (or
-//! its own tests) needed to change to account for the split --
-//! `explorer/user_menu.rs`'s own `pub use state::{...}` list and
-//! `input.rs`'s `state::create_command_edit_file`/`state::port_far_menu`/
-//! `state::backup_far_menu_without_porting` calls still resolve exactly
-//! as before.
-//!
-//! `OWN_FILE_NAME`/`FAR_FILE_NAME` stay here, at the shared root, rather
-//! than living in whichever submodule happens to use them most
-//! (`resolve`) -- `porting` and `browsing` both need them too, and a
-//! plain (non-`pub`) item declared here is already visible to every
-//! descendant module of this one, no `pub(super)` juggling needed for
-//! the common case.
+//! Menu state, one file per concern: `resolve`, `porting`, `template`,
+//! `browsing`, `add_item`, `command_edit`, `prompt`. `OWN_FILE_NAME`/
+//! `FAR_FILE_NAME` live here, visible to every submodule.
 
 mod add_item;
 mod browsing;

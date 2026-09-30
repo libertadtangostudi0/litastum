@@ -1,29 +1,10 @@
-//! `FarMenu.ini`'s own nested-block DSL, plus macro substitution for a
-//! `Commands` item's own command strings -- split into `dsl`/
-//! `substitution`/`prompts` by concern once this file passed the
-//! ~500-line decomposition threshold
-//! (`.claude/rules/code-conventions.md`), same shape as `user_menu.rs`'s
-//! own split one level up:
-//! - `dsl`: reads a real `FarMenu.ini` into `MenuItem`s -- only used
-//!   for one-time porting, never for litastum's own file.
-//! - `substitution`: substitutes both real Far Manager's own `!...!`
-//!   family (what Far's own docs call "meta-symbols," not to be
-//!   confused with Far's *other*, much bigger macro feature --
-//!   scripted/recorded key sequences, `F11`/macro editor -- which this
-//!   file has nothing to do with and litastum doesn't implement; named
-//!   `substitution.rs` rather than `macros.rs` specifically to avoid
-//!   that collision if a real macro-recording feature is ever added
-//!   later) and litastum's own `{{...}}` family into a `Commands`
-//!   item's strings, run every time an item is executed regardless of
-//!   which file format produced it.
-//! - `prompts`: the `!?Label?Default!`/`{{prompt:...}}` placeholder --
-//!   asks the user for a value once per unique label before running,
-//!   shared machinery for both macro syntaxes since the interactive
-//!   part (`Overlay::UserMenuPrompt`) doesn't care which one was used.
-//!
-//! `MenuItem`/`MenuItemBody` live here, at the top, since they're the
-//! one shape all three submodules (and `toml_format.rs`, `state.rs`,
-//! `input.rs` outside this directory) actually pass around.
+//! Menu items, plus the three parsing concerns:
+//! - `dsl`: reads `FarMenu.ini` (porting only);
+//! - `substitution`: Far's `!...!` "meta-symbols" and litastum's `{{...}}`
+//!   (named so to avoid confusion with Far's recorded key macros, which
+//!   litastum doesn't have);
+//! - `prompts`: `!?Label?Default!`/`{{prompt:...}}`, one question per
+//!   unique label, shared by both syntaxes.
 
 mod dsl;
 mod prompts;
@@ -42,20 +23,10 @@ pub use substitution::{substitute_macros, MacroContext, PanelMacroContext};
 /// browse and execute.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem {
-    /// The single character before the item's own `:` (`"s: status"` ->
-    /// `Some('s')`), shown as a prefix in the list *and* wired up as a
-    /// real instant-select shortcut (`UserMenuState::select_by_hotkey`,
-    /// dispatched from `input::handle_user_menu_key`) -- reported
-    /// directly as a real gap: an earlier version parsed and displayed
-    /// this field but never actually bound it to a key at all, so
-    /// typing the shown letter did nothing. Case-insensitive, matching
-    /// real Far Manager's own hotkey convention. `F1`..`F24`-style
-    /// hotkeys (real Far Manager also allows those) still aren't
-    /// recognized as hotkeys at all here -- a line like `F5: refresh`
-    /// doesn't match the single-char prefix rule below, so it falls
-    /// through to being read as a hotkey-less item titled `F5:
-    /// refresh`'s remainder, a known, narrow gap rather than full
-    /// parity with every hotkey Far allows.
+    /// The character before the item's `:` (`"s: status"` -> `Some('s')`),
+    /// shown in the list and a case-insensitive shortcut
+    /// (`UserMenuState::select_by_hotkey`). Far's `F1`..`F24` hotkeys aren't
+    /// recognized: `F5: refresh` reads as a hotkey-less item.
     pub hotkey: Option<char>,
     pub title: String,
     pub body: MenuItemBody,

@@ -1,49 +1,16 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// Rewrites `key` so a `Ctrl+<letter>` chord typed under a non-Latin
-/// keyboard layout still matches this app's own (Latin-only) bindings.
+/// Rewrites a `Ctrl+<letter>` typed under a non-Latin layout to the Latin
+/// letter on the same key, so it matches our bindings. The Windows console
+/// translates the key through the active layout even with `Ctrl` held
+/// (`Ctrl+C` arrived as Cyrillic U+0441), which broke every `Ctrl+<letter>`
+/// binding. Unix terminals send control bytes instead, so this is a no-op
+/// there and needs no `cfg`.
 ///
-/// Reported directly, traced through the real log: `Ctrl+C` in the
-/// built-in editor did nothing at all, and `logs/litastum.log` showed
-/// exactly why -- `editor key key=KeyEvent { code: Char('с'), modifiers:
-/// KeyModifiers(CONTROL), ... }`. That `'с'` is Cyrillic (U+0441), not
-/// Latin `c` (U+0063) -- on a Russian (ЙЦУКЕН) keyboard layout, Windows
-/// still translates the physical `C` key's virtual-key code through the
-/// *active* layout even while `Ctrl` is held, so `crossterm` reports
-/// whatever letter that layout puts there, not the Latin one every
-/// `KeyCode::Char('c')`-shaped binding in this app (`Copy`, `Paste`,
-/// `Save`, `Find`, ...) is written against. This isn't specific to the
-/// editor or to Cyrillic -- every `Ctrl+<letter>` binding in the app
-/// (the always-live command line's `Ctrl+O`/`Ctrl+P`/`Ctrl+U`, the
-/// transfer popup's `Ctrl+C`/`X`/`V`, ...) reads the same raw
-/// `KeyEvent` and would break the same way under *any* non-Latin
-/// layout, not just a Russian one.
-///
-/// Terminals on Unix don't have this problem at all -- `Ctrl+<letter>`
-/// there is a real control *byte* (`0x01`-`0x1A`), computed from the
-/// physical key position by the terminal driver itself, never
-/// layout-translated. This is a Windows Console-specific quirk
-/// (`ReadConsoleInputW` still runs the active layout's virtual-key-to-
-/// character translation for every key, `Ctrl` held or not), which is
-/// why the fix lives here rather than needing `#[cfg(windows)]` gating
-/// with a Unix branch of its own -- on Unix, no `LAYOUTS` table below
-/// ever matches what a real terminal sends for `Ctrl+<letter>`, so this
-/// is a harmless no-op there.
-///
-/// **Architecture, for adding another layout**: doesn't special-case
-/// Cyrillic specifically -- `layouts::LAYOUTS` is a plain list of
-/// per-layout position tables (`layouts::LayoutTable`), each mapping
-/// that layout's own letters to whichever Latin letter sits in the same
-/// physical key position on a standard US QWERTY layout. This function
-/// just searches every table in the list for the typed character;
-/// there's no notion of "the currently active layout" to track or
-/// switch on (crossterm never reports which layout produced a
-/// character, only the character itself) -- a real OS layout switch
-/// just means a different table happens to match, which is also why
-/// this stays correct even if the user switches layouts mid-session.
-/// Supporting one more layout (French AZERTY, German QWERTZ, ...) is
-/// purely additive: write its own table in `layouts.rs` and list it in
-/// `LAYOUTS`, nothing here or at either call site needs to change.
+/// `layouts::LAYOUTS` is a list of per-layout position tables; every table
+/// is searched, with no notion of the active layout (`crossterm` doesn't
+/// report it), so switching layouts mid-session just works. Adding a
+/// layout means adding a table. History: docs/history/keyboard-layout.md.
 pub(crate) fn normalize_ctrl_shortcut(mut key: KeyEvent) -> KeyEvent {
     if !key.modifiers.contains(KeyModifiers::CONTROL) {
         return key;

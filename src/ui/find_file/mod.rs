@@ -31,15 +31,8 @@ pub fn draw_find_file(frame: &mut Frame, area: Rect, state: &FindFileState, them
     }
 }
 
-/// "1 result" / "N results" / "N+ results" -- the plural-agreement half
-/// of the results title's own count-and-timing summary. `capped`
-/// (`FindFileState::results_capped`) appends a "+", the same widely
-/// understood "there's more, this isn't the real total" convention a
-/// lot of search/notification UIs already use -- added directly after
-/// a report that a search hitting exactly `find_file_max_results` (200,
-/// the default) looked like a complete, successful search with no way
-/// to tell it wasn't, compared side by side against real Far Manager
-/// finding well over double that on the same tree.
+/// "1 result" / "N results" / "N+ results" -- `capped` adds the "+", since
+/// a search hitting exactly the cap looked complete.
 fn result_count_label(count: usize, capped: bool) -> String {
     let plus = if capped { "+" } else { "" };
     if count == 1 && !capped {
@@ -68,15 +61,9 @@ fn draw_typing(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &The
     // requested directly) -- `Classic` stays as plain as every other
     // Classic-style popup, no separator of its own.
     let has_separator = style == PopupStyle::Rounded;
-    // 5 content rows (name label, name value, content label, content
-    // value, hint) -- one label+value pair per field, matching Far
-    // Manager's own two-field Find file dialog (name mask, and a
-    // separate "Text to find" for searching inside files) -- plus the
-    // separator's own row when there is one, plus 2 for a plain border.
-    // `Rounded`'s own extra padding/title chrome needs more room for the
-    // same rows, or they'd get clipped to nothing
-    // (`popup::chrome_extra_rows`'s own doc comment has the exact
-    // accounting).
+    // Two label+value pairs (name mask and "Text to find", as in Far's
+    // dialog), a hint, the optional separator, the border -- plus the extra
+    // chrome `Rounded` needs, or the rows get clipped.
     let height = 7 + popup::chrome_extra_rows(style) + u16::from(has_separator);
     // `Classic` bakes " Find file " (with its own margin spaces) into
     // the border; `Rounded` already gets real margin from `draw_frame`'s
@@ -141,14 +128,9 @@ fn draw_typing(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &The
     Position { x: cursor_row.x + cursor as u16, y: cursor_row.y }
 }
 
-/// `FindFilePhase::Searching`: a live "please wait" screen shown while
-/// the background search (`background.rs`) is still running --
-/// requested directly for a comparison against real Far Manager's own
-/// dialog, which shows the same kind of thing rather than blocking with
-/// nothing on screen. Reads `state.pending`'s own live counters
-/// directly (`SearchProgress`, `Relaxed` loads -- this is just a status
-/// line refreshed every redraw, not something anything synchronizes
-/// real work on) rather than needing its own copy of the numbers.
+/// `Searching`: live progress while the background search runs, as in
+/// Far's dialog. Reads the `SearchProgress` counters directly (`Relaxed`
+/// is fine for a status line).
 fn draw_searching(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Theme, style: PopupStyle) {
     let has_separator = style == PopupStyle::Rounded;
     // 2 content rows (status line, hint) -- deliberately terser than
@@ -192,14 +174,8 @@ fn draw_searching(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &
     frame.render_widget(hint, rows[content_start + 1]);
 }
 
-/// Fixed popup height, independent of `state.results.len()` -- now that
-/// the list actually scrolls (see the `ListState` below), there's no
-/// reason for the popup itself to keep growing with the result count
-/// the way it used to. Picked to match `ui/theme_menu.rs`'s own
-/// color-scheme popup height directly, per an explicit side-by-side
-/// comparison request -- that popup's own formula (`themes.len() + 13`)
-/// comes out to `21` for the 8 themes bundled with this repo, so this
-/// reuses that same number rather than inventing an unrelated one.
+/// Fixed height (the list scrolls): 21, matching the color-scheme picker,
+/// as requested. History: docs/history/popups.md.
 const RESULTS_HEIGHT: u16 = 21;
 
 fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Theme, style: PopupStyle) {
@@ -264,14 +240,8 @@ fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Th
             .iter()
             .enumerate()
             .map(|(index, path)| {
-                // `theme.warning` for a marked (but not currently
-                // selected) row -- same "attention/marked" color and
-                // bold weight `Panel::marked_entries`' own rendering
-                // (`ui/panel.rs::build_list_item`) already uses, so
-                // marking a result reads the same way marking a panel
-                // entry does. The selected row keeps its own highlight
-                // regardless of whether it's also marked, matching that
-                // same panel code's own "selection wins" precedent.
+                // A marked row uses `theme.warning` and bold, like a marked panel entry;
+                // the selected row's highlight wins.
                 let style = if index == state.selected {
                     popup::selected_row_style(theme)
                 } else if state.marked.contains(&index) {
@@ -282,15 +252,8 @@ fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Th
                 ListItem::new(Line::from(Span::styled(path.to_string_lossy().into_owned(), style)))
             })
             .collect();
-        // A result count in the thousands (a big tree, a broad query)
-        // used to render every item straight into this fixed-height
-        // area with no scroll offset at all -- reported directly, the
-        // same "List with no ListState doesn't auto-scroll" gap
-        // `Panel`'s own entry grid hit earlier (see its own doc comment
-        // in `explorer/panel/mod.rs`), and already fixed once in this
-        // codebase for `ui/theme_menu.rs`'s picker the same way: a real
-        // `ListState` tracking the selected index, which `List` then
-        // scrolls to keep in view on its own.
+        // A `ListState` keeps the selection in view -- a plain `List` doesn't
+        // scroll, and with thousands of results it vanished.
         let list = List::new(items);
         let mut list_state = ListState::default().with_selected(Some(state.selected));
         frame.render_stateful_widget(list, rows[content_start], &mut list_state);
@@ -299,14 +262,8 @@ fn draw_results(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &Th
     if let Some((label, detail)) = &state.export_message {
         let label_line = Line::from(Span::styled(label.clone(), Style::default().fg(theme.text_dim)));
         frame.render_widget(label_line, rows[content_start + 1]);
-        // A real Downloads path is easily wide enough to overflow the
-        // popup on one line together with the label -- ratatui clips
-        // rather than wraps a `Line` that's too long for its area, so
-        // splitting the detail onto its own row (still just clipped if
-        // it's *itself* wider than the popup, but that's a much rarer
-        // case than "label + path together" was) is the fix here, not
-        // a text-wrapping widget for what's meant to be a one-line
-        // status.
+        // The detail gets its own row: a long path next to the label overflowed,
+        // and `ratatui` clips rather than wraps.
         let detail_line = Line::from(Span::styled(detail.clone(), Style::default().fg(theme.text)));
         frame.render_widget(detail_line, rows[content_start + 2]);
     }

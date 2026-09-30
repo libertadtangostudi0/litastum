@@ -104,14 +104,9 @@ mod tests {
         assert_eq!(search(&dir, "target", ""), vec![dir.join("target_dir")]);
     }
 
-    /// Regression coverage for the real request: since both walk paths
-    /// run in parallel, results arrive in whatever order worker threads
-    /// happened to finish in -- reported directly, compared side by side
-    /// against real Far Manager's own results view, which groups matches
-    /// by directory with both directories and files sorted within it.
-    /// `search_cancelable`'s own trailing sort should reproduce that same
-    /// clustering-by-directory effect from a plain case-insensitive full-
-    /// path sort, with no separate "group by directory" pass needed.
+    /// Results come out sorted by full path, case-insensitively, which groups
+    /// them by directory like Far's results view -- parallel workers finish
+    /// in any order.
     #[test]
     fn search_results_are_sorted_case_insensitively_grouping_by_directory() {
         let dir = scratch_dir();

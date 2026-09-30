@@ -1,19 +1,6 @@
-/// A name/mask query, parsed once per search (`search/mod.rs`, before
-/// the walk starts) rather than re-parsed on every entry visited --
-/// requested directly as a follow-up, after confirming the ASCII fast
-/// path in `matches_query` below already made the common *ASCII name,
-/// ASCII glob query* case allocation-free on its own (its pattern is
-/// used as a plain byte slice, `as_bytes()`, never `collect()`ed). What
-/// this still closes is the glob fallback (`glob_match_chars`), reached
-/// whenever *either* the query or the entry's own name is non-ASCII --
-/// that used to build a fresh `Vec<char>` for the pattern on every
-/// single entry it was reached for, even though the pattern itself
-/// never changes across one whole search. `pattern_chars` is built once
-/// here for any glob query at all (see `new`'s own doc comment for why
-/// it can't be skipped just because the query happens to be ASCII —
-/// the fallback can still be reached by a non-ASCII *name*), left empty
-/// only for a plain (non-glob) substring query, which never reaches
-/// `glob_match_chars` regardless.
+/// A name/mask query, parsed once per search instead of per entry.
+/// `pattern_chars` feeds the non-ASCII glob fallback; empty for a plain
+/// substring query. History: docs/history/find-file-search.md.
 pub(super) struct ParsedQuery<'a> {
     lower: &'a str,
     is_glob: bool,
@@ -21,21 +8,9 @@ pub(super) struct ParsedQuery<'a> {
 }
 
 impl<'a> ParsedQuery<'a> {
-    /// `lower` must already be lowercased by the caller (`search/mod.rs`,
-    /// once for the whole search).
-    ///
-    /// `pattern_chars` is built whenever `is_glob` at all -- **not**
-    /// only when `lower` itself is non-ASCII. `matches_query`'s own
-    /// ASCII/non-ASCII dispatch is decided per entry, by whether *that
-    /// entry's own name* is ASCII too, not by the query alone -- a
-    /// perfectly ASCII glob query (`"*.md"`) still needs
-    /// `glob_match_chars` (and therefore a real `pattern_chars`) the
-    /// moment it's checked against a non-ASCII file name. Building
-    /// `pattern_chars` unconditionally for every glob query, ASCII or
-    /// not, is still only one allocation per whole search (this
-    /// constructor runs once, not once per entry) -- cheap insurance
-    /// against exactly this case, found by a real test failure when
-    /// this was first written to only cover a non-ASCII *query*.
+    /// `lower` must already be lowercased. `pattern_chars` is built for
+    /// every glob query, ASCII or not: the `char` path is chosen per
+    /// entry, so an ASCII `*.md` still needs it for a non-ASCII name.
     pub(super) fn new(lower: &'a str) -> Self {
         let is_glob = lower.contains('*') || lower.contains('?');
         let pattern_chars = if is_glob { lower.chars().collect() } else { Vec::new() };
@@ -50,22 +25,9 @@ impl<'a> ParsedQuery<'a> {
 /// overwhelmingly common case -- see the ASCII branch's own doc comment
 /// below for why that matters.
 pub(super) fn matches_query(name: &str, query: &ParsedQuery) -> bool {
-    // **Zero-allocation fast path, taken for every ordinary (ASCII)
-    // file name and query mask** -- requested directly, as a follow-up
-    // once the walk itself was already parallel: the previous version
-    // always built a fresh lowercased `String` for `name` (`walk.rs`'s
-    // own `entry.file_name().to_string_lossy().to_lowercase()`) on
-    // *every single entry visited*, not just on a match -- millions of
-    // short-lived allocations on a genuinely large tree, for a walk
-    // that's otherwise already parallel and I/O-bound. When both `name`
-    // and `query.lower` are plain ASCII (true for the vast majority of
-    // real file names and masks), case-folding can be done per-byte,
-    // in place, with no allocation at all -- `contains_ascii_case_insensitive`/
-    // `glob_match_ascii` below. A name or query with any non-ASCII
-    // character falls back to the original, allocating, full-Unicode
-    // `to_lowercase()` + `glob_match_chars` path -- correctness for
-    // that rarer case is unchanged, just no longer paid for by the
-    // common one.
+    // Allocation-free fast path when both name and query are ASCII
+    // (almost always): per-byte case folding. Anything else takes the
+    // full-Unicode path.
     if name.is_ascii() && query.lower.is_ascii() {
         if query.is_glob {
             glob_match_ascii(query.lower.as_bytes(), name.as_bytes())
@@ -96,14 +58,8 @@ fn contains_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|window| window.eq_ignore_ascii_case(needle))
 }
 
-/// Same algorithm as `glob_match_chars` below, operating on raw ASCII
-/// bytes instead of `char`s -- `pattern` is assumed already-lowercase
-/// ASCII (guaranteed by `matches_query`'s own dispatch, from the
-/// one-time, whole-query `to_lowercase()` in `search/mod.rs`); only
-/// `text` (the file name, per entry) needs folding, done per-byte via
-/// `to_ascii_lowercase()` as the scan goes, with no allocation at all
-/// on either side -- `pattern`/`text` are both plain byte slices here,
-/// never collected into an owned buffer.
+/// `glob_match_chars` over ASCII bytes: `pattern` is already lowercase,
+/// `text` is folded per byte as it goes -- no allocation.
 fn glob_match_ascii(pattern: &[u8], text: &[u8]) -> bool {
     let (mut p, mut t) = (0, 0);
     let mut star_p: Option<usize> = None;
@@ -130,19 +86,9 @@ fn glob_match_ascii(pattern: &[u8], text: &[u8]) -> bool {
     pattern[p..].iter().all(|&c| c == b'*')
 }
 
-/// Classic greedy `*`/`?` wildcard matching (`*` — any run of
-/// characters, including none; `?` — exactly one character) — the
-/// textbook two-pointer-plus-backtrack-point algorithm, not a
-/// full-featured glob (no `[...]` character classes, no escaping).
-/// Operates on `char`s rather than bytes so a multi-byte file name
-/// can't be split mid-character. Only reached now for a non-ASCII
-/// `name`/query -- see `matches_query`'s own doc comment;
-/// `glob_match_ascii` above is the zero-allocation sibling taken for
-/// the common ASCII case. `pattern` arrives pre-parsed
-/// (`ParsedQuery::pattern_chars`, built once per search, not once per
-/// entry) -- only `text` still needs collecting into `Vec<char>` here,
-/// since it's different on every call (the entry's own name), unlike
-/// `pattern`, which is the same for the whole search.
+/// Greedy `*`/`?` wildcard match (no `[...]`, no escaping) over `char`s,
+/// so a multi-byte name isn't split. Only for non-ASCII input;
+/// `glob_match_ascii` is the fast path. `pattern` comes pre-parsed.
 fn glob_match_chars(pattern: &[char], text: &str) -> bool {
     let text: Vec<char> = text.chars().collect();
     let (mut p, mut t) = (0, 0);

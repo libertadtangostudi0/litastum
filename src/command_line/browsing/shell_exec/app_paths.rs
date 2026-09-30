@@ -1,28 +1,12 @@
 use std::path::PathBuf;
 
-/// Resolves `name` (a bare executable name typed with no path, e.g.
-/// `"devenv"` or `"devenv.exe"`) through the Windows "App Paths"
-/// registry mechanism --
-/// `HKEY_CURRENT_USER`/`HKEY_LOCAL_MACHINE`
-/// `SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\<name>.exe`'s
-/// default value.
-///
-/// Reported directly against `devenv.exe`: Visual Studio's installer
-/// registers itself here instead of adding its own install directory
-/// to `PATH` -- the Explorer "Run" box and `ShellExecute` both consult
-/// this key, but `cmd.exe`'s own bare-command search (what
-/// `append_command_line` hands a typed line to) never does, so a name
-/// that "just works" everywhere else came back
-/// `'devenv.exe' is not recognized...` through litastum. `HKEY_CURRENT_USER`
-/// is checked first, matching this key's own documented precedence
-/// (a per-user registration should win over a machine-wide one).
-///
-/// Only ever returns a path that actually exists on disk right now --
-/// a stale registry entry left behind by an uninstalled program
-/// shouldn't make litastum hand `cmd.exe` a path that will just fail
-/// to launch anyway, when leaving the original bare name in place would
-/// at least get `cmd.exe`'s own real "not recognized" error instead of
-/// a confusing one pointing at a path that no longer exists.
+/// Resolves a bare executable name (`devenv`, `devenv.exe`) through the
+/// Windows "App Paths" registry key (`HKCU`, then `HKLM`,
+/// `SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\<name>.exe`).
+/// Explorer's Run box and `ShellExecute` consult it, `cmd.exe` doesn't --
+/// Visual Studio registers only there. Returns a path only if it exists
+/// now, so a stale entry still gets `cmd.exe`'s own "not recognized".
+/// History: docs/history/command-execution.md.
 #[cfg(windows)]
 pub(super) fn resolve(name: &str) -> Option<PathBuf> {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
@@ -38,19 +22,10 @@ pub(super) fn resolve(name: &str) -> Option<PathBuf> {
     })
 }
 
-/// Strips a surrounding pair of `"` characters, if present, plus any
-/// incidental whitespace outside them.
-///
-/// Confirmed directly against a real `devenv.exe` entry: `App Paths`'
-/// default value is commonly stored as a full quoted command-line-style
-/// string (`"C:\...\devenv.exe"`, the quote characters actually part of
-/// the registry value, not just how some tool happens to print it) --
-/// the same convention lets a consumer splice the value straight into a
-/// command line with spaces already protected. Left un-stripped,
-/// `PathBuf` treats the quotes as literal filename characters and
-/// `resolve`'s own `is_file()` check always fails, silently discarding
-/// a real, valid registration -- this was the actual reason resolving
-/// `devenv` came back empty even though the key genuinely exists.
+/// Strips surrounding `"` and outer whitespace. App Paths values are
+/// often stored quoted (`"C:\...\devenv.exe"`); unstripped, the quotes
+/// became part of the file name and the `is_file()` check discarded a
+/// valid registration.
 #[cfg(windows)]
 fn unquote(raw: &str) -> &str {
     let trimmed = raw.trim();

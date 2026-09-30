@@ -4,14 +4,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::app::{App, Overlay};
 use crate::command_line::Effect;
 
-/// Key handling on a user-menu item's own `!?Label?Default!` prompt
-/// popup (`Overlay::UserMenuPrompt`) -- a standard single-line text field
-/// (`TextField::apply_key`), one prompt at a time. `Enter` accepts the
-/// current field's value and either advances to the next prompt or, if
-/// that was the last one, runs the finished, fully-substituted command
-/// list (`Effect::RunShell`, same as `handle_user_menu_key` for a
-/// prompt-less item) and returns to browsing. `Esc` cancels
-/// the whole item -- no partial run of some-but-not-all commands.
+/// Keys on a `!?Label?Default!` prompt (`Overlay::UserMenuPrompt`), one
+/// field at a time. `Enter` accepts and moves to the next prompt, or runs
+/// the substituted commands after the last one; `Esc` cancels the whole
+/// item -- never a partial run.
 pub fn handle_user_menu_prompt_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if key.code == KeyCode::Esc {
         app.overlay = None;

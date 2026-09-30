@@ -10,24 +10,11 @@ use crate::app::{App, Overlay};
 use super::search::{search_cancelable, SearchProgress};
 use super::state::FindFilePhase;
 
-/// A Find file search running on a background thread --
-/// `FindFileState::pending`'s own `Some` case. Requested directly, after
-/// a comparison against real Far Manager's own Find file dialog: a
-/// large real search on this app's own single-threaded, synchronous
-/// `search::search` used to block the whole UI with nothing to look at,
-/// indistinguishable from a hang even though it was just slow -- real
-/// Far's own dialog shows live progress and lets `Esc` cancel
-/// mid-search instead.
-///
-/// Mirrors `explorer::image_preview::PendingDecode`'s own shape
-/// exactly: a one-shot channel, no generation counter needed to detect
-/// a *stale* result, since there's only ever one `PendingSearch` alive
-/// in `FindFileState` at a time -- starting a new search or closing the
-/// popup simply drops this, and the background thread's own eventual
-/// `sender.send(..)` against a receiver nobody's listening on anymore
-/// just fails silently (the thread still finishes -- or notices
-/// `cancel` and stops -- and exits normally either way, its result just
-/// goes nowhere).
+/// A search running on a background thread, so a large one shows live
+/// progress and `Esc` can cancel it, as in Far. Same shape as
+/// `image_preview::PendingDecode`: one at a time, and dropping it makes the
+/// thread's final `send` fail silently -- no stale-result tracking.
+/// History: docs/history/find-file-search.md.
 pub struct PendingSearch {
     receiver: Receiver<Vec<PathBuf>>,
     /// Live visited/found counters the background thread updates as it
@@ -63,14 +50,8 @@ pub fn spawn_search(root: PathBuf, query: String, content_query: String) -> Pend
 }
 
 impl PendingSearch {
-    /// `Esc` during `FindFilePhase::Searching`: asks the background
-    /// thread to stop at its own next check point rather than blocking
-    /// the UI until it actually does -- see `search.rs::search_cancelable`'s
-    /// own doc comment for how quickly it actually notices. The
-    /// eventual `send` against a receiver dropped the moment this whole
-    /// `PendingSearch` goes away (the popup closing right after this
-    /// call) just fails silently, same as `image_preview.rs`'s own
-    /// cancellation-by-replacement already relies on.
+    /// `Esc` while searching: asks the thread to stop at its next check point
+    /// without waiting for it; its later `send` fails silently.
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
     }

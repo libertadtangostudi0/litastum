@@ -6,45 +6,19 @@ use super::SearchProgress;
 
 mod scan;
 
-/// Checks every candidate's own content for `needle_lower`
-/// (`scan::file_contains`) across a fixed pool of threads
-/// (`available_parallelism()`, falling back to 1 if the OS won't say),
-/// stopping early once `max_results` matches are found or `cancel` is
-/// set. See `search/mod.rs`'s own doc comment for why this runs in
-/// parallel at all. `progress.visited` keeps counting up across this
-/// second phase (it doesn't reset to 0 -- see `SearchProgress`'s own
-/// doc comment for why one running counter is enough here), now
-/// meaning "candidates content-checked so far" rather than "directory
-/// entries walked."
+/// Checks each candidate's content for `needle_lower` on
+/// `available_parallelism()` threads, stopping at `max_results` or on
+/// `cancel`. `progress.visited` keeps counting, now meaning candidates
+/// checked.
 ///
-/// **Work distribution is a shared `next_index` counter, not a static
-/// chunk per thread** -- an earlier version split `candidates` into
-/// `threads` equal-sized slices up front, which starves under a real,
-/// uneven candidate list: file sizes vary wildly (a handful of huge log
-/// files mixed in with thousands of small source files), so a thread
-/// unlucky enough to get a slice with the big ones sits busy long after
-/// every other thread has run out of work and gone idle. Every thread
-/// here instead pulls whichever index is next via one shared
-/// `fetch_add` and keeps going until the counter runs past the end of
-/// `candidates` -- self-balancing, since a thread that finishes a small
-/// file quickly just claims another index sooner, without needing a
-/// real work-stealing deque (`crossbeam-deque`, pulled in transitively
-/// by the `ignore` crate `walk.rs` already depends on, would be the
-/// next step up if this single shared counter ever stopped being
-/// enough -- not needed here, since claiming *the next unclaimed
-/// index* is already the whole of what stealing would buy on a flat
-/// list like this one).
+/// - Work comes from a shared `next_index` counter, not a fixed slice per
+///   thread: file sizes vary wildly, and a thread with the big ones kept
+///   working long after the rest went idle.
+/// - "Enough found?" is an atomic load of `progress.found`; the `Mutex`
+///   is only taken to push a match. Checking the list's length under the
+///   lock on every iteration contended on the common no-match path.
 ///
-/// **The "still going?" check is a plain atomic load, not a `Mutex`
-/// lock** -- an earlier version checked `found.lock().unwrap().len() >=
-/// max_results` on *every single loop iteration*, meaning every thread
-/// took the same lock, just to peek its length, even on the
-/// overwhelmingly common "this candidate didn't match" path. Reading
-/// `progress.found` (already an `AtomicUsize`, already updated on every
-/// real push below) instead means the hot, no-match path never touches
-/// the `Mutex` at all -- it's only ever locked when a thread actually
-/// has a match to push, which is comparatively rare and where a lock's
-/// own cost is negligible next to the file read that just happened.
+/// History: docs/history/find-file-search.md.
 pub(super) fn content_filter_in_parallel(candidates: Vec<PathBuf>, needle_lower: &str, max_results: usize, progress: &SearchProgress, cancel: &AtomicBool) -> Vec<PathBuf> {
     if candidates.is_empty() {
         return Vec::new();

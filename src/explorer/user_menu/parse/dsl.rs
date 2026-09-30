@@ -1,12 +1,8 @@
 use super::{MenuItem, MenuItemBody};
 
-/// Parses a real `FarMenu.ini`'s content into its top-level items --
-/// used only for one-time porting into `LitastumMenu.toml`
-/// (`state::port_far_menu`), never for litastum's own file. Far
-/// Manager's user-menu format isn't actually `[section]`/`key=value`
-/// INI at all (despite the `.ini` extension) -- it's Far's own small
-/// nested-block DSL, confirmed against a real published menu
-/// (`pkjq/far-git-menu`'s `FarMenu.ini`):
+/// Parses a `FarMenu.ini` into items, for porting only. Despite the
+/// extension it isn't INI but Far's nested-block DSL (checked against
+/// `pkjq/far-git-menu`):
 ///
 /// ```text
 /// G: GIT
@@ -22,24 +18,15 @@ use super::{MenuItem, MenuItemBody};
 /// }
 /// ```
 ///
-/// - A header line is `<hotkey>: <title>` (`hotkey` is zero or one
-///   alphanumeric character right before the *first* `:` on the line —
-///   see `is_header_line` for why that's what tells a header apart from
-///   an ordinary command line that happens to contain a colon, like a
-///   `git log --pretty=format:"..."`).
-/// - If the very next line is exactly `{`, the item is a submenu: every
-///   line up to the matching `}` is parsed recursively as its own
-///   sequence of items.
-/// - Otherwise, every following line up to the next header line, a
-///   `}`, or end of file is one command to run, in order.
-/// - Blank lines separate items but are otherwise ignored; lines whose
-///   first non-blank character is `;` are comments, ignored everywhere.
+/// - A header is `<hotkey>: <title>`, the hotkey an optional single
+///   alphanumeric before the first `:` (`is_header_line` tells it from a
+///   command containing a colon).
+/// - A `{` on the next line opens a submenu up to the matching `}`;
+///   otherwise the following lines up to the next header, `}` or EOF are
+///   commands.
+/// - Blank lines separate items; lines starting with `;` are comments.
 ///
-/// Malformed input (a line that's neither a valid header nor inside a
-/// body -- e.g. stray text before the first header) is skipped rather
-/// than causing a parse error or panic; this is a best-effort reader
-/// for a hand-edited text file, not a strict format with round-trip
-/// guarantees.
+/// Best-effort: malformed lines are skipped, never an error.
 pub fn parse(content: &str) -> Vec<MenuItem> {
     let lines: Vec<&str> = content.lines().collect();
     let mut pos = 0;

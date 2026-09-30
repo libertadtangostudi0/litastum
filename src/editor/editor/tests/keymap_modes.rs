@@ -49,18 +49,9 @@ fn vim_normal_mode_does_not_insert_plain_characters() {
 }
 
 
-/// Regression guard for the explicit request: this project's own
-/// hand-rolled correction passes (`wrap_line_boundary_arrow_movement`,
-/// `anchor_fresh_shift_selection`, ...) must not run at all once `Vim`
-/// is active -- they were never tuned against Vim's own modal, multi-key
-/// sequences (`EditorKeymapMode::Vim`'s own doc comment). Picks one
-/// concrete, easily observed symptom of `wrap_line_boundary_arrow_movement`
-/// actually running: under `Standard`, a plain `Left` at the very start
-/// of a non-first line wraps up onto the end of the previous line. Under
-/// `Vim`, `edtui`'s own `Normal`-mode `h` binding (not a raw `Left`
-/// arrow at all) is what actually moves the cursor, and a raw `Left`
-/// arrow simply isn't bound to anything in `edtui`'s own `vim_mode()`
-/// table -- so it must have no effect, not even a wrap.
+/// No correction pass runs under `Vim`. Observable through the line wrap:
+/// under `Standard`, `Left` at a line start wraps to the previous line;
+/// under `Vim` a raw `Left` isn't bound at all, so nothing moves.
 #[test]
 fn line_boundary_wrapping_does_not_run_in_vim_mode() {
     let path = unique_scratch_dir("editor").join("file.txt");
@@ -74,23 +65,9 @@ fn line_boundary_wrapping_does_not_run_in_vim_mode() {
 }
 
 
-/// Regression/documentation test for a real report, with a screenshot,
-/// asking whether this was an `edtui` bug: repeatedly pressing `Right`
-/// on a `.editorconfig` file's own first line ("root = true", Vim
-/// mode) appeared to "stop" partway along the line. Reproduced with
-/// the exact same content -- it isn't a bug, it's genuine Vim
-/// behavior: `Right`/`l` in `Normal` mode is bound to `edtui`'s own
-/// `MoveForward`, clamped by `max_col_normal` to `line.len() - 1` (the
-/// line's own *last real character*, never one column past it the way
-/// `Insert` mode's own append position allows) -- confirmed directly
-/// from `edtui`'s source. "root = true" is 11 characters (indices
-/// 0..=10), so column 10 (the final 'e') is correctly the last
-/// reachable column; further presses are a no-op, and -- unlike this
-/// project's own `Standard`-mode line-boundary wrapping
-/// (`wrap_line_boundary_arrow_movement`, deliberately not active in
-/// `Vim` at all) -- real Vim's own `l` never wraps onto the next line
-/// either, so there's genuinely nowhere further right for the cursor
-/// to go without a different key (`a`/`A`/`$`/entering `Insert`).
+/// Not a bug (asked with a screenshot): in Vim `Normal`, `Right`/`l` stops
+/// on a line's last character (`max_col_normal`) and never wraps -- real
+/// Vim behavior. "root = true" ends at column 10. History: docs/history/editor-keymap.md.
 #[test]
 fn vim_right_arrow_stops_at_the_last_character_of_a_line_not_a_bug() {
     let path = unique_scratch_dir("editor").join(".editorconfig");

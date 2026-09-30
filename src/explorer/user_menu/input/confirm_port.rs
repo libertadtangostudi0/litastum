@@ -5,17 +5,10 @@ use crate::app::{App, Overlay};
 use crate::explorer::user_menu::state::{self, UserMenuState};
 use crate::yes_no::{self, Answer};
 
-/// Key handling on `Overlay::ConfirmPortFarMenu` -- opened either by `F2`
-/// (`explorer::command::open_user_menu`) or by the startup check
-/// (`main.rs`) finding a `FarMenu.ini`, regardless of whether
-/// `LitastumMenu.toml` already exists (`state::resolve_menu`'s own doc
-/// comment). `Y` actually ports it (`state::port_far_menu` -- parses
-/// the DSL, backs up and overwrites `LitastumMenu.toml`, moves
-/// `FarMenu.ini` aside to `FarMenu.ini.bak`) and opens the result for
-/// browsing; `N`/`Esc` still moves `FarMenu.ini` aside
-/// (`state::backup_far_menu_without_porting`, same backup name, just
-/// without reading it) so it stops being re-detected, and shows a
-/// one-line `Overlay::Info` telling the user where it ended up.
+/// Keys on `Overlay::ConfirmPortFarMenu` (from `F2` or the startup check).
+/// `Y` ports the file (`state::port_far_menu`) and opens the result; `N`/
+/// `Esc` only moves `FarMenu.ini` aside to `FarMenu.ini.bak` so it stops
+/// being offered, and says where in an `Overlay::Info`.
 pub fn handle_confirm_port_far_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let Some(Overlay::ConfirmPortFarMenu(_)) = &app.overlay else {
         return Ok(());

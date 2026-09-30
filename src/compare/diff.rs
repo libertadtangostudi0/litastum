@@ -20,33 +20,16 @@ pub enum DiffLineKind {
 /// alignment.
 pub struct DiffLines {
     pub kinds: Vec<DiffLineKind>,
-    /// This row's own line index in the *live* buffer text `compute`
-    /// was given, or `None` for an `Empty` padding row with no real
-    /// source line at all. `similar`'s own `DiffOp` variants already
-    /// carry `old_index`/`new_index` directly, so this is just those
-    /// values threaded through rather than a separately tracked
-    /// counter. Used both to paint a real editor row's own `Highlight`
-    /// (`ui/compare.rs`) and, via `map_real_row` below, to keep the
-    /// unfocused pane's viewport diff-aligned with the focused one.
+    /// Each row's line index in the live text, `None` for an `Empty` padding
+    /// row (straight from `similar`'s `old_index`/`new_index`). Used for the
+    /// row highlights and `map_real_row`.
     pub source_index: Vec<Option<usize>>,
 }
 
-/// Line-level diff of `left_text`/`right_text`, producing two
-/// **row-aligned** `DiffLines` -- row `i` on the left and row `i` on
-/// the right are always meant to line up on screen, the same
-/// "keep both sides in lockstep" convention every side-by-side diff
-/// view uses (GitHub's own included). `similar::TextDiff`'s own
-/// `Equal`/`Delete`/`Insert`/`Replace` ops don't naturally line up this
-/// way on their own -- a `Delete` of 3 lines has nothing on the right
-/// to sit next to, and a `Replace` of 2 old lines for 5 new ones is
-/// naturally lopsided -- so the shorter side of any `Delete`/`Insert`/
-/// `Replace` block is padded out with `DiffLineKind::Empty` rows to
-/// match the longer side's own row count.
-///
-/// Called fresh every frame against each pane's own live `Editor::text()`
-/// (not a one-time snapshot) -- the two editable panes this drives
-/// (`compare::CompareState`) can genuinely diverge from what was on disk
-/// at open time, and the red/green highlighting needs to track that.
+/// Line diff producing two row-aligned `DiffLines` (row `i` on each side
+/// shown level): the shorter side of each `Delete`/`Insert`/`Replace`
+/// block is padded with `Empty` rows. Called every frame on the live
+/// text.
 pub fn compute(left_text: &str, right_text: &str) -> (DiffLines, DiffLines) {
     let diff = TextDiff::from_lines(left_text, right_text);
     let mut left = DiffLines { kinds: Vec::new(), source_index: Vec::new() };
@@ -137,21 +120,10 @@ fn hunk_start_at(kinds: &[DiffLineKind], row: usize) -> usize {
     start
 }
 
-/// The first row of the next diff *hunk* -- a whole contiguous block of
-/// changed lines, not just the next individual changed line -- at or
-/// after `from`. Drives `F7`/`F8`/`Ctrl+Down` ("jump to next diff hunk",
-/// `state.rs::CompareState::jump_to_next_hunk`).
-///
-/// Reported directly: a multi-line hunk (several consecutive
-/// `Removed`/`Added` rows) made `F8` stop on every single line inside
-/// it before finally moving on to the next real hunk, since the
-/// original implementation called `next_changed_row` straight from
-/// `cursor.row + 1` -- the row right after the cursor is still part of
-/// the *same* hunk for anything longer than one line, so that was
-/// always "the next changed row," never "the next hunk." Fixed by
-/// skipping past `from`'s own hunk first (if it's sitting inside one)
-/// before searching for the next changed row at all -- what's found
-/// after that skip is guaranteed to belong to a different, later hunk.
+/// First row of the next hunk (a contiguous changed block) at or after
+/// `from`, for `F7`/`F8`/`Ctrl+Down`. Skips `from`'s own hunk first --
+/// searching from the next row stopped on every line of a multi-line
+/// hunk. History: docs/history/compare.md.
 pub fn next_hunk_start(kinds: &[DiffLineKind], from: usize) -> Option<usize> {
     let mut i = from;
     while i < kinds.len() && matches!(kinds[i], DiffLineKind::Removed | DiffLineKind::Added) {
@@ -160,16 +132,9 @@ pub fn next_hunk_start(kinds: &[DiffLineKind], from: usize) -> Option<usize> {
     next_changed_row(kinds, i)
 }
 
-/// The first row of the previous diff hunk, strictly before whichever
-/// hunk `from` itself sits inside (or before `from` outright, if it
-/// isn't currently inside one) -- the other half of `next_hunk_start`,
-/// same "skip the whole current block, not just one line of it" fix.
-/// Lands on that previous hunk's own *first* row, not merely the
-/// nearest changed line before `from` (which would land on its *last*
-/// row instead, backward through a multi-line hunk one line at a time
-/// -- the same bug `next_hunk_start` fixes, mirrored for this
-/// direction): finds the nearest changed row before the current hunk,
-/// then walks that row's own run back to where it starts.
+/// First row of the previous hunk, before the one `from` is in -- landing
+/// on that hunk's first row, not its last, so `F7` doesn't step backward
+/// through a hunk line by line (the mirror of `next_hunk_start`).
 pub fn previous_hunk_start(kinds: &[DiffLineKind], from: usize) -> Option<usize> {
     let boundary = if from < kinds.len() && matches!(kinds[from], DiffLineKind::Removed | DiffLineKind::Added) {
         hunk_start_at(kinds, from)
@@ -180,25 +145,10 @@ pub fn previous_hunk_start(kinds: &[DiffLineKind], from: usize) -> Option<usize>
     Some(hunk_start_at(kinds, last_row_of_previous_hunk))
 }
 
-/// Given the real row `from_real_row` currently at the top of the
-/// *focused* pane's viewport, finds the row on the *other* side that
-/// should sit at the top of its own viewport to stay diff-aligned --
-/// used every frame to drive `Editor::set_viewport_top_row` on whichever
-/// pane doesn't currently have focus (`ui/compare.rs::draw_compare`).
-///
-/// Walks `from_source_index` to find the diff row that real row landed
-/// on, then walks `to_source_index` forward from there for the nearest
-/// row with real content on the other side -- forward, not nearest in
-/// either direction, so that scrolling to the top of an added/removed
-/// block on the focused side aligns the other pane with the *start* of
-/// that same block (or whatever real content immediately follows it),
-/// matching how GitHub/VS Code-style diff views keep a change and its
-/// counterpart-or-gap level with each other. Falls back to row `0` if
-/// `from_real_row` isn't found at all (shouldn't happen for a valid
-/// pair of `DiffLines` computed from the same `compute` call) or if
-/// nothing on the other side has real content at or after that point
-/// (the other side's remaining real content is all above the fold --
-/// row `0` is as reasonable a fallback as any).
+/// The other pane's real row to put at its top, given the focused
+/// pane's top `from_real_row`: the diff row it lands on, then forward to
+/// the nearest real content on the other side -- forward, so a changed
+/// block and its gap start level. `0` if nothing is found.
 pub fn map_real_row(from_source_index: &[Option<usize>], to_source_index: &[Option<usize>], from_real_row: usize) -> usize {
     let Some(diff_row) = from_source_index.iter().position(|row| *row == Some(from_real_row)) else {
         return 0;

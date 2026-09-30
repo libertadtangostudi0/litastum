@@ -107,14 +107,9 @@ pub fn resolve(key: KeyEvent) -> ThemeMenuCommand {
 }
 
 
-/// Key handling on the F9 color-scheme picker: `Enter` applies the
-/// highlighted theme as both interface and editor theme, `I`/`E` apply
-/// just one side, `Esc` closes without changing anything. Applying
-/// updates `app.theme`/`app.syntax_theme` immediately — no restart —
-/// and persists the choice to `config.json` on a best-effort basis
-/// (`config.rs` logs and carries on if that write fails; the live
-/// preview still applies). Moved here from `main.rs` so this module
-/// owns its own state (`ThemeMenu`) *and* handling.
+/// Keys on the color-scheme picker: `Enter` applies the theme to both
+/// halves, `I`/`E` to one; `Esc` closes. Applies live and persists to
+/// `config.json` best-effort.
 pub fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let Some(Overlay::ThemeMenu(menu)) = &mut app.overlay else {
         return Ok(());
@@ -226,17 +221,9 @@ mod tests {
     mod handle_theme_menu_key_tests {
         use super::*;
 
-    /// A real `App` (no terminal needed) in `Overlay::ThemeMenu`, for
-    /// exercising `handle_theme_menu_key` end to end.
-    ///
-    /// Deliberately does *not* cover the `Enter`/`I`/`E` apply branches
-    /// with a non-empty theme list: `config::set_interface_theme`/
-    /// `set_editor_theme` write to the *real* OS config directory
-    /// (`config_dir()`, not an injectable path like `try_persist`'s own
-    /// tests use) — calling them here would mutate the actual user's
-    /// `config.json` as a side effect of running the test suite, which
-    /// is worse than not testing that path at all. `config.rs`'s own
-    /// tests have the same limitation, for the same reason.
+    /// A real `App` in `Overlay::ThemeMenu`. The apply branches aren't tested
+    /// with real themes: `set_interface_theme`/`set_editor_theme` write the
+    /// real `config_dir()`, which a test must never touch.
     fn app_in_theme_menu(themes: Vec<&str>) -> App {
         let mut app = crate::test_support::test_app(crate::test_support::unique_scratch_dir("theme-menu"));
         app.overlay = Some(Overlay::ThemeMenu(menu_with(themes)));

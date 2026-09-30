@@ -16,17 +16,10 @@ pub struct MarkdownLink {
 }
 
 
-/// `Overlay::MarkdownLinkSearch`: a filterable list of every link in the
-/// document (`MarkdownPreviewState::links`), opened via `l` on the
-/// preview -- typing narrows `filtered()` to labels/URLs containing the
-/// typed text (case-insensitively), `Up`/`Down` move within it, `Enter`
-/// opens the highlighted one (`open_link`, the same resolve-and-open
-/// logic `Ctrl`+click uses). Deliberately simple text entry (append/
-/// backspace only, no cursor movement or selection) -- same scope as
-/// the editor's own `Ctrl+F` search box (`editor.rs::search_push_char`/
-/// `_pop_char`), which this is modeled on: a short filter query has no
-/// real need for the fuller `text_field` machinery other popups in
-/// this app use for actual data entry.
+/// `Overlay::MarkdownLinkSearch`: a filterable list of the document's
+/// links. Typing filters labels/URLs case-insensitively, `Up`/`Down` move,
+/// `Enter` opens (`open_link`, as for `Ctrl`+click). Append/backspace
+/// only -- a short filter needs no full text field.
 pub struct MarkdownLinkSearchState {
     links: Vec<MarkdownLink>,
     query: String,
@@ -86,45 +79,21 @@ impl MarkdownLinkSearchState {
 }
 
 
-/// What a Markdown link's raw `url` actually resolves to, once
-/// `resolve_link_target` has validated it -- kept as two distinct
-/// variants (rather than always a `PathBuf`, an earlier version's
-/// approach) so `open_link` can hand a real URL to
-/// `system_open::open_url` (`cmd /C start`, no Explorer IPC hop) and a
-/// local file to `system_open::open` (`explorer.exe`) -- the two need
-/// genuinely different OS commands, see `system_open::build_open_url_command`'s
-/// own doc comment for why.
+/// What a link resolves to: a URL (`system_open::open_url`) or a local
+/// file (`system_open::open`) -- they need different OS commands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum LinkTarget {
     Url(String),
     File(PathBuf),
 }
 
-/// Resolves a Markdown link's raw `url` (as written in the source file)
-/// into something actually safe to hand to `system_open` -- `None` for
-/// anything that isn't, rather than passing it through blindly.
-/// Reported directly as a real bug: a raw in-document anchor
-/// (`#section`, common in a README's own table of contents) or a bare
-/// relative reference `explorer.exe` doesn't recognize as either a URL
-/// or an existing path makes it silently fall back to opening its own
-/// default location instead (which, depending on the user's own
-/// Windows configuration, isn't necessarily even a fixed, predictable
-/// folder -- reported as landing in a OneDrive-redirected `Documents`)
-/// -- confusing, and nothing to do with the link that was actually
-/// clicked.
-///
-/// - `#fragment` alone -- an in-document anchor. Not supported yet
-///   (this preview has no heading-to-line index to jump through); `None`
-///   rather than trying to open it as anything else.
-/// - A real absolute URL (contains `://`, or a `mailto:` link) --
-///   `LinkTarget::Url`, handed to `system_open::open_url`.
-/// - Anything else is treated as a relative reference to another file
-///   in the same project, resolved against `markdown_dir` (the
-///   previewed file's own directory) -- a leading `#fragment` on such a
-///   link (`file.md#section`) is stripped first, then `None` unless the
-///   resulting path actually exists on disk, so a broken or
-///   not-yet-supported reference never gets handed to the OS as a
-///   guess.
+/// Resolves a link's raw `url` into something safe to open, else `None`:
+/// - `#fragment` alone -- not supported yet (no heading index);
+/// - contains `://` or is `mailto:` -- `LinkTarget::Url`;
+/// - anything else -- a file relative to `markdown_dir`, with any
+///   `#fragment` stripped, only if it exists.
+/// Anything unresolved passed to `explorer.exe` opened its default folder
+/// instead. History: docs/history/markdown-preview.md.
 pub(super) fn resolve_link_target(url: &str, markdown_dir: &Path) -> Option<LinkTarget> {
     if url.starts_with('#') {
         return None;
@@ -141,30 +110,15 @@ pub(super) fn resolve_link_target(url: &str, markdown_dir: &Path) -> Option<Link
     target.exists().then_some(LinkTarget::File(target))
 }
 
-/// The label to show in `state.link_message()` for `url` -- the text a
-/// user actually reads (e.g. "before you start"), never the raw URL
-/// itself. Looked up from `state.links()` (first match; a document can
-/// in principle link the same target twice under different text, and
-/// either label is a fine description of what got opened) rather than
-/// threaded through as a separate parameter by every caller -- see
-/// `MarkdownPreviewState::link_message`'s own field doc comment for the
-/// real bug this replaces (a truncated raw URL that still looked like a
-/// complete, valid one).
+/// The link's label for the status message (first match in
+/// `state.links()`), never the raw URL -- see `link_message`.
 fn label_for_url(state: &MarkdownPreviewState, url: &str) -> String {
     state.links().into_iter().find(|link| link.url == url).map(|link| link.label).unwrap_or_else(|| url.to_string())
 }
 
-/// Resolves and opens `url` (a link's raw target, from either
-/// `Ctrl`+click or `Overlay::MarkdownLinkSearch`'s own `Enter`), and always
-/// leaves a visible record of what happened on `state`
-/// (`set_link_message`) -- "Opened: ...", "Failed to open ...: ...", or
-/// "Can't open yet: ..." for anything `resolve_link_target` won't vouch
-/// for. Requested directly after a first version of `Ctrl`+click left no
-/// visible trace at all once it started correctly refusing to open
-/// anchors/missing files -- indistinguishable from the click not
-/// registering. The message itself names the link's *label*
-/// (`label_for_url`), not its raw URL -- see `link_message`'s own field
-/// doc comment for why.
+/// Resolves and opens `url` (from a click or the link search) and always
+/// records the outcome in `link_message` ("Opened", "Failed to open",
+/// "Can't open yet"), named by label. History: docs/history/markdown-preview.md.
 pub(super) fn open_link(state: &mut MarkdownPreviewState, url: &str) {
     let markdown_dir = state.path().parent().map(Path::to_path_buf).unwrap_or_default();
     let label = label_for_url(state, url);

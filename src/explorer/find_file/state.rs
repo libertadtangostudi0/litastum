@@ -38,14 +38,9 @@ pub struct FindFileState {
     pub phase: FindFilePhase,
     /// "File name to find" -- a name or glob mask.
     pub query: TextField,
-    /// Far Manager's own "Text to find" -- an optional substring
-    /// (case-insensitive, plain substring only, no glob/regex) a
-    /// matching file's own *content* must also contain, on top of
-    /// `query`'s name/mask match. Empty means "don't filter by
-    /// content" -- same "optional, AND-combined with the other field"
-    /// shape real Far's dialog uses. Never applies to directory
-    /// results -- a directory has no content to search inside, so one
-    /// only ever shows up when this is empty.
+    /// Far's "Text to find": an optional plain, case-insensitive substring a
+    /// file's content must also contain. Empty means no content filter;
+    /// directories only match while it's empty.
     pub content_query: TextField,
     /// Which of `query`/`content_query` `Tab` and typed characters
     /// currently reach.
@@ -63,19 +58,10 @@ pub struct FindFileState {
     pub content_history_index: Option<usize>,
     pub results: Vec<PathBuf>,
     pub selected: usize,
-    /// Which results are marked (Far Manager-style multi-select, same
-    /// convention as `explorer::panel::marks.rs`), by index into
-    /// `results` -- requested directly so two results found in
-    /// unrelated directories (a search doesn't stay confined to one
-    /// folder the way a panel's own marks do) can be picked out and
-    /// compared without first navigating both of them into the two
-    /// panels by hand. Indexed by position, not by path/name the way a
-    /// panel's own `marked: HashSet<String>` is -- `results` never
-    /// reorders once a search finishes (no live directory it needs to
-    /// stay in sync with), so an index is stable for as long as this
-    /// popup stays open, and two results can easily share the same file
-    /// name in different directories, which a name-keyed set couldn't
-    /// tell apart.
+    /// Marked results, by index -- for picking two results from unrelated
+    /// directories to compare. Indices, not names like a panel's marks:
+    /// results never reorder while the popup is open, and two results can
+    /// share a file name.
     pub marked: HashSet<usize>,
     /// The search currently running on a background thread --
     /// `Some` only during `FindFilePhase::Searching`, `None` in every
@@ -84,28 +70,13 @@ pub struct FindFileState {
     /// dropped -- after being told to cancel first -- when `Esc` closes
     /// the popup mid-search).
     pub pending: Option<PendingSearch>,
-    /// How long the search that produced `results` actually took, wall-
-    /// clock -- `PendingSearch::started.elapsed()`, read the moment
-    /// `background::poll_pending_find_file_search` notices the
-    /// background thread finished, not measured on the background
-    /// thread itself. Requested directly so the results popup shows how
-    /// long a search actually ran, not just how many results came back.
-    /// `None` before any search has run yet (`Typing`/`Searching` never
-    /// read this).
+    /// Wall-clock duration of the search behind `results`, shown in the popup
+    /// (read when the poll sees it finish). `None` before the first search.
     pub search_duration: Option<Duration>,
-    /// Whether `results` stopped short of every real match because a
-    /// `find_file_max_results`/`find_file_max_visited` cap
-    /// (`theming::config::limits()`) was hit, not because the search
-    /// genuinely ran out of matches -- `background::poll_pending_find_file_search`
-    /// reads this once from `PendingSearch::progress.capped` the moment
-    /// a search finishes. Added directly after a side-by-side report
-    /// against real Far Manager: a search that happened to hit exactly
-    /// `find_file_max_results` (200, the default) looked like a
-    /// complete, successful search with no way to tell it wasn't --
-    /// `ui/find_file.rs` shows a "+" on the result count instead of a
-    /// misleadingly precise total when this is `true`. Never set for a
-    /// plain `Esc` cancel -- that's a deliberate stop, not a surprising
-    /// incompleteness worth calling out separately.
+    /// Whether a `find_file_max_results`/`find_file_max_visited` cap cut the
+    /// results short -- the popup then shows "+" on the count, since a search
+    /// hitting exactly 200 looked complete. Not set by an `Esc` cancel.
+    /// History: docs/history/find-file-search.md.
     pub results_capped: bool,
     /// Feedback from the last `Ctrl+S` export, shown under the results
     /// list until the next export attempt (success or failure — both

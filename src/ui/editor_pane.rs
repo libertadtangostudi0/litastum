@@ -11,15 +11,9 @@ use crate::theming::Theme;
 
 use super::centered_rect;
 
-/// Renders the built-in editor full-screen (border/title drawn by
-/// `Editor::view` itself), with a one-line hint bar below for its
-/// special bindings (everything else goes straight to `edtui`).
-///
-/// Returns the real terminal cursor's own desired position rather than
-/// calling `frame.set_cursor_position` itself -- see `ui/mod.rs::draw`'s
-/// own doc comment on why every cursor-placing draw function in this
-/// app returns it instead now, up to `event_loop::run`, which applies it
-/// once, after the whole frame has actually reached the terminal.
+/// The editor full-screen (`Editor::view` draws the border and title),
+/// with a hint row for its own bindings. Returns the cursor position
+/// rather than setting it (see `ui::draw`).
 pub(super) fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme) -> Option<Position> {
     let rows = Layout::default()
         .direction(Direction::Vertical)

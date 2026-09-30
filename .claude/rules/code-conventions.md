@@ -32,7 +32,8 @@
   coming back, so a real bug fix still gets one.
 - Migrating the existing long comments to this layout happens in
   stages, area by area -- until an area is migrated, its long comments
-  stay as they are.
+  stay as they are. A documentation-only stage can take a bigger chunk
+  (more lines per stage) than a code change.
 - No Cyrillic in code or code comments — code and doc comments are
   English throughout, regardless of what language the conversation
   with the assistant is in. Casual/technical discussion in chat may be

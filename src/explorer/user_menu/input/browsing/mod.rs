@@ -9,44 +9,20 @@ use crate::explorer::Panel;
 use crate::explorer::user_menu::parse::{self, MacroContext, MenuItemBody, PanelMacroContext};
 use crate::explorer::user_menu::state::{self, AddUserMenuItemState, UserMenuCommandEdit, UserMenuPromptState};
 
-/// Key handling while browsing a (possibly nested) user menu
-/// (`Overlay::UserMenu`): `Up`/`Down` move. `Enter` on a submenu descends
-/// into it, on a `Commands` item substitutes `!&` (the entry under the
-/// cursor) and, if any `!?Label?Default!` placeholders remain, opens
-/// `Overlay::UserMenuPrompt` to collect them before running -- otherwise
-/// runs immediately. A plain letter matching some item's own `hotkey`
-/// at the current level does the exact same thing `Enter` would once
-/// the cursor is sitting on that item (`UserMenuState::select_by_hotkey`) --
-/// together, `Enter` and a matched hotkey are the only two ways this
-/// runs a command. `Right` mirrors `Enter` on a submenu (descends into it),
-/// but on a `Commands` item opens that item's command(s) for editing
-/// instead of running them (`open_selected_item`/`open_edit_selected_command`,
-/// same flow `F4` uses) -- deliberately *not* the same as `Enter` here,
-/// reported directly after an earlier version made `Right` run the
-/// command too: browsing shouldn't risk firing something real,
-/// `Right`'s own "go deeper" direction reads more naturally as "go look
-/// inside this" than as a second way to run it. `Esc`/`Left` back up
-/// one level, or close the menu entirely from the top level, same shape
-/// as `theming::handle_main_menu_key` -- `Right`/`Left` alongside
-/// `Enter`/`Esc` for navigation was requested directly, matching real
-/// Far Manager's own menu navigation, where either key works. `Ins`
-/// opens the add-item form (`Overlay::AddUserMenuItem`); `Delete` removes
-/// the highlighted item immediately (no confirmation -- this edits a
-/// config file, not real user data, same reasoning `F8`'s own confirm-
-/// before-delete doesn't extend to); `F4` opens a `Commands` item's
-/// command(s) for editing directly, without needing to navigate onto it
-/// with `Right` first -- unlike `Right`, it's a no-op on a `Submenu`
-/// item rather than descending into it, since reaching for `F4`
-/// directly is specifically about editing a command.
+/// Keys while browsing the user menu (`Overlay::UserMenu`):
+/// - `Up`/`Down` move; `Enter` or an item's hotkey descends into a submenu
+///   or runs a `Commands` item (collecting `!?Label?Default!` answers
+///   first via `Overlay::UserMenuPrompt`);
+/// - `Right` descends into a submenu but *edits* a `Commands` item (like
+///   `F4`) -- arrow navigation must never run a command;
+/// - `Esc`/`Left` go up a level or close; `Ins` adds an item; `Delete`
+///   removes one without confirmation (it's a config file, not user data);
+///   `F4` edits a `Commands` item's commands, no-op on a submenu.
+///
+/// History: docs/history/user-menu.md.
 pub fn handle_user_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
-    // `Enter` needs its own function: descending into a submenu or
-    // running an item both need fresh, narrowly-scoped borrows of
-    // `app.mode` (running also needs a separate `&mut App` for
-    // `active_panel()`) -- easier to keep
-    // that self-contained than to share one long-lived borrow across
-    // every arm of the match below, same reasoning
-    // `confirm::handle_confirm_transfer_key` already applies to its own
-    // `Enter` case.
+    // Its own function: descending and running each need short, separate
+    // borrows of `app` (as in `confirm::handle_confirm_transfer_key`).
     if key.code == KeyCode::Enter {
         return run_selected_user_menu_item(app);
     }
@@ -88,16 +64,8 @@ pub fn handle_user_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         return Ok(Effect::None);
     }
 
-    // A plain letter matching some item's own `hotkey` at the *current*
-    // level jumps the cursor there and runs/descends into it
-    // immediately, matching real Far Manager's own user-menu
-    // convention (and, before this, a real gap: the hotkey was parsed
-    // and shown as a prefix in every row but never actually wired up as
-    // a shortcut at all -- reported directly). Same "needs the whole
-    // `&mut App`" reasoning as `Enter` above, since a
-    // match runs `run_selected_user_menu_item` itself. An unmatched
-    // letter (or any other key still falling through to here) is a
-    // silent no-op past this point, same as before this was added.
+    // A letter matching an item's hotkey at the current level selects it
+    // and acts like `Enter` (Far's convention). Anything else is ignored.
     if let KeyCode::Char(c) = key.code {
         let matched = {
             let Some(Overlay::UserMenu(menu)) = &mut app.overlay else {
@@ -174,16 +142,9 @@ fn run_selected_user_menu_item(app: &mut App) -> Result<Effect> {
 }
 
 
-/// Builds the macro-substitution context (`parse::MacroContext`) from
-/// `app`'s two panels -- `active`/`passive` follow whichever panel
-/// currently has focus (`app.active`), `left`/`right` are the fixed
-/// on-screen panels regardless of focus, matching real Far Manager's
-/// own four-way addressing (`!^`/`!##`/`![`/`!]`, see
-/// `parse`'s own `substitution` submodule for the actual token
-/// dispatch). Built fresh right
-/// before running a menu item's commands -- never stored, since panel
-/// state (cursor position, marks) can change between one run and the
-/// next.
+/// The macro context from both panels: `active`/`passive` follow focus,
+/// `left`/`right` are fixed on screen (Far's `!^`/`!##`/`![`/`!]`). Built
+/// fresh before each run, since cursor and marks change.
 fn build_macro_context(app: &App) -> MacroContext {
     let passive_index = 1 - app.active;
     MacroContext {
@@ -203,16 +164,8 @@ fn panel_macro_context(panel: &Panel) -> PanelMacroContext {
 }
 
 
-/// `Right` on the user menu: on a submenu, descends into it exactly
-/// like `Enter` would (`UserMenuState::enter_submenu`); on a `Commands`
-/// item, defers to `open_edit_selected_command` (the same thing `F4`
-/// does) rather than running it -- deliberately *not* the same as
-/// `Enter` here: reported directly after an earlier version made
-/// `Right` behave identically to `Enter`, which meant simply navigating
-/// with the arrow keys could fire a real command. `Enter` is now the
-/// only key that actually runs anything; `Right`'s own "go deeper"
-/// direction reads more naturally as "go look inside this" than as a
-/// second way to run it.
+/// `Right`: descends into a submenu; on a `Commands` item, opens it for
+/// editing instead of running it. History: docs/history/user-menu.md.
 fn open_selected_item(app: &mut App) {
     let entered = {
         let Some(Overlay::UserMenu(menu)) = &mut app.overlay else { return };
@@ -225,17 +178,10 @@ fn open_selected_item(app: &mut App) {
 }
 
 
-/// `F4` on the user menu (also reached via `Right` above, for a
-/// `Commands` item specifically): opens the highlighted item's own
-/// command(s) in the real built-in editor -- a scratch file
-/// (`state::create_command_edit_file`) holding just those lines, not
-/// the whole `LitastumMenu.toml`. A no-op for a `Submenu` item or an
-/// empty level (nothing single to edit there), and a silent no-op if
-/// the scratch file can't be created/opened, same as every other
-/// "couldn't act on this" case in this codebase. Requested directly,
-/// twice: a first version opened the *whole* file, a second opened a
-/// bespoke single-line UI form -- both missed the actual ask, a real
-/// editor session scoped to just this item's own command(s).
+/// `F4` (or `Right` on a `Commands` item): opens just this item's commands
+/// in the built-in editor, via a scratch file (`state::create_command_edit_file`).
+/// No-op on a submenu, an empty level, or a failed scratch file.
+/// History: docs/history/user-menu.md.
 fn open_edit_selected_command(app: &mut App) {
     let Some(Overlay::UserMenu(menu)) = &app.overlay else { return };
     let Some(item) = menu.selected_item() else { return };

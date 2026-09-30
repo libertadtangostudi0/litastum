@@ -2,34 +2,15 @@ use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
 
 use super::{MarkdownLine, MarkdownSpan, MarkdownSpanKind};
 
-/// Walks `content`'s own `pulldown_cmark` event stream into a flat list
-/// of styled lines -- deliberately not a full CommonMark-to-terminal
-/// renderer (tables, footnotes, task-list checkboxes, and images all
-/// fall through the catch-all `_ => {}` arm below and are silently
-/// dropped rather than misrendered), just the common constructs a real
-/// README/notes file actually uses: headings, bold/italic, inline and
-/// fenced code, block quotes, ordered/unordered (possibly nested)
-/// lists, links (shown as their own link-colored text, without the
-/// underlying URL in the *displayed* text -- a preview, not a browser
-/// -- but the URL is still kept on the span itself, so a mouse click
-/// can open it, `handle_markdown_preview_mouse`), and horizontal rules.
-/// Loose lists (CommonMark wrapping each item's content in its own
-/// `Paragraph`) pick up an extra blank line between items, a known,
-/// minor cosmetic gap rather than tracking list-tightness separately.
+/// Turns `content` into styled lines -- the common constructs only:
+/// headings, emphasis, inline/fenced code, quotes, nested lists, links
+/// (label shown, URL kept on the span for clicks), rules. Tables,
+/// footnotes, task boxes and images are dropped, not misrendered. Loose
+/// lists get an extra blank line between items (known, minor).
 ///
-/// Also returns, alongside each returned line, the 0-indexed *source*
-/// line it started at (`Parser::into_offset_iter`'s own byte ranges,
-/// translated to a line number via `line_at_offset`) -- requested
-/// directly so the embedded preview can scroll to and highlight
-/// whichever rendered line corresponds to the built-in editor's own
-/// cursor position (`MarkdownPreviewState::sync_to_editor_cursor`).
-/// Approximate by construction, not exact: a source paragraph spanning
-/// several lines (soft-broken into one flowed preview line, `SoftBreak`
-/// below) is stamped with just its *first* line, and a blank separator
-/// line pushed after closing a block has no real source content of its
-/// own to point at, so it's stamped with whatever line the closing
-/// event itself sits on -- "roughly the same line," not a byte-exact
-/// mapping, is what was actually asked for.
+/// Also returns each line's source line (from `into_offset_iter`) for
+/// `sync_to_editor_cursor` -- approximate: a soft-wrapped paragraph gets
+/// its first line, a blank separator the line its block closed on.
 pub(super) fn render_markdown(content: &str) -> (Vec<MarkdownLine>, Vec<usize>) {
     let mut lines: Vec<MarkdownLine> = Vec::new();
     let mut line_rows: Vec<usize> = Vec::new();

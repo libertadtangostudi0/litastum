@@ -61,28 +61,11 @@ pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<()> {
     Ok(())
 }
 
-/// `Enter` while typing: spawns `search::search_cancelable` on a
-/// background thread (`background::spawn_search`) and switches to
-/// `FindFilePhase::Searching` -- doesn't block waiting for it, and
-/// doesn't apply any results itself; `background::poll_pending_find_file_search`
-/// (driven from `event_loop::wait_for_event`) picks up the finished search
-/// and switches to `FindFilePhase::Results` once it's actually done. A
-/// no-op only if *both* fields are empty (nothing sensible to search
-/// for) -- either one alone is enough, matching Far Manager's own
-/// two-field dialog (a bare "Text to find", with the name mask left as
-/// its own implicit "match everything", is a legitimate search there
-/// too).
-///
-/// Also records whichever field(s) are non-empty into their own
-/// persisted history (`history::record_history`) -- `Enter` is this
-/// popup's actual "submit" moment (unlike the editor's `Ctrl+F` box,
-/// which has no separate run step and records on `Esc` instead), so
-/// this is the closest analogue to the command line's own "record on
-/// run." In-memory only here, same reasoning as the editor/command-line
-/// history modules' own split between `record_history` (memory) and
-/// `save_history` (disk) -- `main.rs::main` persists both files once at
-/// clean exit, keeping this function's own extensive unit tests
-/// filesystem-free.
+/// `Enter` while typing: starts the search on a background thread and
+/// switches to `Searching`; the poll switches to `Results` when done.
+/// Either field alone is enough, as in Far. Records the non-empty fields
+/// in their histories, in memory only -- saved to disk once at exit, so
+/// the tests stay filesystem-free.
 fn run_search(app: &mut App) -> Result<()> {
     let Some(Overlay::FindFile(state)) = &app.overlay else {
         return Ok(());

@@ -1,19 +1,10 @@
 use super::{Entry, Panel};
 
-/// Far Manager-style multi-select: `Shift+A` marks every real entry
-/// (`select_all`); `Shift+Up`/`Down` toggles the entry under the cursor
-/// and moves one row, so repeated presses paint a block one row at a
-/// time (`toggle_mark_move_up`/`_down`); `Shift+Left`/`Right` does the
-/// same but for the whole column(s) the existing paginated column jump
-/// (`Panel::move_left`/`move_right`) crosses in one press
-/// (`toggle_mark_move_left`/`_right`) -- requested directly as "should
-/// mark the whole column(s) it jumps over," matching the row-at-a-time
-/// behavior scaled up to the column-at-a-time unit `Left`/`Right`
-/// already move by in this panel. Originally bound to `Ctrl` instead of
-/// `Shift` throughout -- switched after a direct correction; see
-/// `command_line::handle_browsing_key`'s own doc comment on the
-/// `Shift+A` binding specifically for why it, alone among these, stays
-/// gated to an empty command line even though the arrows aren't.
+/// Far-style marking: `Shift+A` marks everything, `Shift+Up`/`Down`
+/// toggles the entry and moves a row, `Shift+Left`/`Right` does the same
+/// for every column the paginated jump crosses. (First bound to `Ctrl`;
+/// `Shift+A` alone needs an empty command line -- see `command_line`.)
+/// History: docs/history/panel.md.
 impl Panel {
     /// Whether `entries[index]` is currently marked -- read by
     /// `ui::build_list_item` to render it in the marked color. `false`
@@ -30,14 +21,8 @@ impl Panel {
         self.entries.iter().filter(|entry| self.marked.contains(&entry.name)).collect()
     }
 
-    /// The entries a bulk panel operation (F5/F6/F8) should act on:
-    /// every marked entry if any are marked, otherwise just the entry
-    /// under the cursor (empty if that's `..`, or the panel has nothing
-    /// in it) -- Far Manager-style, the marked set always wins over the
-    /// cursor once anything's marked, regardless of where the cursor
-    /// itself sits. Shared by `explorer::command::transfer_sources`
-    /// (F5/F6) and `request_delete` (F8) so this rule lives in exactly
-    /// one place rather than being reimplemented per command.
+    /// What F5/F6/F8 act on: the marked entries if any, else the cursor entry
+    /// (nothing for `..` or an empty panel). The one place this rule lives.
     pub fn marked_or_current(&self) -> Vec<&Entry> {
         let marked = self.marked_entries();
         if !marked.is_empty() {

@@ -1,69 +1,18 @@
 use edtui::{Highlight, Index2, Lines, RowIndex};
 use ratatui::style::Style;
 
-/// The bracket kinds this editor understands, each as `(open, close)`.
-/// `()`/`[]`/`{}` are unambiguous everywhere they appear. `<>` is
-/// included too, requested directly -- but it's a different case from
-/// the other three: `<`/`>` are also comparison operators in every
-/// C-like language this editor highlights, so a same-kind nesting-depth
-/// scan (this module's whole strategy, see `find_forward`/`find_backward`)
-/// can genuinely mismatch on real code containing one (e.g. `a < b`
-/// with a real, unrelated `>` later in the file) -- there's no syntax
-/// awareness here to tell "comparison" from "generic/tag delimiter"
-/// apart, unlike a real parser-backed matcher. Included anyway because
-/// this is the same tradeoff most mainstream editors that support `<>`
-/// matching at all already accept (a plain depth scan, not a parser),
-/// and it's still correct far more often than not -- genuinely
-/// unbalanced `<`/`>` as bare comparisons on their own line, or spread
-/// across a whole file, is a much rarer shape than balanced angle
-/// brackets in generics (`Vec<Option<T>>`) or HTML/XML tags
-/// (`<div>...</div>`), which is exactly where this earns its keep. No
-/// quote-pair or other custom-delimiter matching attempted.
+/// Bracket kinds as `(open, close)`. `<>` can mismatch where `<`/`>`
+/// are comparisons (a depth scan has no syntax awareness) -- accepted,
+/// like most editors, for generics and tags. No quote matching.
 const PAIRS: [(char, char); 4] = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
 
-/// Highlights *both* the bracket under (or immediately left of) the
-/// cursor and its matching partner, VS Code/Far Manager-style -- two
-/// single-cell `Highlight`s, or none at all if the cursor isn't
-/// touching a bracket or the bracket has no match (unbalanced code, or
-/// the match is outside the buffer entirely).
-///
-/// Both brackets are included, not just the far one -- requested
-/// directly, and matches real Far/VS Code behavior (both sides of a
-/// matched pair read as "this pair," not just one of them). `edtui`
-/// paints the cursor's own cell *after* every other style
-/// (`EditorView::render`, same "cursor on top" behavior
-/// docs/history/word-select.md (5) records for text selection), which
-/// would otherwise silently hide the near bracket's own highlight for
-/// as long as the cursor sits right on it -- `Editor::view`'s
-/// `cursor_style` decision compensates for that separately (see
-/// `cursor_is_on_a_matched_bracket`'s own doc comment), painting the
-/// cursor's cell with this same style directly rather than relying on
-/// the `Highlight` this function returns for that cell.
-///
-/// Same highlight color as `word_highlight.rs`'s "same word as the one
-/// under the cursor" feature -- requested directly too, so brackets
-/// read as the same *kind* of "matches something nearby" hint rather
-/// than a visually distinct feature (`Editor::view` passes both passes
-/// the identical `Style`).
-///
-/// Deliberately a *separate* highlight pass from `word_highlight.rs`,
-/// not folded into it — so bracket matching doesn't get swept into
-/// word-occurrence highlighting's own notion of "similar," and in
-/// particular keeps its own "highlight both, not just the home
-/// occurrence" behavior independent of `word_highlight`'s opposite
-/// choice (excluding the cursor's own word occurrence). The two
-/// features can never actually collide in practice (`word_highlight`'s
-/// own `is_word_char` only ever matches ASCII alphanumerics and `_`, so
-/// a bracket character is never a candidate for it to begin with), but
-/// keeping this in its own module/function with its own call in
-/// `Editor::view` — rather than, say, extending `word_occurrence_highlights`
-/// to also special-case brackets — keeps that guarantee structural
-/// instead of incidental.
-///
-/// `edtui`'s own `Highlight` fully *replaces* whatever style was
-/// already on that cell (no fg/bg merging — confirmed directly from its
-/// source, same tradeoff `word_highlight.rs` already documents), so
-/// `style` is expected to set both `fg` and `bg` for that reason.
+/// Highlights both the bracket under (or just left of) the cursor and
+/// its partner, in the word-occurrence style; none if there's no bracket
+/// or no match. `edtui` paints the cursor cell last, so `Editor::view`
+/// repaints it separately (`cursor_is_on_a_matched_bracket`). A separate
+/// pass from `word_highlight`, so their rules stay independent. `style`
+/// sets both `fg` and `bg`: a `Highlight` replaces the span's style.
+/// History: docs/history/editor-rendering.md.
 pub(super) fn bracket_match_highlights(lines: &Lines, cursor: Index2, style: Style) -> Vec<Highlight> {
     let Some((pos, ch)) = bracket_at(lines, cursor) else {
         return Vec::new();
@@ -74,22 +23,9 @@ pub(super) fn bracket_match_highlights(lines: &Lines, cursor: Index2, style: Sty
     vec![Highlight::new(pos, pos, style), Highlight::new(match_pos, match_pos, style)]
 }
 
-/// Whether `cursor` sits *exactly* on one side of a genuinely matched
-/// bracket pair -- not merely "touching" one from the append position
-/// one column to its right (`bracket_at`'s own doc comment), since in
-/// that case the cursor's own screen cell isn't actually a bracket
-/// character at all. Used by `Editor::view` to decide whether to paint
-/// the real terminal cursor's own cell in the highlight color instead
-/// of the plain base style: `edtui` paints that cell *after* any
-/// `Highlight` (`EditorView::render`), which would otherwise silently
-/// hide the near bracket's own highlight for as long as the cursor sits
-/// right on it -- reported directly, with a screenshot, once
-/// `bracket_match_highlights` started returning both brackets: the far
-/// one visibly highlighted, the near one (under the cursor) not, even
-/// though both are meant to show at once. Same fix shape already
-/// applied to an active text selection's own cursor cell
-/// (`Editor::view`'s own doc comment on `cursor_style`), just for
-/// bracket matching instead of selection.
+/// Whether `cursor` sits exactly on a matched bracket (not just touching
+/// it from the right). `Editor::view` then paints the cursor cell in the
+/// highlight color, since `edtui` paints it after every `Highlight`.
 pub(super) fn cursor_is_on_a_matched_bracket(lines: &Lines, cursor: Index2) -> bool {
     let Some((pos, ch)) = bracket_at(lines, cursor) else {
         return false;
@@ -97,17 +33,10 @@ pub(super) fn cursor_is_on_a_matched_bracket(lines: &Lines, cursor: Index2) -> b
     pos == cursor && find_matching_bracket(lines, pos, ch).is_some()
 }
 
-/// The inclusive `(top_row, bottom_row)` span of a matched bracket pair
-/// touching `cursor` -- `None` if the cursor isn't touching a bracket,
-/// the bracket has no match, or both sides sit on the same row (nothing
-/// to scroll for). Used by `Editor::view` to widen the viewport when
-/// the pair's own two rows would otherwise not both fit on screen --
-/// reported directly, with a screenshot: a multi-line pair only ever
-/// showed one bracket highlighted whenever the other one scrolled
-/// outside the visible area, since `edtui`'s own auto-scroll only ever
-/// keeps the *cursor's* row in view, with no notion of "and also this
-/// other row." Not a highlighting bug at all -- there's no cell to
-/// paint a color on if it was never rendered to the terminal.
+/// Rows `(top, bottom)` of a matched pair touching `cursor`; `None` if
+/// there's no pair or it's on one row. `Editor::view` widens the viewport
+/// to fit both -- `edtui` only keeps the cursor's row in view, so the
+/// other bracket was never drawn. History: docs/history/editor-rendering.md.
 pub(super) fn matched_bracket_row_span(lines: &Lines, cursor: Index2) -> Option<(usize, usize)> {
     let (pos, ch) = bracket_at(lines, cursor)?;
     let match_pos = find_matching_bracket(lines, pos, ch)?;

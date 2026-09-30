@@ -67,14 +67,10 @@ pub fn record_history(history: &mut Vec<String>, query: &str) {
     }
 }
 
-/// The most-recently-used history entry that starts with `query`
-/// (case-insensitive), if it's strictly longer than `query` — `None`
-/// for an empty query, no match, or an exact-length match with nothing
-/// left to suggest. Ghost-text ordinary suggestion for the search box,
-/// requested directly (an inline suggestion, similar to the command
-/// line's own) — a *prefix* match, not `command_line::history::suggest_history`'s own
-/// substring-anywhere match, since only a prefix match can be shown as
-/// dimmed text appended after what's already typed.
+/// The most recent history entry starting with `query` (case-insensitive)
+/// and longer than it -- the search box's ghost-text suggestion. A prefix
+/// match, unlike the command line's substring match, since it's drawn
+/// after what's typed. `None` for an empty query or nothing to add.
 pub fn suggest<'a>(history: &'a [String], query: &str) -> Option<&'a str> {
     if query.is_empty() {
         return None;

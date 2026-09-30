@@ -8,22 +8,10 @@ use crate::editor::{self, Editor};
 use super::links::{open_link, MarkdownLinkSearchState};
 use super::state::MarkdownPreviewState;
 
-/// `F3` on a `.md`/`.markdown` file: opens the built-in editor
-/// (`Editor::open`, same as `F4`) for it *and* a live rendered preview
-/// side by side (`App::markdown_edit_preview`) -- requested directly:
-/// view and edit a `.md` file at the same time, in the left panel, with
-/// the rendered result shown on the right on save. `app.active` starts at `0`
-/// (the editor, ready to type into immediately); `Tab`
-/// (`event_loop::keys::handle_key_event`) toggles it to `1` (the preview) for
-/// scrolling/`l`-searching/`Ctrl`+clicking it -- see
-/// `handle_markdown_edit_preview_key`. A silent no-op if either half
-/// fails to open (a corrupt/unreadable file, or one that's not valid
-/// UTF-8 for the editor) -- same "couldn't act on this" convention
-/// `explorer::command::open_editor` already uses for plain `F4`.
-///
-/// Mouse capture (so a link can be opened with a click, requested
-/// directly) comes with the editor itself -- `event_loop::sync_mouse_capture`
-/// keeps it on for as long as any `Mode::Editing` session is open.
+/// `F3` on a `.md` file: the editor (as `F4`) and a live preview side by
+/// side (`App::markdown_edit_preview`). Focus starts in the editor; `Tab`
+/// switches to the preview. A no-op if either fails to open. Mouse
+/// capture comes with the editor (`event_loop::sync_mouse_capture`).
 pub fn open_edit_preview(app: &mut App) {
     let Some(path) = app.active_panel().selected_path() else {
         return;
@@ -43,17 +31,11 @@ pub fn open_edit_preview(app: &mut App) {
 }
 
 
-/// Key handling while `App::active == 1` -- the embedded preview has
-/// focus, not the editor -- during a `Mode::Editing` session that has a linked `App::markdown_edit_preview`
-/// (`event_loop::keys::handle_key_event` is what routes here instead of
-/// `editor::handle_editor_key`, based on `app.active`). `Up`/`Down`
-/// scroll one line, `PageUp`/`PageDown` a fixed chunk (`PAGE_SIZE`);
-/// `l` opens the keyboard-driven link search (`Overlay::MarkdownLinkSearch`,
-/// `open_link_search`'s own doc comment). `Esc`/`F3` close the *whole*
-/// session, not just the preview half -- reusing
-/// `editor::close_editor_or_confirm` so an unsaved editor buffer still
-/// gets the same "discard changes?" prompt it would closing from the
-/// editor side, regardless of which half had focus at the time.
+/// Keys while the preview has focus (`app.active == 1`): `Up`/`Down`
+/// scroll a line, `PageUp`/`PageDown` a page, `l` opens the link search.
+/// `Esc`/`F3` close the whole session through
+/// `editor::close_editor_or_confirm`, so unsaved edits still get the
+/// discard prompt.
 pub fn handle_markdown_edit_preview_key(app: &mut App, key: KeyEvent) -> Result<()> {
     if let KeyCode::Char('l' | 'L') = key.code {
         open_link_search(app);
@@ -77,16 +59,9 @@ pub fn handle_markdown_edit_preview_key(app: &mut App, key: KeyEvent) -> Result<
 }
 
 
-/// `l` on the embedded preview: opens the keyboard-driven link browser
-/// (`Overlay::MarkdownLinkSearch`), requested directly as a more reliable
-/// alternative to `Ctrl`+click (`MarkdownPreviewState::link_at`'s own
-/// doc comment on why that's only ever an approximation once word-wrap
-/// is involved) -- exact by construction, since it works from the same
-/// parsed `MarkdownLink` list `links::resolve_link_target` already
-/// trusts, not from guessing which on-screen row a click landed on.
-/// A no-op if the document has no links at all (nothing to search).
-/// Opened as an overlay over `Mode::Editing`; the editor and
-/// `App::markdown_edit_preview` (the list's source) stay where they are.
+/// `l`: the keyboard link list (`Overlay::MarkdownLinkSearch`) -- exact,
+/// built from the parsed links rather than a click position. No-op
+/// without links. History: docs/history/markdown-preview.md.
 fn open_link_search(app: &mut App) {
     if !matches!(&app.mode, Mode::Editing(_)) {
         return;
@@ -142,24 +117,10 @@ pub fn handle_markdown_link_search_key(app: &mut App, key: KeyEvent) {
 }
 
 
-/// Mouse handling during a `Mode::Editing` session with a linked
-/// `App::markdown_edit_preview`: `Ctrl`+left-click on a rendered line
-/// containing a link opens it with the OS's own default handler
-/// (`system_open::open`/`open_url` -- built for opening a file/
-/// directory in the OS file manager or a URL in the default browser
-/// respectively) -- but only once `links::resolve_link_target` has
-/// actually turned the link's raw text into something worth opening
-/// (see its own doc comment for the real bug this guards against).
-/// Requires `Ctrl` (rather than a plain click) so an ordinary
-/// click/drag can still be used for the terminal's own purposes
-/// without every click on a link line firing navigation -- the same
-/// convention most GUI terminals and editors use for clickable links
-/// (VS Code's integrated terminal, iTerm2, ...). Works regardless of
-/// `App::active` -- a mouse click is a real screen position, not
-/// something that needs the preview to already have keyboard focus.
-/// The scroll wheel also scrolls the preview, same step as `Up`/`Down`,
-/// with no `Ctrl` needed. Anything else (a plain click, a right/middle
-/// click, mouse movement, drag) is ignored.
+/// Mouse in an editor session with a linked preview: `Ctrl`+left-click on
+/// a link opens it (via `links::resolve_link_target`), whichever half has
+/// focus -- `Ctrl` so a plain click stays the terminal's. The wheel
+/// scrolls the preview. Everything else is ignored.
 pub fn handle_markdown_preview_mouse(app: &mut App, mouse: MouseEvent) {
     if !matches!(&app.mode, Mode::Editing(_)) {
         return;

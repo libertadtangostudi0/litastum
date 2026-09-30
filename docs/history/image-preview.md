@@ -35,3 +35,10 @@ Crate choice and the terminal-protocol query: `litastum-stack.md`.
 - **Only jpg/jpeg/png/bmp**, the formats requested (`TODO/viewer.md`).
   More need widening `Cargo.toml`'s `image` features too, kept narrow on
   purpose.
+- **The resize filter.** `Resize::Fit` defaults to `Nearest`, reported
+  as looking terrible on a screenshot with small text (one source pixel
+  per cell, the rest thrown away). `Lanczos3` blends properly; it's
+  slower, but runs once per image, not per frame.
+- **Stray text before the first frame.** The protocol query writes to
+  the real screen behind `ratatui`'s buffer, and some text showed in a
+  panel until overwritten. `main` clears the terminal after the query.

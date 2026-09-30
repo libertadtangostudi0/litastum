@@ -11,31 +11,12 @@ use crate::compare::{compute, map_real_row, CompareState, DiffLineKind, LineEndi
 use crate::editor::Editor;
 use crate::theming::Theme;
 
-/// Renders `Alt+F5`'s own full-screen comparer: two ordinary, fully
-/// editable `editor::Editor` panes side by side (real cursor, undo,
-/// syntax highlighting, save -- everything `F4` editing already has),
-/// with GitHub-style red/green diff backgrounds layered on top
-/// (`Editor::set_extra_highlights`) and a one-line hint bar, mirroring
-/// `editor_pane.rs::draw_editor`'s own "Min(3) content / Length(1)
-/// hint" vertical split.
-///
-/// The diff itself is recomputed fresh every single frame, straight
-/// from both panes' *live* text (`Editor::text`) -- there is no
-/// snapshot taken at `CompareState::open` time that could drift from
-/// what's actually being edited. Neither pane's real buffer is ever
-/// touched by this: unlike the phase-1 read-only version this replaced,
-/// no synthetic filler rows are inserted anywhere -- `compute`'s own
-/// row-aligned `Empty` padding rows exist purely to classify real rows
-/// and to drive `map_real_row` below, never to render as text.
-///
-/// Only the currently *focused* pane (`CompareState::focus`) scrolls
-/// under its own steam (`Editor::view`'s usual cursor-follow behavior,
-/// completely unmodified). The *other* pane's viewport is forced, every
-/// frame, to whatever real row `map_real_row` says corresponds to the
-/// focused pane's own current top row -- `Editor::set_viewport_top_row`,
-/// the same technique (and the same underlying `edtui` viewport-follows-
-/// cursor fact) already fixed a real scroll bug in the read-only
-/// version of this view; see that method's own doc comment.
+/// `Alt+F5`: two ordinary, editable `Editor` panes side by side, with
+/// red/green diff backgrounds (`Editor::set_extra_highlights`) and a hint
+/// row. The diff is recomputed every frame from the live text; its
+/// `Empty` padding rows are never drawn. Only the focused pane scrolls
+/// itself -- the other is aligned every frame via `map_real_row` and
+/// `Editor::set_viewport_top_row`. History: docs/history/compare.md.
 pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) -> Option<Position> {
     let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Min(3), Constraint::Length(1)]).split(area);
     let panes = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(50), Constraint::Percentage(50)]).split(rows[0]);
@@ -89,19 +70,8 @@ fn draw_pane(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme, 
     cursor
 }
 
-/// One whole-line `Highlight` per changed (`Removed`/`Added`) real row
-/// -- an `Empty` (padding, no real row on this side) or `Unchanged` row
-/// gets none at all, rendering with `Editor::view`'s own ordinary
-/// syntax-highlighted styling.
-///
-/// **A `Highlight`'s own style *replaces* whatever's under it
-/// outright** -- confirmed directly from `edtui`'s own rendering
-/// (`word_highlight.rs`'s own doc comment already established this for
-/// word-occurrence highlighting): there's no way to tint just the
-/// background while leaving per-token syntax coloring underneath, so a
-/// changed line renders in one flat foreground/background pair, the
-/// same tradeoff an active text selection in the built-in editor
-/// already accepts.
+/// One whole-line `Highlight` per `Removed`/`Added` row. A `Highlight`
+/// replaces the span's style, so a changed line is one flat color pair.
 fn row_highlights(kinds: &[DiffLineKind], source_index: &[Option<usize>], text: &str, changed_bg: Color, theme: &Theme) -> Vec<Highlight> {
     let real_lines: Vec<&str> = text.lines().collect();
     let style = Style::default().fg(theme.text).bg(changed_bg);
@@ -118,22 +88,11 @@ fn row_highlights(kinds: &[DiffLineKind], source_index: &[Option<usize>], text: 
     highlights
 }
 
-/// Small right-aligned `[CRLF]`/`[LF]` markers over a pane's own
-/// visible rows, one per real line currently on screen -- `F9` -> Line
-/// endings' `Shown` setting. Drawn as a thin overlay *on top of* the
-/// already-rendered `EditorView` rather than baked into the buffer text
-/// the way the read-only phase-1 version did it: these panes are real,
-/// editable, saved-to-disk buffers now, and inserting extra characters
-/// into them to show a marker would corrupt the file the moment it's
-/// saved. `line_endings` is `CompareState`'s own fixed on-open snapshot
-/// (`CompareState::line_endings`'s own doc comment explains why it
-/// can't be redetected from the live buffer at all -- `edtui` itself
-/// throws the `\r` away on load). `inner` approximates `Editor::view`'s
-/// own bordered content area (`Block::bordered()` is always a uniform
-/// 1-cell frame) -- there's no direct hook into its internal layout to
-/// read this back exactly, but the approximation only has to be right
-/// along the right edge, which line numbers (drawn on the *left*)
-/// never affect.
+/// Right-aligned `[CRLF]`/`[LF]` markers drawn over the editor view --
+/// never inserted into the buffer, which is saved to disk.
+/// `line_endings` is the snapshot taken on open (`edtui` drops `\r`).
+/// `inner` approximates the view's 1-cell border; only its right edge
+/// matters. History: docs/history/compare.md.
 fn draw_line_ending_overlay(frame: &mut Frame, area: Rect, line_endings: &[Option<LineEnding>], viewport_top_row: usize, theme: &Theme) {
     let inner = Rect {
         x: area.x.saturating_add(1),
@@ -175,14 +134,9 @@ mod tests {
         CompareState::open(left_path, right_path, None, EditorKeymapMode::Standard).unwrap()
     }
 
-    /// Regression coverage: requested directly, syntax highlighting
-    /// competed for attention with the diff coloring, so
-    /// `CompareState::open` now calls `Editor::disable_syntax_highlighting`
-    /// on both panes. `.rs` content (which `syntect`'s bundled default
-    /// grammar set genuinely recognizes) is deliberately used here, not
-    /// `.txt` -- a `.txt` file would never get a syntax highlighter in
-    /// the first place, so it couldn't tell "disabled" apart from
-    /// "nothing recognized this file" at all.
+    /// Compare panes have no syntax colors (they competed with the diff). Uses
+    /// `.rs`, which `syntect` recognizes -- `.txt` couldn't tell "disabled"
+    /// from "unrecognized".
     #[test]
     fn syntax_highlighting_is_disabled_even_for_a_recognized_language() {
         let dir = crate::test_support::unique_scratch_dir("ui-compare-no-syntax");
@@ -238,14 +192,9 @@ mod tests {
         assert!(row_has_bg(&buffer, 30..60, 2, theme.diff_added_bg), "right's changed row should be green somewhere");
     }
 
-    /// Regression coverage for the same class of bug the read-only
-    /// phase-1 version had (`ui/compare.rs`'s own git history): the
-    /// *unfocused* pane's viewport must actually follow the focused
-    /// one every frame, not just report the right `viewport_top_row()`
-    /// internally while rendering something stale. Scrolls the focused
-    /// (left) pane down past an inserted line and checks the *rendered
-    /// text* of the unfocused (right) pane landed on the diff-mapped
-    /// row, not row 0.
+    /// The unfocused pane really renders at the diff-mapped row after the
+    /// focused one scrolls -- checked on the rendered text, not just
+    /// `viewport_top_row()`.
     #[test]
     fn the_unfocused_panes_viewport_tracks_the_focused_one() {
         let left = "a\nb\nc\nd\ne\nf\ng\nh\n";

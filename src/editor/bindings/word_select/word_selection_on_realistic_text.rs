@@ -9,15 +9,10 @@ fn state_for(contents: &str, cursor_col: usize) -> EditorState {
     state
 }
 
-/// Real reported text (`"- App: owns panels, active index"`,
-/// architecture-doc-shaped) -- unlike every test above, this mixes
-/// in punctuation (`:`, `,`) between words, which `edtui`'s own
-/// 3-way character classification (word / punctuation / whitespace)
-/// treats as its own single-character "word". Repeated
-/// `Ctrl+Shift+Left` from the end of the line should still strictly
-/// monotonically extend the selection leftward, landing on each
-/// word *and* each punctuation run in turn, never stalling or
-/// jumping backward.
+/// Real reported text with punctuation between words
+/// (`"- App: owns panels, active index"`): repeated `Ctrl+Shift+Left`
+/// from the line end extends strictly leftward over every word and
+/// punctuation run, never stalling or jumping back.
 #[test]
 fn repeated_left_monotonically_extends_through_punctuation() {
     let text = "- App: owns panels, active index";

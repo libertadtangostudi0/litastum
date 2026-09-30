@@ -55,16 +55,10 @@ pub fn substitute_prompts(command: &str, answers: &[(String, String)]) -> String
     result
 }
 
-/// Finds the next placeholder in `text`, if any -- either Far's own
-/// `!?Label?Default!` or litastum's `{{prompt:Label}}`/
-/// `{{prompt:Label:Default}}` (`super::substitution::consume_litastum_token`'s
-/// own doc comment explains why litastum has its own syntax at all).
-/// Returns `(text_before_it, label, default, remainder_after_it)`.
-/// Shared by `extract_prompts` (which only reads `label`/`default`) and
-/// `substitute_prompts` (which also needs the untouched text on both
-/// sides, to rebuild the command with the answer spliced in) -- both
-/// work unmodified against whichever syntax was actually used, since
-/// this is the only place that has to know both exist.
+/// The next placeholder in `text`, Far's `!?Label?Default!` or
+/// `{{prompt:Label[:Default]}}`, as `(before, label, default, after)`.
+/// The only place that knows both syntaxes; `extract_prompts` and
+/// `substitute_prompts` share it.
 fn next_placeholder(text: &str) -> Option<(&str, &str, &str, &str)> {
     let far = text.find("!?").and_then(|start| parse_far_placeholder(text, start));
     let native = text.find("{{prompt:").and_then(|start| parse_native_placeholder(text, start));
@@ -83,16 +77,9 @@ fn next_placeholder(text: &str) -> Option<(&str, &str, &str, &str)> {
     }
 }
 
-/// Parses a `!?Label?Default!` placeholder assumed to start at byte
-/// offset `start` in `text` (`text[start..]` begins with `!?`) -- `None`
-/// if what follows isn't actually a well-formed placeholder (e.g. the
-/// degenerate `!?!`, Far's own file-description macro, which
-/// `super::substitution::substitute_macros` leaves untouched for the
-/// same reason). `pub(super)` since `substitution::consume_far_token`
-/// also needs this exact parse (to copy a real placeholder's span out
-/// atomically rather than misreading its own closing `!` as an
-/// unrelated macro -- see that function's own doc comment for the
-/// regression this fixed).
+/// Parses a `!?Label?Default!` starting at `start`; `None` if malformed
+/// (e.g. Far's `!?!`). Also used by `consume_far_token` to copy a
+/// placeholder whole. History: docs/history/user-menu.md.
 pub(super) fn parse_far_placeholder(text: &str, start: usize) -> Option<(&str, &str, &str, &str)> {
     let prefix = &text[..start];
     let after_marker = &text[start + 2..];

@@ -9,20 +9,11 @@ use crate::editor::Editor;
 
 use super::super::export::export_results;
 
-/// Key handling for `FindFilePhase::Results` -- `Up`/`Down` move the
-/// selection, `Shift+Up`/`Down` mark the current row and move (same
-/// `Panel::toggle_mark_move_up`/`_down` convention, see
-/// `FindFileState::toggle_mark_move_down`'s own doc comment for why
-/// marks here are indexed rather than name-keyed), `Alt+F5` compares
-/// exactly two marked results, `Enter` opens the selected result and
-/// closes the popup, `Tab` does the same navigation but leaves the
-/// popup open, `F4` opens it in the built-in editor, `Ctrl+S` exports
-/// the full list, `Ctrl+C` copies the highlighted result's own full
-/// path to the real OS clipboard -- reported directly as a real gap:
-/// there was no way to get a result's path out of this popup at all
-/// short of exporting the *entire* list to a file. `Esc` is handled one
-/// level up, in `handle_find_file_key`, ahead of this dispatch
-/// entirely.
+/// Keys on the results: `Up`/`Down` move, `Shift+Up`/`Down` mark and move,
+/// `Alt+F5` compares two marked results, `Enter` opens and closes the
+/// popup, `Tab` opens and keeps it, `F4` edits, `Ctrl+S` exports,
+/// `Ctrl+C` copies the highlighted path. `Esc` is handled one level up.
+/// History: docs/history/find-file-search.md.
 pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<()> {
     match key.code {
         KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -69,16 +60,9 @@ pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<()> {
     Ok(())
 }
 
-/// `Alt+F5` on the results popup: compares the two marked results,
-/// same `compare::CompareState` this app's own panel-to-panel `Alt+F5`
-/// (`command_line::browsing::handle_browsing_key`) already opens --
-/// requested directly, since results found by a search can easily live
-/// in two unrelated directories with no convenient way to get both of
-/// them into the two panels first. A silent no-op unless exactly two
-/// results are marked, or either resolved path can't actually be
-/// compared (a directory result, or a read failure) -- same convention
-/// `compare_targets` already follows for the panel version of this
-/// action.
+/// `Alt+F5`: compares the two marked results -- search hits often live in
+/// unrelated directories. No-op unless exactly two are marked and both can
+/// be compared.
 fn compare_marked_results(app: &mut App) -> Result<()> {
     let Some(Overlay::FindFile(state)) = &app.overlay else {
         return Ok(());
@@ -208,22 +192,10 @@ fn navigate_active_panel_to_result(app: &mut App, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `F4` on a result: opens it in the built-in editor, same as `F4` from
-/// the browser (`explorer::command::open_editor`) -- does nothing for a
-/// directory result (search results can include directory name matches
-/// too, not just files) or a file that fails to load as UTF-8 text,
-/// same as that function.
-///
-/// The results list itself isn't dropped, just set aside
-/// (`app.editor_return_to`) -- reported directly as a real gap:
-/// finishing the edit used to always land back in plain browsing,
-/// losing the search results even though nothing about them was
-/// actually done with yet. `editor_keymap::return_from_editor` restores
-/// `Overlay::FindFile` from it once the editor genuinely closes (`Esc`
-/// with no unsaved changes, or discarding them) -- moved via
-/// `mem::replace` rather than cloned, so a large result set (the very
-/// case the popup's own scrolling exists for) doesn't get deep-copied
-/// just to park it here.
+/// `F4` on a result: opens it in the editor (not a directory, not
+/// non-UTF-8). The results are parked in `app.editor_return_to` (moved,
+/// not cloned) and restored when the editor closes, instead of dropping
+/// back to plain browsing. History: docs/history/find-file-search.md.
 fn edit_selected_result(app: &mut App) -> Result<()> {
     let Some(Overlay::FindFile(state)) = &app.overlay else {
         return Ok(());

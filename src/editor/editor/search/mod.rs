@@ -29,17 +29,10 @@ impl SearchBox {
 
 
 impl Editor {
-    /// Whether the `Ctrl+F` box has keyboard focus -- every key goes to
-    /// the box (`editor_keymap::handle_search_key`). `EditorMode::Search`
-    /// is the flag for this (`edtui` itself draws nothing extra for it
-    /// while its own `SearchState` stays empty); the matching itself is
-    /// this app's own `SearchSession` -- see its doc comment for why
-    /// `edtui`'s search couldn't be kept.
-    ///
-    /// Distinct from `search_box_open`, requested directly to match VS
-    /// Code: clicking into the text takes focus away from the box (the
-    /// caret moves, arrows and typing work on the text again) while the
-    /// box stays open and its match stays highlighted.
+    /// Whether the `Ctrl+F` box has keyboard focus (`EditorMode::Search` is
+    /// the flag; matching is our `SearchSession`). Distinct from
+    /// `search_box_open`: a click in the text takes focus while the box stays
+    /// open, as in VS Code.
     pub fn is_searching(&self) -> bool {
         self.state.mode == EditorMode::Search
     }
@@ -121,14 +114,9 @@ impl Editor {
         }
     }
 
-    /// One editing key in the search box (`TextField::apply_key` --
-    /// typing, Backspace/Delete, character/word selection with
-    /// `Shift`/`Ctrl+Shift` + arrows, `Home`/`End`, ...). Whenever the
-    /// text itself changes, the matches follow immediately and the
-    /// cursor jumps to the first one (find-as-you-type), and history
-    /// browsing ends -- editing means the query is being written fresh
-    /// again, not still showing whatever `Up`/`Down` last recalled.
-    /// Returns whether the key was an editing key at all.
+    /// One editing key in the search box (`TextField::apply_key`). A text
+    /// change updates the matches, jumps to the first one and ends history
+    /// browsing. Returns whether it was an editing key.
     pub fn search_edit_key(&mut self, key: KeyEvent) -> bool {
         let lines = &self.state.lines;
         let search_box = self.search.get_or_insert_with(|| SearchBox::new(self.state.cursor));
@@ -169,27 +157,10 @@ impl Editor {
         }
     }
 
-    /// `Esc` -- closes the search box. Requested directly: if the
-    /// cursor is currently sitting on a real match, leave it right
-    /// *after* the match's own last character (the ordinary "next
-    /// character you'd type" position, same as where a plain typing
-    /// cursor always sits) -- rather than reverting to wherever the
-    /// cursor was before the box opened. Only reverts when there's
-    /// genuinely nothing to land on: an empty query, or no match.
-    ///
-    /// **One past the match's last character, not directly on it** --
-    /// reported directly against a real search ("lso" landed the cursor
-    /// visually *between* 's' and the final 'o', not after it). This
-    /// codebase's own "cursor sits on the last *selected* character"
-    /// convention (`bindings::word_select`'s forward-selection landing,
-    /// the vertical-shift-select fix, ...) only reads right because
-    /// `Editor::cursor_screen_position` shifts the rendered bar one
-    /// column past whatever cell `state.cursor` names *while a selection
-    /// is active* -- closing the search box leaves `state.selection`
-    /// untouched (`None`), so that shift never fires here, and landing on
-    /// the match's own last character would visually read as stopping
-    /// one short of it, same trap that convention exists to avoid in the
-    /// first place.
+    /// `Esc`: closes the box. On a match, the cursor goes one past its last
+    /// character; with no query or no match, back to where the search started.
+    /// Not onto the last character: with no selection there's no bar-cursor
+    /// shift, and "lso" landed visually between 's' and 'o'. History: docs/history/editor-keymap.md.
     pub fn stop_search(&mut self) {
         let query = self.search_query();
         if !query.is_empty() && self.cursor_sits_on_a_real_match(&query) {
@@ -217,14 +188,9 @@ impl Editor {
         }
     }
 
-    /// `Up` -- recalls the *previous* entry in `history` (a shell's own
-    /// `Up`-arrow convention: first press shows the most recent past
-    /// query, each further press steps one entry further back), rather
-    /// than moving between matches of the *current* query -- see
-    /// `search_next`/`search_previous` above for why those, not
-    /// `Up`/`Down`, are what the report actually asked for that. A
-    /// no-op with nothing to recall (`history` empty, or already at the
-    /// oldest entry).
+    /// `Up`: the previous `history` entry, shell-style -- not the previous
+    /// match (that's `Shift+Enter`/`Shift+F3`). No-op at the oldest entry or
+    /// with no history.
     pub fn search_history_up(&mut self, history: &[String]) {
         if history.is_empty() {
             return;
@@ -237,14 +203,8 @@ impl Editor {
         self.replace_search_query(&history[next_index].clone());
     }
 
-    /// `Down` -- the other half of `search_history_up`: steps back
-    /// *toward* the most recent entry, and past it clears the query
-    /// entirely (the shell convention's own "back to your own
-    /// not-yet-recalled line," simplified here to just "empty," since
-    /// this box has no separate "what was I typing before I started
-    /// browsing" state to restore). A no-op while not currently browsing
-    /// history at all (`Up` was never pressed, or an edit since already
-    /// cleared it -- see `search_edit_key`).
+    /// `Down`: back toward the newest entry; past it, an empty query. No-op
+    /// when not browsing history.
     pub fn search_history_down(&mut self, history: &[String]) {
         let Some(index) = self.search_history_index else {
             return;

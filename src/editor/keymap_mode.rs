@@ -6,24 +6,14 @@ use serde::{Deserialize, Serialize};
 /// requested directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum EditorKeymapMode {
-    /// This project's own non-modal (VSCode-convention) keymap
-    /// (`bindings::standard_key_handler`), plus every hand-rolled
-    /// correction pass `Editor::input` layers on top of it (word-wise
-    /// selection touch-tracking, `Shift`+arrow anchor fixes, line-
-    /// boundary wrapping, ...) -- see `.claude/rules/litastum-stack.md`
-    /// and `docs/history/` for why those exist. All of that is
-    /// specifically tuned against this keymap's own declarative table;
-    /// none of it runs while `Vim` (below) is active instead.
+    /// Our non-modal keymap (`bindings::standard_key_handler`) plus every
+    /// correction pass `Editor::input` layers on it -- all tuned for this
+    /// table; none run under `Vim`.
     #[default]
     Standard,
-    /// `edtui`'s own bundled `EditorEventHandler::vim_mode()`, used
-    /// as-is -- implementing real Vim keybindings from scratch is well
-    /// outside this project's own scope, and `edtui` already ships one.
-    /// This project's own correction passes (see `Standard`'s own doc
-    /// comment) are specifically tuned against `Standard`'s keymap and
-    /// are skipped entirely while this is active instead -- running them
-    /// against Vim's own modal, multi-key sequences isn't guaranteed
-    /// safe and hasn't been attempted.
+    /// `edtui`'s own `EditorEventHandler::vim_mode()`, as-is. Our correction
+    /// passes are skipped: they were never tuned for Vim's modal, multi-key
+    /// sequences.
     Vim,
 }
 

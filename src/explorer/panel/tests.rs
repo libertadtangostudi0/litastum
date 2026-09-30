@@ -200,14 +200,8 @@ mod scrolling_tests {
         panel
     }
 
-    /// Regression test for the real report and follow-up: pressing
-    /// `Right` at the last (right-hand) column of the currently
-    /// visible page must page-turn the whole grid forward by one
-    /// column's width, landing on the new page's own column 0, same
-    /// row -- not nudge the view by a single row the way `Down`
-    /// does. Requested directly after a minimal-shift version left
-    /// the cursor at an arbitrary, non-aligned row instead of at the
-    /// top of the freshly revealed column.
+    /// `Right` in the last visible column turns the page by one column,
+    /// landing on the new column's same row -- not a one-row nudge. History: docs/history/panel.md.
     #[test]
     fn moving_right_past_the_last_column_pages_forward_by_a_whole_column() {
         let mut panel = panel_with_viewport(102, 2, 28); // rows() = 51, column_height = min(28, 51) = 28
@@ -221,14 +215,8 @@ mod scrolling_tests {
         assert_eq!(panel.scroll_offset(), 28, "should have paged forward by a whole column (28), not by one row");
     }
 
-    /// The mirror of the test above: `Left` only pages the grid
-    /// backward once it's actually leaving the currently visible
-    /// window -- moving from column 1 back to column 0 of the
-    /// *same* window (already scrolled, from the `Right` press
-    /// above) doesn't scroll at all, exactly like `Right` moving
-    /// from column 0 to column 1 doesn't; only the *second* `Left`,
-    /// which would leave column 0's own page, actually pages
-    /// backward.
+    /// `Left` only pages back when leaving the visible window: column 1 to 0
+    /// doesn't scroll, the next `Left` does.
     #[test]
     fn moving_left_past_the_first_column_pages_backward_by_a_whole_column() {
         let mut panel = panel_with_viewport(102, 2, 28);
@@ -263,15 +251,9 @@ mod scrolling_tests {
         assert_eq!(panel.scroll_offset(), 0);
     }
 
-    /// Regression test for the real report: from the last (right-hand)
-    /// column, with less than a full column's worth of entries left
-    /// beyond the current page, `Right` did nothing at all instead of
-    /// reaching the trailing entries that were still unreached (here,
-    /// `generate_test_files.bat`, sorted after all the numbered
-    /// files) -- `column_height * columns` (`102`) overshooting
-    /// `entries.len()` was silently treated the same as "this row has
-    /// no counterpart at all," when it should instead land on the
-    /// very last entry.
+    /// `Right` from the last column with less than a column left reaches the
+    /// last entry: an index past `entries.len()` was treated as "no entry
+    /// there" and did nothing. History: docs/history/panel.md.
     #[test]
     fn moving_right_from_the_last_column_with_a_partial_remainder_jumps_to_the_very_last_entry() {
         let mut panel = panel_with_viewport(102, 2, 39);

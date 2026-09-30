@@ -33,14 +33,8 @@ pub fn load_history() -> Vec<String> {
     }
 }
 
-/// Best-effort — logged and otherwise ignored on failure, same as
-/// `theming::config::try_persist`'s callers; a failed save shouldn't
-/// block the command that was just run. Kept separate from
-/// `record_history` below (rather than called from inside it) so
-/// `record_history`'s own unit tests — which run in parallel and don't
-/// want to touch real state — can exercise the in-memory bookkeeping
-/// without ever writing this file; the one real caller
-/// (`browsing::submit_command_line`) calls both in sequence.
+/// Best-effort: a failed save is logged. Separate from `record_history` so
+/// its tests stay off the disk; `submit_command_line` calls both.
 pub(super) fn save_history(history: &[String]) {
     let Some(dir) = history_dir() else {
         warn!("command history: no history directory available, not persisted");
@@ -55,17 +49,10 @@ pub(super) fn save_history(history: &[String]) {
     }
 }
 
-/// Appends `input` to `app.command_history`, for F9 → Commands →
-/// History / `Alt+F8` (`handle_history_key`/`draw_command_history`
-/// below) — not `Up`-arrow recall, since arrows stay bound to panel
-/// navigation on the always-live command line (see the module doc and
-/// `.claude/rules/litastum-command-line.md`); a popup has no such
-/// conflict, which is what makes History workable at all. Skips a
-/// repeat of the immediately-previous entry (typing `dir` three times
-/// in a row shouldn't fill History with three identical lines), and
-/// caps total length at `theming::config::limits().max_command_history`,
-/// dropping the oldest entry once exceeded. Doesn't persist by itself
-/// — see `save_history` above.
+/// Appends `input` to the history for F9 -> Commands -> History /
+/// `Alt+F8` (not `Up` recall: arrows navigate the panels). Skips a repeat
+/// of the last entry, caps at `limits().max_command_history`. Doesn't save
+/// (`save_history`).
 pub fn record_history(app: &mut App, input: &str) {
     if app.command_history.last().map(String::as_str) == Some(input) {
         return;
@@ -102,18 +89,10 @@ pub fn matching_history<'a>(history: &'a [String], query: &str) -> Vec<&'a Strin
     history.iter().filter(|entry| entry.to_lowercase().contains(&query)).collect()
 }
 
-/// Substring matches (case-insensitive, same as `matching_history`)
-/// for the auto-popping suggestion list shown right above the command
-/// line while typing (`ui::draw_history_suggestions`) — Far Manager's
-/// own command-line autocomplete behaves the same way, appearing
-/// unprompted rather than needing an explicit key like `Alt+F8` does.
-/// Deduplicated (a command run many times shouldn't clutter the list
-/// with repeats) and most-recently-used first, unlike
-/// `matching_history`'s oldest-first order — a fresh, unprompted list
-/// reads better ordered by recency, same reasoning a shell's own
-/// history search prioritizes recent commands. An empty `query`
-/// suggests nothing (there's no "you typed nothing" popup — that's
-/// what `Alt+F8`'s always-available manual search is for).
+/// Substring matches (case-insensitive) for the suggestions that pop up
+/// while typing, as in Far: deduplicated, newest first (unlike
+/// `matching_history`). An empty query suggests nothing -- `Alt+F8` is the
+/// manual search.
 pub fn suggest_history<'a>(history: &'a [String], query: &str) -> Vec<&'a str> {
     if query.is_empty() {
         return Vec::new();
@@ -139,26 +118,11 @@ fn matching_history_indices(history: &[String], query: &str) -> Vec<usize> {
     history.iter().enumerate().filter(|(_, entry)| entry.to_lowercase().contains(&query)).map(|(i, _)| i).collect()
 }
 
-/// Key handling on the History popup: typing filters the list live
-/// (`matching_history`, above) using the same always-live command line
-/// everything else types into — Far Manager's own `Alt+F8` behaves the
-/// same way, narrowing the list as you type rather than needing a
-/// separate search field. `Up`/`Down` move within the *filtered* list,
-/// `Enter` runs the highlighted (filtered) entry straight away (through
-/// the exact same `submit_command_line` the always-live command line's own
-/// `Enter` uses, so `cd`/`cls` and the actual shell-out all behave
-/// identically) — reported directly as the expected behavior, matching
-/// a real shell's own history recall: picking a past command should run
-/// it, not just drop it back into the line unexecuted for a second
-/// `Enter`. `Tab` instead copies the highlighted entry into the command
-/// line for editing *without* running it -- the old `Enter` behavior,
-/// moved rather than removed, once `Enter` itself started running
-/// things: recalling a command to tweak before running it for real is
-/// still a real, separate need from "just run the last one again".
-/// `F8` deletes the highlighted entry outright (both in memory and from
-/// disk), matching this popup's own F8-deletes convention everywhere
-/// else in this app (the file panel's own F8). `Esc` closes without
-/// changing the command line.
+/// Keys on the History popup: typing filters it live through the command
+/// line (as Far's `Alt+F8`); `Up`/`Down` move; `Enter` runs the entry
+/// through `submit_command_line`, like a shell's recall; `Tab` copies it
+/// into the command line to edit first; `F8` deletes it (memory and disk);
+/// `Esc` closes. History: docs/history/command-execution.md.
 pub fn handle_history_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if !matches!(app.overlay, Some(Overlay::CommandHistory(_))) {
         return Ok(Effect::None);

@@ -2,15 +2,9 @@ use std::path::PathBuf;
 
 use super::prompts::parse_far_placeholder;
 
-/// One panel's worth of state for macro substitution (`substitute_macros`) --
-/// built fresh from `App`/`Panel` right before running a menu item's
-/// commands (`input::run_selected_user_menu_item`'s own
-/// `build_macro_context`), never stored. Lives here (rather than
-/// alongside `Panel` itself) so this module -- the one place that
-/// actually needs to reason about Far's `!##`/`!^`/`![`/`!]` panel-
-/// context prefixes -- stays the single source of truth for what a
-/// macro substitution needs to know, without pulling `crate::app`/
-/// `crate::explorer::panel` into this otherwise pure, I/O-free module.
+/// One panel's state for `substitute_macros`, built fresh before each run
+/// (`build_macro_context`). Defined here so this module stays pure and
+/// free of `App`/`Panel`.
 #[derive(Debug, Clone, Default)]
 pub struct PanelMacroContext {
     pub dir: PathBuf,
@@ -95,29 +89,13 @@ enum PanelRef {
 }
 
 
-/// Substitutes every macro in `command` against `ctx` -- both real Far
-/// Manager's own `!...!` family (confirmed against Far's own
-/// `@MetaSymbols` help topic, for reading a ported `FarMenu.ini` or a
-/// hand-written command that still uses Far's own syntax) and
-/// litastum's own `{{...}}` family (`consume_litastum_token`'s own doc
-/// comment explains why this needed a syntax of its own rather than
-/// just extending Far's). A `!?...?!` or `{{prompt:...}}` placeholder
-/// is deliberately left untouched by this pass -- `super::prompts`'s
-/// `extract_prompts`/`substitute_prompts` handle those separately, once
-/// the user has actually answered them.
+/// Substitutes Far's `!...!` macros (`@MetaSymbols`) and litastum's
+/// `{{...}}` in `command`. Prompt placeholders (`!?...?!`,
+/// `{{prompt:...}}`) are left for `super::prompts` once answered.
 ///
-/// Deliberate gaps against real Far, all documented at the call site
-/// that hits them: short (8.3) filename variants fall back to the long
-/// name (no Windows short-name lookup in this codebase, and no such
-/// concept at all on macOS/Linux); `!=\`/`!=/` (symbolic-link-resolved
-/// path) fall back to the plain path (no symlink-canonicalization
-/// helper here yet); `!?!` (Far's separate per-file "description" --
-/// `descript.ion` files -- feature) is left as literal text, since
-/// litastum has no equivalent; `!@!`/`!$!` ("name of a file containing
-/// the list of selected names," Far's own workaround for command-line
-/// length limits) fall back to the same inline list `!&` produces,
-/// rather than actually writing a scratch file -- keeps this module
-/// I/O-free, at the cost of that one narrow use case.
+/// Gaps against Far: 8.3 names and `!=\`/`!=/` fall back to the plain
+/// name/path, `!?!` stays literal, `!@!`/`!$!` inline the list like `!&`
+/// (no scratch file, no I/O here). History: docs/history/user-menu.md.
 pub fn substitute_macros(command: &str, ctx: &MacroContext) -> String {
     let mut result = String::new();
     let mut rest = command;
@@ -163,14 +141,10 @@ pub fn substitute_macros(command: &str, ctx: &MacroContext) -> String {
     result
 }
 
-/// Consumes one Far-style `!...!` (or self-terminating `!&`/`!:`/etc.)
-/// macro token starting at `rest` (which must begin with `!`) -- returns
-/// the text to emit in its place, the (possibly updated) current-panel
-/// context for whatever comes after, and the remainder of `rest` past
-/// this token. Order matters: longer/more specific prefixes are checked
-/// before shorter ones they'd otherwise be mistaken for (`.!`/`-!`/`+!`
-/// before the bare fallback, `&~` before plain `&`, ...), same
-/// "backtrack-free, ordered dispatch" shape a real tokenizer needs.
+/// Consumes one Far `!...!` token at `rest` (starting with `!`): returns
+/// its replacement, the current-panel context for what follows, and the
+/// remainder. Longer prefixes are checked before shorter ones they'd be
+/// mistaken for (`&~` before `&`, ...).
 fn consume_far_token<'a>(rest: &'a str, ctx: &MacroContext, current: PanelRef) -> (String, PanelRef, &'a str) {
     debug_assert!(rest.starts_with('!'));
     let after = &rest[1..];
@@ -178,18 +152,9 @@ fn consume_far_token<'a>(rest: &'a str, ctx: &MacroContext, current: PanelRef) -
     if let Some(remainder) = after.strip_prefix('!') {
         return ("!".to_string(), current, remainder);
     }
-    // `!?...?!` (a real prompt placeholder) and the degenerate `!?!`
-    // (Far's file-description macro, unsupported -- see this
-    // function's own doc comment) both start with `!?`. Both need to
-    // be copied out *atomically*, whole span at once -- copying only
-    // the opening `!?` and leaving the rest (including the
-    // placeholder's own closing `!`) to be rescanned character-by-
-    // character let that closing `!` get misread as a fresh, unrelated
-    // macro of its own (e.g. the bare-`!` fallback), silently eating it
-    // and leaving `extract_prompts` with no closing `!` to find at all
-    // -- reported directly as a real regression: a genuine
-    // `!?Label?Default!` placeholder stopped opening the prompt popup
-    // and ran the raw, still-un-substituted command instead.
+    // `!?...?!` and `!?!` are copied whole: rescanning the rest let the
+    // placeholder's closing `!` be eaten as a new macro, and the prompt
+    // never opened. History: docs/history/user-menu.md.
     if after.starts_with('?') {
         if let Some(remainder) = after.strip_prefix("?!") {
             return ("!?!".to_string(), current, remainder);
@@ -247,15 +212,10 @@ fn consume_far_token<'a>(rest: &'a str, ctx: &MacroContext, current: PanelRef) -
         return (panel.inline_list(quote), current, remainder);
     }
     if after.starts_with('@') || after.starts_with('$') {
-        // "Name of a file containing the list" -- see this function's
-        // own doc comment for why this falls back to the plain inline
-        // list instead. Far's own docs write the file-list marker
-        // doubled ("!@@!") in some places and single ("!$!") in
-        // others -- tolerates either one or two marker characters
-        // rather than betting on which is the real delimiter, since
-        // this macro is already an approximation. Still skips past the
-        // modifier letters and the closing `!`, if any, so they don't
-        // leak into the substituted command as literal text.
+        // The list-file macro falls back to the inline list (see the function
+        // doc). Far's docs write the marker both doubled (`!@@!`) and single
+        // (`!$!`), so either count is accepted; the modifiers and closing `!` are
+        // still skipped.
         let remainder = after[1..].trim_start_matches(['@', '$']);
         let after_modifiers = remainder.trim_start_matches(|c: char| c.is_ascii_alphabetic());
         let remainder = after_modifiers.strip_prefix('!').unwrap_or(after_modifiers);
@@ -281,21 +241,10 @@ fn take_list_modifier(rest: &str) -> (bool, &str) {
     }
 }
 
-/// Consumes one litastum-native `{{...}}` macro token starting at
-/// `rest` (which must begin with `{{`) -- litastum's own answer to
-/// Far's `!...!` macros, picked specifically because `{{`/`}}` collides
-/// with nothing cmd.exe (`%VAR%`, or `!VAR!` under delayed expansion),
-/// PowerShell (`$var`, `${...}`), or POSIX `sh` (`$var`, `$(...)`,
-/// backticks) already give special meaning to -- unlike Far's own
-/// `!...!`, which genuinely does collide with cmd's own delayed-
-/// expansion `!VAR!` syntax. Currently just the two macros actually
-/// requested: `{{cursor}}` (Far's `!.!`) and `{{prompt:...}}` (Far's
-/// `!?...?!`, handled by `super::prompts`); more can follow the same
-/// pattern later. Returns `None` (leave `{{`/`}}` as two literal
-/// characters, and try again one character later) for a
-/// `{{prompt:...}}` placeholder (left for `super::prompts`'s
-/// `extract_prompts`/`substitute_prompts` to handle once answered) or
-/// anything that isn't a recognized token at all.
+/// Consumes one `{{...}}` token at `rest` (which starts with `{{`).
+/// `{{` collides with nothing in cmd, PowerShell or `sh`, unlike Far's
+/// `!...!` (cmd's `!VAR!`). Handles `{{cursor}}`; `None` (keep the
+/// characters literal) for `{{prompt:...}}` or anything unrecognized.
 fn consume_litastum_token<'a>(rest: &'a str, ctx: &MacroContext, current: PanelRef) -> Option<(String, &'a str)> {
     debug_assert!(rest.starts_with("{{"));
     let close = rest.find("}}")?;

@@ -16,27 +16,11 @@ fn test_state(contents: &str) -> (EditorState, EditorEventHandler) {
     (state, EditorEventHandler::new(standard_key_handler()))
 }
 
-/// Drives one key through the real table, then the same correction
-/// passes `Editor::input` runs, in the same order -- see that method's
-/// own doc comment. Most of this module's tests only need the raw
-/// table (`handler.on_key_event` alone), but the fresh-Shift-arrow-
-/// selection tests specifically exercise the interaction between the
-/// table (which no longer performs any `Move` on its own for those
-/// keys) and `anchor_fresh_shift_selection`/
-/// `wrap_line_boundary_arrow_movement`/
-/// `exclude_landing_column_on_fresh_vertical_selection`/
-/// `close_selection_if_back_on_the_anchors_row`, which only ever run
-/// as part of `Editor::input` -- calling `handler.on_key_event` alone
-/// here would only show the table's own half of the fix and silently
-/// miss the other half, exactly the mistake a first version of the
-/// `Shift+Left` test below made.
-///
-/// `vertical_shift_anchor_col` stands in for `Editor`'s own field of
-/// the same name -- a real `Editor` carries it across presses on
-/// `self`; a test has no `Editor` to hang it off, so callers declare
-/// one `let mut vertical_shift_anchor_col = None;` per test and thread
-/// it through every `input(...)` call in that test, same lifetime as
-/// the real field has across a real editing session.
+/// One key through the real table plus the correction passes, in
+/// `Editor::input`'s order -- the fresh `Shift`+arrow tests need both
+/// halves, and a first `Shift+Left` test that used the raw table alone
+/// missed half of the fix. `vertical_shift_anchor_col` stands in for
+/// `Editor`'s field: each test declares one and threads it through.
 fn input(
     state: &mut EditorState,
     handler: &mut EditorEventHandler,
@@ -162,19 +146,9 @@ fn repeated_shift_down_keeps_the_trimmed_column() {
     assert_eq!(state.cursor, Index2 { row: 2, col: 0 }, "column 1 trimmed to 0 on the first press, unchanged on the second");
 }
 
-/// Regression (docs/history/shift-select.md, 5): pressing `Shift+Down` then `Shift+Up`
-/// (or the reverse) must return to *exactly* the starting point with
-/// nothing selected -- `edtui`'s inclusive-both-ends model can't
-/// represent an empty selection as `Some` at all, so landing back on
-/// the anchor's own cell must close the selection entirely, same as
-/// the word-select "Tenth"/"Eleventh" fixes elsewhere in this codebase.
-/// `MoveDown`/`MoveUp` never re-derive `.col`, they just carry forward
-/// whatever's already in `state.cursor` -- so without
-/// `vertical_shift_anchor_col` tracking the true, pre-trim column
-/// separately, the one-time trim on the way down never got undone on
-/// the way back up, leaving a stray one-character selection (`"te"` in
-/// the real report, cursor between "t" and "e" of a word) instead of
-/// nothing.
+/// `Shift+Down` then `Shift+Up` (or the reverse) returns to exactly the
+/// start with nothing selected -- the trimmed column is restored from
+/// `vertical_shift_anchor_col`. The report left `"te"` selected. History: docs/history/shift-select.md.
 #[test]
 fn shift_down_then_shift_up_returns_to_an_empty_selection_at_the_start() {
     let (mut state, mut handler) = test_state("terminal one\nterminal two");
@@ -229,19 +203,9 @@ fn select_copy_paste_roundtrip() {
     assert_eq!(String::from(state.lines.clone()), "hello worldhello");
 }
 
-/// Independent regression test requested directly after a report
-/// that copying "broke" alongside the word-select retraction work
-/// (`docs/history/word-select.md` ("Eighth")) -- that report
-/// turned out to be about the *selection itself* landing wrong, not
-/// about `Copy` mishandling a correct selection (confirmed by
-/// tracing `CopySelection`, which just reads `state.selection`
-/// directly). Still worth pinning down on its own, independent of
-/// any coordinate assertion: builds a selection through the real
-/// word-select path (`extend_word_selection`, not `Shift+Right`
-/// character-wise), retracts one word the same way a real
-/// `Ctrl+Shift+Left` after `Ctrl+Shift+Right` would, then copies and
-/// pastes back -- so the assertion is on the actual clipboard text
-/// content, not on `state.selection`/`state.cursor` numbers.
+/// Copy/paste after a word-wise retraction ("Eighth"), asserted on the
+/// clipboard text rather than coordinates -- the reported copy bug turned
+/// out to be the selection landing wrong, but copying is pinned on its own.
 #[test]
 fn word_select_copy_paste_roundtrip() {
     let (mut state, mut handler) = test_state("hello world wide web");
@@ -266,22 +230,9 @@ fn word_select_copy_paste_roundtrip() {
     );
 }
 
-/// Regression test for the real, ninth-attempt report against real
-/// text: a whole line selected some other way than word-select
-/// (character-wise here, matching `word_select::tests::
-/// ctrl_shift_left_retracts_fully_even_from_a_never_extended_selection`'s
-/// own "Untouched" shape), then one `Ctrl+Shift+Left` -- reported
-/// directly against `"theme, 2-column panels, arrow-key"`: the
-/// highlight only shrank to `"...arrow-k"` (stopping mid-word,
-/// one column short of the `'-'`), because the old fix only handled
-/// a *whitespace* gap, not a punctuation one. Selects the whole line
-/// one column short of the true end (so the selection's own end sits
-/// on `'y'`, the last real character, not the append position past
-/// it -- matching how a real "select whole line" action leaves the
-/// cursor), then checks the pasted-back text directly, independent
-/// of any `state.selection`/`state.cursor` coordinate assertion, per
-/// the same "check copying separately" request as
-/// `word_select_copy_paste_roundtrip` above.
+/// "Ninth": a whole line selected character-wise, then one
+/// `Ctrl+Shift+Left` must stop on the `-` of "arrow-key", not on `k`.
+/// Checked via the pasted-back text. History: docs/history/word-select.md.
 #[test]
 fn word_select_retraction_across_punctuation_matches_what_gets_copied() {
     let text = "theme, 2-column panels, arrow-key";
@@ -308,15 +259,8 @@ fn word_select_retraction_across_punctuation_matches_what_gets_copied() {
     );
 }
 
-/// Regression test for the real, fifteenth-attempt report (see
-/// `docs/history/word-select.md` for the full
-/// story, including the eleventh-attempt fix this one revised):
-/// retracting *past* a mid-buffer selection's own anchor must close the
-/// selection entirely, not leave a stale one-character selection (the
-/// space beyond the anchor) that a `Ctrl+C` could still copy. Confirms
-/// this at the actual clipboard level, not just via `state.selection`
-/// coordinates -- pasting after the closing press should insert nothing
-/// at all, since there's nothing left selected to copy.
+/// "Fifteenth": retracting past a mid-buffer anchor closes the selection;
+/// pasting afterwards inserts nothing. History: docs/history/word-select.md.
 #[test]
 fn word_select_copy_after_retracting_past_the_anchor_copies_nothing() {
     let (mut state, mut handler) = test_state("Draft architecture derived");
@@ -416,15 +360,9 @@ fn ctrl_left_moves_back_by_a_word() {
     assert!(state.cursor.col < 10, "should have moved back more than one character: {}", state.cursor.col);
 }
 
-/// A selection started character-wise (`Shift+Right`) should still
-/// extend correctly once switched to word-wise (`Ctrl+Shift+Right`)
-/// mid-selection -- both share the same `state.selection`, so
-/// there's no special handoff needed, but worth pinning down
-/// directly since a user is likely to mix the two in practice (a
-/// few characters, then "grab the rest of this word"). Lives here
-/// rather than in `word_select`'s own test module since it's really
-/// exercising the handoff *between* this table and that function,
-/// not either one in isolation.
+/// A selection started with `Shift+Right` extends with `Ctrl+Shift+Right`
+/// -- both share `state.selection`, no handoff. Here because it covers the
+/// seam between the table and `extend_word_selection`.
 #[test]
 fn switching_from_character_wise_to_word_wise_selection_still_extends() {
     let (mut state, mut handler) = test_state("hello world");

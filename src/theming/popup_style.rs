@@ -1,14 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-/// Which chrome flavor popups render with -- user-selectable via
-/// **F9 -> Options -> UI**, kept as two permanent, coexisting options
-/// rather than converging on one: an explicit request to keep the
-/// original square-cornered look (`Classic`) alongside the newer
-/// card-style one (`Rounded`, `ui/popup.rs`) rather than migrating
-/// every popup onto whichever style review happened to favor. See
-/// `.claude/rules/litastum-popup-design.md` for `Rounded`'s own settled
-/// fill/corner-glyph history -- that decision is about `Rounded`'s own
-/// look, not about whether `Classic` should keep existing alongside it.
+/// The popup chrome style, chosen in F9 -> Options -> UI. Both stay on
+/// purpose: the square `Classic` was asked to remain next to the card-style
+/// `Rounded` (`ui/popup.rs`, `.claude/rules/litastum-popup-design.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PopupStyle {
     /// Plain square `Block::borders(ALL)`, title baked directly into

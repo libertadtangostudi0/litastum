@@ -175,16 +175,10 @@ impl MarkdownPreviewState {
         self.highlighted_line
     }
 
-    /// The index into `lines()` whose own source line is the closest
-    /// one at or before `source_row` -- skips blank separator lines
-    /// entirely (`render_markdown` stamps each with whatever row the
-    /// block it followed *closed* on, which is often the exact same row
-    /// as that block's own last real content line -- including one
-    /// would make it the ambiguous, wrong pick whenever a scan for "the
-    /// last line at or before this row" reaches it first). Falls back
-    /// to the first real content line if `source_row` sits before
-    /// everything (e.g. the cursor is on a blank line at the very top);
-    /// `None` only when the document has no content lines at all.
+    /// The line whose source row is the last at or before `source_row`,
+    /// skipping blank separators (they carry their block's closing row, often
+    /// equal to its last real line). Falls back to the first content line;
+    /// `None` for a document with no content.
     fn line_for_source_row(&self, source_row: usize) -> Option<usize> {
         let mut best: Option<usize> = None;
         for (index, line) in self.lines.iter().enumerate() {

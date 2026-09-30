@@ -46,6 +46,14 @@ character ("loaded" retracted onto 'l' showed the bar between 'l' and
 - **One style for word occurrences and bracket pairs**: brackets first
   shipped with their own look and were asked to read as the same kind
   of "matches something nearby" hint.
+- **Bracket matching** (`bracket_match/`) highlights both brackets of
+  the pair, as in Far/VS Code -- requested directly. `<>` was added on
+  request despite being comparison operators too: a depth scan with no
+  syntax awareness can mismatch on `a < b`, the tradeoff most editors
+  with `<>` matching accept; generics and tags are the common case. It
+  stays a separate pass from word highlighting, so neither's rules
+  (both brackets vs. "not the one under the cursor") leak into the
+  other.
 - **The far bracket of a multi-line pair** only highlighted while its
   row was already visible -- `edtui` only scrolls to keep the cursor's
   row in view. `widen_viewport_to_show_matched_bracket_pair` moves the

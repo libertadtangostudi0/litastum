@@ -1,19 +1,9 @@
 use super::{MarkdownLine, MarkdownSpan};
 
-/// Word-wraps one logical `MarkdownLine` into however many visual rows
-/// it takes to fit `width` columns, each returned row a `MarkdownLine`
-/// of its own (spans split at wrap points, but each split piece keeps
-/// its original `kind`/`url` -- so a link that happens to straddle a
-/// wrap point still resolves correctly on either row it lands on).
-///
-/// `ui::markdown_preview::draw_markdown_preview` calls this instead of
-/// handing `ratatui`'s own `Paragraph` a `Wrap` to do this on its own --
-/// the point isn't the wrapping itself (either would look the same on
-/// screen) but that *this* module can then build exact click hitboxes
-/// (`MarkdownPreviewState::set_visible_row_links`) from the very same
-/// rows actually rendered, rather than a separate row-to-logical-line
-/// guess that has no way to know where `ratatui`'s own wrap points
-/// landed.
+/// Wraps one `MarkdownLine` to `width`, each piece keeping its `kind`/`url`
+/// so a link split across rows works on both. Done here rather than by
+/// `Paragraph`'s `Wrap` so click hitboxes come from the exact rows drawn.
+/// History: docs/history/markdown-preview.md.
 pub fn wrap_markdown_line(line: &MarkdownLine, width: usize) -> Vec<MarkdownLine> {
     if line.is_empty() {
         return vec![Vec::new()];

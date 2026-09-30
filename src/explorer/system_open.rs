@@ -1,22 +1,10 @@
 use std::path::Path;
 use std::process::{Child, Command};
 
-/// Builds (but doesn't run) the OS command that opens `path` the way a
-/// real double-click in the platform's own file manager would --
-/// launches whatever program is associated with a file, or opens a
-/// window navigated to a directory. Split out from `open` below so
-/// tests can inspect the constructed `Command` (program name,
-/// arguments) without ever launching a real process.
-///
-/// - Windows: `explorer.exe <path>` -- handles a plain file path the
-///   same way a double-click does (hands it to whatever's associated
-///   with it), no separate `ShellExecute` call needed, and opens a
-///   window at `path` when it's a directory.
-/// - macOS: `open <path>` -- same shape, the platform's own equivalent.
-/// - Other Unix: `xdg-open <path>` -- the desktop-agnostic
-///   freedesktop.org convention. Not installed on a headless system,
-///   but this project already accepts that class of limitation
-///   elsewhere (see `shell.rs`'s own Unix shell-profile fallback).
+/// The command (not run) that opens `path` like a double-click in the
+/// file manager: `explorer.exe` on Windows, `open` on macOS, `xdg-open`
+/// elsewhere (absent on headless systems -- accepted). Split out so tests
+/// can inspect it.
 fn build_open_command(path: &Path) -> Command {
     #[cfg(windows)]
     let program = "explorer";
@@ -41,29 +29,12 @@ pub fn open(path: &Path) -> std::io::Result<Child> {
     build_open_command(path).spawn()
 }
 
-/// Builds (but doesn't run) the OS command that opens a URL (a real
-/// `http(s)://`/`mailto:` link, not a filesystem path) with the OS's
-/// own default handler -- split out from `build_open_command` above
-/// rather than reused for it, because Windows genuinely wants a
-/// different program for each.
-///
-/// - Windows: `cmd /C start "" <url>` instead of `explorer.exe <url>`
-///   (what `open` above would have used for anything, path or URL,
-///   before this split existed) -- reported directly as feeling
-///   noticeably slow for a `Ctrl`+click on a Markdown link. `explorer.exe
-///   <url>` works, but it does so by handing the URL to Explorer's own
-///   *already-running* shell process over IPC, which is the right tool
-///   for "open a folder window" but adds a real, perceptible round-trip
-///   just to launch a browser. `cmd`'s builtin `start` calls
-///   `ShellExecute` directly, no Explorer IPC hop needed -- the same
-///   `cmd /C start` idiom other cross-platform "open a URL" tools use
-///   on Windows for exactly this reason. The literal empty `""`
-///   argument is `start`'s own window-title placeholder -- required
-///   whenever the target itself might be quoted, or `start` misreads
-///   the first quoted argument as the title instead of the target.
-/// - macOS/other Unix: same `open`/`xdg-open` as a path -- both already
-///   handle a URL argument just as well as a file path, no split
-///   needed there.
+/// The command (not run) that opens a URL. On Windows `cmd /C start "" <url>`
+/// rather than `explorer.exe <url>`, which goes through the running
+/// Explorer over IPC and felt slow for a `Ctrl`+click; `start` calls
+/// `ShellExecute` directly. `""` is `start`'s title argument, needed or a
+/// quoted target is taken as the title. `open`/`xdg-open` elsewhere.
+/// History: docs/history/markdown-preview.md.
 fn build_open_url_command(url: &str) -> Command {
     #[cfg(windows)]
     {

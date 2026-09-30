@@ -13,21 +13,10 @@ use crate::text_field::TextField;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
-/// The always-live command line (Far Manager-style — see
-/// `command_line.rs`). Shows the active shell profile's name at the
-/// right edge, since which one a typed command actually runs against
-/// is otherwise invisible (`Ctrl+P` to change it).
-/// Renders `"{cwd}> {typed}"`, matching real Far Manager's own command
-/// line (which always shows the active panel's path, not just a bare
-/// `>` prompt with no indication of where a command would actually
-/// run). Returns the prefix's character count — `ui::draw` needs it to
-/// place the real terminal cursor right after the typed text, since
-/// that position now depends on `cwd`'s length, not a fixed `"> "`.
-///
-/// No shell-profile-name hint on the right edge anymore (an earlier
-/// version had one, `"Ctrl+P {shell_name}"`) — reported as visual
-/// clutter that doesn't belong on a Far-style command line; `Ctrl+P`'s
-/// own picker already shows which profile is active when opened.
+/// The always-live command line: `"{cwd}> {typed}"`, like Far's (the
+/// path, not a bare `>`). Returns the prefix's character count, for the
+/// cursor. The shell-profile hint on the right was removed as clutter;
+/// `Ctrl+P`'s picker shows it.
 pub(super) fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &TextField, theme: &Theme) -> u16 {
     let prefix = format!("{}> ", cwd.display());
 
@@ -38,35 +27,14 @@ pub(super) fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, comma
     prefix.chars().count() as u16
 }
 
-/// Fixed popup height, independent of `history.len()`/how many entries
-/// currently match `query` -- the list itself now scrolls (see the
-/// `ListState` below) to keep the selected entry in view, so there's no
-/// reason for the popup itself to keep growing with the match count the
-/// way it used to. Same value `ui/find_file.rs::RESULTS_HEIGHT` already
-/// settled on, for the same "fixed-height, scrollable list popup"
-/// shape. Widened from 60 to 70 columns alongside this -- a real typed
-/// command (a long `svn`/`git` invocation, a deep path) routinely runs
-/// past 60 columns and used to get clipped mid-line with no way to see
-/// the rest.
+/// Fixed height (the list scrolls), the same 21 as the Find file results;
+/// 70 columns wide, since long commands were clipped at 60. History: docs/history/popups.md.
 const HISTORY_HEIGHT: u16 = 21;
 const HISTORY_WIDTH: u16 = 70;
 
-/// Renders the History popup — filtered live against `query` (the same
-/// always-live command line everything else types into, per
-/// `command_line::matching_history`'s doc), most-recently-run command
-/// last within the filtered list (natural reading order for "what did
-/// I just type"), or a hint that nothing matches (or nothing's been
-/// run yet, if history itself is empty).
-///
-/// `style` (F9 -> Options -> UI) went unused here until now -- reported
-/// directly (the Rounded style did nothing for this one popup): unlike
-/// every other popup (`ui::draw`'s own match arm always passes
-/// `app.settings.popup_style` through), this one hand-rolled a fixed, `Classic`-only
-/// `Block::borders(ALL)` instead of building on `popup::draw_frame`,
-/// so switching to `Rounded` visibly did nothing for it. Missed during
-/// the original `ui/popup.rs` migration pass (`TODO/code-quality.md`)
-/// -- every popup that migration pass actually touched picked it up,
-/// this one just wasn't on the list.
+/// The History popup: filtered live by the command line's text, newest
+/// last, or a hint when nothing matches. Built on `popup::draw_frame`,
+/// which it had missed, so `Rounded` did nothing here.
 pub fn draw_command_history(frame: &mut Frame, area: Rect, menu: &CommandHistoryMenu, history: &[String], query: &str, theme: &Theme, style: PopupStyle) {
     let matches = matching_history(history, query);
     let height = (HISTORY_HEIGHT + popup::chrome_extra_rows(style)).min(area.height);
@@ -110,16 +78,8 @@ pub fn draw_command_history(frame: &mut Frame, area: Rect, menu: &CommandHistory
                 ListItem::new(Line::from(Span::styled(entry.as_str().to_string(), style)))
             })
             .collect();
-        // A real command history (or a broad query matching most of it)
-        // used to render every entry straight into this fixed-height
-        // area with no scroll offset at all -- reported directly, with
-        // a screenshot showing the actually-selected entry clipped off
-        // past the popup's own bottom border, nowhere to be seen. Same
-        // "`List` with no `ListState` doesn't auto-scroll" gap already
-        // fixed this way for `ui/find_file.rs`'s own results list and
-        // `ui/theme_menu.rs`'s picker -- a real `ListState` tracking the
-        // selected index, which `List` then scrolls to keep in view on
-        // its own.
+        // A `ListState` keeps the selected entry in view; without one `List`
+        // doesn't scroll, and the selection disappeared below the border.
         let list = List::new(items);
         let mut list_state = ListState::default().with_selected(Some(menu.selected));
         frame.render_stateful_widget(list, rows[0], &mut list_state);
@@ -138,15 +98,9 @@ pub fn draw_command_history(frame: &mut Frame, area: Rect, menu: &CommandHistory
     frame.render_widget(hint, rows[hint_row_index]);
 }
 
-/// Renders the auto-popping history-suggestion list
-/// (`command_line::suggest_history`) directly above `command_line_area`
-/// (the always-live command line's own row) — unlike `draw_command_history`
-/// above, this isn't a centered modal popup: it appears unprompted the
-/// instant there's at least one match, Far Manager's own command-line
-/// autocomplete behaves the same way. `Up`/`Down` move `selected`,
-/// `Tab` accepts it into the command line (both `browsing.rs`, ahead of
-/// their usual panel-navigation/path-completion meaning while this
-/// list is actually showing).
+/// The history suggestions that pop up above the command line on a match,
+/// as in Far (not a centered popup). While shown, `Up`/`Down` move and
+/// `Tab` accepts (`browsing.rs`).
 pub fn draw_history_suggestions(frame: &mut Frame, command_line_area: Rect, suggestions: &[&str], selected: usize, theme: &Theme) {
     let height = (suggestions.len() as u16 + 2).min(10);
     let popup = Rect {
@@ -207,14 +161,7 @@ mod tests {
         buffer_text(terminal.backend().buffer())
     }
 
-    /// Regression test for the actual reported bug: a history far past
-    /// what the fixed-height popup can show at once used to render
-    /// every entry into the list with no scroll offset at all -- the
-    /// selected row, deep into a long history, was simply invisible,
-    /// clipped off past the popup's own bottom border with nothing to
-    /// bring it into view. A real `ListState` (see the call site's own
-    /// doc comment) should keep whichever row is selected actually on
-    /// screen no matter how far into a long history it is.
+    /// A selection deep in a long history stays on screen.
     #[test]
     fn selecting_an_entry_far_down_a_long_history_scrolls_it_into_view() {
         let history = history_of(200);
@@ -235,14 +182,8 @@ mod tests {
         assert!(text.contains("command_0002"));
     }
 
-    /// Regression test for the other half of the same report: the
-    /// popup used to grow with the match count instead of staying a
-    /// fixed size -- a long history made the whole popup grow to fill
-    /// (and, past the terminal's own height, overflow) the screen.
-    /// Checked by finding which *row* the popup's own bottom border
-    /// lands on: a fixed-height popup closes at the same row regardless
-    /// of history length, a growing one closes further down (or off
-    /// the bottom entirely) for the longer history.
+    /// The popup doesn't grow with the history: its bottom border lands on the
+    /// same row for a short and a long one.
     #[test]
     fn the_popup_stays_a_fixed_height_regardless_of_history_length() {
         let short = history_of(3);

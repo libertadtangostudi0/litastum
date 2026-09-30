@@ -120,14 +120,9 @@ fn starting_mode(mode: EditorKeymapMode) -> EditorMode {
 
 
 impl Editor {
-    /// Loads `path`'s contents into a new editing session. Fails if the
-    /// file can't be read as UTF-8 text (binary files aren't supported
-    /// yet — see `TODO/editor.md`). `custom_syntax_theme` is `None` for the
-    /// built-in named syntax theme, or a scheme-derived theme when the
-    /// user has a custom color scheme configured. `keymap_mode` is
-    /// normally `App::settings.editor_keymap_mode` (the session-wide default,
-    /// itself loaded from `config.json`) -- see `EditorKeymapMode`'s own
-    /// doc comment.
+    /// Opens `path` for editing; fails if it isn't UTF-8 text (`TODO/editor.md`).
+    /// `custom_syntax_theme` is `None` for the built-in theme. `keymap_mode`
+    /// is normally `App::settings.editor_keymap_mode`.
     pub fn open(path: PathBuf, custom_syntax_theme: Option<SynTheme>, keymap_mode: EditorKeymapMode) -> io::Result<Self> {
         let contents = fs::read_to_string(&path)?;
         let lines = Lines::from(contents.as_str());

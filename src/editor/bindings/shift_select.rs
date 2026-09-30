@@ -92,15 +92,10 @@ fn forward_anchor(state: &mut EditorState, cursor_before: Index2, mut move_actio
     false
 }
 
-/// `Left`: there's no valid anchor-only answer -- the character to
-/// select is always the one the cursor is about to move *onto*, never
-/// the one it's currently sitting on. Always performs the move first;
-/// if that made real progress, drags the anchor to match the new
-/// cursor position too (collapsing the selection to exactly that one
-/// cell, instead of spanning old-to-new). If the move made no progress
-/// at all, leaves the anchor untouched and reports "not yet handled" so
-/// the line-boundary wrap check gets a chance to cross into the
-/// previous line instead.
+/// `Left`: the cell to select is the one the cursor moves onto. Moves
+/// first; on real progress the anchor follows, leaving exactly that one
+/// cell selected. No progress leaves the anchor and returns `false`, so
+/// the line-boundary wrap can cross to the previous line.
 fn backward_anchor(state: &mut EditorState, cursor_before: Index2, mut move_action: impl Execute) -> bool {
     move_action.execute(state);
     if state.cursor == cursor_before {

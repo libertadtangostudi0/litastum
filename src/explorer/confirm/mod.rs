@@ -1,12 +1,7 @@
-//! Key handling *and rendering* for the two ephemeral filesystem-action
-//! popups: F8's "delete this?" (`Overlay::ConfirmDelete`) and
-//! F5/F6/Shift+F6's "copy/move/rename to?" (`Overlay::ConfirmTransfer`).
-//! Grouped in one module since both are small, short-lived
-//! confirmations over a `Pending*` struct from `app.rs`, and neither
-//! owns a whole subsystem the way `theme_menu.rs`/`menu.rs`/
-//! `command_line.rs` do — moved out of `main.rs`/`ui.rs` for the same
-//! reason those were: each mode's key handling and rendering lives
-//! with the concern it belongs to, rather than in a general dispatcher.
+//! Keys and rendering for the two short-lived file-action prompts: F8's
+//! delete (`Overlay::ConfirmDelete`) and F5/F6/`Shift+F6`'s copy/move/
+//! rename (`Overlay::ConfirmTransfer`), each over a `Pending*` from
+//! `app.rs`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -20,16 +15,10 @@ use crate::yes_no::{self, Answer};
 use super::fs_ops;
 
 
-/// Key handling on the F8 "delete this?" prompt: `Y` actually deletes
-/// every entry in `pending.entries` (a file via `fs::remove_file`, a
-/// directory recursively via `fs::remove_dir_all` — no separate "is it
-/// empty" case, matching Far Manager's own F8 which recurses without
-/// asking twice) and reloads the panel; `N`/`Esc` cancels with nothing
-/// touched. A failed delete (permissions, a file in use, ...) is only
-/// logged, same as `confirm::run_confirmed_transfer` — doesn't stop the
-/// rest of `entries` from being attempted, and there's no status-bar
-/// message surface yet to show it to the user (see `TODO/editor.md`'s
-/// non-UTF-8-file gap, same underlying limitation).
+/// The F8 prompt: `Y` deletes every entry (directories recursively, as
+/// Far does without asking twice) and reloads; `N`/`Esc` cancel. A failed
+/// delete is logged and the rest continue -- there's no message surface
+/// to show it yet.
 pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let Some(Overlay::ConfirmDelete(pending)) = &app.overlay else {
         return Ok(());
@@ -91,23 +80,11 @@ pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<()> {
 }
 
 
-/// `Enter` on the transfer prompt: runs the copy/move
-/// (`fs_ops::copy_entry`/`move_entry`) for every entry in
-/// `pending.sources` and reloads both panels. Split out of
-/// `handle_confirm_transfer_key` since it needs to consume `app.mode`
-/// via `mem::replace` (to take ownership of `PendingTransfer` without
-/// cloning it) rather than just borrow it like every other key on that
-/// prompt does.
-///
-/// A single source treats `destination` as the *full* target path,
-/// exactly as before multi-select existed (this is what lets a
-/// single-entry transfer double as a rename, editing the trailing
-/// filename). Several sources have no one path that could do that for
-/// all of them, so `destination` is instead the target *directory*,
-/// with each source's own name joined onto it individually — a failure
-/// on one entry (permissions, a name collision, ...) is only logged,
-/// same as the single-entry case, and doesn't stop the rest from being
-/// attempted.
+/// `Enter` on the transfer prompt: copies or moves every source and
+/// reloads both panels. Takes `PendingTransfer` by `mem::replace` instead
+/// of cloning it. One source: `destination` is the full target path (so
+/// it doubles as a rename); several: it's the target directory, each name
+/// joined on. A failure is logged and the rest continue.
 fn run_confirmed_transfer(app: &mut App) -> Result<()> {
     let Some(Overlay::ConfirmTransfer(pending)) = app.overlay.take() else {
         return Ok(());

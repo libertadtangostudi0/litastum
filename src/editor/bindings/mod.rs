@@ -19,15 +19,10 @@ pub(super) use shift_select::{
 };
 pub(super) use word_select::extend_word_selection;
 
-/// A non-modal (VSCode/Windows-convention) keymap for `edtui`, which
-/// ships only Vim and Emacs presets. `edtui` is explicitly designed for
-/// this — `KeyEventHandler::new` takes any binding table — so this
-/// isn't a workaround.
-///
-/// The editor stays in `EditorMode::Insert` for ordinary typing/
-/// movement; `EditorMode::Visual` is entered only for the duration of a
-/// `Shift+Arrow` selection and always exited back to `Insert` (never
-/// left in `Normal`, which this keymap doesn't otherwise use).
+/// The non-modal (VS Code/Windows-convention) keymap. `edtui` ships only
+/// Vim and Emacs presets but takes any binding table. The editor stays in
+/// `Insert`; `Visual` only lasts for a `Shift`+arrow selection and always
+/// returns to `Insert`, never `Normal`.
 pub(super) fn standard_key_handler() -> KeyEventHandler {
     /// Exits an active selection back to plain typing. Goes through
     /// `Normal` on the way, since `SwitchMode(Insert)` alone doesn't
@@ -76,17 +71,8 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         (v(KeyInput::shift(KeyCode::Right)), MoveForward(1).into()),
         (v(KeyInput::shift(KeyCode::Up)), MoveUp(1).into()),
         (v(KeyInput::shift(KeyCode::Down)), MoveDown(1).into()),
-        // Ctrl+Shift+Left/Right (word-wise selection) are deliberately
-        // *not* in this table -- `editor_keymap.rs::handle_editor_key`
-        // intercepts them ahead of `Editor::input`/this whole table and
-        // calls `word_select::extend_word_selection` directly instead.
-        // Forward and backward each need a *different* single `edtui`
-        // action (`MoveWordForwardToEndOfWord` vs. `MoveWordBackward`),
-        // so nothing here actually stops this pair from moving into the
-        // table too -- it stays a direct call mainly because
-        // `extend_word_selection` also logs a debug line per press (see
-        // its own doc comment for the real history of why the *choice*
-        // of action per direction took several attempts to land on).
+        // `Ctrl+Shift+Left`/`Right` aren't here: `editor_keymap` calls
+        // `extend_word_selection` directly, ahead of the table. History: docs/history/word-select.md.
 
         // Plain movement while a selection is active collapses it.
         (v(KeyInput::new(KeyCode::Left)), exit_selection().chain(MoveBackward(1)).into()),
@@ -103,65 +89,34 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         (i(KeyInput::new(KeyCode::Backspace)), DeleteChar(1).into()),
         (i(KeyInput::new(KeyCode::Delete)), DeleteCharForward(1).into()),
         (i(KeyInput::new(KeyCode::Enter)), LineBreak(1).into()),
-        // Deliberately *not* `.chain(exit_selection())` here, unlike
-        // every other visual-mode entry above -- see
-        // `is_selection_consuming_key`'s own doc comment below for why:
-        // `DeleteSelection` already takes its own undo checkpoint, and
-        // chaining `exit_selection()` (which always takes a *second*
-        // one on its way back to Insert) left a redundant, do-nothing
-        // checkpoint on top of the real one. `Editor::input` resets the
-        // mode/selection afterward instead, without capturing again.
+        // No `.chain(exit_selection())` here, unlike the entries above: its
+        // `SwitchMode(Insert)` takes a second undo checkpoint.
+        // `Editor::input` resets mode and selection instead
+        // (`is_selection_consuming_key`).
         (v(KeyInput::new(KeyCode::Backspace)), DeleteSelection.into()),
         (v(KeyInput::new(KeyCode::Delete)), DeleteSelection.into()),
 
-        // Undo/redo (Windows/VSCode convention). **Shadowed in the real
-        // app** -- `Editor::input` intercepts `Ctrl+Z`/`Ctrl+Y` directly,
-        // ahead of this table entirely, and owns its own full undo/redo
-        // stack instead of relying on these two actions or on
-        // `capture_on_insert` (see `Editor::input`'s own doc comment for
-        // why: `EditorState::capture()`, what `Undo` pops against here,
-        // is `pub(crate)`, so this app's own fast paste could never
-        // record a checkpoint for it, and once any edit happened after
-        // a paste, undo had no boundary left to jump back to in one
-        // step -- a real reported bug). Left bound here anyway, not
-        // removed: `bindings/tests.rs::ctrl_z_undoes_last_insert` tests
-        // this table + `capture_on_insert` directly, one level below
-        // `Editor::input`'s own interception, which needs the binding
-        // to still exist to have anything to press.
+        // Undo/redo. Shadowed in the app -- `Editor::input` intercepts `Ctrl+Z`/
+        // `Ctrl+Y` and owns the stack (`.claude/rules/litastum-editor-undo.md`).
+        // Kept for the raw-table tests (`ctrl_z_undoes_last_insert`).
         (i(KeyInput::ctrl('z')), Undo.into()),
         (i(KeyInput::ctrl('y')), Redo.into()),
 
-        // Clipboard. Copy/cut only make sense with a selection; paste
-        // works from plain typing mode, and also exits a selection
-        // first if one was active (simplification: this does not
-        // replace the selection with the pasted text, just clears it
-        // and pastes at the cursor — see TODO/editor.md). `PasteBefore` (vim's
-        // `P`) inserts exactly at the cursor; the plain `Paste` action
-        // (vim's `p`) inserts *after* it instead, which felt wrong for
-        // a "standard" editor — found while writing tests for this.
-        //
-        // None of these three chain `exit_selection()` either, same
-        // reason as `Backspace`/`Delete` above -- `PasteBefore` also
-        // takes its own checkpoint (`DeleteSelection` doesn't apply to
-        // `Ctrl+C`, which doesn't mutate the buffer at all, but still
-        // needs the same post-hoc mode reset since it doesn't switch
-        // modes on its own either).
+        // Clipboard. Copy/cut need a selection; paste over one clears it and
+        // pastes at the cursor rather than replacing it (`TODO/editor.md`).
+        // `PasteBefore` (vim's `P`) inserts at the cursor; `Paste` (vim's `p`)
+        // would insert after it. None chain `exit_selection()`, as above.
         (v(KeyInput::ctrl('c')), CopySelection.into()),
         (v(KeyInput::ctrl('x')), DeleteSelection.into()),
         (i(KeyInput::ctrl('v')), PasteBefore.into()),
         (v(KeyInput::ctrl('v')), PasteBefore.into()),
     ]);
 
-    // `capture_on_insert: true` -- take an undo checkpoint before every
-    // typed character. `false` (the vim-mode default) relies on
-    // `SwitchMode(Insert)` transitions to create checkpoints instead,
-    // but this keymap sets `state.mode = Insert` once directly at open
-    // and mostly stays there, so with `false` a plain typing session
-    // created *zero* undo checkpoints -- Ctrl+Z was silently a no-op.
-    // Found by a failing test, not by inspection. Per-character undo
-    // granularity isn't as slick as grouping by typing burst, but
-    // `EditorState::capture` is crate-private, so there's no hook to
-    // implement that grouping ourselves.
+    // `capture_on_insert: true` -- a checkpoint before every typed character.
+    // With `false`, `edtui` only checkpoints on `SwitchMode(Insert)`, which
+    // this keymap almost never goes through, so `Ctrl+Z` did nothing (found
+    // by a failing test). Grouping by typing burst would need the
+    // crate-private `EditorState::capture`.
     KeyEventHandler::new(register, true)
 }
 

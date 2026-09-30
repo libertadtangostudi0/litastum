@@ -30,6 +30,36 @@ Code: `src/editor/editor_keymap/mod.rs`. Related:
   from every test. It's saved once at clean exit (`main.rs`), the same
   memory/disk split `command_line::history` uses.
 
+## `Left`/`Right` crossing line boundaries (`line_wrap.rs`)
+
+Reported missing: `Left` at a line's start (or `Right` at its end) just
+stayed put. `edtui`'s `MoveBackward`/`MoveForward` are column-only by
+design, so no binding was misconfigured -- it was never implemented.
+Another table entry couldn't do it: `Chainable` runs every link, so
+"then go to the previous line's end" would fire on every `Left`. Solved
+like word selection: run the unmodified table, then correct only if the
+cursor didn't move. Reusing `edtui`'s `MoveUp`/`MoveDown` +
+`MoveToStartOfLine`/`MoveToEndOfLine` extends a `Visual` selection for
+free. `Ctrl` (word-wise) was left out: not part of the report.
+
+The `Ctrl` guard's test calls the correction directly: an earlier
+version drove it through the table and failed, because `edtui`'s
+`MoveWordBackward` already crosses lines on its own.
+
+## Search box and Vim notes
+
+- **`Esc` closing the search box** first landed the cursor *on* the
+  match's last character. Reported: "lso" looked like the cursor stopped
+  between 's' and 'o'. With no selection there's no bar-cursor shift
+  (`editor-rendering.md`), so it now goes one past the match.
+- **Vim `Right` "stops" partway** on `.editorconfig`'s "root = true"
+  (asked, with a screenshot, whether it's an `edtui` bug). It isn't:
+  `Normal`-mode `l` is clamped to the last character (`max_col_normal`)
+  and never wraps, as in real Vim.
+- **`PasteBefore`, not `Paste`**, for the raw table's `Ctrl+V`: vim's
+  `p` inserts *after* the cursor, which felt wrong in a standard
+  editor -- found while writing tests.
+
 ## `Editor::input` corrections (Standard keymap)
 
 - **`Ctrl+A`, `Backspace`, `Ctrl+Z` needed two `Ctrl+Z` presses.** The

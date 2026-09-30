@@ -97,15 +97,10 @@ fn paste_undo_stack_is_capped_dropping_the_oldest_entry() {
 }
 
 
-/// The actual reported bug, end to end: paste, then do something else
-/// (typing further characters), then undo repeatedly. The later typed
-/// characters must undo one at a time first (ordinary, expected
-/// granularity), and once undo reaches back to the paste itself, the
-/// *whole* pasted block must disappear in one further `Ctrl+Z` -- not
-/// character by character, which is what happened before `Editor`
-/// owned its own full undo stack (the paste had no boundary `edtui`'s
-/// own undo could ever see, once a later edit's own checkpoint became
-/// the closest thing behind it).
+/// Paste, type two characters, undo: the characters undo one at a time,
+/// then the whole paste in one step -- before `Editor` owned the undo
+/// stack, the paste had no boundary left. History:
+/// docs/history/editor-undo.md.
 #[test]
 fn undo_treats_a_paste_as_one_block_even_after_later_edits() {
     let (mut editor, _path) = open_test_editor("");
@@ -163,19 +158,9 @@ fn a_new_edit_after_undo_clears_redo_history() {
 }
 
 
-/// Real requested behavior: the paste-undo stack is invalidated
-/// entirely -- once any other key happens, `Ctrl+Z` must fall through
-/// to `edtui`'s own real undo stack instead of resurrecting a stale
-/// paste snapshot.
-///
-/// Since `Editor` now owns its own full undo stack (not just a
-/// paste-specific one -- see `input`'s own doc comment for why), a
-/// pending snapshot is never blindly cleared by "any other key" the way
-/// an earlier, paste-only version of this worked -- pure navigation
-/// (which can never mutate the buffer, `can_mutate_buffer`) leaves an
-/// existing snapshot alone, since there's nothing to invalidate; a real
-/// edit pushes its *own* snapshot on top instead of discarding the
-/// earlier one, so both stay undoable, most recent first.
+/// Navigation leaves the undo stack alone and a later edit pushes its own
+/// snapshot, so both the paste and the edit stay undoable, newest first.
+/// (An earlier paste-only stack was discarded by any other key.)
 #[test]
 fn navigation_leaves_a_pending_snapshot_untouched_but_a_real_edit_pushes_its_own() {
     let (mut editor, _path) = open_test_editor("hello\n");

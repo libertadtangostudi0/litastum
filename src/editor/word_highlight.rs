@@ -213,14 +213,8 @@ word");
         assert_eq!(highlights, vec![Highlight::new(Index2::new(1, 6), Index2::new(1, 11), style())]);
     }
 
-    /// Regression test for the real report: a file consisting of one
-    /// enormous line (an escaped log/diff dump) made the editor visibly
-    /// sluggish, since this module's per-frame scan is O(line length)
-    /// with no early exit. A pathologically long row must be skipped
-    /// entirely by `word_occurrences`, not just slow -- confirmed here
-    /// by putting a real match for the searched word on that long row
-    /// and asserting it's never returned, alongside a genuine match on
-    /// an ordinary-length row, which must still be found.
+    /// A match on an over-long row is never reported, while one on a normal
+    /// row still is. History: docs/history/editor-rendering.md.
     #[test]
     fn a_pathologically_long_line_is_skipped_by_the_word_scan() {
         let long_row = format!("needle {}", "x".repeat(MAX_HIGHLIGHTED_LINE_LEN + 1));

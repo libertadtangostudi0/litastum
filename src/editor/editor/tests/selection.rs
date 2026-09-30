@@ -25,14 +25,9 @@ fn set_keymap_mode_switches_the_handler_mode_and_drops_any_selection() {
 }
 
 
-/// Integration-level regression (docs/history/shift-select.md): one `Shift+Right` right before "Draft" must select
-/// exactly "D", not "Dr". Goes through the real `Editor::input`
-/// (not just the raw table in `bindings/mod.rs`'s own tests), since
-/// this is exactly where the interaction with
-/// `wrap_line_boundary_arrow_movement` matters -- a multi-line file
-/// is used specifically so a wrongly-still-firing wrap check would
-/// have jumped the selection down into the next line instead of
-/// stopping on "D".
+/// One `Shift+Right` before "Draft" selects "D", not "Dr", through the
+/// real `Editor::input`; multi-line, so a wrongly firing wrap would jump
+/// to the next line. History: docs/history/shift-select.md.
 #[test]
 fn shift_right_selects_exactly_one_character_mid_buffer() {
     let (mut editor, _path) = open_test_editor("Draft architecture\nsecond line");
@@ -64,16 +59,10 @@ fn shift_left_selects_exactly_one_character_mid_buffer() {
 }
 
 
-/// Real, integration-level regression test for the reported bug
-/// (`docs/history/word-select.md`, "Fourteenth", has the full story): a selection built
-/// purely by walking backward (`Ctrl+Shift+Left` twice) must retrace
-/// correctly when a `Ctrl+Shift+Right` follows -- undoing exactly the
-/// most recent `Left`, not blindly extending forward from wherever the
-/// cursor currently sits. Goes through the real `Editor::extend_word_selection`
-/// (not the raw `bindings::extend_word_selection` directly), since this
-/// is exactly where the bug lived: `WordSelectTouch` tracking never
-/// recognized a forward press against a `NativeBackward`-built
-/// selection as a retraction.
+/// "Fourteenth": a selection built by two `Ctrl+Shift+Left` presses
+/// retraces on `Ctrl+Shift+Right`, through the real
+/// `Editor::extend_word_selection`, where `WordSelectTouch` lives.
+/// History: docs/history/word-select.md.
 #[test]
 fn ctrl_shift_right_retraces_a_backward_built_selection() {
     let (mut editor, _path) = open_test_editor("Draft architecture derived");

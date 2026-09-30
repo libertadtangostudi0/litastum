@@ -3,14 +3,8 @@ use std::path::{Path, PathBuf};
 
 use super::OWN_FILE_NAME;
 
-/// The commented-out-example content `create_menu_file` writes --
-/// pulled out to a module-level constant (rather than local to that
-/// function) so `resolve::resolve_menu_with_fallback`'s own tests can
-/// write the exact same "empty template" content a real freshly-created
-/// file would have, without duplicating it out of sync. `pub(super)`
-/// (visible to `state` and every module nested inside it, `resolve`'s
-/// own test module included) rather than `pub` -- nothing outside this
-/// directory needs the literal template text.
+/// The commented-out example `create_menu_file` writes, shared with
+/// `resolve`'s tests so they write exactly the same "empty" file.
 pub(super) const EMPTY_MENU_TEMPLATE: &str = "\
 # LitastumMenu.toml -- F2 user menu. Uncomment and edit:
 #
@@ -26,24 +20,9 @@ pub(super) const EMPTY_MENU_TEMPLATE: &str = "\
 # commands = [\"echo hi\"]
 ";
 
-/// Creates a fresh `LitastumMenu.toml` in `dir`, with a commented-out
-/// example to get started -- `F2` calls this when `resolve_menu` finds
-/// neither file at all, so there's actually something to open in the
-/// built-in editor right away (`explorer::command::open_user_menu`)
-/// instead of an empty popup with nothing in it to select. `None` if
-/// either step fails (a read-only directory, permissions, ...) -- `F2`
-/// just does nothing then, same as any other "couldn't act on this"
-/// case in this codebase.
-///
-/// `create_dir_all`s `dir` first, unlike the very first version of
-/// this function -- needed once `open_user_menu` started passing the
-/// *common config* directory here instead of the always-already-real
-/// active panel directory: the OS config directory (`%APPDATA%\litastum\`
-/// or equivalent) may not exist yet at all on a machine where no
-/// theme/setup has ever been saved, and a plain `fs::write` fails
-/// outright when its parent directory is missing. A no-op for the
-/// already-real active-directory case this function still also serves
-/// (`create_menu_file_tests`, `UserMenuState`'s own persistence).
+/// Creates a `LitastumMenu.toml` with a commented-out example in `dir`,
+/// creating `dir` first (the config directory may not exist yet). `None`
+/// on failure; `F2` then does nothing.
 pub fn create_menu_file(dir: &Path) -> Option<PathBuf> {
     fs::create_dir_all(dir).ok()?;
     let path = dir.join(OWN_FILE_NAME);

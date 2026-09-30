@@ -39,19 +39,10 @@ pub(super) fn draw_panel(frame: &mut Frame, area: Rect, panel: &Panel, is_active
 }
 
 
-/// Splits `area` into `columns` vertical slices and fills each with a
-/// `panel.column_height()`-tall slice of the *currently visible page*
-/// (`panel.scroll_offset()..` in the flat `entries` array) -- column 0
-/// gets the page's own first `column_height` entries, column 1 the
-/// next `column_height`, and so on, exactly the same math `Panel`'s own
-/// navigation (`move_left`/`move_right`) uses, so the cursor and the
-/// rendered grid always agree on which entry sits in which cell. See
-/// `Panel::column_height`'s own doc comment for why this has to be
-/// `min(area.height, the list's own even-split row count)`, not
-/// `area.height` outright -- and `Panel`'s own struct doc for why
-/// scrolling needs a real, tracked offset at all rather than handing
-/// every row straight to a plain `List` (it doesn't scroll to follow
-/// the cursor on its own, the original reported bug).
+/// Splits `area` into `columns` slices, each holding `column_height()`
+/// entries of the visible page from `scroll_offset()` -- the same math as
+/// `Panel`'s navigation, so the cursor and the grid agree. (A plain `List`
+/// doesn't follow the cursor, hence the tracked offset.)
 fn draw_entry_grid(
     frame: &mut Frame,
     area: Rect,
@@ -102,15 +93,8 @@ fn draw_entry_grid(
 }
 
 
-/// `is_marked` (Far Manager-style multi-select, `panel/marks.rs`)
-/// overrides the entry's own type-based color entirely, matching real
-/// Far Manager's own convention: a marked file/directory always renders
-/// in the mark color, regardless of whether it's an archive, an
-/// executable, or anything else `highlight_role` would otherwise pick.
-/// Uses `theme.warning` -- the same "attention/marked" color the
-/// original UI-theme plan already named for this
-/// (`.claude/rules/litastum-ui-theme.md`) but never actually wired up
-/// until marking itself existed.
+/// A marked entry is drawn in `theme.warning` whatever its type, as in
+/// Far.
 pub(super) fn build_list_item(entry: &Entry, is_selected: bool, is_marked: bool, panel_active: bool, theme: &Theme) -> ListItem<'static> {
     let label = if entry.is_dir {
         format!("{}/", entry.name)

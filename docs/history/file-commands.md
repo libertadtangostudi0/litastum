@@ -19,3 +19,5 @@
 - **`FarMenu.ini` is offered, not read or converted silently**
   (`Overlay::ConfirmPortFarMenu`), and wins over an existing
   `LitastumMenu.toml`.
+- **`Shift+F6` renames in place**: the same transfer prompt as a move,
+  defaulting to the entry's own directory, with the cursor at the name.

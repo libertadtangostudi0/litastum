@@ -39,14 +39,9 @@ pub(super) fn request_transfer(app: &mut App, operation: TransferOp) {
         return;
     }
 
-    // A single entry keeps the existing behavior exactly: the
-    // destination is the *full* target path (other panel's directory +
-    // this entry's own name), editable in place -- including renaming
-    // it during the transfer. Several entries have no single path that
-    // could do that for all of them at once, so the destination
-    // defaults to just the target *directory* instead -- each source's
-    // own name gets joined onto it individually at transfer time
-    // (`confirm::run_confirmed_transfer`).
+    // One entry: the destination is the full target path, so it can be
+    // renamed on the way. Several: the target directory, each name joined on
+    // at transfer time (`confirm::run_confirmed_transfer`).
     let destination = if let [only] = sources.as_slice() {
         destination_dir.join(&only.name).to_string_lossy().into_owned()
     } else {
@@ -65,16 +60,9 @@ fn transfer_sources(panel: &Panel) -> Vec<TransferSource> {
 }
 
 
-/// `Shift+F6`: opens the same `Overlay::ConfirmTransfer` prompt as
-/// `request_transfer(_, Move)`, but the destination defaults to the
-/// entry's own directory instead of the other panel's — so confirming
-/// with the destination untouched is a no-op, and the actual use case
-/// (editing the name before confirming) renames in place via the same
-/// `fs_ops::move_entry` call `main.rs` already makes for a real
-/// cross-panel move. The cursor starts right after the directory part
-/// (at the start of the filename, not the end of the whole path) so
-/// typing immediately edits the name — the whole point of this
-/// binding — without needing `Home`/`Ctrl+Left` first.
+/// `Shift+F6`: the transfer prompt as a move, but defaulting to the
+/// entry's own directory -- editing the name renames in place. The cursor
+/// starts at the name, so typing edits it right away.
 pub(super) fn request_rename(app: &mut App) {
     let panel = app.active_panel();
     let Some(entry) = panel.current() else {
@@ -266,14 +254,9 @@ mod tests {
         assert_eq!(&pending.destination.text()[pending.destination.text().char_indices().nth(pending.destination.cursor()).unwrap().0..], "source.txt");
     }
 
-    /// Regression guard for the cursor-position arithmetic in
-    /// `request_rename` (`destination.chars().count() -
-    /// entry.name.chars().count()`), which relies on `to_string_lossy()`
-    /// leaving the trailing filename's char count untouched. A
-    /// multi-byte-but-still-valid-UTF-8 name (unlike the parent
-    /// directory, which on a real OS could contain non-UTF-8 bytes that
-    /// `to_string_lossy()` would replace and shrink/grow) is the case
-    /// this could break under if that assumption were ever wrong.
+    /// `request_rename`'s cursor math subtracts the name's char count from the
+    /// destination's, assuming `to_string_lossy()` leaves the name intact --
+    /// checked with a multi-byte name.
     #[test]
     fn request_rename_handles_a_multibyte_filename_without_underflow() {
         let mut app = app_with_selected_file("café_résumé.txt");

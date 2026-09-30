@@ -40,3 +40,9 @@ Marks are a set of names, not indices, so they survive an in-place
 `reload()` (a file changing on disk) while the entry still exists; an
 index set would silently point at the wrong entry once sorting or the
 count shifted. They're cleared on an actual directory change instead.
+
+## Marking
+
+Marks were first bound to `Ctrl`+arrows and moved to `Shift` after a
+correction. `Shift+Left`/`Right` were asked to "mark the whole
+column(s) it jumps over", the column-sized version of `Shift+Up`/`Down`.

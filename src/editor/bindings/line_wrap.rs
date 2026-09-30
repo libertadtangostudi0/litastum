@@ -2,48 +2,12 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use edtui::actions::{Execute, MoveDown, MoveToEndOfLine, MoveToStartOfLine, MoveUp};
 use edtui::{EditorState, Index2};
 
-/// Reported missing: plain `Left` at the very start of a line (or
-/// `Right` at its very end) just sits there instead of carrying on
-/// into the previous/next line, the way every other editor's arrow
-/// keys do. `edtui`'s own `MoveForward`/`MoveBackward` (confirmed
-/// directly from its source) are deliberately column-only -- they
-/// clamp at `max_col`/`0` and never touch `state.cursor.row` -- so
-/// `standard_key_handler`'s table (`(i(Left), MoveBackward(1))`, etc.)
-/// was never going to cross a line boundary on its own; this isn't a
-/// misconfiguration of an existing binding, the behavior was simply
-/// never implemented.
-///
-/// Not expressible as another table entry either: the declarative
-/// `Action` chaining (`Chainable`) always runs every link
-/// unconditionally, but wrapping to the adjacent line must only happen
-/// when the plain move *didn't* actually go anywhere -- chaining
-/// `MoveBackward(1)` with an unconditional "then go up and to the end
-/// of that line" would wrap on *every* `Left` press, not just the ones
-/// already at column 0. Same shape of limitation as
-/// `docs/history/word-select.md` describes for
-/// `Ctrl+Shift+Left`/`Right` -- solved the same way: call `Editor::input`
-/// (the table, completely unmodified) first, then a check-and-correct
-/// pass here, on the real state, only when the table's own handling
-/// turned out to be a no-op at a line boundary.
-///
-/// Deliberately narrow: only plain `Left`/`Right` and `Shift+Left`/
-/// `Right` (`modifiers` excludes `Ctrl`) -- `Ctrl+Left`/`Right`
-/// (word-wise) and `Ctrl+Shift+Left`/`Right` (word-wise selection,
-/// `extend_word_selection`) aren't part of this report and are left
-/// alone rather than reached for speculatively.
-///
-/// Reuses `edtui`'s own `MoveUp`/`MoveDown`/`MoveToStartOfLine`/
-/// `MoveToEndOfLine` actions directly (same technique
-/// `extend_word_selection` uses) rather than hand-rolling the row/col
-/// change -- confirmed directly from `edtui`'s source that all four
-/// already call `set_selection_with_lines` themselves whenever
-/// `state.mode == Visual`, exactly like every other motion action, so
-/// this needs no selection-specific branch of its own: calling them
-/// keeps a `Shift+Left`/`Right` selection extending correctly across
-/// the line boundary for free, and leaves plain (non-selecting)
-/// movement and an already-collapsed selection (`exit_selection` has
-/// already run inside `Editor::input`'s own call to the table by the
-/// time this runs) equally untouched otherwise.
+/// `Left` at a line's start / `Right` at its end moves to the adjacent
+/// line. Runs after the unmodified table, and only if the cursor didn't
+/// move: `edtui`'s moves are column-only, and a table chain can't be
+/// conditional. Uses `edtui`'s own line motions, which extend a
+/// `Visual` selection too, so `Shift+Left`/`Right` wrap as well. Not for
+/// `Ctrl` (word-wise). History: docs/history/editor-keymap.md.
 pub(in crate::editor) fn wrap_line_boundary_arrow_movement(state: &mut EditorState, key_code: KeyCode, modifiers: KeyModifiers, cursor_before: Index2) {
     if modifiers.contains(KeyModifiers::CONTROL) {
         return;
@@ -169,21 +133,9 @@ mod tests {
         assert_eq!((state.cursor.row, state.cursor.col), (1, 5));
     }
 
-    /// Word-wise `Ctrl+Left`/`Right` are deliberately out of scope for
-    /// *this* function -- `modifiers.contains(CONTROL)` should make it
-    /// a complete no-op regardless of what the table itself did.
-    ///
-    /// Tests the guard directly against `wrap_line_boundary_arrow_movement`
-    /// rather than through the real table + `Ctrl+Left` binding: it
-    /// turns out `edtui`'s own `MoveWordBackward` *already* crosses a
-    /// line boundary on its own (confirmed the hard way -- an earlier
-    /// version of this test drove it through the real table and
-    /// expected row to stay put, and failed, because the table's own
-    /// `MoveWordBackward` had already moved it before this function
-    /// ever ran). That's pre-existing `edtui` behavior, entirely
-    /// unrelated to this fix -- calling the function directly here
-    /// isolates what this fix actually owns (the `Ctrl` guard) from
-    /// what word motion does on its own.
+    /// `Ctrl` makes the correction a no-op. Called directly, not through
+    /// the table: `edtui`'s `MoveWordBackward` already crosses lines on
+    /// its own.
     #[test]
     fn control_modifier_prevents_the_wrap_check_from_acting() {
         let (mut state, _handler) = test_state("hello\nworld");

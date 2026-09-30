@@ -117,14 +117,9 @@ mod persist_tests {
         assert_eq!(config.editor_theme.as_deref(), Some("keep-me"), "unrelated key must survive the write");
     }
 
-    /// `save_setup`/`load_active_shell` themselves aren't tested
-    /// directly — like `set_interface_theme`/`set_editor_theme`, they
-    /// go through the real OS `config_dir()`, not an injectable path,
-    /// so exercising them here would mutate the actual user's
-    /// `config.json` as a side effect of running the test suite (same
-    /// limitation, same reasoning, as `theme_menu.rs`'s tests). This
-    /// pins down the `active_shell` round trip through the
-    /// injectable-path half both of them are thin wrappers around.
+    /// `save_setup`/`load_active_shell` go through the real `config_dir()`, so
+    /// they aren't tested directly; this covers the injectable-path half they
+    /// wrap.
     #[test]
     fn active_shell_round_trips_through_try_persist_and_read_config() {
         let dir = scratch_dir();

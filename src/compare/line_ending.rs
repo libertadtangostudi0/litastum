@@ -23,16 +23,10 @@ impl LineEndingDisplay {
     }
 }
 
-/// What a single real source line (not a diff's own `Empty` padding
-/// row) actually ends in, detected from the file's own raw bytes at
-/// load time -- not assumed from the OS or guessed from the *other*
-/// lines in the same file. The real reason this feature exists at all:
-/// two files can be textually identical yet still genuinely different
-/// purely because of a line-ending mismatch (one edited on Windows, one
-/// on Unix), which plain syntax-highlighted text can never surface on
-/// its own -- `None` is the file's own last line when it has no
-/// trailing newline at all, a real, fairly common case (many editors
-/// don't force one), not an error.
+/// What one real line ends in, detected from the file's raw bytes on load.
+/// Why this exists: two textually identical files can still differ by line
+/// endings, which plain text never shows. `None` is a last line without a
+/// trailing newline -- common, not an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineEnding {
     Crlf,

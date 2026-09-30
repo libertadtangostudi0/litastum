@@ -94,3 +94,15 @@ gets interrupted as it would in a real shell.
   panels even mid-command, backwards from every shell.
 - **`Alt+F5` with exactly two marked entries** compares those two, added
   on top of the original "cursor file in each panel" convention.
+
+## Resolving and recalling commands
+
+- **`devenv` wasn't found** ("'devenv.exe' is not recognized"): Visual
+  Studio registers itself only under the App Paths registry key, which
+  Explorer and `ShellExecute` consult but `cmd.exe` doesn't. Bare names
+  are resolved through it now. The first version still found nothing:
+  the registry value is stored with quotes, which became part of the
+  path until stripped.
+- **`Enter` in the History popup runs the command**, reported as the
+  expected behavior (like a shell's recall); copying it into the line
+  to edit first moved to `Tab`.

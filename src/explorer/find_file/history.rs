@@ -10,15 +10,9 @@ use crate::history_dir::history_dir;
 /// no particular reason to differ.
 const MAX_HISTORY: usize = 50;
 
-/// The file name the "File name to find" field's own persisted history
-/// is stored under, inside `history_dir()`'s own directory. A separate
-/// file from the content-query history below -- requested directly,
-/// asking for the two histories to be kept separate: the two fields are
-/// different enough kinds of query (a file name/glob mask vs. a
-/// substring to find inside a file) that mixing their history would
-/// make recalling either one harder, the same reasoning that already
-/// kept editor search history and command history in two separate
-/// files instead of one shared one.
+/// History file for the "File name to find" field -- separate from the
+/// content-query one, as requested: a name mask and a text to find are
+/// different kinds of query.
 pub const NAME_HISTORY_FILE: &str = "find_file_name_history.txt";
 
 /// The file name the "Text to find" field's own persisted history is
@@ -64,14 +58,9 @@ pub fn save_history(file_name: &str, history: &[String]) {
     }
 }
 
-/// Appends `query` to `history` — called when `Enter` actually runs a
-/// search (`input.rs::run_search`), the closest analogue this feature
-/// has to the command line's own "record on run" (there's no separate
-/// "submit" step to wait for beyond that). A no-op for an empty query
-/// (the field that wasn't used in a given search shouldn't gain an
-/// empty-string history entry). Skips a repeat of the immediately-
-/// previous entry and caps total length at `MAX_HISTORY`, same rules
-/// as the two sibling history modules.
+/// Appends `query` when `Enter` runs a search. Skips an empty query and a
+/// repeat of the last entry; capped at `MAX_HISTORY`, like the other
+/// history modules.
 pub fn record_history(history: &mut Vec<String>, query: &str) {
     if query.is_empty() {
         return;

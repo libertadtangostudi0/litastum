@@ -37,15 +37,9 @@ fn esc_cancels_back_to_editing_with_the_preview_still_linked() {
     assert!(app.markdown_edit_preview.is_some());
 }
 
-/// The actual end-to-end point of the whole feature: `Enter`
-/// resolves and reacts to the *selected* result, then returns to
-/// editing with a message recording what happened on the linked
-/// preview -- naming the link's *label* ("Contributing"), not its
-/// raw URL, per `MarkdownPreviewState::link_message`'s own field
-/// doc comment. Deliberately selects the *relative, missing-file*
-/// link (`Down` once), not the real absolute URL at index 0 -- a
-/// test that actually opened a real URL would spawn a real OS
-/// process (a real browser) every time this suite runs.
+/// `Enter` acts on the selected link and returns to editing with a message
+/// naming its label ("Contributing"). Picks the relative missing-file
+/// link: opening the real URL would launch a browser on every test run.
 #[test]
 fn enter_opens_the_selected_link_and_returns_to_editing() {
     let mut app = app_in_search();

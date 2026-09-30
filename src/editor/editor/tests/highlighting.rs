@@ -1,17 +1,9 @@
 use super::*;
 
 
-/// Regression test for a real report: a file consisting of one
-/// enormous line (an escaped log/diff dump, no real line breaks) made
-/// the editor visibly sluggish -- `syntect` re-tokenizes a line's full
-/// text on every highlight pass regardless of viewport, so this cost
-/// was being paid fresh on every one of the app's per-event redraws.
-/// `Editor::view` now skips building a `SyntaxHighlighter` at all for
-/// such a file (`has_pathologically_long_line`) -- confirmed here by
-/// rendering a `.rs` file (which does get real keyword coloring, see
-/// the control case below) with one line padded well past
-/// `word_highlight::MAX_HIGHLIGHTED_LINE_LEN`, and checking that no
-/// rendered cell's foreground differs from the plain base text color.
+/// A file with one enormous line gets no syntax highlighting
+/// (`has_pathologically_long_line`) -- `syntect` re-tokenized the whole
+/// line on every redraw. No cell may differ from the base text color.
 #[test]
 fn a_pathologically_long_line_disables_syntax_highlighting_for_the_whole_file() {
     use ratatui::backend::TestBackend;
@@ -76,18 +68,9 @@ fn a_short_rust_file_does_get_real_syntax_coloring() {
 }
 
 
-/// Real, rendering-level test for the bracket-matching feature
-/// (`bracket_match.rs`): with the cursor on an opening bracket, its
-/// closing partner should render in the same highlight style
-/// `word_highlight.rs` uses (`theme.text` on `theme.border`,
-/// `Editor::view` passes both passes the identical `Style` -- requested
-/// directly, so brackets read as the same *kind* of hint as word
-/// highlighting rather than a visually distinct feature); a plain
-/// character between them should not. The cursor's *own* bracket isn't
-/// asserted on directly -- `edtui` paints the cursor's own cell last,
-/// on top of any highlight (`bracket_match_highlights`'s own doc
-/// comment), so it never visibly carries the highlight style regardless
-/// of whether this feature works at all.
+/// With the cursor on an opening bracket, the closing one renders in the
+/// word-highlight style; a character between them doesn't. The cursor's
+/// own cell is tested separately.
 #[test]
 fn matching_brackets_render_in_the_shared_highlight_style() {
     use ratatui::backend::TestBackend;
@@ -123,17 +106,9 @@ fn matching_brackets_render_in_the_shared_highlight_style() {
 }
 
 
-/// Regression test for the explicit report (with a screenshot): once
-/// `bracket_match_highlights` started returning both brackets of a
-/// pair, the far one showed the highlight color but the *near* one --
-/// wherever the cursor itself sat -- stayed plain, since `edtui` paints
-/// the cursor's own cell last, silently overwriting any `Highlight`
-/// there. Fixed via `Editor::view`'s `cursor_style` decision, now
-/// painting that cell with `highlight_style` instead of `hide_cursor()`'s
-/// plain `base` whenever `cursor_is_on_a_matched_bracket` says so. This
-/// test pins the fix down directly by comparing the cursor's own cell
-/// before and after moving onto a matched bracket -- it must change
-/// color, not stay a constant `base`.
+/// The near bracket (under the cursor) must change color too: `edtui`
+/// paints the cursor cell last, so `Editor::view` paints it with the
+/// highlight style when `cursor_is_on_a_matched_bracket`. History: docs/history/editor-rendering.md.
 #[test]
 fn the_bracket_under_the_cursor_is_also_visibly_highlighted() {
     use ratatui::backend::TestBackend;
@@ -180,15 +155,9 @@ fn the_bracket_under_the_cursor_is_also_visibly_highlighted() {
 }
 
 
-/// Regression test for the explicit request: bracket matching must
-/// never feed into, or be fed by, word-occurrence highlighting -- the
-/// two features stay fully independent, even though they now share one
-/// color. With the cursor on the opening bracket, only the matching ')'
-/// highlights (the word "foo" appearing twice must NOT light up, since
-/// a bracket character was never a candidate for `word_highlight`'s own
-/// "similar word" scan); moving the cursor onto "foo" flips this around
-/// -- the *other* occurrence of the word highlights, and the bracket
-/// highlight is gone entirely.
+/// Bracket matching and word highlighting stay independent: on `(` only
+/// `)` highlights, not the repeated word; on the word, only its other
+/// occurrence.
 #[test]
 fn bracket_matching_and_word_highlighting_never_interfere() {
     use ratatui::backend::TestBackend;
@@ -243,22 +212,11 @@ fn bracket_matching_and_word_highlighting_never_interfere() {
 }
 
 
-/// Regression test for the reported bug: a multi-line matched bracket
-/// pair only ever showed one bracket highlighted whenever the other
-/// one had scrolled outside the currently-visible rows -- `edtui`'s own
-/// vertical auto-scroll only ever keeps the *cursor's* row in view,
-/// with no notion of "and this other row too." `Editor::view` now
-/// widens the viewport to include the whole pair when it actually fits
-/// (`matched_bracket_row_span`).
-///
-/// Builds a 12-line file with `{` on row 0 and `}` on row 5 (a 6-row
-/// span), renders once with the cursor at the very end of the file
-/// (row 11) to force the viewport to scroll away from row 0 first --
-/// matching how a real file this doesn't naturally start on-screen at
-/// once cursor moves around -- then moves the cursor onto the `}` and
-/// renders again. `content_height` is deliberately chosen (`area`
-/// height 8, minus the 2-row border) to be *exactly* the pair's own
-/// span (6), so it fits precisely.
+/// The far bracket of a multi-line pair is scrolled into view when the
+/// pair fits (`matched_bracket_row_span`). A 12-line file, `{` on row 0
+/// and `}` on row 5: render with the cursor at the end first to scroll
+/// away, then move onto `}`. The content height (8 - 2 border rows) is
+/// exactly the pair's span. History: docs/history/editor-rendering.md.
 #[test]
 fn a_multi_line_bracket_pair_widens_the_viewport_to_show_both_when_it_fits() {
     use ratatui::backend::TestBackend;

@@ -103,22 +103,11 @@ pub fn draw_theme_menu(frame: &mut Frame, area: Rect, menu: &ThemeMenu, theme: &
 }
 
 
-/// One theme's row: a 4-dot swatch (or a dash if the file failed to
-/// load), its name, and -- right-aligned to `width`, matching the
-/// reference mockup rather than sitting right next to the name -- a
-/// "current" label if it's what's actually configured for either half
-/// right now.
-///
-/// The selected row's highlight is a manually-painted background
-/// rather than `List`'s own `highlight_style` (see the call site's own
-/// comment for why), inset by one unhighlighted column on both the
-/// left and right -- approximating the reference mockup's rounded
-/// "pill" selector, whose curved ends recede slightly from the row's
-/// true edges (an actual curve isn't renderable in a character grid,
-/// so a 1-column gap stands in for it). Every row, selected or not,
-/// gets that same leading/trailing column reserved -- otherwise
-/// content would visibly shift sideways by one column the moment a
-/// row becomes selected.
+/// One theme row: a 4-dot swatch (a dash if the file didn't load), the
+/// name, and a right-aligned "current" label. The selection is a painted
+/// background inset one column on each side, standing in for the mockup's
+/// rounded pill; every row reserves those columns so nothing shifts when
+/// selected. `.claude/rules/litastum-popup-design.md`.
 fn theme_row<'a>(entry: &'a ThemeMenuEntry, menu: &ThemeMenu, theme: &Theme, width: u16, is_selected: bool) -> ListItem<'a> {
     let highlight = is_selected.then_some(theme.border);
     let fg_style = |fg: ratatui::style::Color| {

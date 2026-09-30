@@ -54,24 +54,11 @@ impl Editor {
 }
 
 
-/// Splices `text` into `lines` starting at `cursor`, in
-/// O(pasted length + line length) rather than `edtui`'s own `PasteBefore`
-/// (O(pasted length * line length) -- see
-/// `Editor::fast_paste_from_clipboard`).
-///
-/// A no-op (returns `cursor` unchanged) for empty `text` -- callers
-/// should already be checking this themselves before saving an undo
-/// snapshot, but this stays defensive since it's the one thing that
-/// actually decides whether anything happens to the buffer.
-///
-/// Returns the cursor's new position: for single-line `text` (no `\n`,
-/// by far the common case -- typing/pasting a URL, a JSON blob, a log
-/// line, ...), that's the last character actually pasted, matching
-/// `edtui`'s own `PasteBefore` (vim `P`) convention. For multi-line
-/// `text`, that's the end of the pasted content on its own new last
-/// row -- a new convention, not `edtui`'s own vim-specific linewise/
-/// characterwise `P` rules, which a plain `Ctrl+V` in this app's
-/// non-modal keymap was never trying to replicate in the first place.
+/// Splices `text` into `lines` at `cursor` in O(pasted + line length).
+/// Empty `text` is a no-op (defensive; callers check first). Returns the
+/// new cursor: on the last pasted character for single-line text (like
+/// `edtui`'s `PasteBefore`), at the end of the pasted content for
+/// multi-line text.
 fn splice_paste(lines: &mut Lines, cursor: Index2, text: &str) -> Index2 {
     // `\r\n`/bare `\r` line endings collapse to `\n` here, matching
     // `edtui`'s own single-line-mode paste handling (`actions/cpaste.rs`)
@@ -115,15 +102,10 @@ fn splice_single_line(lines: &mut Lines, row: usize, col: usize, segment: &str) 
     Index2::new(row, col + pasted_len.saturating_sub(1))
 }
 
-/// The pasted text contains at least one newline: the row the cursor
-/// was on splits into "head + first pasted segment" (kept as the same
-/// row) and "last pasted segment + original tail" (a new row), with any
-/// segments strictly in between inserted as whole new rows of their
-/// own. Every one of these is either a plain `Vec` extend/splice on one
-/// row or a whole-row insert (`Jagged::insert`, itself just an outer
-/// `Vec<Vec<char>>::insert` -- one shift proportional to the *row
-/// count*, not to any row's own length) -- no per-character cost
-/// against a long row anywhere in this path either.
+/// Multi-line paste: the cursor's row becomes "head + first segment", a
+/// new row holds "last segment + tail", middle segments are whole new
+/// rows. Only row-level splices and inserts -- no per-character cost on a
+/// long row.
 fn splice_multi_line(lines: &mut Lines, row: usize, col: usize, segments: &[&str]) -> Index2 {
     let Some(row_vec) = lines.get_mut(RowIndex::new(row)) else {
         return Index2::new(row, col);

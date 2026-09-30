@@ -43,3 +43,15 @@ on, often the same as that block's last real line.
   the link's label instead.
 - **`l` opens a link search** -- a filterable keyboard list of every
   link -- as the exact alternative to mouse hit-testing.
+
+## Opening links
+
+- **An anchor or unresolvable link opened a random folder.** Passed to
+  `explorer.exe` as-is, `#section` or an unknown relative name made it
+  open its default location -- once a OneDrive-redirected `Documents`.
+  `resolve_link_target` only returns real URLs and existing files.
+- **URLs opened slowly**: `explorer.exe <url>` hands the URL to the
+  running Explorer over IPC. URLs now go through `cmd /C start ""`
+  (`ShellExecute` directly), paths still through `explorer.exe`.
+- **Source-row mapping is approximate** by request ("roughly the same
+  line"): a soft-wrapped paragraph maps to its first line.

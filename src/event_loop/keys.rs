@@ -77,26 +77,13 @@ fn editor_accepting_plain_typing(app: &App) -> bool {
     editor.is_plain_standard_typing()
 }
 
-/// Applies a burst of already-queued plain characters to the editor in
-/// one go: on Windows a terminal paste (and fast typing) arrives as
-/// ordinary key events with no `Event::Paste`, and `run()` would
-/// otherwise redraw once per character. History:
+/// Applies a burst of queued plain characters to the editor at once: on
+/// Windows a paste (and fast typing) arrives as key events, and each
+/// would redraw. Drains while the editor still takes plain typing
+/// (re-checked each time) and applies the batch with one
+/// `Editor::paste_text`. A different key found mid-burst flushes the batch
+/// and is then dispatched normally -- never dropped. History:
 /// docs/history/editor-performance.md (Round 2).
-///
-/// Mirrors `drain_pending_navigation_keys`'s own "coalesce a burst,
-/// redraw once" shape: drains every already-queued plain character key
-/// (`is_plain_typed_char`) for as long as the editor would still accept
-/// one as plain typing (`editor_accepting_plain_typing` -- re-checked on
-/// every iteration, not just once, in case some other queued event
-/// changes mode mid-burst), and applies the whole batch in one
-/// `Editor::paste_text` call -- the same fast, from-scratch splice
-/// `Ctrl+V`/a real bracketed paste already use
-/// (`editor::fast_paste::splice_paste`), rather than one `InsertChar` per character. A
-/// key found mid-burst that isn't a plain character (or that arrives
-/// once the editor would no longer treat one as plain typing) is never
-/// silently dropped, same rule every sibling drain function in this
-/// file already follows -- the batch collected so far is flushed first,
-/// then that key/event is dispatched normally before this returns.
 fn drain_pending_editor_typing(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     let mut batch = String::new();
     while event::poll(std::time::Duration::from_secs(0))? {
@@ -238,14 +225,9 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
     }
 
     let handled = match &app.mode {
-        // `Tab` toggles which half of a combined editor+preview session
-        // (`App::markdown_edit_preview`) keyboard input reaches -- `0`
-        // the editor, `1` the embedded preview -- intercepted here,
-        // ahead of both `editor::handle_editor_key` and
-        // `explorer::handle_markdown_edit_preview_key`, since it's
-        // meaningless to either on its own (plain `F4` editing, with no
-        // linked preview, forwards `Tab` straight to the editor as
-        // always -- see the `_ if` guard's own condition).
+        // `Tab` switches between editor and preview in a linked Markdown session,
+        // ahead of both handlers; plain `F4` editing still sends `Tab` to the
+        // editor.
         Mode::Editing(_) if app.markdown_edit_preview.is_some() && key.code == KeyCode::Tab => {
             app.active = 1 - app.active;
             Ok(())

@@ -179,6 +179,14 @@ The derived syntax theme originally named code scopes only.
   no extension by `Path::extension()`'s rules, but both are real YAML,
   so the alias matches the full file name.
 
+## The fallback syntax theme's name
+
+`SYNTAX_THEME` was first `"base16-ocean.dark"`, copied from `edtui`'s
+field docs; the theme list a few lines below spells it
+`base16-ocean-dark`. The dotted form failed to resolve and
+`SyntaxHighlighter::new` returned `Err`, so highlighting was silently
+off. Switched to `"dracula"`, spelled one way everywhere.
+
 ## Resolver tiers
 
 `resolve_syntax_highlighter` landed in two passes, from two reports of
@@ -192,3 +200,19 @@ The derived syntax theme originally named code scopes only.
   `config`, but `GitConfig.sublime-syntax` declares
   `first_line_match: ^\[core\]`). Requested as a general mechanism, not
   an `if file_name == "config"` special case.
+- **Per candidate, both sets.** `CMakeLists.txt` rendered as plain
+  text: every candidate was tried against `syntect`'s set first, so
+  `txt` (the second, less specific candidate) matched Plain Text before
+  `"CMakeLists.txt"` was tried against the bundled set. Now each
+  candidate is tried against both sets before the next. (The custom Rust
+  grammar briefly flipped which set came first; reverted with it.)
+- **Groovy's banner comments** (lines of `***`) were reported still
+  broken after the Javadoc fix; a test showed the grammar right and the
+  running build stale.
+
+## Compare's diff backgrounds
+
+`danger`/`success` blended over `bg`, started at 20%. 13% was tried
+after `github-dark-default` read too burgundy, then reported washed out
+across the themes tried; it went back up, to 30%, on a request for a
+brighter highlight.

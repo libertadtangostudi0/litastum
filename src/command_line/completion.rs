@@ -1,14 +1,9 @@
 use std::fs;
 use std::path::Path;
 
-/// A live `Tab`-cycling session, remembered on `App` across repeated
-/// `Tab` presses (`App::command_line_completion`) — Windows `cmd.exe`
-/// convention: the first `Tab` on a word shows the first match, each
-/// further `Tab` steps to the next one (wrapping back to the first
-/// after the last), rather than completing to the matches' shared
-/// prefix and stopping. Any other edit to the command line
-/// (`insert_char`/`backspace`/`Esc`/running it) ends the session — see
-/// `browsing::handle_browsing_key`.
+/// A `Tab`-cycling session kept on `App` across presses, `cmd.exe`-style:
+/// each `Tab` steps to the next match, wrapping, instead of completing a
+/// shared prefix. Any other edit ends it (`browsing::handle_browsing_key`).
 pub struct CompletionCycle {
     /// Where the word being completed starts in the line — constant
     /// for the life of one cycle, since every step replaces
@@ -24,17 +19,10 @@ pub struct CompletionCycle {
     index: usize,
 }
 
-/// `Tab`: continues `cycle` if one's already running (steps to the
-/// next match), otherwise starts a new one from the word currently
-/// under the cursor — the last whitespace-separated "word" in `line`,
-/// resolved as a filesystem path relative to `cwd` (an already-absolute
-/// word, like `C:\Users\` or `/etc/`, completes from its own root
-/// instead — `Path::join`'s own behavior, same as `Panel::change_dir`'s
-/// `cd` handling relies on). No matches leaves `line` and `cycle`
-/// untouched entirely — no bell, no error, nothing suggested.
-///
-/// Matching is case-insensitive (Windows filesystems don't
-/// distinguish; harmless extra leniency on case-sensitive ones too).
+/// `Tab`: steps an active `cycle`, else starts one from the line's last
+/// whitespace-separated word, as a path relative to `cwd` (an absolute
+/// word completes from its own root, via `Path::join`). No match changes
+/// nothing. Case-insensitive.
 pub fn complete(line: &mut String, cwd: &Path, cycle: &mut Option<CompletionCycle>) {
     if let Some(state) = cycle {
         state.index = (state.index + 1) % state.matches.len();

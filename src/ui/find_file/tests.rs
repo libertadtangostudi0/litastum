@@ -34,15 +34,7 @@ fn rendered(state: &FindFileState) -> String {
     buffer_text(terminal.backend().buffer())
 }
 
-/// Regression test for the real report: a result count far past
-/// what the (terminal-height-clamped) popup can show at once used
-/// to render every item into a fixed-height list with no scroll
-/// offset at all -- the selected row, deep into a list of
-/// thousands, was simply invisible, scrolled off past the bottom of
-/// the rendered area with nothing to bring it into view. A real
-/// `ListState` (see the call site's own doc comment) should keep
-/// whichever row is selected actually on screen no matter how far
-/// into a long list it is.
+/// A selection deep in thousands of results stays on screen.
 #[test]
 fn selecting_a_result_far_down_a_long_list_scrolls_it_into_view() {
     let state = state_with(2000, 1500);
@@ -61,15 +53,9 @@ fn a_short_result_list_needs_no_scrolling_to_show_the_selection() {
     assert!(text.contains("file_0002"));
 }
 
-/// `Rounded` gets a separator under the title (matching
-/// `ui/theme_menu.rs`'s own color-scheme picker) and another right
-/// before the footer hints (matching `ui/confirm.rs`'s delete
-/// popup) -- requested directly, alongside a screenshot of the
-/// color-scheme picker's own title-plus-line look.
-/// Requested directly, alongside the color-scheme picker's own
-/// title-plus-line screenshot: the title should also get a bold,
-/// un-padded look and a separator right under it in the Results
-/// phase, same as `Typing` already has.
+/// `Rounded` gets a separator under the title (like the color-scheme
+/// picker) and before the hints (like the delete popup), in both the
+/// `Typing` and `Results` phases.
 #[test]
 fn rounded_style_results_show_a_separator_under_the_title() {
     let state = state_with(2, 0);
@@ -103,14 +89,8 @@ fn rounded_style_typing_shows_a_separator_under_the_title() {
     assert!(line_below.contains('─'), "a separator should sit right below the title: {line_below:?}");
 }
 
-/// Regression coverage for a real report: the `Typing` phase's
-/// popup used a fixed height (5) sized for `Classic`'s tighter
-/// chrome (just a 2-row border) -- under `Rounded`, whose border +
-/// padding + title row eat 7 rows on their own, that left zero room
-/// for the label/query/hint content, and the popup rendered
-/// entirely blank. `draw_typing` now grows the popup by
-/// `popup::chrome_extra_rows(style)` to keep the same 3 content rows
-/// visible under either style.
+/// Under `Rounded` the `Typing` popup still shows its content: sized for
+/// `Classic`, the padding and title row left no room and it was blank.
 #[test]
 fn rounded_style_typing_phase_shows_the_label_and_hint_not_just_an_empty_box() {
     let state = FindFileState { phase: FindFilePhase::Typing, query: TextField::at("abc".to_string(), 3, None), content_query: TextField::at(String::new(), 0, None), active_field: FindFileField::Name, name_history_index: None, content_history_index: None, results: vec![], selected: 0, marked: Default::default(), pending: None, search_duration: None, results_capped: false, export_message: None };
@@ -252,14 +232,8 @@ fn results_title_includes_the_content_query_when_set() {
     assert!(text.contains("needle"), "the content query should show up in the title: {text}");
 }
 
-/// Regression coverage for the real request: while a search is
-/// still running (`FindFilePhase::Searching`), the popup should
-/// show live progress and an `Esc`-to-cancel hint -- Far Manager's
-/// own dialog shows both instead of blocking with nothing to look
-/// at. Uses a real background search (`explorer::spawn_search`,
-/// re-exported test-only) against a scratch directory with enough
-/// files that it's very unlikely to have already finished by the
-/// time this reads the popup's own text.
+/// While searching, the popup shows live progress and an `Esc` hint. A real
+/// background search over enough files that it's still running.
 #[test]
 fn searching_phase_shows_live_progress_and_a_cancel_hint() {
     let dir = crate::test_support::unique_scratch_dir("find-file-ui-searching");

@@ -8,26 +8,10 @@ use super::{BACKUP_SUFFIX, FAR_FILE_NAME, OWN_FILE_NAME};
 use crate::explorer::user_menu::parse::MenuItem;
 use crate::explorer::user_menu::toml_format;
 
-/// Ports `far_path` (a real `FarMenu.ini`) into a `LitastumMenu.toml`
-/// alongside it -- called only once the user has confirmed it
-/// (`Overlay::ConfirmPortFarMenu`). Returns the parsed items regardless of
-/// whether either write below actually succeeded (best-effort
-/// persistence, same "never block on a failed write" rule
-/// `theming::config` already follows for theme/setup persistence).
-///
-/// Two backups happen here, both requested directly after "what if I
-/// already have a menu and drop a new FarMenu.ini in" came up:
-/// - An *existing* `LitastumMenu.toml` is renamed to
-///   `LitastumMenu.toml.bak` before being overwritten -- porting
-///   shouldn't silently discard a menu someone already built by hand
-///   or through the UI.
-/// - `FarMenu.ini` itself is renamed to `FarMenu.ini.bak` once ported --
-///   unlike the very first version of this feature (which left it
-///   completely untouched), it has to move out of the way now that
-///   `resolve_menu` reports a `FarMenu.ini`'s mere presence every time
-///   regardless of whether `LitastumMenu.toml` already exists; leaving
-///   it in place would re-trigger this same prompt on every future
-///   `F2`/startup check.
+/// Ports `far_path` into a `LitastumMenu.toml` beside it, once confirmed.
+/// Returns the items even if a write failed (best-effort). Backs up an
+/// existing `LitastumMenu.toml` to `.bak` first, and moves `FarMenu.ini`
+/// to `FarMenu.ini.bak` so it isn't offered again. History: docs/history/user-menu.md.
 pub fn port_far_menu(far_path: &Path) -> Vec<MenuItem> {
     let dir = far_path.parent().unwrap_or_else(|| Path::new("."));
     let content = match read_text_file_any_encoding(far_path) {
@@ -60,15 +44,9 @@ pub fn port_far_menu(far_path: &Path) -> Vec<MenuItem> {
 }
 
 
-/// `N`/`Esc` on the "port FarMenu.ini?" prompt: moves `far_path` aside
-/// to `FarMenu.ini.bak` without reading or converting it, purely so it
-/// stops being detected (and re-prompted for) on every future `F2`/
-/// startup check -- `resolve_menu` reports a `FarMenu.ini`'s mere
-/// presence unconditionally, so declining still has to make it go away
-/// somehow. Returns the backup path so the caller can tell the user
-/// where it ended up; `None` if the rename itself failed (permissions,
-/// ...), logged and left as a silent no-op otherwise -- the file simply
-/// stays in place and gets offered again next time.
+/// Declining the port: moves `far_path` to `FarMenu.ini.bak` unread, so
+/// it stops being offered. Returns the new path for the message; `None`
+/// (logged) if the rename failed, and it's offered again next time.
 pub fn backup_far_menu_without_porting(far_path: &Path) -> Option<PathBuf> {
     let backup = far_path.with_file_name(format!("{FAR_FILE_NAME}{BACKUP_SUFFIX}"));
     match fs::rename(far_path, &backup) {
@@ -81,21 +59,9 @@ pub fn backup_far_menu_without_porting(far_path: &Path) -> Option<PathBuf> {
 }
 
 
-/// Reads `path` as text, decoding whichever of UTF-8, UTF-16LE, or
-/// UTF-16BE it's actually encoded in -- reported directly: a real
-/// `FarMenu.ini` (exported straight from an actual Far Manager
-/// install) failed to port at all, silently producing zero items.
-/// Confirmed by inspecting the raw bytes: it starts with `FF FE` (a
-/// UTF-16LE byte-order mark) followed by every character null-padded
-/// -- real Far Manager saves this file in UTF-16LE, not UTF-8, and a
-/// plain `fs::read_to_string` (strict UTF-8) fails outright on it,
-/// since two-byte-per-character text is essentially never valid UTF-8.
-/// Detected by byte-order mark, the same convention every other text
-/// tool uses to tell these apart, since nothing else in the file names
-/// its own encoding. Falls back to plain UTF-8 (also stripping a UTF-8
-/// BOM, `EF BB BF`, if present) when there's no UTF-16 BOM -- covers a
-/// hand-written or already-UTF-8 `FarMenu.ini` too, not just Far
-/// Manager's own default export.
+/// Reads `path` as UTF-8, UTF-16LE or UTF-16BE, by byte-order mark (a
+/// UTF-8 BOM is stripped). Far saves `FarMenu.ini` as UTF-16LE, which a
+/// strict UTF-8 read rejects. History: docs/history/user-menu.md.
 fn read_text_file_any_encoding(path: &Path) -> io::Result<String> {
     let bytes = fs::read(path)?;
 
@@ -174,14 +140,8 @@ mod tests {
             assert!(matches!(resolve_menu(&dir), MenuFile::Own(_, _)), "should no longer be re-detected as a FarMenu.ini to port");
         }
 
-        /// Regression coverage for the actual real-world report: a
-        /// `FarMenu.ini` exported straight from a real Far Manager
-        /// install ported to zero items -- confirmed by inspecting its
-        /// raw bytes directly, it's UTF-16LE with a BOM (`FF FE`, every
-        /// ASCII character null-padded), which a strict-UTF-8 read
-        /// fails on outright. Built here the same way a real text
-        /// editor saving "UTF-16 LE" would produce it, not by guessing
-        /// at the byte layout.
+        /// A real Far export: UTF-16LE with a BOM. Built the way an editor saves
+        /// "UTF-16 LE", not by guessing the layout.
         #[test]
         fn ports_a_real_utf16le_far_menu_ini() {
             let dir = scratch_dir();

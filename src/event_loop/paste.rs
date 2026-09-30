@@ -7,27 +7,12 @@ use crate::command_line::Effect;
 
 use super::keys::key_effect;
 
-/// Edge-triggered: fires the fast paste path once per distinct real
-/// physical `Ctrl+V` press (`PasteFlood::ctrl_v_just_pressed`), never
-/// repeatedly while the combo stays held. Returns `true` (asking
-/// `wait_for_event` to return and let `run()` redraw) only when
-/// something actually happened -- a fresh press while nothing can take a
-/// paste (`paste_target` is `None`) is left completely alone, no swallow
-/// armed, so `crossterm`'s normal event flow handles it exactly as
-/// before.
-///
-/// Covers every text field in `paste_target`, not just the editor's
-/// buffer -- every field got the same ~7-8ms/char flood. The editor
-/// additionally requires plain `Standard` typing
-/// (`Editor::is_plain_standard_typing`): Vim's `Ctrl+V` is visual-block
-/// mode, not paste. History: docs/history/editor-performance.md.
-///
-/// See `windows_terminal`'s own module doc for why a real terminal
-/// `Ctrl+V` needs this bypass in the first place. Everything about the
-/// keystroke flood that follows it -- the edge-triggered press, pasting
-/// only what the flood hasn't already delivered, and swallowing the rest
-/// of it once it arrives -- is `windows_terminal::PasteFlood`'s; this
-/// only decides where the paste goes (`paste_target`) and applies it.
+/// Fires the fast paste once per physical `Ctrl+V` press (edge-triggered),
+/// into any `paste_target` field -- each got the same ~7-8ms/char flood.
+/// The editor also needs plain `Standard` typing (Vim's `Ctrl+V` is
+/// visual block). `false`, with no swallow armed, when nothing can take a
+/// paste. The flood handling itself is `windows_terminal::PasteFlood`'s.
+/// History: docs/history/editor-performance.md.
 #[cfg(windows)]
 pub(super) fn try_intercept_paste_hotkey(app: &mut App) -> Result<bool> {
     if !app.paste_flood.ctrl_v_just_pressed() {
@@ -122,18 +107,11 @@ fn apply_paste(app: &mut App, target: PasteTarget, text: &str) -> Result<()> {
     Ok(())
 }
 
-/// A bracketed paste (`EnableBracketedPaste` in `setup_terminal`).
-/// Unix-only in practice (`crossterm`'s Windows backend never
-/// produces `Event::Paste`, see `windows_terminal`). Goes through the
-/// same `paste_target`/`apply_paste` as the Windows `Ctrl+V` bypass --
-/// the terminal already handed the text over, so there's no clipboard
-/// read, and no keystroke flood to swallow afterward either.
-///
-/// Two real problems this fixed by sharing that routing: every mode
-/// that wasn't the editor used to get the text replayed as keystrokes
-/// unconditionally (including ones where a letter is a command), and
-/// an open `Ctrl+F` box still sent the paste into the file's own
-/// buffer instead of the box.
+/// A bracketed paste (Unix only in practice -- `crossterm`'s Windows
+/// backend never produces `Event::Paste`), routed like the Windows
+/// `Ctrl+V` bypass. That shared routing fixed text replayed as keystrokes
+/// into modes where a letter is a command, and a paste going into the file
+/// while the `Ctrl+F` box was open.
 pub(super) fn handle_paste_event(app: &mut App, text: &str) -> Result<()> {
     match paste_target(app) {
         Some(target) => apply_paste(app, target, text),

@@ -3,17 +3,10 @@ use tracing::warn;
 
 use super::parse::{MenuItem, MenuItemBody};
 
-/// litastum's own native user-menu format -- structured (serde-backed
-/// TOML) rather than Far Manager's own hand-rolled nested-block DSL
-/// (`parse.rs`), specifically so this app can read-modify-write it
-/// programmatically (adding/removing a menu item from the UI, planned
-/// next) without a bespoke serializer for that DSL or a lossy
-/// regenerate-the-whole-file step. `FarMenu.ini` itself is only ever
-/// read through `parse::parse` (once, to port it -- `port_ini_to_toml`
-/// below); this module never reads or writes that format.
-///
-/// Shape, one array-of-tables entry per item (TOML has no bare
-/// top-level array, hence the `item` wrapper key):
+/// litastum's own menu format: serde-backed TOML, so the app can edit it
+/// programmatically. `FarMenu.ini` is only read by `parse::parse`, for
+/// porting. One array-of-tables entry per item (TOML has no top-level
+/// array, hence the `item` key):
 ///
 /// ```toml
 /// [[item]]
@@ -28,14 +21,8 @@ use super::parse::{MenuItem, MenuItemBody};
 /// commands = ["git commit -m \"!?Commit title?!\""]
 /// ```
 ///
-/// `TomlMenuItem` is a separate type from `MenuItem` on purpose --
-/// `MenuItem`/`MenuItemBody` are shaped for browsing/execution
-/// (`state.rs`/`input.rs`), not for serde's own conventions (an enum
-/// like `MenuItemBody` has no natural, readable TOML representation);
-/// keeping the on-disk shape (two optional fields, `commands` xor
-/// `submenu`) separate from the in-memory one (a `Commands`/`Submenu`
-/// enum, always exactly one or the other) means neither has to
-/// compromise for the other's sake.
+/// `TomlMenuItem` is separate from `MenuItem`: on disk two optional
+/// fields (`commands` xor `submenu`), in memory an enum.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct TomlMenuFile {
     #[serde(default)]

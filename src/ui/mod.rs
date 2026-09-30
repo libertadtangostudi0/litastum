@@ -44,21 +44,13 @@ use function_keys::{function_key_columns, ALT_LABELS, DEFAULT_LABELS};
 #[cfg(test)]
 use panel::build_list_item;
 
-/// Draws the whole application: two file panels side by side, a
-/// command-line row, and the F-key hint bar.
-///
-/// Returns the `(columns, visible_rows)` each panel was actually
-/// rendered with, so the caller can feed it back into
-/// `Panel::set_columns`/`set_visible_rows` before the next keyboard
-/// event is handled — both depend on terminal size, which only
-/// `ui::draw` computes, but `Panel` (not `ui`) owns the cursor/scroll
-/// state that navigation needs them for.
-///
-/// Also returns where the terminal cursor should go (`None` = hidden).
-/// Draw functions return it rather than calling
-/// `Frame::set_cursor_position`: `event_loop` places it after the frame
-/// is on screen, which avoids a flicker. History:
-/// docs/history/event-loop.md.
+/// Draws the whole app: two panels, the command line and the F-key bar.
+/// Returns the `(columns, visible_rows)` each panel was drawn with --
+/// `Panel` owns navigation but only `ui` knows the terminal size -- and
+/// where the terminal cursor goes (`None` = hidden). The cursor is
+/// returned rather than set with `Frame::set_cursor_position`:
+/// `event_loop` places it after the frame is on screen, avoiding a
+/// flicker. History: docs/history/event-loop.md.
 pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Position>) {
     let theme = app.theme; // Theme is Copy -- see theme.rs for why
     let area = frame.area();

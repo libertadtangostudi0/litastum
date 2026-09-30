@@ -20,19 +20,11 @@ pub struct UserMenuLevelView<'a> {
 }
 
 
-/// `F2`: browsing a (possibly nested) user menu, and adding/removing
-/// items in place. `root` is the *single* canonical tree (what actually
-/// gets persisted); `stack` is the path of indices walked from `root`
-/// to reach whichever level is currently shown, `selected` the cursor
-/// within that level. An earlier version cloned each submenu's children
-/// into its own owned level on `enter_submenu` -- fine for read-only
-/// browsing, but wrong the moment editing was added: an edit made three
-/// levels deep would only ever touch that level's own disposable clone,
-/// invisible to `root` and lost the instant `back()` popped it. Walking
-/// `root` through `stack` on every access instead means there is
-/// nowhere else for the data to live, so an edit at any depth is
-/// automatically visible everywhere (including after `persist`ing to
-/// `LitastumMenu.toml`) with no separate sync step.
+/// Browsing and editing a (possibly nested) user menu. `root` is the one
+/// tree that gets persisted; `stack` is the index path to the level shown,
+/// `selected` the cursor in it. Levels are never cloned: an earlier
+/// version cloned submenus on entry, and edits made deep down were lost
+/// on `back()`. History: docs/history/user-menu.md.
 pub struct UserMenuState {
     root: Vec<MenuItem>,
     /// Indices into progressively deeper `Submenu` levels, parent to
@@ -48,15 +40,9 @@ pub struct UserMenuState {
 }
 
 impl UserMenuState {
-    /// Builds the browsing state from an already-resolved item list
-    /// (`MenuFile::Own`, or the result of `port_far_menu`) -- file
-    /// resolution itself lives in `resolve_menu`/`port_far_menu`
-    /// (`resolve.rs`/`porting.rs`), kept separate so
-    /// `explorer::command::open_user_menu` can decide what to do
-    /// (browse, offer to port, or create) before ever building one of
-    /// these. `dir` is where edits get persisted back to
-    /// (`LitastumMenu.toml`), independent of wherever `items` itself
-    /// originally came from (a fresh read, or a just-completed port).
+    /// Builds the state from already-resolved items (`MenuFile::Own` or a
+    /// port) -- resolution stays in `resolve`/`porting`, so the caller decides
+    /// first. `dir` is where edits persist.
     pub fn from_items(dir: PathBuf, items: Vec<MenuItem>) -> Self {
         Self { root: items, stack: Vec::new(), selected: 0, dir }
     }
@@ -103,17 +89,9 @@ impl UserMenuState {
         self.current_items().get(self.selected)
     }
 
-    /// Moves the cursor to the first item at the *current* level whose
-    /// own `hotkey` matches `c` (case-insensitively, matching real Far
-    /// Manager's own convention -- its hotkeys aren't case-sensitive
-    /// either). `true` if one was found and the cursor moved there --
-    /// the caller (`input::handle_user_menu_key`) still has to actually
-    /// run/descend into it itself, same as it would for a plain `Enter`
-    /// press once the cursor is already sitting on the right item.
-    /// `false` (a silent no-op, cursor unchanged) for an unmatched
-    /// letter or an empty level -- deliberately narrow: real Far only
-    /// ever jumps within the level currently on screen, never searches
-    /// into a collapsed submenu.
+    /// Moves to the first item at the current level whose hotkey matches `c`,
+    /// case-insensitively; `true` if found. The caller then acts as for
+    /// `Enter`. Never searches into submenus, like Far.
     pub fn select_by_hotkey(&mut self, c: char) -> bool {
         let Some(index) = self.current_items().iter().position(|item| item.hotkey.is_some_and(|hotkey| hotkey.eq_ignore_ascii_case(&c))) else {
             return false;

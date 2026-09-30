@@ -18,47 +18,23 @@ pub enum Side {
     Right,
 }
 
-/// `Alt+F5`'s own full-screen mode: two files, side by side, **both
-/// fully editable** -- see `TODO/file-compare.md` for the design this
-/// implements. Genuinely two plain `Editor`s (undo, syntax highlighting,
-/// save, everything `F4` editing already has), not a read-only diff
-/// viewer with editing bolted on: `ui/compare.rs` paints GitHub-style
-/// red/green backgrounds over them (`Editor::set_extra_highlights`) and
-/// keeps the *unfocused* pane's viewport diff-aligned with the focused
-/// one (`Editor::set_viewport_top_row`, driven by `diff::map_real_row`
-/// every frame) -- but neither pane's real buffer ever has synthetic
-/// filler lines injected into it, so saving either one always writes
-/// exactly what's actually in the file, nothing more.
+/// `Alt+F5`'s screen: two plain, fully editable `Editor`s (undo,
+/// highlighting, save). `ui/compare.rs` paints the diff backgrounds and
+/// keeps the unfocused pane aligned; no filler lines ever enter a buffer,
+/// so saving writes exactly the file. History: docs/history/compare.md.
 pub struct CompareState {
     pub left: Editor,
     pub right: Editor,
     pub focus: Side,
-    /// The real cursor position of the pane that currently does *not*
-    /// have focus, captured the instant it lost focus -- `None` while
-    /// that pane genuinely has never been focused away from since
-    /// `open`. Its own `Editor::cursor` is overridden every frame while
-    /// unfocused, purely to keep its viewport diff-aligned
-    /// (`Editor::set_viewport_top_row`'s own doc comment) -- this is the
-    /// only place its true position survives until `toggle_focus`
-    /// restores it.
+    /// The unfocused pane's real cursor, saved when it lost focus: its
+    /// `Editor::cursor` is overridden every frame to align its viewport, so
+    /// this is where the true position survives until `toggle_focus`.
     left_saved_cursor: Option<Index2>,
     right_saved_cursor: Option<Index2>,
-    /// Each real line's own `CRLF`/`LF` ending, exactly as it was on
-    /// disk when `open` read it (`F9` -> Line endings' `Shown` display,
-    /// `ui/compare.rs::draw_line_ending_overlay`). A fixed snapshot, not
-    /// re-derived from the live `Editor` buffer on every frame the way
-    /// the diff highlights are: `edtui::Lines::from` normalizes `\r\n`
-    /// to `\n` the moment a file is loaded (confirmed directly --
-    /// `str::lines()`, which it's built on, strips both uniformly), so
-    /// the distinction genuinely doesn't survive inside `Editor` at all
-    /// -- there is no live buffer this could be recomputed from. A known,
-    /// accepted limitation that follows from that: an edit that inserts
-    /// or removes lines shifts every later real row's index, so this
-    /// snapshot can drift out of sync with which physical line is which
-    /// after enough editing -- still meaningfully more useful than
-    /// nothing for the common case (checking an unmodified or lightly
-    /// edited file for a mixed-line-ending mismatch, the actual reason
-    /// this feature exists) than not showing it at all.
+    /// Each real line's ending as read on open -- a snapshot, because
+    /// `edtui::Lines::from` normalizes `\r\n` to `\n`, so the live buffer
+    /// can't tell. Inserting or deleting lines makes it drift; accepted, since
+    /// checking a lightly edited file for mixed endings is the use case.
     left_line_endings: Vec<Option<LineEnding>>,
     right_line_endings: Vec<Option<LineEnding>>,
 }
@@ -144,18 +120,9 @@ impl CompareState {
         self.focused_mut().save()
     }
 
-    /// `Tab`-equivalent "jump to next diff hunk" (bound to `F8`/
-    /// `Ctrl+Down` in `input.rs`, since `Tab` itself now means "switch
-    /// pane focus" — see this module's own top doc comment): moves the
-    /// *focused* pane's real cursor to the first row of the next
-    /// *hunk* -- a whole contiguous block of changed lines -- diffed
-    /// live against the other pane's current text. A no-op past the
-    /// last hunk.
-    ///
-    /// Passes the cursor's own current row, not `row + 1`, to
-    /// `next_hunk_start` -- see that function's own doc comment for why
-    /// the fixed `+ 1` version used to stop on every line of a
-    /// multi-line hunk instead of skipping straight to the next one.
+    /// `F8`/`Ctrl+Down`: moves the focused pane's cursor to the first row of
+    /// the next hunk, diffed live. Passes the current row, not `row + 1`
+    /// (`next_hunk_start` skips the current hunk). No-op past the last one.
     pub fn jump_to_next_hunk(&mut self) {
         let focused_kinds = self.live_focused_kinds();
         let from = self.focused().cursor().row;

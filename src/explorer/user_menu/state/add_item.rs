@@ -7,14 +7,9 @@ enum AddItemStage {
     Command,
 }
 
-/// `Overlay::AddUserMenuItem`: a small two-field form (`Ins` while
-/// browsing the user menu) for adding a new item without leaving the
-/// popup to hand-edit `LitastumMenu.toml`. Deliberately minimal -- no
-/// hotkey field, no multi-command items, no authoring help for `!&`/
-/// `!?Label?Default!` -- those are still easiest to add by hand-editing
-/// the file afterward; this covers the common case (one title, one
-/// command, or a bare submenu to build out by entering it and adding
-/// more items the same way).
+/// `Overlay::AddUserMenuItem` (`Ins`): a two-field form for adding an item
+/// without hand-editing the file. Deliberately minimal -- no hotkey, one
+/// command or a bare submenu; anything more is easier in the file.
 pub struct AddUserMenuItemState {
     stage: AddItemStage,
     pub title: TextField,

@@ -3,20 +3,12 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
-/// Everything this app tracks about Windows Terminal's own paste --
-/// the physical `Ctrl+V` edge, the keystroke flood Windows Terminal
-/// sends *after* this app has already pasted the clipboard itself, and
-/// the characters that flood may have delivered *before* the physical
-/// key press was even seen. See `paste_hotkey.rs`'s own module doc for
-/// why any of this exists (Windows Terminal owns `Ctrl+V` and feeds the
-/// clipboard in as simulated keystrokes at ~7-8ms each), and
-/// `event_loop::paste::try_intercept_paste_hotkey` for the one place
-/// that drives it.
-///
-/// Compiled on every platform: `should_swallow`/`record_typed_key` run
-/// for every key everywhere, they just never find anything to do unless
-/// the Windows-only half (`ctrl_v_just_pressed`/`expect`) has armed
-/// something first.
+/// Windows Terminal paste state: the physical `Ctrl+V` edge, the flood
+/// expected after we pasted ourselves, and characters that arrived before
+/// the key press was seen. Driven from
+/// `event_loop::paste::try_intercept_paste_hotkey`. Compiled everywhere:
+/// `should_swallow`/`record_typed_key` just never match unless the
+/// Windows half armed something.
 #[derive(Default)]
 pub struct PasteFlood {
     /// Real physical `Ctrl+V` state as of the previous poll -- only used

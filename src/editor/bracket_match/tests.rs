@@ -380,16 +380,9 @@ fn cursor_is_on_a_matched_bracket_false_when_not_touching_a_bracket_at_all() {
     assert!(!cursor_is_on_a_matched_bracket(&lines, Index2::new(0, 2)));
 }
 
-/// The one case that must come back `false` even though `bracket_at`
-/// itself would resolve something: the cursor sitting one column
-/// *past* a bracket (the "touching from the left" append position)
-/// isn't genuinely *on* a bracket character -- painting that cell
-/// with the highlight color would color an empty/unrelated cell,
-/// not the bracket itself. `bracket_match_highlights` is fine
-/// returning a highlight anchored at the real bracket position
-/// either way; it's specifically the terminal *cursor cell*
-/// (`Editor::view`'s `cursor_style` decision) that must stay plain
-/// here.
+/// One column past a bracket (the append position) `bracket_at` still
+/// resolves it, but the cursor cell isn't the bracket, so it must stay
+/// plain.
 #[test]
 fn cursor_is_on_a_matched_bracket_false_when_only_touching_from_the_append_position() {
     let lines = Lines::from("(a)");

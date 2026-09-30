@@ -8,23 +8,10 @@ use crate::yes_no::{self, Answer};
 
 use super::menu::open_compare_menu;
 
-/// A key press while Compare (`Mode::CompareFiles`) is open, at the
-/// level `handle_compare_key` needs to care about -- mirrors
-/// `editor::editor_keymap::EditorCommand`'s own shape and reasoning
-/// almost exactly (see its doc comment for why `Save`/`Forward`/`Ignore`
-/// exist as their own variants), with two Compare-specific additions:
-/// `ToggleFocus` (`Tab` means "switch pane" everywhere else in this app,
-/// not "insert a tab character" -- there's no real conflict, since a
-/// literal tab character has no obvious use in either pane's own
-/// content) and `NextHunk`/`PreviousHunk` (bound to `Ctrl+Down`/`Ctrl+Up`
-/// specifically because `Tab`, this app's usual "next thing" key, is
-/// already taken by `ToggleFocus` here -- **and also to `F8`/`F7`**,
-/// requested directly to match TortoiseMerge/`merge.exe`'s own
-/// next/previous-difference convention for quickly scanning where a
-/// file actually changed. Both bindings do the exact same thing; `F7`/
-/// `F8` are neither taken by anything else in this mode nor by
-/// the browser's own F-key row, which this mode's dispatch never falls
-/// through to in the first place).
+/// A key in Compare, like `editor_keymap::EditorCommand` plus:
+/// `ToggleFocus` (`Tab` switches panes, as elsewhere in the app) and
+/// `NextHunk`/`PreviousHunk` on `Ctrl+Down`/`Ctrl+Up` and on `F8`/`F7`
+/// (TortoiseMerge/`merge.exe` convention, requested).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CompareCommand {
     Close,

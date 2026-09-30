@@ -9,20 +9,10 @@ use crate::app::{DeleteEntry, PendingDelete, PendingTransfer, TransferOp};
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
-/// Renders the F8 "delete this?" prompt over the browser -- a small
-/// card (`popup::draw_frame`) rather than the plain bordered box this
-/// used before: a danger-dot + "Delete" title with an "F8" badge at
-/// the right edge, the entry's name and (for a single file -- see
-/// `DeleteEntry::size`'s own doc comment) its size and path, then a
-/// separator and pill-style `y delete` / `esc keep` hints. Redesigned
-/// from a reference mockup reviewed alongside the F9 menu and
-/// color-scheme-picker redesigns (`ui/menu.rs`, `ui/theme_menu.rs`).
-///
-/// Several entries (Far Manager-style multi-select, see
-/// `PendingDelete::entries`'s own doc comment) are summarized by count
-/// instead of named individually -- there's no room to list every name
-/// on one line, matching how the F5/F6 transfer prompt handles the same
-/// situation (`draw_confirm_transfer_popup`).
+/// The F8 delete prompt: a `popup::draw_frame` card with a danger dot,
+/// "Delete" and an "F8" badge, the entry's name (plus size and path for a
+/// single file), then `y delete` / `esc keep` pills. Several entries are
+/// summarized by count, as in the transfer prompt. History: docs/history/popups.md.
 pub fn draw_confirm_delete_popup(frame: &mut Frame, area: Rect, pending: &PendingDelete, theme: &Theme, style: PopupStyle) {
     const WIDTH: u16 = 50;
     // 4 content rows either way, plus whatever chrome each style adds

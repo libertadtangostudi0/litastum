@@ -22,16 +22,9 @@ fn ctrl_shift_right_selects_by_a_word() {
     assert!(state.selection.is_some());
 }
 
-/// Regression test for the real, repeatedly-reported bug (and its
-/// own, differently-shaped regression once fixed the first time):
-/// one `Ctrl+Shift+Right` press on "hello world" must select exactly
-/// "hello" -- neither reaching into the 'w' of "world" (the original
-/// report) nor stopping one column short, on the trailing space
-/// (a later attempt's own overcorrection, also reported directly:
-/// selection must track only where the cursor itself travels,
-/// nothing added on either side). See `extend_word_selection`'s own
-/// doc comment for the earlier attempts that got this wrong, in both
-/// directions.
+/// One `Ctrl+Shift+Right` on "hello world" selects exactly "hello": not
+/// the `w` (the original report), not stopping on the space (a later
+/// overcorrection). History: docs/history/word-select.md.
 #[test]
 fn ctrl_shift_right_does_not_select_into_the_next_word() {
     let mut state = state_for("hello world", 0);
@@ -41,15 +34,9 @@ fn ctrl_shift_right_does_not_select_into_the_next_word() {
     assert_eq!(selection.end, state.cursor, "the selection's own end must always equal the cursor");
 }
 
-/// Regression test for a real report: an earlier fix (a corrective
-/// `MoveBackward(1)` chained after `MoveWordForward`) left the
-/// cursor sitting on the space between words, and the *next*
-/// `Ctrl+Shift+Right` press's own word-scan started from that same
-/// space -- crossing back to the same 'w' and then immediately
-/// stepping back again netted zero movement, so the second press
-/// was silently ignored -- reported directly as "sometimes gets ignored."
-/// A real editor's word-selection must extend further on every
-/// press, never stall.
+/// "Second": each press must extend further. A corrective
+/// `MoveBackward(1)` left the cursor on the space, and the next press
+/// cancelled itself out.
 #[test]
 fn repeated_ctrl_shift_right_keeps_extending_the_selection() {
     let mut state = state_for("hello world wide web", 0);
@@ -99,15 +86,9 @@ fn repeated_ctrl_shift_left_keeps_extending_the_selection_backward() {
     assert!(after_third.col < after_second.col, "third press should extend further back still: {after_second:?} -> {after_third:?}");
 }
 
-/// Regression test for the real, seventh-attempt report: starting a
-/// *fresh* backward selection while the cursor already sits at the
-/// very start of a word (exactly where a prior plain `Ctrl+Right`
-/// word move leaves it) must not drag that word's own first
-/// character into the selection. `state_for(.., 6)` puts the cursor
-/// on the `'w'` of "world" -- itself already the start of that word,
-/// same shape as landing on the `'t'` of "the" in `"loaded the"`
-/// after a plain `Ctrl+Right`. Reported directly: selecting backward
-/// from there grabbed `"loaded t"`, not `"loaded "`.
+/// "Seventh": a fresh backward selection starting on a word's first
+/// character (where `Ctrl+Right` leaves it) doesn't include it --
+/// `"loaded "`, not `"loaded t"`.
 #[test]
 fn ctrl_shift_left_from_a_word_start_does_not_grab_that_words_first_letter() {
     let mut state = state_for("hello world", 6); // cursor on 'w', the very start of "world"
@@ -118,16 +99,8 @@ fn ctrl_shift_left_from_a_word_start_does_not_grab_that_words_first_letter() {
     assert_eq!(state.cursor.col, 0);
 }
 
-/// Regression test for the real, twelfth-attempt report: starting a
-/// *fresh* backward selection while the cursor rests on the whitespace
-/// right after a word (the ordinary place a cursor sits once it's moved
-/// or typed past one) must not drag that whitespace into the selection
-/// either. Reported directly against
-/// `"Draft architecture derived from the planning chat + the Far
-/// Manager UI"`, cursor placed right after "derived"'s own last letter
-/// (i.e. resting on the space before "from"): selecting backward from
-/// there grabbed `"derived "` (trailing space included), not
-/// `"derived"`.
+/// "Twelfth": a fresh backward selection starting on the space after a
+/// word doesn't include it -- `"derived"`, not `"derived "`.
 #[test]
 fn ctrl_shift_left_from_the_space_after_a_word_does_not_grab_that_space() {
     let mut state = state_for("Draft architecture derived from the planning chat", 26); // the space right after "derived"
@@ -138,17 +111,9 @@ fn ctrl_shift_left_from_the_space_after_a_word_does_not_grab_that_space() {
     assert_eq!(state.cursor.col, 19);
 }
 
-/// Regression test for the real, thirteenth-attempt report: a fresh
-/// backward selection starting *mid-word*, with no whitespace or word
-/// boundary anywhere nearby, must trim the anchor too -- same as every
-/// other shape of "the anchor holds a real character" (Seventh,
-/// Twelfth). Reported directly against plain "roadmap", cursor placed
-/// between 'd' and 'm' (i.e. resting on 'm' itself): selecting backward
-/// grabbed `"roadm"` (the anchor's own 'm' included), not `"road"`. An
-/// earlier version of this test (before the general fix landed) had
-/// asserted the *opposite* -- that a mid-word anchor legitimately
-/// belongs to the selection and must not be trimmed; that assumption
-/// was the bug, never verified against a real report until this one.
+/// "Thirteenth": a fresh backward selection starting mid-word trims the
+/// anchor too -- `"road"`, not `"roadm"`. An earlier version of this test
+/// asserted the opposite; that assumption was the bug.
 #[test]
 fn ctrl_shift_left_from_mid_word_trims_the_anchor_too() {
     let mut state = state_for("roadmap", 4); // cursor on 'm', between 'd' and 'm'
@@ -159,18 +124,9 @@ fn ctrl_shift_left_from_mid_word_trims_the_anchor_too() {
     assert_eq!(state.cursor.col, 0);
 }
 
-/// Regression test for the real, eighth-attempt report -- including
-/// its own first, overcorrected fix (see `extend_word_selection`'s
-/// own doc comment). *Retracting* a selection that was built by
-/// extending forward word-by-word must remove a whole word's own
-/// text per press, landing on the separating space in front of it --
-/// not stopping one character short, still inside the word just
-/// "removed" (`"hello world f"`, the original bug), and not
-/// swallowing the space too (`"hello world"` with no trailing space,
-/// the first fix's own overcorrection). "hello world foo", built up
-/// one word at a time with `Right`, then retracted once with `Left`,
-/// should land right on the space right after "world" --
-/// `"hello world "`.
+/// "Eighth": retracting a forward-built selection removes a whole word per
+/// press and lands on the separator -- `"hello world "`, neither
+/// `"hello world f"` (the bug) nor `"hello world"` (the first fix).
 #[test]
 fn ctrl_shift_left_retracts_a_whole_word_onto_the_separating_space() {
     let mut state = state_for("hello world foo", 0);
@@ -186,17 +142,8 @@ fn ctrl_shift_left_retracts_a_whole_word_onto_the_separating_space() {
     assert_eq!(selection.end, state.cursor, "the selection's own end must always equal the cursor, same invariant as everywhere else");
 }
 
-/// Regression test for the real, fifteenth-attempt report: the
-/// simplest possible round trip -- extend one word forward, then
-/// immediately retract that exact same word -- must return to nothing
-/// selected, not leave a stray character behind. `"Draft architecture"`,
-/// cursor right before "architecture" (column 6): `Ctrl+Shift+Right`
-/// selects "architecture"; `Ctrl+Shift+Left` once should undo it
-/// completely, landing back exactly where the `Right` press started,
-/// with no selection at all -- not `" "` (the space before
-/// "architecture"), which an earlier version of the retraction fix
-/// (see `docs/history/word-select.md`, "Eleventh") produced
-/// instead.
+/// "Fifteenth": one word forward and straight back leaves nothing
+/// selected, not the space before it ("Eleventh"'s result).
 #[test]
 fn ctrl_shift_right_then_left_returns_to_nothing_selected() {
     let mut state = state_for("Draft architecture", 6); // right before "architecture"
@@ -209,18 +156,9 @@ fn ctrl_shift_right_then_left_returns_to_nothing_selected() {
     assert_eq!(state.cursor.col, 6, "should be back exactly where the Right press started");
 }
 
-/// Regression test for the real, sixteenth-attempt report: retracing a
-/// *backward*-built selection must land back on the exact original
-/// starting column, not the trimmed anchor. `"derived"`, cursor between
-/// 'i' and 'v' (column 4): `Ctrl+Shift+Left` selects "deri" (trims the
-/// anchor to column 3, per `trim_anchor_off_a_word_it_never_visited`),
-/// `Ctrl+Shift+Right` should return the cursor to column 4 exactly --
-/// not column 3 (one short), which an earlier version of
-/// `retreat_forward_through_a_backward_walk` produced by snapping to
-/// the trimmed `selection.start` directly instead of the real,
-/// untrimmed starting column (`true_anchor`, threaded through here the
-/// same way `Editor::word_select_true_anchor` is threaded through in
-/// real use).
+/// "Sixteenth": retracing a backward-built selection returns to the true
+/// starting column (4 in "derived"), not the trimmed anchor (3) --
+/// `true_anchor` is threaded like `Editor::word_select_true_anchor`.
 #[test]
 fn ctrl_shift_right_after_left_returns_to_the_true_starting_column() {
     let mut state = state_for("derived", 4); // between 'i' and 'v'
@@ -237,15 +175,9 @@ fn ctrl_shift_right_after_left_returns_to_the_true_starting_column() {
     assert_eq!(state.cursor.col, 4, "should be back at the exact original column, not the trimmed anchor (3)");
 }
 
-/// One further `Ctrl+Shift+Right` past the return above starts a fresh
-/// *forward* selection from the true original column -- matching VS
-/// Code's own "reflect" behavior for this same case (confirmed directly
-/// against it): once back where the backward selection started, a
-/// further `Right` selects "ved", the mirror image of "deri" around the
-/// original cursor position. Takes one extra press to get there
-/// compared to VS Code's own single `Right` -- this codebase's own
-/// retracing step and a fresh extension are two separate presses here,
-/// not one combined action.
+/// A further `Ctrl+Shift+Right` from there starts a fresh forward
+/// selection ("ved"), mirroring VS Code -- one press later than VS Code,
+/// since retracing and extending are separate presses here.
 #[test]
 fn ctrl_shift_right_one_more_press_after_the_return_reflects_forward() {
     let mut state = state_for("derived", 4);
@@ -285,20 +217,10 @@ fn repeated_ctrl_shift_left_after_ctrl_shift_right_keeps_retracting_word_plus_sp
     assert_eq!(state.cursor.col, 5, "two Left presses after three Right presses should land on the space right after \"hello\" -- \"hello \"");
 }
 
-/// Regression test for the real, fourth-shape report: a selection
-/// that was *never* built by word-wise `Right` presses at all (e.g.
-/// a whole line selected some other way) still needs to retract
-/// fully on its very first `Ctrl+Shift+Left` -- `retracting=true` is
-/// exactly what `Editor::extend_word_selection` computes for "this
-/// selection's `WordSelectTouch` is `Untouched`" (see that method's
-/// own doc comment), regardless of `forward` ever having fired.
-/// "hello world, foo" -- a comma directly against "world" with no
-/// space, matching the real report's own trailing punctuation --
-/// with the cursor starting right on the comma: retracting once
-/// should land on the space right after "world", same as the
-/// plain-word case above, not stall on `'w'`/`'d'` the way a
-/// character-classification guess (this fix's own second attempt)
-/// got wrong for exactly this shape.
+/// A selection never built by word-wise `Right` (`Untouched`, so
+/// `retracing = true`) retracts fully on the first `Ctrl+Shift+Left`,
+/// also across trailing punctuation ("world,") -- where a
+/// character-classification guess stalled.
 #[test]
 fn ctrl_shift_left_retracts_fully_even_from_a_never_extended_selection() {
     let mut state = state_for("hello world, foo", 11); // cursor right on the ','
@@ -306,16 +228,8 @@ fn ctrl_shift_left_retracts_fully_even_from_a_never_extended_selection() {
     assert_eq!(state.cursor.col, 5, "should land on the space right after \"world\" -- \"hello world \", comma and all removed");
 }
 
-/// Regression test for the real, ninth-attempt report: retracting
-/// across a *punctuation* separator (not whitespace) must land on
-/// the separator itself too, same as the whitespace case above --
-/// reported directly against `"...arrow-key"`: one retract landed on
-/// `'k'` (`"...arrow-k"`, one column short) instead of on the `'-'`
-/// itself (`"...arrow-"`), because the old fix only stepped onto a
-/// *whitespace* gap. `"arrow-key"` with the cursor on `'y'` (the last
-/// char of "key", as an already-fully-selected line would have it,
-/// `retracting=true` simulating `WordSelectTouch::Untouched`) --
-/// retracting once should remove "key" and land right on the `'-'`.
+/// "Ninth": retracting across punctuation lands on the separator --
+/// `"arrow-"`, not `"arrow-k"`.
 #[test]
 fn ctrl_shift_left_retracts_fully_across_a_punctuation_separator_too() {
     let mut state = state_for("arrow-key", 8); // cursor on 'y', the last char of "key"
@@ -360,15 +274,10 @@ fn ctrl_shift_left_at_the_very_start_of_the_buffer_selects_nothing_on_other_text
     assert!(state.selection.is_none(), "\"c\" must not end up selected -- there was nowhere for either press to move to");
 }
 
-/// Regression test for the real retest that caught the tenth fix's
-/// own first attempt still failing -- the actual reported flow
-/// wasn't two fresh `Ctrl+Shift+Left` presses from column 0, it was
-/// selecting the line's first word via `Ctrl+Shift+Right`, then
-/// retracting it with `Ctrl+Shift+Left`: `MoveWordBackward` genuinely
-/// moves here (from "Draft"'s last letter back to its first), so the
-/// zero-progress check never fired, but the cursor still lands
-/// exactly back on the selection's own anchor (column 0) -- the same
-/// phantom "D" left selected, copyable, reported again verbatim.
+/// "Tenth", retest: select the first word with `Ctrl+Shift+Right`, then
+/// retract it. `MoveWordBackward` really moves, so the zero-progress check
+/// never fired -- but the cursor lands on the anchor and must close,
+/// not leave a phantom "D".
 #[test]
 fn ctrl_shift_left_retracting_the_first_word_of_the_buffer_selects_nothing() {
     let mut state = state_for("Draft architecture", 0);
@@ -395,20 +304,8 @@ fn ctrl_shift_left_retracting_the_first_word_of_the_buffer_selects_nothing_on_ot
     assert!(state.selection.is_none(), "\"c\" must not end up selected after retracting the whole first word");
 }
 
-/// Regression test for the real, fifteenth-attempt report -- and its
-/// own predecessor, the eleventh-attempt fix this one revised (see
-/// `docs/history/word-select.md` for the full story).
-/// Retracting *past* a mid-buffer selection's own anchor must close the
-/// selection entirely -- nothing is left to give back once
-/// `MoveWordBackward` lands exactly on the anchor. `"Draft architecture
-/// derived"`, cursor placed right before the `'a'` of "architecture"
-/// (column 6): two `Ctrl+Shift+Right` presses select `"architecture
-/// derived"`; two `Ctrl+Shift+Left` presses should retract both words
-/// fully back to nothing -- not leave `" "` (the space beyond the
-/// anchor) selected, which is what an earlier version of this fix
-/// deliberately produced, until a simpler report (one word extended
-/// then immediately retracted) showed that broke the most basic
-/// round-trip case there is.
+/// "Fifteenth" (revising "Eleventh"): retracting two words back past the
+/// anchor closes the selection entirely, not leaving `" "` selected.
 #[test]
 fn ctrl_shift_left_retracting_past_a_mid_buffer_anchor_closes_the_selection() {
     let mut state = state_for("Draft architecture derived", 6);
@@ -423,15 +320,9 @@ fn ctrl_shift_left_retracting_past_a_mid_buffer_anchor_closes_the_selection() {
     assert!(state.selection.is_none());
 }
 
-/// One further `Ctrl+Shift+Left` past the closing above starts an
-/// entirely ordinary *fresh* backward selection from the same anchor
-/// position (the previous press just returned `state.mode` to
-/// `Insert`) -- walking into "Draft" and landing at column 0, with
-/// `trim_anchor_off_a_word_it_never_visited` trimming the fresh anchor
-/// back into the gap, giving `"Draft "` in full. Byte-for-byte the same
-/// result the old "claims new territory" fix produced for this same
-/// third press, confirming nothing was actually lost by simplifying the
-/// second press to a clean close instead.
+/// A further `Ctrl+Shift+Left` then starts an ordinary fresh backward
+/// selection: `"Draft "`, the same result the old "claim new territory"
+/// fix gave -- nothing lost by simplifying.
 #[test]
 fn ctrl_shift_left_one_more_press_past_the_closing_selects_the_previous_word() {
     let mut state = state_for("Draft architecture derived", 6);
@@ -448,14 +339,8 @@ fn ctrl_shift_left_one_more_press_past_the_closing_selects_the_previous_word() {
     assert_eq!(selection.start.col, 5, "fresh anchor should trim back into the gap, giving \"Draft \" in full");
 }
 
-/// The fix must not fire when there was never anything to retract in
-/// the first place -- a selection built entirely by `Left` presses
-/// (never touching `Right`) always lands each press on a word's own
-/// *start* (`ctrl_shift_left_selects_the_whole_previous_word_with_no_extra_character`,
-/// `repeated_ctrl_shift_left_keeps_extending_the_selection_backward`),
-/// never its last character, so the new guard should never trigger
-/// for it -- pinned down directly here rather than only inferred
-/// from those other tests still passing.
+/// The retraction guard never fires for a selection built only by `Left`
+/// presses, which always land on a word's start.
 #[test]
 fn pure_backward_selection_is_unaffected_by_the_retraction_fix() {
     let mut state = state_for("hello world wide web", 20); // end of the line
@@ -469,19 +354,11 @@ fn pure_backward_selection_is_unaffected_by_the_retraction_fix() {
     assert_eq!(after_second, 12, "should land on 'w', the start of \"wide\" -- still just plain MoveWordBackward");
 }
 
-// No general `Right`-then-`Left` round-trip guarantee for a *fresh*
-// selection: forward still lands on a word's own *last* character
-// (`ctrl_shift_right_does_not_select_into_the_next_word`) while a
-// fresh backward selection lands on a word's *first* character
-// (`ctrl_shift_left_selects_the_whole_previous_word_with_no_extra_character`)
-// -- two individually-correct conventions, deliberately not unified
-// onto one shared grid (see `extend_word_selection`'s own doc
-// comment). What *is* now guaranteed, per the "Eighth" tests above:
-// retracting an *already-open* selection removes one whole word's
-// own text per `Left` press, landing on the space in front of it --
-// not exactly the cell a matching `Right` press had left the cursor
-// on (that was the first, overcorrected attempt at this fix), one
-// column further back, onto the separator itself.
+// No `Right`-then-`Left` round-trip guarantee for a fresh selection:
+// forward lands on a word's last character, a fresh backward one on its
+// first -- two conventions, deliberately not unified. Retracting an open
+// selection does remove one whole word per `Left`, landing on the
+// separator. History: docs/history/word-select.md.
 
 /// Regression test for the real, reported bug ("Seventeenth" in
 /// `docs/history/word-select.md`): forward extension used

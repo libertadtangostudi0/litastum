@@ -56,14 +56,10 @@ fn sanitize_for_filename(query: &str) -> String {
     }
 }
 
-/// `YYYY-MM-DD_HHMMSS`, computed by hand from `SystemTime` (UTC, not
-/// local time — no timezone lookup this way, but this is only ever
-/// used to keep export file names from colliding with each other, not
-/// as a user-facing display of "when") rather than pulling in a
-/// date/time crate for one file-name timestamp. The days-to-civil-date
-/// conversion is Howard Hinnant's well-known public-domain algorithm
-/// (<http://howardhinnant.github.io/date_algorithms.html>), not
-/// something invented here.
+/// `YYYY-MM-DD_HHMMSS` in UTC, computed by hand from `SystemTime` -- only
+/// to keep export names unique, so no date crate. The date conversion is
+/// Howard Hinnant's public-domain algorithm
+/// (<http://howardhinnant.github.io/date_algorithms.html>).
 fn timestamp_for_filename() -> String {
     let since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     let total_secs = since_epoch.as_secs();

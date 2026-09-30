@@ -10,23 +10,10 @@ use ratatui::{
 
 use crate::theming::Theme;
 
-/// Shared chrome for `F3`'s two full-panel previews (`ui::image_preview`,
-/// `ui::markdown_preview`) -- pulled out once both had grown the exact
-/// same `Block::default().borders(ALL).border_style(theme.accent).title(...)`
-/// boilerplate independently, the same "shared primitive" pattern
-/// `ui::popup::draw_frame` already established for popup chrome
-/// (`.claude/rules/litastum-popup-design.md`).
-///
-/// `theme.accent` -- the same color `draw_panel` uses for the *active*
-/// panel's own border -- since `F3` always switches focus to the right
-/// panel before either preview ever draws (`image_preview::open_preview`/
-/// `markdown_preview::open_preview`'s own doc comments). `title` names
-/// the file being previewed (its own file name, not the full path --
-/// the panel is usually too narrow for one, and the directory is
-/// already visible in the file listing this preview replaced); `title_bottom`
-/// is `None` for the image preview (nothing to report there) and the
-/// Markdown preview's own link-click status line when present. Returns
-/// the inner `Rect` the caller draws its actual content into.
+/// Shared frame for the F3 previews (image, Markdown): `theme.accent`
+/// border, since F3 makes the right panel active; the file name as the
+/// title (the path is in the listing it replaced); an optional bottom
+/// title (the Markdown link status). Returns the inner area.
 pub fn draw_preview_frame<'a>(frame: &mut Frame, area: Rect, theme: &Theme, title: impl Into<Line<'a>>, title_bottom: Option<Line<'a>>) -> Rect {
     let mut block = Block::default().borders(Borders::ALL).border_style(Style::default().fg(theme.accent)).title(title);
     if let Some(footer) = title_bottom {

@@ -167,6 +167,24 @@ Code comments and tests elsewhere refer to these by ordinal ("Eighth",
     `MoveWordBackward` has the same comparison but happens to land on
     the character anyway, so it was left alone.
 
+## `WordSelectTouch` details
+
+- **Three states, not `Option<bool>`.** A selection built some other
+  way (a whole line selected, then trimmed with `Ctrl+Shift+Left`) needs
+  the same full retraction as `Untouched`, while a pure backward walk
+  (`NativeBackward`) must keep walking. A boolean collapses the first
+  two into one value it then can't tell from the third.
+- **`NativeBackward` survives a retracing forward press.** Otherwise the
+  second `Right` of a retraction fell through to the ordinary forward
+  branch -- sometimes landing right by coincidence, sometimes leaving a
+  stray one-character selection on the anchor. A genuine forward press
+  past the anchor still becomes `Touched`.
+- **Known gap, not chased:** nothing resets the state to `Untouched`
+  when a selection closes and a new one is built some other way. Only a
+  leftover `NativeBackward` gives a wrong answer (`Touched` retracts
+  like `Untouched`), and only if that new selection's first action is
+  `Ctrl+Shift+Left` -- too narrow for a bigger hook.
+
 ## General lessons
 
 - Before generalizing a fix to "all four directions," check that the

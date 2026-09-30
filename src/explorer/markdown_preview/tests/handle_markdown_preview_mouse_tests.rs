@@ -66,14 +66,9 @@ fn ctrl_click_on_an_anchor_link_does_not_open_anything() {
     assert!(matches!(app.mode, Mode::Editing(_)), "should not have crashed or changed mode");
 }
 
-/// The actual point of the whole feedback feature: a click that
-/// resolves to nothing openable still leaves a visible trace
-/// (`link_message`), not silence indistinguishable from the click
-/// never having registered at all -- reported directly after the
-/// anchor/missing-file guard above made exactly that silence the
-/// norm. Checks for the link's *label* ("Jump"), not its raw URL --
-/// see `MarkdownPreviewState::link_message`'s own field doc comment
-/// for why a raw URL is never embedded here.
+/// A click on a link that can't be opened still leaves a message, named by
+/// its label -- silence looked like the click never registered.
+/// History: docs/history/markdown-preview.md.
 #[test]
 fn ctrl_click_on_an_anchor_link_sets_an_explanatory_message() {
     let dir = unique_scratch_dir("markdown-preview-mouse");
