@@ -98,23 +98,11 @@ assets/debug/
 # litastum
 # ======================================
 
-# The real per-user config.json (theming/config/mod.rs -- theme/shell/
-# popup-style choices, tunable Limits overrides) normally lives in the
-# real OS config directory (%APPDATA%\litastum\ or equivalent), never
-# here -- this entry only matters because `LITASTUM_CONFIG_DIR` (see
-# .claude/rules/litastum-config.md) is routinely pointed at this exact
-# checkout for local development/testing, which writes a real,
-# developer-machine-specific config.json straight into the repo root.
-/config.json
-
-# Command-line/editor-search/Find-file history (command_line/history.rs,
-# editor/find_history.rs, explorer/find_file/history.rs) now lives in
-# `history/` directly under the repo root (`src/history_dir.rs`,
-# CARGO_MANIFEST_DIR-anchored) -- real, developer-machine-specific
-# history, never committed. Never the OS config dir either -- see
-# history_dir.rs's own doc comment for why (this app never reads/writes
-# anything outside its own directory tree).
-/history/
+# App data (src/app_data.rs): config.json, user themes/, the common F2
+# menu and history/ -- what an installed build will keep in
+# %APPDATA%\litastum\. Until there's an installer it lives here, in the
+# same layout, and is developer-machine-specific, never committed.
+/appdata/
 
 # Debug scratch folder for manual explorer/panel testing -- purely
 # local, never committed (including generate_test_files.bat itself,
