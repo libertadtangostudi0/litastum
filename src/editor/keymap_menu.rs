@@ -36,8 +36,8 @@ pub fn handle_editor_keymap_menu_key(app: &mut App, key: KeyEvent) -> Result<()>
         if let Mode::Editing(editor) = &mut app.mode {
             editor.set_keymap_mode(mode);
         }
-        app.editor_keymap_mode = mode;
-        config::set_editor_keymap_mode(mode);
+        app.settings.editor_keymap_mode = mode;
+        config::save_settings(&app.settings);
     }
     Ok(())
 }
@@ -52,7 +52,7 @@ mod tests {
 
     fn app_with_editor_keymap_menu(current: EditorKeymapMode) -> App {
         let mut app = editing_app("hello", current);
-        app.editor_keymap_mode = current;
+        app.settings.editor_keymap_mode = current;
         app.overlay = Some(Overlay::EditorKeymapMenu(open_editor_keymap_menu(current)));
         app
     }
@@ -81,7 +81,7 @@ mod tests {
         handle_editor_keymap_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
 
         assert!(app.overlay.is_none());
-        assert_eq!(app.editor_keymap_mode, EditorKeymapMode::Standard);
+        assert_eq!(app.settings.editor_keymap_mode, EditorKeymapMode::Standard);
     }
 
     #[test]
@@ -92,7 +92,7 @@ mod tests {
 
         handle_editor_keymap_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert_eq!(app.editor_keymap_mode, EditorKeymapMode::Vim);
+        assert_eq!(app.settings.editor_keymap_mode, EditorKeymapMode::Vim);
         let Mode::Editing(editor) = &app.mode else { panic!("expected Mode::Editing") };
         assert_eq!(editor.keymap_mode(), EditorKeymapMode::Vim);
     }
@@ -104,6 +104,6 @@ mod tests {
 
         handle_editor_keymap_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert_eq!(app.editor_keymap_mode, EditorKeymapMode::Standard);
+        assert_eq!(app.settings.editor_keymap_mode, EditorKeymapMode::Standard);
     }
 }

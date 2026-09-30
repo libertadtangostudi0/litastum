@@ -295,7 +295,7 @@ crossterm::event::read()
    etc. don't need a shared Command enum the way panel navigation does)
         |
         v
-   ui::draw(frame, &mut App)  -- theme.rs supplies styles, app.popup_style
+   ui::draw(frame, &mut App)  -- theme.rs supplies styles, app.settings.popup_style
    picks Classic vs Rounded chrome for every popup
 ```
 

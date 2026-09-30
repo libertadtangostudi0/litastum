@@ -209,3 +209,17 @@ mod theme_discovery_tests {
         assert!(syntax_theme.is_some(), "the bundled github-dark-default.json should also drive the editor's syntax theme, not just the interface");
     }
 }
+
+
+/// Each setting falls back on its own: a `config.json` that only names
+/// one keeps the defaults for the rest.
+#[test]
+fn settings_fall_back_field_by_field() {
+    let config: Config = serde_json::from_str(r#"{ "editor_keymap_mode": "Vim" }"#).unwrap();
+
+    let settings = settings_from(&config);
+
+    assert_eq!(settings.editor_keymap_mode, EditorKeymapMode::Vim);
+    assert_eq!(settings.popup_style, PopupStyle::default());
+    assert_eq!(settings.compare_line_ending_display, LineEndingDisplay::default());
+}

@@ -271,56 +271,47 @@ pub fn load_active_shell() -> Option<String> {
 }
 
 
-/// The configured popup style, or the default.
-pub fn load_active_popup_style() -> PopupStyle {
-    let Some(config_dir) = config_dir() else {
-        debug!("no config directory available on this platform; using default popup style");
-        return PopupStyle::default();
-    };
-    read_config(&config_dir).popup_style.unwrap_or_default()
+/// The UI choices restored at startup: the popup style (F9 -> Options ->
+/// UI), the keymap new editor sessions open with, and Compare's line-
+/// ending display. Kept on `App::settings`; each menu changes its field
+/// and saves the whole thing (`save_settings`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Settings {
+    pub popup_style: PopupStyle,
+    pub editor_keymap_mode: EditorKeymapMode,
+    pub compare_line_ending_display: LineEndingDisplay,
 }
 
 
-/// Persists the popup style, best-effort.
-pub fn set_popup_style(style: PopupStyle) {
-    if let Some(config_dir) = config_dir() {
-        persist(&config_dir, |config| config.popup_style = Some(style));
+/// `config.json`'s settings, each missing field falling back to its
+/// default on its own -- or all defaults without a config directory.
+pub fn load_settings() -> Settings {
+    let Some(config_dir) = config_dir() else {
+        debug!("no config directory available on this platform; using default settings");
+        return Settings::default();
+    };
+    settings_from(&read_config(&config_dir))
+}
+
+
+fn settings_from(config: &Config) -> Settings {
+    Settings {
+        popup_style: config.popup_style.unwrap_or_default(),
+        editor_keymap_mode: config.editor_keymap_mode.unwrap_or_default(),
+        compare_line_ending_display: config.compare_line_ending_display.unwrap_or_default(),
     }
 }
 
 
-/// The configured editor keymap, or the default (`Standard`).
-pub fn load_active_editor_keymap_mode() -> EditorKeymapMode {
-    let Some(config_dir) = config_dir() else {
-        debug!("no config directory available on this platform; using default editor keymap mode");
-        return EditorKeymapMode::default();
-    };
-    read_config(&config_dir).editor_keymap_mode.unwrap_or_default()
-}
-
-
-/// Persists the editor keymap new sessions open with, best-effort.
-pub fn set_editor_keymap_mode(mode: EditorKeymapMode) {
+/// Persists `settings`, best-effort -- a failed write is logged, and the
+/// change still applies for this session.
+pub fn save_settings(settings: &Settings) {
     if let Some(config_dir) = config_dir() {
-        persist(&config_dir, |config| config.editor_keymap_mode = Some(mode));
-    }
-}
-
-
-/// The configured Compare line-ending display, or the default.
-pub fn load_active_compare_line_ending_display() -> LineEndingDisplay {
-    let Some(config_dir) = config_dir() else {
-        debug!("no config directory available on this platform; using default line-ending display");
-        return LineEndingDisplay::default();
-    };
-    read_config(&config_dir).compare_line_ending_display.unwrap_or_default()
-}
-
-
-/// Persists Compare's line-ending display, best-effort.
-pub fn set_compare_line_ending_display(display: LineEndingDisplay) {
-    if let Some(config_dir) = config_dir() {
-        persist(&config_dir, |config| config.compare_line_ending_display = Some(display));
+        persist(&config_dir, |config| {
+            config.popup_style = Some(settings.popup_style);
+            config.editor_keymap_mode = Some(settings.editor_keymap_mode);
+            config.compare_line_ending_display = Some(settings.compare_line_ending_display);
+        });
     }
 }
 
@@ -331,7 +322,7 @@ pub fn set_compare_line_ending_display(display: LineEndingDisplay) {
 /// caller applies the theme live regardless of whether this succeeded.
 fn persist(config_dir: &Path, mutate: impl FnOnce(&mut Config)) {
     if let Err(err) = try_persist(config_dir, mutate) {
-        warn!(%err, "failed to save theme choice to config.json (theme is still applied for this session)");
+        warn!(%err, "failed to save config.json (the change still applies for this session)");
     }
 }
 

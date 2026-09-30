@@ -91,7 +91,7 @@ fn compare_marked_results(app: &mut App) -> Result<()> {
     }
 
     let syntax_theme = app.syntax_theme.clone();
-    if let Ok(compare_state) = crate::compare::CompareState::open(left_path, right_path, syntax_theme, app.editor_keymap_mode) {
+    if let Ok(compare_state) = crate::compare::CompareState::open(left_path, right_path, syntax_theme, app.settings.editor_keymap_mode) {
         app.overlay = None;
         app.mode = Mode::CompareFiles(compare_state);
     }
@@ -236,7 +236,7 @@ fn edit_selected_result(app: &mut App) -> Result<()> {
     }
 
     let syntax_theme = app.syntax_theme.clone();
-    let Ok(editor) = Editor::open(path, syntax_theme, app.editor_keymap_mode) else {
+    let Ok(editor) = Editor::open(path, syntax_theme, app.settings.editor_keymap_mode) else {
         return Ok(());
     };
 

@@ -2,8 +2,7 @@
 /// showing a per-line `CRLF`/`LF` marker -- `Hidden` is the default
 /// (matching `EditorKeymapMode`/`PopupStyle`'s own "off unless asked
 /// for" convention for a setting nothing needed before it existed).
-/// Persisted the same way (`theming::config::{load_active_compare_line_ending_display,
-/// set_compare_line_ending_display}`).
+/// Persisted with the other settings (`theming::config::Settings`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum LineEndingDisplay {
     #[default]

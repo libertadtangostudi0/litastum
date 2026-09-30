@@ -50,7 +50,7 @@ pub fn handle_editor_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
         MenuOutcome::Chosen(EditorMenuItem::Keybindings) => {
             let current = match &app.mode {
                 Mode::Editing(editor) => editor.keymap_mode(),
-                _ => app.editor_keymap_mode,
+                _ => app.settings.editor_keymap_mode,
             };
             Some(Overlay::EditorKeymapMenu(open_editor_keymap_menu(current)))
         }

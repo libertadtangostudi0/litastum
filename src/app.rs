@@ -6,14 +6,15 @@ use ratatui_image::picker::Picker;
 
 use crate::choice_menu::ChoiceMenu;
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
-use crate::compare::{CompareLineEndingMenu, CompareMenu, CompareState, LineEndingDisplay};
-use crate::editor::{Editor, EditorKeymapMenu, EditorKeymapMode, EditorMenu};
+use crate::compare::{CompareLineEndingMenu, CompareMenu, CompareState};
+use crate::editor::{Editor, EditorKeymapMenu, EditorMenu};
 use crate::explorer::{
     AddUserMenuItemState, DriveMenu, FindFileState, ImagePreviewState, MarkdownLinkSearchState, MarkdownPreviewState, Panel, UserMenuCommandEdit, UserMenuPromptState,
     UserMenuState,
 };
 use crate::text_field::TextField;
-use crate::theming::{MainMenu, PopupStyle, PopupStyleMenu, Theme, ThemeMenu};
+use crate::theming::config::Settings;
+use crate::theming::{MainMenu, PopupStyleMenu, Theme, ThemeMenu};
 
 
 /// The screen: what the app is showing underneath any popup
@@ -176,17 +177,10 @@ pub struct App {
     /// (`.claude/rules/litastum-theming.md`); `None` = the built-in named
     /// theme. Each opened `Editor` gets a clone.
     pub syntax_theme: Option<SynTheme>,
-    /// Which chrome flavor popups render with (`theming::PopupStyle`).
-    /// Loaded in `main.rs`, not `App::new` -- reading `config.json` would
-    /// otherwise leak disk I/O into every test built via `test_app`.
-    pub popup_style: PopupStyle,
-    /// Which key-binding scheme new editor sessions open with
-    /// (`editor::EditorKeymapMode`). Loaded like `popup_style`; passed to
-    /// every `Editor::open`.
-    pub editor_keymap_mode: EditorKeymapMode,
-    /// Whether Compare shows a per-line `CRLF`/`LF` marker. Loaded like
-    /// `popup_style`.
-    pub compare_line_ending_display: LineEndingDisplay,
+    /// Persisted UI choices (`theming::config::Settings`). Loaded in
+    /// `main.rs`, not `App::new` -- reading `config.json` would otherwise
+    /// leak disk I/O into every test built via `test_app`.
+    pub settings: Settings,
     /// The always-live command line at the bottom of the browser (Far
     /// Manager-style) -- see `command_line::browsing` for the editing
     /// logic and `.claude/rules/litastum-command-line.md` for the design.
@@ -273,9 +267,7 @@ impl App {
             should_quit: false,
             theme,
             syntax_theme,
-            popup_style: PopupStyle::default(),
-            editor_keymap_mode: EditorKeymapMode::default(),
-            compare_line_ending_display: LineEndingDisplay::default(),
+            settings: Settings::default(),
             command_line: TextField::new(),
             command_line_completion: None,
             command_line_suggestion_selected: 0,

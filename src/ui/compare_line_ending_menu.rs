@@ -5,7 +5,7 @@ use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
 /// Compare's F9 -> Line endings picker. `current`
-/// (`App::compare_line_ending_display`) is marked independently of the
+/// (`App::settings.compare_line_ending_display`) is marked independently of the
 /// highlighted row.
 pub fn draw_compare_line_ending_menu(frame: &mut Frame, area: Rect, menu: &CompareLineEndingMenu, theme: &Theme, style: PopupStyle, current: LineEndingDisplay) {
     let labels = popup::choice_labels(menu, |display| display.label().to_string(), Some(current));

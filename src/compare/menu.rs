@@ -45,7 +45,7 @@ pub fn handle_compare_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
     debug!(?key, ?outcome, "compare menu key");
     app.overlay = match outcome {
         MenuOutcome::Open => return Ok(()),
-        MenuOutcome::Chosen(CompareMenuItem::LineEndings) => Some(Overlay::CompareLineEndingMenu(open_compare_line_ending_menu(app.compare_line_ending_display))),
+        MenuOutcome::Chosen(CompareMenuItem::LineEndings) => Some(Overlay::CompareLineEndingMenu(open_compare_line_ending_menu(app.settings.compare_line_ending_display))),
         MenuOutcome::Closed => None,
     };
     Ok(())

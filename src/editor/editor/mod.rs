@@ -125,7 +125,7 @@ impl Editor {
     /// yet — see `TODO/editor.md`). `custom_syntax_theme` is `None` for the
     /// built-in named syntax theme, or a scheme-derived theme when the
     /// user has a custom color scheme configured. `keymap_mode` is
-    /// normally `App::editor_keymap_mode` (the session-wide default,
+    /// normally `App::settings.editor_keymap_mode` (the session-wide default,
     /// itself loaded from `config.json`) -- see `EditorKeymapMode`'s own
     /// doc comment.
     pub fn open(path: PathBuf, custom_syntax_theme: Option<SynTheme>, keymap_mode: EditorKeymapMode) -> io::Result<Self> {

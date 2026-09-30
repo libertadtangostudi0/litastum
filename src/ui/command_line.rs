@@ -61,7 +61,7 @@ const HISTORY_WIDTH: u16 = 70;
 /// `style` (F9 -> Options -> UI) went unused here until now -- reported
 /// directly (the Rounded style did nothing for this one popup): unlike
 /// every other popup (`ui::draw`'s own match arm always passes
-/// `app.popup_style` through), this one hand-rolled a fixed, `Classic`-only
+/// `app.settings.popup_style` through), this one hand-rolled a fixed, `Classic`-only
 /// `Block::borders(ALL)` instead of building on `popup::draw_frame`,
 /// so switching to `Rounded` visibly did nothing for it. Missed during
 /// the original `ui/popup.rs` migration pass (`TODO/code-quality.md`)

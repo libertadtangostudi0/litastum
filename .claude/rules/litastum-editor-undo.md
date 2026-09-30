@@ -41,6 +41,6 @@ stack covering every edit, not just pastes.
 
 ## Regression coverage
 
-`editor/editor/tests.rs::undo_treats_a_paste_as_one_block_even_after_later_edits`:
+`editor/editor/tests/undo_and_paste.rs::undo_treats_a_paste_as_one_block_even_after_later_edits`:
 paste, type two characters, three `Ctrl+Z` -- the two characters undo
 one at a time, then the whole paste in one step.

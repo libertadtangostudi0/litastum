@@ -18,7 +18,7 @@ pub fn open_popup_style_menu(current: PopupStyle) -> PopupStyleMenu {
 
 
 /// `Enter` applies the highlighted style live (every popup reads
-/// `app.popup_style` on the next render) and persists it; `Esc` closes
+/// `app.settings.popup_style` on the next render) and persists it; `Esc` closes
 /// without changing anything.
 pub fn handle_popup_style_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
     let Some(Overlay::PopupStyleMenu(menu)) = &mut app.overlay else {
@@ -31,8 +31,8 @@ pub fn handle_popup_style_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
         MenuOutcome::Open => {}
         MenuOutcome::Closed => app.overlay = None,
         MenuOutcome::Chosen(style) => {
-            app.popup_style = style;
-            config::set_popup_style(style);
+            app.settings.popup_style = style;
+            config::save_settings(&app.settings);
             app.overlay = None;
         }
     }
@@ -50,7 +50,7 @@ mod tests {
 
     fn app_in_popup_style_menu(current: PopupStyle) -> App {
         let mut app = crate::test_support::test_app(crate::test_support::unique_scratch_dir("popup-style-menu"));
-        app.popup_style = current;
+        app.settings.popup_style = current;
         app.overlay = Some(Overlay::PopupStyleMenu(open_popup_style_menu(current)));
         app
     }
@@ -79,7 +79,7 @@ mod tests {
         handle_popup_style_menu_key(&mut app, key(KeyCode::Esc)).unwrap();
 
         assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
-        assert_eq!(app.popup_style, PopupStyle::Rounded);
+        assert_eq!(app.settings.popup_style, PopupStyle::Rounded);
     }
 
     #[test]

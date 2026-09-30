@@ -17,7 +17,7 @@ pub fn open_compare_line_ending_menu(current: LineEndingDisplay) -> CompareLineE
 }
 
 
-/// `Enter` applies the highlighted choice live (`App::compare_line_ending_display`,
+/// `Enter` applies the highlighted choice live (`App::settings`,
 /// read by `ui/compare.rs` every frame) and persists it; `Esc` closes
 /// without changing anything.
 pub fn handle_compare_line_ending_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
@@ -33,8 +33,8 @@ pub fn handle_compare_line_ending_menu_key(app: &mut App, key: KeyEvent) -> Resu
 
     app.overlay = None;
     if let MenuOutcome::Chosen(display) = outcome {
-        app.compare_line_ending_display = display;
-        config::set_compare_line_ending_display(display);
+        app.settings.compare_line_ending_display = display;
+        config::save_settings(&app.settings);
     }
     Ok(())
 }

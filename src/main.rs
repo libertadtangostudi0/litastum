@@ -70,9 +70,7 @@ fn main() -> Result<()> {
     // Same isolation reasoning as command_history/search_history below
     // -- loaded here, not in App::new, so tests via test_support::test_app
     // never touch the real config.json for this.
-    app.popup_style = theming::config::load_active_popup_style();
-    app.editor_keymap_mode = theming::config::load_active_editor_keymap_mode();
-    app.compare_line_ending_display = theming::config::load_active_compare_line_ending_display();
+    app.settings = theming::config::load_settings();
     // Loaded here rather than in `App::new` itself so every test that
     // builds an `App` (nearly all of them, via `test_support::test_app`)
     // stays isolated from whatever real `command_history.txt` happens

@@ -133,7 +133,7 @@ fn open_compare(app: &mut App) {
         return;
     };
     let syntax_theme = app.syntax_theme.clone();
-    if let Ok(state) = crate::compare::CompareState::open(left_path, right_path, syntax_theme, app.editor_keymap_mode) {
+    if let Ok(state) = crate::compare::CompareState::open(left_path, right_path, syntax_theme, app.settings.editor_keymap_mode) {
         app.mode = Mode::CompareFiles(state);
     }
 }

@@ -12,6 +12,18 @@ Not renamed to something more general yet; would touch a lot of
 if the "theming" name ever becomes actively misleading rather than just
 slightly imprecise.
 
+## `Settings`: the persisted UI choices, one struct
+
+`popup_style`, `editor_keymap_mode` and `compare_line_ending_display`
+are one `theming::config::Settings`, kept on `App::settings`:
+`load_settings()` reads them in one pass (each missing field falling
+back on its own), and a menu that changes one sets the field and calls
+`save_settings(&app.settings)`. A new setting of this kind is one field
+on `Settings` (and `Config`), not a new load/set pair. Themes and the
+shell profile stay separate on purpose: themes are looked up by name
+across directories, and the shell is only saved by F9 -> Options ->
+Save setup.
+
 ## `Limits` (`theming/config/limits.rs`): tunable caps, one place
 
 Requested directly, after a perf/weak-spot audit pass turned up five

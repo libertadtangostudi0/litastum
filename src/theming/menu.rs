@@ -134,7 +134,7 @@ pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
             MainMenuItem::FindFile => app.overlay = Some(Overlay::FindFile(FindFileState::new())),
             MainMenuItem::History => app.overlay = Some(Overlay::CommandHistory(CommandHistoryMenu::open())),
             MainMenuItem::ColorSchemes => app.overlay = Some(Overlay::ThemeMenu(ThemeMenu::open())),
-            MainMenuItem::Ui => app.overlay = Some(Overlay::PopupStyleMenu(open_popup_style_menu(app.popup_style))),
+            MainMenuItem::Ui => app.overlay = Some(Overlay::PopupStyleMenu(open_popup_style_menu(app.settings.popup_style))),
             MainMenuItem::SaveSetup => {
                 // Far Manager's own Shift+F9 -- persists the current
                 // session's choices (so far, the active shell profile)

@@ -140,7 +140,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         // browser panel's worth of space (`TODO/file-compare.md`'s own
         // "Rendering approach"/data-model sketch).
         Mode::CompareFiles(state) => {
-            let cursor = compare::draw_compare(frame, area, state, &theme, app.compare_line_ending_display);
+            let cursor = compare::draw_compare(frame, area, state, &theme, app.settings.compare_line_ending_display);
             draw_overlay(frame, area, app, &theme);
             return (unchanged_layout, cursor);
         }
@@ -299,20 +299,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
 /// overlay has a text field of its own.
 fn draw_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) -> Option<Position> {
     let overlay = app.overlay.as_ref()?;
-    let style = app.popup_style;
+    let style = app.settings.popup_style;
     match overlay {
         Overlay::ConfirmDiscard => draw_confirm_discard_popup(frame, area, theme),
         Overlay::EditorMenu(menu) => editor_menu::draw_editor_menu(frame, area, menu, theme, style),
         Overlay::EditorKeymapMenu(menu) => {
             let current = match &app.mode {
                 Mode::Editing(editor) => editor.keymap_mode(),
-                _ => app.editor_keymap_mode,
+                _ => app.settings.editor_keymap_mode,
             };
             editor_keymap_menu::draw_editor_keymap_menu(frame, area, menu, theme, style, current);
         }
         Overlay::CompareMenu(menu) => compare_menu::draw_compare_menu(frame, area, menu, theme, style),
         Overlay::CompareLineEndingMenu(menu) => {
-            compare_line_ending_menu::draw_compare_line_ending_menu(frame, area, menu, theme, style, app.compare_line_ending_display);
+            compare_line_ending_menu::draw_compare_line_ending_menu(frame, area, menu, theme, style, app.settings.compare_line_ending_display);
         }
         Overlay::MainMenu(state) => menu::draw_main_menu(frame, area, state, theme, style),
         Overlay::ThemeMenu(menu) => theme_menu::draw_theme_menu(frame, area, menu, theme, style),
