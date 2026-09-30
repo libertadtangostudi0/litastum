@@ -35,6 +35,11 @@ fn ctrl_f_resolves_to_find() {
 }
 
 #[test]
+fn f7_resolves_to_find_like_in_far() {
+    assert_eq!(resolve(KeyEvent::new(KeyCode::F(7), KeyModifiers::NONE)), EditorCommand::Find);
+}
+
+#[test]
 fn plain_f_without_ctrl_is_forwarded_not_find() {
     let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE);
     assert_eq!(resolve(key), EditorCommand::Forward);
@@ -103,8 +108,8 @@ fn f10_is_ignored_not_forwarded() {
 #[test]
 fn every_function_key_is_ignored_not_forwarded() {
     for n in 1..=12 {
-        if n == 9 || n == 3 {
-            continue; // F9 opens the editor's own settings menu, F3 is next search match -- see their own tests below.
+        if n == 9 || n == 3 || n == 7 {
+            continue; // F9 opens the editor's own settings menu, F3 is next search match, F7 opens search -- see their own tests.
         }
         let key = KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE);
         assert_eq!(resolve(key), EditorCommand::Ignore, "F{n} should be ignored, not forwarded to edtui");

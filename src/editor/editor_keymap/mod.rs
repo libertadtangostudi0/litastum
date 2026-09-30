@@ -56,6 +56,8 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
         KeyCode::Esc => EditorCommand::Close,
         KeyCode::Char('s' | 'S') if ctrl => EditorCommand::Save,
         KeyCode::Char('f' | 'F') if ctrl => EditorCommand::Find,
+        // Far's editor search key, same as `Ctrl+F`.
+        KeyCode::F(7) => EditorCommand::Find,
         KeyCode::Char('a' | 'A') if ctrl => EditorCommand::SelectAll,
         KeyCode::Left if ctrl && shift => EditorCommand::WordSelect { forward: false },
         KeyCode::Right if ctrl && shift => EditorCommand::WordSelect { forward: true },

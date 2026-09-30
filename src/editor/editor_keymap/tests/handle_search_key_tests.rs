@@ -11,6 +11,16 @@ fn ctrl_f_opens_the_search_box() {
 }
 
 #[test]
+fn f7_opens_the_search_box_like_ctrl_f() {
+    let (mut app, _path) = open_editor_app("hello world\n");
+
+    handle_editor_key(&mut app, key(KeyCode::F(7))).unwrap();
+
+    let Mode::Editing(editor) = &app.mode else { unreachable!() };
+    assert!(editor.is_searching());
+}
+
+#[test]
 fn typing_filters_the_query_live_and_jumps_to_the_first_match() {
     let (mut app, _path) = open_editor_app("hello world\n");
     handle_editor_key(&mut app, ctrl_key('f')).unwrap();
