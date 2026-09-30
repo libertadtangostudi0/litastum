@@ -58,3 +58,26 @@ character ("loaded" retracted onto 'l' showed the bar between 'l' and
 - **Word occurrences only scan rows that can be on screen**
   (`rows_that_can_be_visible`): the whole-buffer scan was ~30ms per
   frame on 100k lines (`editor-performance.md`).
+
+## Word-occurrence highlighting (`word_highlight.rs`)
+
+Requested with a screenshot of VS Code's behavior. `TODO/editor.md`
+expected a second hand-rolled render pass; reading `edtui`'s
+`view/internal.rs` showed `EditorState::highlights` is already
+rendered every frame, between syntax styling and the selection -- the
+layering this needs. A `Highlight`'s style replaces the span outright
+(`InternalSpan::split_spans`), so it sets both `fg` and `bg`, like the
+selection does.
+
+- **Cursor right after a word highlighted nothing** -- the append
+  position at a line end, or `theme|.rs`. `word_at` checks the cell
+  under the cursor, then the one to its left.
+- **Crash on a short line.** `MoveUp`/`MoveDown` change only
+  `cursor.row`, so moving from a long line onto an empty one left
+  `cursor.col` at 35; `row[cursor.col - 1]` panicked. Both branches
+  check `< row.len()`.
+- **One enormous line** (an escaped log dump with literal `\n`) made the
+  editor sluggish: this scan ran on every redraw, O(line length). Lines
+  over `MAX_HIGHLIGHTED_LINE_LEN` (20,000, twice VS Code's ~10,000
+  tokenization cap) are skipped here and turn off syntax highlighting
+  for the file.

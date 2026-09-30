@@ -39,7 +39,8 @@ this was tried, in this order, and rejected:
    of matching that default, and didn't.
 3. **No fill at all** (`Clear` only, relying on the untouched default
    matching the surroundings exactly) — fixed the corner mismatch, but
-   gave up the filled-card look entirely; also rejected.
+   gave up the filled-card look entirely; rejected at first, then
+   returned to after steps 4 and 5 (see below).
 4. **Fill everywhere except the 4 literal corner cells** (left at the
    untouched default) — a single unfilled cell doesn't read as
    "rounded," just as a small notch; rejected.
@@ -47,11 +48,13 @@ this was tried, in this order, and rejected:
    the border's own corner character with a 45° chamfer) — explicitly
    reported as looking *worse* than every previous attempt.
 
-**Where this landed**: `BorderType::Rounded` with a full `theme.bg`
-fill (step 2's approach) is the current, accepted state — not because
-the corner mismatch is gone (it structurally can't be, in a character
-grid), but because it's what looks least bad after exhausting the
-realistic alternatives. A character cell is simply not enough
+**Where this landed**: `BorderType::Rounded` with **no fill** (step
+3's approach -- `Clear`, then the border; `ui/popup.rs::draw_frame`) is
+the current, accepted state. The popup's interior is the terminal's own
+default background, the same one the panels show, so there's no square
+corner to stick out; the cost is no filled-card look. Every fill
+variant loses to it because a character cell is far too coarse for a
+curve. A character cell is simply not enough
 resolution to render an actual curve by any means a terminal offers;
 this is a hard limit of text-mode UI, not specific to `ratatui` or fixable
 by trying yet another glyph combination. **Do not re-litigate this**

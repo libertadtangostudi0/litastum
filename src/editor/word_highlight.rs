@@ -3,48 +3,15 @@ use std::ops::Range;
 use edtui::{Highlight, Index2, Lines, RowIndex};
 use ratatui::style::Style;
 
-/// VS Code-style "highlight every other occurrence of the identifier
-/// under the cursor" -- requested directly, with a screenshot of VS
-/// Code's own behavior as the reference. No selection needed, purely a
-/// read-only visual aid: this only ever *reads* `lines`/`cursor`, never
-/// mutates the buffer.
+/// VS Code-style highlights of every other occurrence of the identifier
+/// under the cursor, as `edtui` `Highlight`s (rendered by `edtui` between
+/// syntax styling and the selection). A highlight replaces the span's
+/// style outright, so `style` sets both `fg` and `bg`. Word characters
+/// match `edtui`'s own `CharacterClass::Alphanumeric`.
 ///
-/// Built on `edtui`'s own `EditorState::highlights` field
-/// (`state::highlight::Highlight`) rather than a hand-rolled render
-/// pass -- confirmed directly from `edtui`'s source
-/// (`view/internal.rs::line_into_spans_with_selections`/
-/// `line_into_highlighted_spans_with_selections`) that this field is
-/// already rendered every frame, layered between the base/syntax
-/// styling and an active selection ("selection takes priority, then
-/// highlights, then base") -- exactly the layering this needs, with no
-/// `EditorView` changes required at all. `TODO/editor.md` had speculated this
-/// would need a second hand-rolled render pass; it doesn't.
-///
-/// `Highlight`'s own style *replaces* whatever span it lands on outright
-/// (`InternalSpan::split_spans`, confirmed by reading it directly) --
-/// there's no way to tint just the background while leaving a token's
-/// own syntax color underneath. `style` is expected to set both `fg`
-/// and `bg` for exactly this reason, the same tradeoff this codebase's
-/// own text-selection highlighting already accepts (selected text also
-/// renders in one flat color, not per-token syntax colors).
-///
-/// No `CharacterClass` reimplementation needed here (unlike
-/// `bindings::word_select`'s own history of avoiding exactly that,
-/// since `edtui`'s is `pub(crate)`) -- a word character is defined
-/// locally (`is_word_char`), matching `edtui`'s own internal
-/// `CharacterClass::Alphanumeric` definition (ASCII alphanumeric or
-/// underscore) since there's no need to reach into the crate for
-/// something this simple.
-///
-/// Only scans `rows` (clamped to the buffer), not the whole buffer --
-/// reported directly as part of a "the editor is slow on a big file"
-/// report and measured on a real-scale file (100k lines,
-/// docs/history/editor-performance.md): the whole-buffer scan cost
-/// ~30ms on *every* frame (1404 highlights computed, ~50 ever visible),
-/// which is almost the entire per-keystroke redraw cost there. Rows
-/// outside the viewport are never drawn, so highlights there are pure
-/// waste; `Editor::view` passes a window around the cursor that's
-/// guaranteed to cover whatever `edtui` ends up scrolling to.
+/// Scans only `rows` -- the whole-buffer scan cost ~30ms per frame on
+/// 100k lines. `Editor::view` passes a window that covers wherever
+/// `edtui` can scroll to. History: docs/history/editor-rendering.md.
 pub(super) fn word_occurrence_highlights(lines: &Lines, cursor: Index2, rows: Range<usize>, style: Style) -> Vec<Highlight> {
     let Some((home_start, _home_end, word)) = word_at(lines, cursor) else {
         return Vec::new();
@@ -57,27 +24,12 @@ pub(super) fn word_occurrence_highlights(lines: &Lines, cursor: Index2, rows: Ra
         .collect()
 }
 
-/// A line length past which this editor's own per-frame, un-indexed
-/// scans (this module's `word_occurrences` below, and syntax
-/// highlighting -- see `Editor::view`'s own use of this same constant)
-/// stop being "cheap enough," matching how mainstream editors (VS
-/// Code's own default tokenization cap is around 10,000 characters)
-/// already handle this exact case. Reported directly: a real file
-/// consisting of one enormous line (an escaped log/diff dump, `\n`/`\t`
-/// literally spelled out rather than real line breaks) made the editor
-/// visibly sluggish -- every keypress redraws (`event_loop::run`'s own
-/// per-event redraw architecture), and this module's word-occurrence
-/// scan runs unconditionally on every one of those frames whenever no
-/// selection is active, so an O(line length) cost was being paid dozens
-/// of times a second. 20,000 is double VS Code's own cap -- generous
-/// headroom for any real source line, while still well short of the
-/// multi-hundred-thousand-character line that was actually reported.
+/// Longest line the per-frame, un-indexed scans (this module and syntax
+/// highlighting) handle; a longer one made every redraw slow. Twice VS
+/// Code's ~10,000-character tokenization cap. History: docs/history/editor-rendering.md.
 pub(super) const MAX_HIGHLIGHTED_LINE_LEN: usize = 20_000;
 
-/// Whether any line in `lines` is long enough that this module's own
-/// per-frame scans (and syntax highlighting -- see
-/// `MAX_HIGHLIGHTED_LINE_LEN`'s own doc comment) should be skipped for
-/// this file entirely, rather than paying that cost on every redraw.
+/// Whether any line exceeds `MAX_HIGHLIGHTED_LINE_LEN`.
 pub(super) fn has_pathologically_long_line(lines: &Lines) -> bool {
     (0..lines.len()).any(|row_index| lines.get(RowIndex::new(row_index)).is_some_and(|row| row.len() > MAX_HIGHLIGHTED_LINE_LEN))
 }
@@ -86,37 +38,12 @@ fn is_word_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
-/// The identifier `cursor` currently sits on, if any -- `(start_col,
-/// end_col_exclusive, word)` on `cursor`'s own row. `None` when there's
-/// no word character either under the cursor or immediately to its left
-/// (whitespace, punctuation, or an empty line), matching VS Code's own
-/// behavior of showing no highlights at all in that case rather than
-/// guessing at a nearby word.
+/// The identifier at `cursor` as `(start_col, end_col_exclusive, word)`:
+/// the cell under the cursor, else the one to its left (the cursor just
+/// past a word, as after typing it). `None` otherwise, like VS Code.
 ///
-/// Checks the cursor's own cell *first*, falling back to the cell
-/// immediately to its left only if that one isn't a word character --
-/// reported directly as a real bug: placing the cursor right after a
-/// word (its own "touching from the right" wording), e.g. the
-/// insert-mode append position past a line's last character, or the
-/// boundary column between a word and the punctuation right after it
-/// (`"theme.rs"`'s cursor sitting right after `"theme"`, before the
-/// `.`), highlighted nothing at all. `row[cursor.col]` alone only ever
-/// covers "the cursor sits ON a word character" -- it can't also cover
-/// "the cursor sits one column past a word's own last character,"
-/// which is exactly where editing normally leaves the cursor after
-/// typing or moving past a word.
-///
-/// Both branches re-check `< row.len()` before indexing, not just
-/// `> 0` -- a second real crash, reported directly: `MoveUp`/`MoveDown`
-/// (confirmed from `edtui`'s own source, see
-/// docs/history/shift-select.md) only ever change `cursor.row`, never
-/// `.col` -- so moving from a long line onto a short or empty one
-/// leaves `cursor.col` sitting well past that new line's own length
-/// until a horizontal move re-clamps it. `row[cursor.col - 1]` on an
-/// empty row (`row.len() == 0`) with `cursor.col` still 35 from the
-/// previous line panicked with an out-of-bounds index -- `cursor.col >
-/// 0` alone doesn't guarantee `cursor.col - 1` is actually a valid
-/// index into *this* row.
+/// Both checks bound by `row.len()`: `MoveUp`/`MoveDown` leave
+/// `cursor.col` past a shorter line's end, which once panicked here.
 fn word_at(lines: &Lines, cursor: Index2) -> Option<(usize, usize, String)> {
     let row = lines.get(RowIndex::new(cursor.row))?;
 
@@ -140,14 +67,9 @@ fn word_at(lines: &Lines, cursor: Index2) -> Option<(usize, usize, String)> {
     Some((start, end, row[start..end].iter().collect()))
 }
 
-/// Every whole-word occurrence of `word` across the buffer, as
-/// `(row, start_col, end_col_exclusive)` -- a match only counts if it
-/// isn't itself flanked by another word character (so searching for
-/// `"log"` doesn't also light up the `"log"` inside `"logger"`), the
-/// same "identifier, not substring" rule VS Code's own highlight uses.
-/// A plain, un-indexed scan over `rows` only -- see
-/// `word_occurrence_highlights`'s own doc comment for why not the whole
-/// buffer.
+/// Whole-word occurrences of `word` in `rows`, as `(row, start_col,
+/// end_col_exclusive)` -- not flanked by another word character, so
+/// `log` doesn't match inside `logger`. Skips over-long lines.
 fn word_occurrences(lines: &Lines, word: &str, rows: Range<usize>) -> Vec<(usize, usize, usize)> {
     let word_len = word.chars().count();
     if word_len == 0 {

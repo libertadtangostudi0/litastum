@@ -6,16 +6,9 @@ use crate::app::{App, Mode, Overlay};
 use crate::editor::Editor;
 use crate::explorer::{image_preview, markdown_preview, system_open, user_menu, Panel};
 
-/// `F3`: previews the entry under the cursor -- an image
-/// (`image_preview::open_preview`) or, for a `.md`/`.markdown` file, the
-/// built-in editor and a live rendered preview side by side
-/// (`markdown_preview::open_edit_preview`) -- checked by extension
-/// before either module even tries to open it, so exactly one preview
-/// kind ever runs per press. A no-op for anything else (a directory, an
-/// unsupported/undecodable file) -- each module's own open function
-/// already no-ops on its own non-matching cases, but checking here
-/// first avoids a wasted `fs::read_dir`/decode attempt for a file
-/// that's obviously the other kind.
+/// `F3`: an image preview, or for a `.md` file the editor with a live
+/// preview beside it; a no-op otherwise. Checked by extension here so
+/// only one kind is attempted.
 pub(super) fn preview_selected(app: &mut App) {
     let Some(path) = app.active_panel().selected_path() else {
         return;
@@ -29,35 +22,16 @@ pub(super) fn preview_selected(app: &mut App) {
 }
 
 
-/// `F2`: opens the active panel's own user menu. Three cases, per
-/// `user_menu::resolve_menu`:
-/// - A `FarMenu.ini` exists -- ask before touching anything
-///   (`Overlay::ConfirmPortFarMenu`), rather than converting or reading it
-///   silently; `handle_confirm_port_far_menu_key` does the actual port
-///   once confirmed. Takes priority even over an already-existing
-///   `LitastumMenu.toml` (`resolve_menu`'s own doc comment) -- the same
-///   startup check runs once in `main.rs`, so this same prompt can also
-///   appear before `F2` is ever pressed.
-/// - Only `LitastumMenu.toml` exists -- browse it directly. If the
-///   active directory has neither file, `resolve_menu` falls back to a
-///   *common* menu in the OS config directory before giving up, so a
-///   menu set up once is available from any directory on any drive --
-///   `menu_dir` (where edits persist back to) is whichever of the two
-///   directories `resolve_menu` actually found something in, not
-///   necessarily the active panel's own `dir`.
-/// - Neither exists anywhere -- creates an empty `LitastumMenu.toml` in
-///   the *common* config directory (`user_menu::common_menu_dir`), not
-///   the active one, and opens it in the built-in editor instead of
-///   browsing an empty popup with nothing in it to select. Deliberately
-///   not the active directory: an earlier version created it there,
-///   which meant every directory a fresh `F2` was ever pressed in ended
-///   up with its own empty, commented-out-only `LitastumMenu.toml`
-///   scattered around -- reported directly, after the common-menu
-///   fallback above was added, that the template shouldn't be created
-///   anywhere except the one designated (common) location. A failed
-///   creation (no config directory available on this platform,
-///   read-only, permissions, ...) is a silent no-op, same as any other
-///   "couldn't act on this" case in this codebase.
+/// `F2`: opens the user menu, per `user_menu::resolve_menu`:
+/// - `FarMenu.ini` found -- ask before porting it
+///   (`Overlay::ConfirmPortFarMenu`); wins over a `LitastumMenu.toml`.
+/// - A `LitastumMenu.toml` in the active directory, else in the common
+///   config directory -- browse it; edits persist to where it was found.
+/// - Neither -- create an empty one in the common directory only (never
+///   the active one) and open it in the editor. A failed creation is a
+///   silent no-op.
+///
+/// History: docs/history/file-commands.md.
 pub(super) fn open_user_menu(app: &mut App) {
     let dir = app.active_panel().path.clone();
     match user_menu::resolve_menu(&dir) {
@@ -83,27 +57,16 @@ pub(super) fn open_user_menu(app: &mut App) {
 }
 
 
-/// Whether the entry under the cursor is a directory (`..` included) —
-/// the branch point both `EnterSelected` (plain `Enter`) and
-/// `OpenInFileManager` (`Shift+Enter`) need: a file always opens in the
-/// built-in editor regardless of which of the two was pressed
-/// (requested directly — plain `Enter` used to be a no-op on a file,
-/// only `F4` opened it), and only a directory tells the two apart (one
-/// navigates the panel into it, the other hands it to the OS file
-/// manager). An empty panel (no entry at all) reads as "not a
-/// directory", same as `false` — both callers fall through to
-/// `open_editor`, which itself no-ops on a `None` `selected_path()`.
+/// Whether the entry under the cursor is a directory (`..` included).
+/// `Enter` and `Shift+Enter` both open a file in the editor and only
+/// differ on a directory. An empty panel reads as `false`.
 pub(super) fn current_entry_is_dir(app: &mut App) -> bool {
     app.active_panel().current().is_some_and(|entry| entry.is_dir)
 }
 
 
-/// Opens the file under the cursor in the built-in editor (`editor.rs`,
-/// backed by `edtui`). Does nothing for directories (never actually
-/// reached for one — see `current_entry_is_dir` above — but kept as a
-/// real guard rather than an assumption), and for files that fail to
-/// load as UTF-8 text (binary files aren't supported yet — see
-/// `TODO/editor.md`) rather than crashing the app.
+/// Opens the file under the cursor in the built-in editor. No-op for a
+/// directory, or a file that doesn't load as UTF-8 (`TODO/editor.md`).
 pub(super) fn open_editor(app: &mut App) {
     let Some(path) = app.active_panel().selected_path() else {
         return;
@@ -119,20 +82,8 @@ pub(super) fn open_editor(app: &mut App) {
 }
 
 
-/// `Shift+Enter` on a directory: hands it off to the OS's own file
-/// manager (`system_open::open`) instead of navigating the panel into
-/// it. `".."` isn't a real, separately-openable entry the way an
-/// ordinary subdirectory is -- it's a navigation aid pointing at the
-/// panel's *parent*, but the directory actually being browsed right now
-/// (and the one this command should reveal) is the panel's own current
-/// `path`. A first attempt resolved `".."` to that parent directory
-/// instead (mirroring `Panel::enter_selected`'s own handling) -- fixed
-/// once retested against the real report: with the cursor on `..`,
-/// `Shift+Enter` should open the panel's own current directory, not
-/// jump a level further up. A spawn failure (the OS command itself
-/// missing, e.g. `xdg-open` on a minimal Linux install) is logged, not
-/// surfaced to the user as an app error -- same reasoning as every
-/// other external process spawn in this codebase.
+/// `Shift+Enter` on a directory: opens it in the OS file manager. A
+/// spawn failure is logged, not shown.
 pub(super) fn open_directory_in_file_manager(app: &mut App) {
     let Some(path) = directory_open_target(app.active_panel()) else {
         return;
@@ -144,11 +95,8 @@ pub(super) fn open_directory_in_file_manager(app: &mut App) {
 }
 
 
-/// The real filesystem path `open_directory_in_file_manager` should
-/// hand to the OS -- split out from it so this (the `..` special case,
-/// see that function's own doc comment) is testable without spawning a
-/// real process. `None` only for an empty panel (no entry under the
-/// cursor at all).
+/// The directory to open: `..` means the panel's own directory (what is
+/// being browsed), not its parent. `None` for an empty panel. History: docs/history/file-commands.md.
 fn directory_open_target(panel: &Panel) -> Option<PathBuf> {
     let entry = panel.current()?;
     if entry.name == ".." {
@@ -270,13 +218,8 @@ mod tests {
             assert_eq!(target, Some(dir.join("sub")));
         }
 
-        /// Regression coverage for the real report, in two rounds: a
-        /// first attempt resolved `..` to the panel's *parent*
-        /// (`panel.path.parent()`) -- reported wrong on retest: with the
-        /// cursor on `..`, `Shift+Enter` should open the panel's own
-        /// *current* directory (what's actually being browsed right
-        /// now), not jump a level further up. `..` isn't a distinct
-        /// entry with somewhere else of its own to point Explorer at.
+        /// `..` opens the directory being browsed; resolving it to the
+        /// parent was reported wrong.
         #[test]
         fn targets_the_panels_own_current_directory_for_dotdot_not_its_parent() {
             let dir = scratch_dir();
@@ -318,29 +261,10 @@ mod tests {
             assert!(matches!(app.overlay, Some(Overlay::UserMenu(_))));
         }
 
-        /// Regression coverage for the real report this originally
-        /// fixed: with no menu file anywhere, `F2` used to be a silent
-        /// no-op, indistinguishable from not being bound at all --
-        /// fixed by creating an empty `LitastumMenu.toml` and opening
-        /// the built-in editor on it right away instead of an empty
-        /// popup with nothing to select.
-        ///
-        /// **Where** that fresh file gets created changed later, per a
-        /// second real report: an earlier version created it in the
-        /// *active* directory, which meant every directory `F2` was
-        /// ever pressed in with nothing configured yet ended up with
-        /// its own scattered, commented-out-only `LitastumMenu.toml` --
-        /// `open_user_menu` now creates it in the *common* config
-        /// directory (`user_menu::common_menu_dir`) instead, so a fresh
-        /// menu is set up in exactly one place. `common_menu_dir` is
-        /// `None` in a test build (`config_dir`'s own doc comment --
-        /// tests never touch the real OS config directory or
-        /// `LITASTUM_CONFIG_DIR`), so this specific integration test
-        /// can only pin down the "no config directory available"
-        /// half of that branch (a silent no-op, same as any other
-        /// "couldn't act on this" case) -- `create_menu_file`'s own
-        /// unit tests (`state.rs`) cover the actual file-creation
-        /// behavior directly, with an injected path.
+        /// With no menu anywhere, `F2` creates one in the common config
+        /// directory, never the active one. `common_menu_dir` is `None`
+        /// in tests, so this pins the no-op half; `create_menu_file`'s
+        /// own tests cover creation.
         #[test]
         fn does_nothing_when_neither_exists_and_no_config_directory_is_available() {
             let dir = scratch_dir();

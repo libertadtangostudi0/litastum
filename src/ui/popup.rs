@@ -10,31 +10,14 @@ use crate::choice_menu::ChoiceMenu;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::centered_rect;
 
-/// Horizontal and vertical breathing room between a popup's border and
-/// its content -- content used to start flush against the border on
-/// every side (`Block::inner` alone), reported as visually cramped
-/// against the reference mockup, which has real margin on all four
-/// sides.
-///
-/// Equal cell counts on all four sides, not the `+2` horizontal / `+1`
-/// vertical `ratatui::widgets::Padding` itself recommends for visually
-/// *equal-looking* padding (terminal cells are roughly twice as tall
-/// as they are wide, so doubling the horizontal count compensates) --
-/// tried first, but reported uneven specifically at the rounded
-/// corner: with a rounded border, the gap between the curve and the
-/// content needs to actually match cell-for-cell in both directions
-/// for the corner itself to read as symmetric, which the
-/// visually-equal-but-numerically-different padding doesn't give.
+/// Gap between a popup's border and its content: equal cell counts on
+/// every side, not `ratatui`'s visually-equal `+2`/`+1`, which read as
+/// uneven at the rounded corner. History: docs/history/popups.md.
 const PADDING: Padding = Padding::uniform(2);
 
-/// How many *extra* rows of chrome `style` needs beyond `Classic`'s own
-/// (border top + bottom, title free -- baked into the border line) --
-/// for `Rounded`, that's `PADDING`'s own 2 rows top + 2 bottom, plus the
-/// one content row `draw_frame` reserves for the title itself.
-/// `draw_list_popup` sizes its own popup height off of this, so a
-/// height formula tuned for `Classic`'s tighter chrome doesn't leave
-/// `Rounded` with zero or negative room for its own content once the
-/// border/padding/title are subtracted.
+/// Rows of chrome `style` needs beyond `Classic`'s border: `Rounded`
+/// adds padding top and bottom plus the title row. Popup heights add
+/// this so `Rounded` keeps room for content.
 pub fn chrome_extra_rows(style: PopupStyle) -> u16 {
     match style {
         PopupStyle::Classic => 0,
@@ -42,36 +25,15 @@ pub fn chrome_extra_rows(style: PopupStyle) -> u16 {
     }
 }
 
-/// Draws a floating popup's shared chrome and its title, returning the
-/// remaining content `Rect` for the caller's own list/hints/whatever
-/// else -- uniform across both `PopupStyle`s, so a caller lays out its
-/// content rows exactly once regardless of which style is active
-/// (F9 -> Options -> UI). `title` accepts a full `Line` (not just a
-/// plain string) so callers that want more than flat text -- a badge, a
-/// scroll-arrow, a leading dot -- can still build one; a plain
-/// `Line::from(Span::raw(...))` works for everything simpler.
+/// Draws a popup's chrome and title and returns the content `Rect`, so
+/// callers lay out content once for both styles (F9 -> Options -> UI).
 ///
-/// - `PopupStyle::Rounded`: rounded border, no background fill of its
-///   own (an active experiment -- see below), uniform padding, `title`
-///   drawn as the frame's own first content line. Corner glyphs
-///   (`╭╮╰╯`) plus *any* explicit background fill were tried
-///   repeatedly and each combination looked worse than the last: the
-///   glyphs are just Unicode line-drawing characters suggesting a
-///   curve, but the character *cell* underneath is always a hard
-///   square, and no fill -- solid, cut at the corners, or a diagonal
-///   quadrant-block chamfer -- can clip itself to that curve the way a
-///   real CSS `border-radius` (the reference mockup this was built
-///   from) can; a popup's corner is only one character cell, nowhere
-///   near enough resolution for an actual curve by any means a
-///   character grid offers. Landed on rounded corners with no fill at
-///   all -- see `.claude/rules/litastum-popup-design.md` for the full
-///   back-and-forth; don't re-litigate this without a genuinely new
-///   idea, not a variation already listed there.
-/// - `PopupStyle::Classic`: plain square `Block::borders(ALL)`, `title`
-///   baked directly into the border line, no interior padding -- the
-///   look every popup in this app used before this module existed,
-///   requested back as a permanent, coexisting alternative rather than
-///   something to migrate away from entirely (F9 -> Options -> UI).
+/// - `Rounded`: rounded border, no fill of its own, uniform padding,
+///   title as the first content line. No fill can follow a corner
+///   glyph's curve in a character cell -- see
+///   `.claude/rules/litastum-popup-design.md` before changing this.
+/// - `Classic`: square border with the title on it, no padding -- kept
+///   as a permanent alternative.
 pub fn draw_frame(frame: &mut Frame, area: Rect, theme: &Theme, style: PopupStyle, title: Line<'static>, width: u16, height: u16) -> Rect {
     let popup = centered_rect(width, height, area);
     frame.render_widget(Clear, popup);
@@ -106,23 +68,14 @@ pub fn draw_frame(frame: &mut Frame, area: Rect, theme: &Theme, style: PopupStyl
 }
 
 
-/// A popup width that's `percent` of `area`'s own width -- `draw_frame`
-/// itself still clamps to `area.width` as a hard ceiling, so this is
-/// purely for popups that should visibly scale with the real terminal
-/// window rather than sit at one fixed cell count regardless of how
-/// wide the app actually is. Added for Find file's own popup (both the
-/// typing form and its results list): reported directly as too narrow
-/// on a wide terminal, compared against most of this app's other
-/// popups, which stay a fixed width by design (a short list/prompt
-/// genuinely doesn't need to grow with the window).
+/// `percent` of `area`'s width, for a popup that should scale with the
+/// terminal (Find file); `draw_frame` still clamps to `area`.
 pub fn percent_width(area: Rect, percent: u16) -> u16 {
     ((area.width as u32 * percent as u32) / 100) as u16
 }
 
 
-/// A dim horizontal rule the width of `area`, separating a popup's
-/// header/content/footer sections -- every popup in the reference
-/// mockup has one before its footer hint row.
+/// A dim horizontal rule separating a popup's sections.
 pub fn separator(width: u16, theme: &Theme) -> Line<'static> {
     Line::from(Span::styled("─".repeat(width as usize), Style::default().fg(theme.border)))
 }
@@ -139,47 +92,24 @@ pub fn key_pill(key: &str, label: &str, bg: ratatui::style::Color, theme: &Theme
 }
 
 
-/// Style for a selected row in a list-style popup (F9 menu, the theme/
-/// shell/drive/popup-style pickers, Find file's own results, the
-/// Markdown link search list, the command-history popup) --
-/// `theme.current_row_bg` background, bold, with `theme.selection_text`
-/// overriding the text color when a scheme actually sets it (falls back
-/// to `theme.text`, every scheme's behavior before that field existed).
-/// Pulled out once identical `Style::default().fg(theme.text).bg(theme.current_row_bg)
-/// .add_modifier(Modifier::BOLD)` literals had spread to essentially
-/// every popup's own list rendering -- reported directly after a scheme
-/// set `current_row_bg` to a bright, saturated color (a vivid ANSI
-/// green) specifically so its own selected file-panel row would read
-/// black-on-green: every *other* popup's selected row kept using
-/// `theme.text` unconditionally and read poorly the same way the panel
-/// row used to, since none of them knew about the override yet.
+/// The selected row in any list popup: `current_row_bg`, bold, with the
+/// scheme's `selection_text` when set (else `theme.text`). Every popup
+/// goes through this so a bright selection background stays readable.
+/// History: docs/history/popups.md.
 pub fn selected_row_style(theme: &Theme) -> Style {
     Style::default().fg(theme.selection_text.unwrap_or(theme.text)).bg(theme.current_row_bg).add_modifier(Modifier::BOLD)
 }
 
-/// Same background/foreground pairing as `selected_row_style`, for an
-/// in-place text *selection* within an editable field (the Copy/Move
-/// destination field, a user-menu prompt field, the always-live command
-/// line's own `Shift`+arrow selection) -- no bold, since this highlights
-/// a run of characters within running text, not a whole list row.
+/// `selected_row_style` without bold, for a text selection inside a
+/// field (Copy/Move destination, prompts, the command line).
 pub fn selected_text_style(theme: &Theme) -> Style {
     Style::default().fg(theme.selection_text.unwrap_or(theme.text)).bg(theme.current_row_bg)
 }
 
 
-/// Renders a plain, single-column list popup: title, a `List` with the
-/// highlighted row picked out, and an `Enter <label>  Esc <label>`
-/// footer hint -- the shape shared by `ui/menu.rs`, `ui/shell.rs`,
-/// `ui/drive_menu.rs`, `ui/popup_style_menu.rs`, and the built-in
-/// editor's own `ui/editor_menu.rs`/`ui/editor_keymap_menu.rs`, pulled
-/// out once six call sites had all copied the same ~25 lines with only
-/// the title, width, item labels, and the two hint descriptions
-/// actually differing. Each caller formats its own `labels` first (a
-/// bare `&str`, a `"(current)"` suffix, `drive_menu.rs`'s own
-/// multi-column layout, ...) rather than this function taking raw
-/// domain data -- what varies there differs enough per caller that
-/// trying to generalize it here would have meant more parameters than
-/// the duplication it replaces was worth.
+/// A single-column list popup: title, labels with the selected row
+/// highlighted, and an `Enter`/`Esc` hint row. Callers format their own
+/// labels (suffixes, columns); that part differs too much to share.
 pub fn draw_list_popup(frame: &mut Frame, area: Rect, theme: &Theme, style: PopupStyle, title: &'static str, width: u16, labels: &[String], selected: usize, enter_label: &str, esc_label: &str) {
     let extra = chrome_extra_rows(style);
     let height = (labels.len().max(1) as u16 + 4 + extra).clamp(6 + extra, area.height);
@@ -328,21 +258,9 @@ mod tests {
         drop(terminal);
     }
 
-    /// Real regression coverage for the "gap between the border and the
-    /// content should look the same on every side" request: measures
-    /// the frame's own actual distance from the popup's border on all
-    /// four sides (independently computed via `centered_rect`, the
-    /// same helper `draw_frame` itself uses) and asserts they're all
-    /// equal cell counts -- not just that `PADDING`'s literal fields
-    /// happen to match, in case a future change reintroduces the
-    /// border/title-row special-casing that made `Block::inner` treat
-    /// horizontal and vertical differently before.
-    ///
-    /// Measured against the padded area *before* the title row is
-    /// consumed (`Block::inner`, not `draw_frame`'s own returned
-    /// content rect) -- `draw_frame` always reserves one more row at
-    /// the top for the title itself, which is expected and unrelated to
-    /// whether the border's own padding is symmetric.
+    /// The padding gap measures the same on all four sides, from the
+    /// real `Block::inner`, not `PADDING`'s fields. Measured before the
+    /// title row, which `draw_frame` reserves on top by design.
     #[test]
     fn the_gap_between_border_and_content_is_equal_on_every_side() {
         let area = Rect::new(0, 0, 60, 30);

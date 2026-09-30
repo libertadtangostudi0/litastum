@@ -158,6 +158,26 @@ The derived syntax theme originally named code scopes only.
   types onto one scope) still didn't hold up against real comparison.
   A static TextMate grammar can't match VS Code's analyzer-driven
   highlighting anyway.
+- **DCL** (AutoCAD Dialog Control Language), reported for a real
+  `base.dcl`: the only public `.dcl` grammar is OpenVMS's unrelated
+  DIGITAL Command Language, which would mis-highlight, so it's
+  self-authored and deliberately modest (comments, strings, numbers,
+  punctuation, tile types, attribute names).
+- **Groovy** (`Jenkinsfile` via `hidden_file_extensions`) is in
+  sublimehq/Packages but not in `syntect`'s dump, like TOML. One local
+  patch: the upstream `comments` context tried `include:
+  scope:text.html.javadoc` first -- a cross-grammar reference to
+  Javadoc, which isn't bundled. Reported on a real `/** ... */` block:
+  the first and last lines colored, every line between rendered as code.
+  The line was removed; the plain comment-block fallback is sufficient
+  (`groovy_multiline_doc_comment_colors_every_line_as_comment`).
+- **Aliases instead of grammars** (`EXTENSION_ALIASES`). `.rc`/`.rc2`
+  (`TBVersionInfo.rc2`, reported unhighlighted) are mostly C
+  preprocessor directives plus a few RC keywords, so C++ gets most of
+  it; the only public `.rc` grammar is Android's unrelated `init.rc`.
+  `.clang-format`/`.clang-tidy` (reported as a wall of plain text) have
+  no extension by `Path::extension()`'s rules, but both are real YAML,
+  so the alias matches the full file name.
 
 ## Resolver tiers
 
