@@ -7,6 +7,7 @@ use tracing::{debug, warn};
 use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
 use crate::editor::Editor;
+use crate::notice::Notice;
 
 use super::super::export::export_results;
 
@@ -82,9 +83,8 @@ fn compare_marked_results(app: &mut App) -> Result<()> {
 /// `Ctrl+C` on a result: copies its own full path (not just the
 /// directory `Tab`/`Enter` navigate to) to the real OS clipboard --
 /// same `arboard` dependency `editor::clipboard` and
-/// `explorer::confirm`'s own transfer-field copy already use. A missing
-/// clipboard or a failed OS call is only logged, same "don't fail the
-/// keystroke over it" rule those two already follow.
+/// `explorer::confirm`'s own transfer-field copy already use. The result
+/// shows as a notice ("Path copied", or the error).
 fn copy_selected_result_path(app: &mut App) {
     let Some(Overlay::FindFile(state)) = &app.overlay else {
         return;
@@ -93,14 +93,14 @@ fn copy_selected_result_path(app: &mut App) {
         return;
     };
 
-    match arboard::Clipboard::new() {
-        Ok(mut clipboard) => {
-            if let Err(err) = clipboard.set_text(path) {
-                warn!(%err, "find file: clipboard set_text failed");
-            }
+    let result = arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(path));
+    app.notice = Some(match result {
+        Ok(()) => Notice::info("Path copied"),
+        Err(err) => {
+            warn!(%err, "find file: couldn't copy the path to the clipboard");
+            Notice::error(format!("Copy failed: {err}"))
         }
-        Err(err) => warn!(%err, "find file: clipboard unavailable"),
-    }
+    });
 }
 
 /// The highlighted result's own full path, formatted for the clipboard
@@ -113,9 +113,8 @@ fn selected_result_path(state: &crate::explorer::FindFileState) -> Option<String
 }
 
 /// `Ctrl+S` on the results popup: writes `export_results` and records
-/// the outcome (success or failure, both — there's no other
-/// status-bar surface to report a failure on yet) in
-/// `state.export_message` for `draw_results` to show.
+/// the outcome (success or failure) in `state.export_message`, shown in
+/// the popup itself -- the exported path needs a row of its own.
 fn run_export(app: &mut App) -> Result<()> {
     let Some(Overlay::FindFile(state)) = &app.overlay else {
         return Ok(());

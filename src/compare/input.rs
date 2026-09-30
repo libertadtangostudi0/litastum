@@ -5,6 +5,7 @@ use tracing::debug;
 use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
 use crate::editor::edtui_supports_key;
+use crate::notice::Notice;
 use crate::yes_no::{self, Answer};
 
 use super::menu::open_compare_menu;
@@ -60,6 +61,7 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         CompareCommand::Save => {
             if let Err(err) = state.save_focused() {
                 tracing::warn!(%err, "compare: failed to save the focused pane");
+                app.notice = Some(Notice::error(format!("Save failed: {err}")));
             }
         }
         CompareCommand::ToggleFocus => state.toggle_focus(),

@@ -79,9 +79,9 @@ pub struct FindFileState {
     /// History: docs/history/find-file-search.md.
     pub results_capped: bool,
     /// Feedback from the last `Ctrl+S` export, shown under the results
-    /// list until the next export attempt (success or failure — both
-    /// get a message, there's no other status-bar surface to put this
-    /// on yet). `(label, detail)` — `("Exported to:", "<path>")` or
+    /// list until the next export attempt (success or failure). Kept in
+    /// the popup rather than a notice, next to the list it's about.
+    /// `(label, detail)` — `("Exported to:", "<path>")` or
     /// `("Export failed:", "<error>")` — rendered on two separate
     /// lines rather than one, since a real Downloads path is easily
     /// wide enough to blow past the popup's width on one line.

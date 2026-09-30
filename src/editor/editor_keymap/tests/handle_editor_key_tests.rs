@@ -13,6 +13,28 @@ fn handle_editor_key_ctrl_s_saves_and_clears_dirty() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "!hi\n");
 }
 
+/// A save that fails (here: a read-only file) shows an error toast and
+/// keeps the editor open; it used to return `Err` and end the app.
+#[test]
+fn a_failed_save_shows_a_notice_instead_of_ending_the_app() {
+    let (mut app, path) = open_editor_app("hi\n");
+    handle_editor_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&path, permissions.clone()).unwrap();
+
+    let result = handle_editor_key(&mut app, ctrl_key('s'));
+
+    permissions.set_readonly(false);
+    fs::set_permissions(&path, permissions).unwrap();
+    assert!(result.is_ok(), "a failed save must not end the app");
+    let Some(notice) = &app.notice else { panic!("expected an error notice") };
+    assert_eq!(notice.kind, crate::notice::NoticeKind::Error);
+    assert!(notice.text.starts_with("Save failed"), "{notice:?}");
+    let Mode::Editing(editor) = &app.mode else { panic!("the editor stays open") };
+    assert!(editor.is_dirty(), "nothing was saved");
+}
+
 #[test]
 fn handle_editor_key_plain_char_is_forwarded_and_marks_dirty() {
     let (mut app, _path) = open_editor_app("hi\n");

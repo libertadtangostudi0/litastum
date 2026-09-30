@@ -89,3 +89,11 @@ selection does.
   over `MAX_HIGHLIGHTED_LINE_LEN` (20,000, twice VS Code's ~10,000
   tokenization cap) are skipped here and turn off syntax highlighting
   for the file.
+
+## Search jumps land in the middle of the view
+
+Reported with a screenshot: a `Ctrl+F` match further down showed up on
+the view's last row -- `edtui` only scrolls just enough to bring the
+cursor into view. `jump_to_match` (`search/mod.rs`) now centers a match
+that is off screen, VS Code-style; a match already visible doesn't
+scroll, and near the end of the file the view stops at the last line.

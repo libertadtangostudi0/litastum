@@ -177,6 +177,10 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
     // of them separately.
     let key = keyboard_layout::normalize_ctrl_shortcut(key);
 
+    // Any key dismisses a toast and then does its usual job; a handler
+    // below may set a new one.
+    app.notice = None;
+
     // Drives the alternate F-key row (`ui::draw_function_keys`). On
     // Windows this is mostly redundant with `wait_for_event`'s own
     // `GetAsyncKeyState` poll (which already catches real hold/release
@@ -273,6 +277,18 @@ mod tests {
         assert!(app.overlay.is_none());
         let Mode::Editing(editor) = &app.mode else { unreachable!() };
         assert!(editor.is_dirty());
+    }
+
+    #[test]
+    fn the_next_key_dismisses_a_notice_and_still_does_its_job() {
+        let mut app = editor_app();
+        app.notice = Some(crate::notice::Notice::error("Save failed"));
+
+        key_effect(&mut app, key(KeyCode::Char('x'))).unwrap();
+
+        assert_eq!(app.notice, None);
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert!(editor.is_dirty(), "the key was typed, not swallowed");
     }
 
     #[test]

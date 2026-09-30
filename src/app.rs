@@ -12,6 +12,7 @@ use crate::explorer::{
     AddUserMenuItemState, DriveMenu, FindFileState, ImagePreviewState, MarkdownLinkSearchState, MarkdownPreviewState, Panel, UserMenuCommandEdit, UserMenuPromptState,
     UserMenuState,
 };
+use crate::notice::Notice;
 use crate::text_field::TextField;
 use crate::theming::config::Settings;
 use crate::theming::{MainMenu, PopupStyleMenu, Theme, ThemeMenu};
@@ -88,9 +89,9 @@ pub enum Overlay {
     /// being edited so `Esc`/a finished add hands it straight back to
     /// `Overlay::UserMenu`.
     AddUserMenuItem(UserMenuState, AddUserMenuItemState),
-    /// A one-line, dismiss-on-any-key notification (e.g. where
-    /// `FarMenu.ini` ended up after declining to port it). Generic on
-    /// purpose -- there's no status-bar message surface otherwise.
+    /// A one-line message that must be acknowledged: any key dismisses
+    /// it and is consumed (e.g. where `FarMenu.ini` ended up after
+    /// declining to port it). Passing messages go to `App::notice`.
     Info(String),
     /// `l` in the embedded Markdown preview (over `Mode::Editing`): a
     /// filterable list of the document's links -- a reliable
@@ -251,6 +252,9 @@ pub struct App {
     /// always-`None` field. `app.active` (0 = editor, 1 = preview, `Tab`
     /// toggles) picks where keys go. Cleared when the editor closes.
     pub markdown_edit_preview: Option<MarkdownPreviewState>,
+    /// The toast in the bottom-right corner, if any -- see `Notice`.
+    /// Cleared by the next key press (`event_loop::keys::key_effect`).
+    pub notice: Option<Notice>,
 }
 
 
@@ -285,6 +289,7 @@ impl App {
             image_picker: Picker::halfblocks(),
             mouse_capture_enabled: false,
             markdown_edit_preview: None,
+            notice: None,
         })
     }
 

@@ -5,6 +5,7 @@ use tracing::warn;
 use crate::app::{App, Mode, Overlay};
 use crate::editor::Editor;
 use crate::explorer::{image_preview, markdown_preview, system_open, user_menu, Panel};
+use crate::notice::Notice;
 
 /// `F3`: an image preview, or for a `.md` file the editor with a live
 /// preview beside it; a no-op otherwise. Checked by extension here so
@@ -83,7 +84,7 @@ pub(super) fn open_editor(app: &mut App) {
 
 
 /// `Shift+Enter` on a directory: opens it in the OS file manager. A
-/// spawn failure is logged, not shown.
+/// spawn failure shows as an error notice.
 pub(super) fn open_directory_in_file_manager(app: &mut App) {
     let Some(path) = directory_open_target(app.active_panel()) else {
         return;
@@ -91,6 +92,7 @@ pub(super) fn open_directory_in_file_manager(app: &mut App) {
 
     if let Err(err) = system_open::open(&path) {
         warn!(path = %path.display(), %err, "failed to open directory in the OS file manager");
+        app.notice = Some(Notice::error(format!("Couldn't open the file manager: {err}")));
     }
 }
 

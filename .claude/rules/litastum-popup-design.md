@@ -91,3 +91,24 @@ per explicit request, and accepted as close enough.
   so it can't produce an inset. Every row (selected or not) reserves
   the same leading/trailing column, or content would visibly shift
   sideways the moment a row becomes selected.
+
+## Notices: passing messages as a toast
+
+`App::notice` (`src/notice.rs`) is the one place for a passing message
+-- a failed save, delete, copy/move, clipboard write or file-manager
+launch, or "Path copied". `ui/notice.rs` draws it as a small bordered
+box in the bottom-right corner, above the command line and F-key rows,
+over any screen or popup: a dot in `danger` (error) or `accent` (info),
+then the text, word-wrapped to at most half the terminal width; the
+border follows `PopupStyle`. It stays until the next key press, which
+still does its usual job (`event_loop::keys::key_effect` clears it
+first, so a handler can set a new one). No timer.
+
+`Overlay::Info` stays for a message that must be acknowledged: modal,
+any key dismisses it and is consumed.
+
+Report an outcome through `app.notice` rather than only logging it.
+Also never return `Err` from a key handler for an I/O failure the user
+can recover from: an `Err` ends the event loop (a failed `Ctrl+S`
+used to close the app).
+

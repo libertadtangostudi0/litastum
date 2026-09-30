@@ -168,6 +168,43 @@ fn confirm_transfer_a_failed_move_still_returns_to_browsing_without_panicking() 
 
     assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     assert!(!dst.exists());
+    let Some(notice) = &app.notice else { panic!("a failed move shows a notice") };
+    assert!(notice.text.starts_with("Move failed: irrelevant:"), "{notice:?}");
+}
+
+#[test]
+fn a_failed_delete_shows_a_notice() {
+    let mut app = scratch_app();
+    let missing = app.panels[0].path.join("already-gone.txt");
+    app.overlay = Some(Overlay::ConfirmDelete(pending_delete(missing, "already-gone.txt", false, 0)));
+
+    handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+
+    let Some(notice) = &app.notice else { panic!("a failed delete shows a notice") };
+    assert_eq!(notice.kind, crate::notice::NoticeKind::Error);
+    assert!(notice.text.starts_with("Delete failed: already-gone.txt:"), "{notice:?}");
+}
+
+#[test]
+fn a_successful_delete_shows_no_notice() {
+    let mut app = scratch_app();
+    let file = app.panels[0].path.join("victim.txt");
+    fs::write(&file, b"bye").unwrap();
+    app.overlay = Some(Overlay::ConfirmDelete(pending_delete(file, "victim.txt", false, 3)));
+
+    handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+
+    assert_eq!(app.notice, None);
+}
+
+#[test]
+fn several_failures_are_counted() {
+    let failures = vec![
+        ("a.txt".to_string(), std::io::Error::other("locked")),
+        ("b.txt".to_string(), std::io::Error::other("locked")),
+    ];
+    let notice = failure_notice("Delete", &failures, 5).unwrap();
+    assert_eq!(notice.text, "Delete failed for 2 of 5 entries; first: a.txt: locked");
 }
 
 /// Regression coverage for the real request: F5 should copy every

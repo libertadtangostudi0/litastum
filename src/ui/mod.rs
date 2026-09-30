@@ -22,6 +22,7 @@ mod image_preview;
 mod info;
 mod markdown_preview;
 mod menu;
+mod notice;
 mod panel;
 mod popup;
 mod preview;
@@ -51,7 +52,18 @@ use panel::build_list_item;
 /// returned rather than set with `Frame::set_cursor_position`:
 /// `event_loop` places it after the frame is on screen, avoiding a
 /// flicker. History: docs/history/event-loop.md.
+///
+/// A notice toast (`App::notice`) is drawn last, over any screen or popup.
 pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Position>) {
+    let drawn = draw_screen(frame, app);
+    if let Some(notice) = &app.notice {
+        notice::draw_notice(frame, notice, &app.theme, app.settings.popup_style);
+    }
+    drawn
+}
+
+
+fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Position>) {
     let theme = app.theme; // Theme is Copy -- see theme.rs for why
     let area = frame.area();
     // Plain F4 editing takes the whole frame. With a linked Markdown

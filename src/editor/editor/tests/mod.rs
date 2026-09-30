@@ -28,6 +28,7 @@ fn open_test_rust_editor(contents: &str) -> Editor {
 
 mod dirty_and_save;
 mod highlighting;
+mod search_scroll;
 mod keymap_modes;
 mod rendering;
 mod selection;

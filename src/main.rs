@@ -9,6 +9,7 @@ mod app_data;
 mod keyboard_layout;
 mod list_cursor;
 mod logging;
+mod notice;
 mod terminal_setup;
 #[cfg(test)]
 mod test_support;

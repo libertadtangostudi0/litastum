@@ -5,6 +5,7 @@ use tracing::debug;
 use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
 use crate::explorer;
+use crate::notice::Notice;
 use crate::yes_no::{self, Answer};
 
 use super::find_history;
@@ -140,13 +141,17 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     match command {
         EditorCommand::Close => unreachable!("handled above"),
         EditorCommand::OpenMenu => unreachable!("handled above"),
-        EditorCommand::Save => {
-            active_editor.save()?;
-            // Saving refreshes a linked Markdown preview.
-            if let Some(preview) = &mut app.markdown_edit_preview {
-                preview.reload();
+        // A failed save is shown, not returned: an `Err` from a key handler
+        // ends the event loop.
+        EditorCommand::Save => match active_editor.save() {
+            Ok(()) => {
+                // Saving refreshes a linked Markdown preview.
+                if let Some(preview) = &mut app.markdown_edit_preview {
+                    preview.reload();
+                }
             }
-        }
+            Err(err) => app.notice = Some(Notice::error(format!("Save failed: {err}"))),
+        },
         EditorCommand::Find => active_editor.start_search(),
         EditorCommand::FindNext => active_editor.search_next(),
         EditorCommand::FindPrevious => active_editor.search_previous(),

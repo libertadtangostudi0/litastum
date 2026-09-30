@@ -4,6 +4,7 @@
 //! `app.rs`.
 
 use std::fs;
+use std::io;
 use std::path::PathBuf;
 
 use color_eyre::eyre::Result;
@@ -12,14 +13,14 @@ use tracing::debug;
 
 use crate::app::{App, Overlay, TransferOp};
 use crate::command_line::Effect;
+use crate::notice::Notice;
 use crate::yes_no::{self, Answer};
 use super::fs_ops;
 
 
 /// The F8 prompt: `Y` deletes every entry (directories recursively, as
 /// Far does without asking twice) and reloads; `N`/`Esc` cancel. A failed
-/// delete is logged and the rest continue -- there's no message surface
-/// to show it yet.
+/// delete doesn't stop the rest; the failures show as an error notice.
 pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::ConfirmDelete(pending)) = &app.overlay else {
         return Ok(Effect::None);
@@ -33,6 +34,7 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<Effect>
             let Some(Overlay::ConfirmDelete(pending)) = app.overlay.take() else {
                 unreachable!("just matched Overlay::ConfirmDelete above");
             };
+            let mut failures = Vec::new();
             for entry in &pending.entries {
                 let result = if entry.is_dir {
                     fs::remove_dir_all(&entry.path)
@@ -41,8 +43,10 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<Effect>
                 };
                 if let Err(err) = result {
                     debug!(path = %entry.path.display(), %err, "delete failed");
+                    failures.push((entry.name.clone(), err));
                 }
             }
+            app.notice = failure_notice("Delete", &failures, pending.entries.len());
             app.active_panel().reload()?;
         }
         Answer::No => app.overlay = None,
@@ -58,8 +62,8 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<Effect>
 /// moves, selection, OS clipboard). `Enter` performs the transfer (`fs_ops::copy_entry`/
 /// `move_entry`) and reloads *both* panels (the destination side
 /// always needs it, and a move also changes the source side); `Esc`
-/// cancels with nothing touched. A failed transfer is only logged, same
-/// as `handle_confirm_delete_key` — no status-bar surface exists yet.
+/// cancels with nothing touched. Failures show as an error notice
+/// (`run_confirmed_transfer`).
 pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if key.code == KeyCode::Enter {
         run_confirmed_transfer(app)?;
@@ -86,13 +90,15 @@ pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<Effec
 /// reloads both panels. Takes `PendingTransfer` by `mem::replace` instead
 /// of cloning it. One source: `destination` is the full target path (so
 /// it doubles as a rename); several: it's the target directory, each name
-/// joined on. A failure is logged and the rest continue.
+/// joined on. A failure doesn't stop the rest; the failures show as an
+/// error notice.
 fn run_confirmed_transfer(app: &mut App) -> Result<()> {
     let Some(Overlay::ConfirmTransfer(pending)) = app.overlay.take() else {
         return Ok(());
     };
     let destination_input = PathBuf::from(pending.destination.text().trim());
 
+    let mut failures = Vec::new();
     for source in &pending.sources {
         let destination = if pending.sources.len() == 1 {
             destination_input.clone()
@@ -111,13 +117,33 @@ fn run_confirmed_transfer(app: &mut App) -> Result<()> {
         };
         if let Err(err) = result {
             debug!(source = %source.path.display(), destination = %destination.display(), %err, "transfer failed");
+            failures.push((source.name.clone(), err));
         }
     }
+    let verb = match pending.operation {
+        TransferOp::Copy => "Copy",
+        TransferOp::Move => "Move",
+    };
+    app.notice = failure_notice(verb, &failures, pending.sources.len());
 
     for panel in &mut app.panels {
         panel.reload()?;
     }
     Ok(())
+}
+
+
+
+/// The error notice for a bulk file operation, `None` if nothing failed:
+/// the one failure in full, or a count plus the first one.
+fn failure_notice(verb: &str, failures: &[(String, io::Error)], total: usize) -> Option<Notice> {
+    let (name, err) = failures.first()?;
+    let text = if failures.len() == 1 {
+        format!("{verb} failed: {name}: {err}")
+    } else {
+        format!("{verb} failed for {} of {total} entries; first: {name}: {err}", failures.len())
+    };
+    Some(Notice::error(text))
 }
 
 
