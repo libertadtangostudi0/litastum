@@ -17,22 +17,10 @@ use paste::handle_paste_event;
 #[cfg(windows)]
 use paste::try_intercept_paste_hotkey;
 
-/// Draws one frame and applies whatever real terminal cursor position
-/// `ui::draw` returned -- factored out since both the loop below and
-/// its own up-front priming draw (see its doc comment) need the exact
-/// same sequence.
-///
-/// Applies the cursor *after* `terminal.draw` has actually finished and
-/// flushed, in `set_cursor_position` then `show_cursor` order -- the
-/// reverse of what `ratatui::Terminal::draw` would have done on its own
-/// had `ui::draw` still called `Frame::set_cursor_position` internally.
-/// See `ui::draw`'s own doc comment for the full trace through
-/// `ratatui`'s and `ratatui-crossterm`'s source confirming why that
-/// order (`show_cursor` before the real target position is applied)
-/// is what caused a real, reported flicker -- moving to *this* order
-/// means the cursor only ever becomes visible already sitting in the
-/// right place, for every `Mode` that places one, not just the command
-/// line.
+/// Draws one frame, then places the terminal cursor `ui::draw` returned
+/// -- position first, then `show_cursor`, after the frame is on screen.
+/// Letting `ratatui` do it shows the cursor before moving it, which
+/// flickered. History: docs/history/event-loop.md.
 fn draw_and_apply_cursor(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<[(usize, usize); 2]> {
     let mut layout = [(1usize, 0usize); 2];
     let mut cursor = None;
@@ -52,21 +40,9 @@ fn draw_and_apply_cursor(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app:
 }
 
 pub(crate) fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
-    // Seeds `app.panels`' own `columns`/`visible_rows` from the real
-    // terminal size before the loop's *own* first frame ever reaches the
-    // screen -- `Panel::new()` defaults both to a single-column
-    // placeholder (`columns: 1`, `visible_rows: 0`, `column_height()`'s
-    // own doc comment calls this the "not yet known" sentinel), and the
-    // real values computed by `ui::draw` only ever get fed back to
-    // *this* draw's own returned `layout` -- applied to `app.panels`
-    // only *after* the frame that used the old, wrong values has
-    // already been sent to the terminal. Reported directly as a real,
-    // persistent glitch (not just an imperceptible one-frame flash):
-    // every entry crammed into one narrow column, staying that way
-    // until the very next keypress forced a redraw, since
-    // `wait_for_event` below blocks for input in between. This extra
-    // draw+apply cycle up front means the loop's own first visible frame
-    // already has correct, real values to render with.
+    // One draw up front seeds the panels' real columns/visible_rows;
+    // otherwise the first visible frame uses `Panel::new()`'s one-column
+    // placeholder and keeps it until the next key.
     let layout = draw_and_apply_cursor(terminal, app)?;
     for (panel, (cols, rows)) in app.panels.iter_mut().zip(layout) {
         panel.set_columns(cols);
@@ -86,67 +62,34 @@ pub(crate) fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut A
 }
 
 
-/// How often `wait_for_event` checks a background image decode or Find
-/// file search (`background_task_pending`/`poll_background_tasks`
-/// below) while one is in flight -- `F3`'s image preview moved its own
-/// decode/resize off the main thread after both the very first open
-/// and every `Left`/`Right` switch were reported as blocking the whole
-/// UI for however long that took (`ImagePreviewState`'s own doc
-/// comment has the full story); the Find file search
-/// (`explorer::find_file::background`) joined it later for the same
-/// reason, once its own real result was starting to take long enough
-/// to matter. Short enough that a finished decode or search appears
-/// essentially instantly once ready, without needing a real keyboard/
-/// mouse event to happen to wake the loop up and notice it.
+/// How often `wait_for_event` polls a background image decode or Find
+/// file search while one runs, so a finished result shows at once
+/// without waiting for input.
 const BACKGROUND_TASK_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(30);
 
-/// Whether any background task `wait_for_event` should be polling for
-/// is currently in flight -- an image decode, or a Find file search.
-/// Kept as one shared check (rather than two separate `if`s repeated at
-/// every call site below) since both `#[cfg]` variants of
-/// `wait_for_event` need the exact same OR of the two.
+/// Whether an image decode or a Find file search is in flight.
 fn background_task_pending(app: &App) -> bool {
     explorer::is_image_decode_pending(app) || explorer::is_find_file_search_pending(app)
 }
 
-/// Polls every background task once, applying whichever one (if any)
-/// has actually finished -- `true` means something changed and the
-/// caller should redraw. Both polls always run (not short-circuited),
-/// since an image decode and a Find file search can't currently be in
-/// flight at the same time in this app anyway (`Mode` is one variant at
-/// once), but there's no reason to make that assumption load-bearing
-/// here.
+/// Polls every background task once; `true` if one finished and the
+/// screen should redraw.
 fn poll_background_tasks(app: &mut App) -> bool {
     let image = explorer::poll_pending_image_decode(app);
     let search = explorer::poll_pending_find_file_search(app);
     image || search
 }
 
-/// Blocks until either a real terminal event arrives (dispatched via
-/// `handle_event`), a pending background task finishes
-/// (`BACKGROUND_TASK_POLL_INTERVAL`, above), or -- Windows only -- the
-/// physical `Alt` key's actual held state (`windows_terminal::alt_key::is_physically_down`)
-/// changes, so the alt-labels F-key row can react to `Alt` genuinely
-/// being held down, not just to the next keypress that happens to carry
-/// the `Alt` modifier. See `windows_terminal/alt_key.rs`'s own doc for why that
-/// distinction matters: `crossterm`'s Windows backend never emits an
-/// event for a bare modifier key on its own, so relying on keypress
-/// modifiers alone means the row only ever updates in the same frame an
-/// `Alt+` shortcut already fired -- too late to be a preview. Elsewhere
-/// (`cfg(not(windows))`), this still just blocks on the next real event
-/// when nothing's pending, same as before either of these polling
-/// reasons existed; the keystroke-modifier approximation in
-/// `handle_event` below is what drives `alt_held` there.
+/// Blocks until a terminal event arrives (`handle_event`), a background
+/// task finishes, or -- on Windows -- the physical `Alt` state changes:
+/// a bare modifier produces no event there, so the F-key bar polls it
+/// (`windows_terminal::alt_key`). Elsewhere `alt_held` comes from key
+/// event modifiers (`handle_event`).
 #[cfg(windows)]
 fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     loop {
-        // Checked every iteration, not just once per call the way the
-        // idle-only `alt_down` check below works -- during an active
-        // Windows-Terminal-injected paste flood, this loop keeps
-        // finding a real `crossterm` event (one flooded character)
-        // almost every time, so an idle-only check would never run
-        // until the flood was already over. See `windows_terminal`'s own
-        // module doc comment for the full story.
+        // Every iteration, not only when idle: during Windows Terminal's
+        // paste flood there's always an event waiting.
         if try_intercept_paste_hotkey(app)? {
             return Ok(());
         }
@@ -194,10 +137,8 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
 }
 
 
-/// Returns whether the caller (`wait_for_event`) should actually redraw
-/// -- `false` only for a key event that `handle_key_event` itself never
-/// acted on at all (see its own doc comment), so `run()`'s own loop
-/// doesn't spend a full frame redrawing something nothing changed.
+/// Returns whether the caller should redraw -- `false` for a key nothing
+/// was dispatched for.
 fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
     match event::read()? {
         Event::Key(key) => handle_key_event(app, key, terminal),
@@ -218,54 +159,12 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
     }
 }
 
-/// Processes every further event already sitting in `crossterm`'s own
-/// queue, without blocking (`event::poll` with a zero timeout), for as
-/// long as they keep being mouse events -- reported directly as a real
-/// lag, response to touchpad/mouse-wheel scrolling sometimes taking a
-/// very long time to catch up. A touchpad (and some mice) deliver
-/// one scroll gesture as a rapid burst of many small discrete tick
-/// events rather than a single one, but `run()`'s own loop does a full
-/// `terminal.draw()` after *every* event `handle_event` returns from --
-/// redrawing between each individual tick of a fast scroll means the
-/// UI visibly falls behind the gesture, worse the larger a single
-/// frame's own render cost is (word-wrapping a Markdown preview, `edtui`'s
-/// own per-frame syntax highlighting, ...). Draining the whole burst
-/// here and letting `run()` draw exactly once afterward fixes that
-/// without touching `handle_markdown_preview_mouse` itself at all -- the
-/// backlog was in how often a frame got drawn, not in how any single
-/// event was handled.
-///
-/// Drains until the queue is genuinely empty, not capped to a fixed
-/// time budget -- an earlier version added a one-frame (16ms) cap
-/// specifically so a direction reversal couldn't be hidden behind an
-/// unbounded backlog, but capping it that way meant a *long*,
-/// uninterrupted scroll now redrew roughly 60 times a second even
-/// though nothing but the scroll position itself was changing each
-/// time -- reported directly as feeling slower than the uncapped
-/// version that preceded it. `last_scroll` below already handles the
-/// actual reversal case directly (see its own doc), so the time cap
-/// wasn't buying anything the reversal check didn't already cover --
-/// removed rather than tuned smaller. The tradeoff this accepts,
-/// deliberately: a long same-direction scroll no longer redraws
-/// incrementally while it's still in motion, only once the whole burst
-/// has actually drained -- exactly what was asked for (no need to
-/// track the cursor position mid-scroll, it'll show up at the top of
-/// the view once scrolling stops), trading mid-scroll visual
-/// feedback for fewer total redraws.
-///
-/// `last_scroll`: the moment a drained event's own scroll direction
-/// actually differs from the previous one, this returns immediately
-/// after handling it, rather than continuing to drain. A real
-/// direction change is exactly the one case where continuing to
-/// coalesce is actively wrong -- it's not "more of the same gesture"
-/// to merge, it's the next gesture already starting. Plain clicks and
-/// non-scroll mouse events don't update `last_scroll` at all -- only
-/// an actual direction *change* between two scrolls should cut the
-/// drain short.
-///
-/// A key event found mid-burst is still handled (never silently
-/// dropped) -- it just ends the drain there, matching every other call
-/// site's own "one real event per `wait_for_event` call" convention.
+/// Handles every queued mouse event without blocking, so a touchpad's
+/// burst of wheel ticks costs one redraw, not one per tick. Drains until
+/// the queue is empty (a time cap made long scrolls feel slower), but
+/// stops right after a scroll that reverses direction (`last_scroll`) --
+/// that's the next gesture, not more of this one. A key found mid-burst
+/// is handled and ends the drain. History: docs/history/event-loop.md.
 fn drain_pending_mouse_events(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, mut last_scroll: Option<MouseEventKind>) -> Result<()> {
     while event::poll(std::time::Duration::from_secs(0))? {
         match event::read()? {
@@ -291,26 +190,11 @@ fn drain_pending_mouse_events(app: &mut App, terminal: &mut Terminal<CrosstermBa
 }
 
 
-/// Mouse capture is on exactly while the built-in editor is open
-/// (`Mode::Editing`, with or without a linked Markdown preview) and off
-/// everywhere else -- checked once per loop iteration rather than
-/// toggled by hand at every place an editor opens or closes, of which
-/// there are several (`F4`, Find file's `F4`, the Markdown
-/// editor+preview, a user-menu command edit, ...).
-///
-/// Scoped this narrowly on purpose: capture takes over the terminal's
-/// own native text selection, which the panels and command line still
-/// need for copying paths and output with the mouse. Requested
-/// directly for the editor, so a click can move the caret -- including
-/// out of the `Ctrl+F` box into the text, VS Code-style (`Editor::mouse`).
-/// Windows Terminal still offers native selection there with
-/// `Shift`+drag.
-///
-/// `app.mouse_capture_enabled` only ever flips after the terminal call
-/// actually succeeded -- `terminal_setup::restore_terminal` relies on it
-/// to never send `DisableMouseCapture` without a successful
-/// `EnableMouseCapture` first (see its own doc comment for the crash
-/// that came from that).
+/// Mouse capture is on exactly while the editor is open, synced once per
+/// loop iteration rather than at each place an editor opens or closes.
+/// Scoped narrowly: capture takes over the terminal's own text
+/// selection, which the panels and command line need. Only set after the
+/// terminal call succeeds -- `restore_terminal` relies on it.
 fn sync_mouse_capture(app: &mut App) {
     let wanted = matches!(app.mode, Mode::Editing(_));
     if wanted == app.mouse_capture_enabled {

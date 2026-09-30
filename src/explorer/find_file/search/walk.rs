@@ -9,29 +9,11 @@ use crate::explorer::is_vcs_dir_name;
 use super::matching::{matches_query, ParsedQuery};
 use super::SearchProgress;
 
-/// A `WalkBuilder` configured the way this app's own search has always
-/// behaved: every real entry under `root`, minus known VCS metadata
-/// directories (`.git`/`.svn`/`.hg`/`.bzr`, `is_vcs_dir_name`) -- not
-/// `ignore`'s own default behavior, which is built around `.gitignore`/
-/// hidden-file/`.ignore` filtering (exactly what ripgrep wants, not
-/// what a plain "find a file by name" dialog should silently apply).
-/// `standard_filters(false)` turns every one of those off; `filter_entry`
-/// then adds back only the one exclusion this app has ever actually
-/// made — pruning VCS directories, not gitignore-aware filtering. A
-/// `.gitignore`'d file is still a real file on disk and should still be
-/// findable here, same as it always was.
-///
-/// `.threads(available_parallelism())` overrides `ignore`'s own default
-/// thread count -- requested directly (the thread count should scale
-/// with the real machine, not a fixed ceiling): left unset, `WalkParallel`
-/// caps itself at
-/// `available_parallelism().min(12)` (its own hardcoded ceiling, not
-/// this app's), so a machine with more than 12 real cores would never
-/// use all of them for the walk. `content_filter_in_parallel` already
-/// uses the same `available_parallelism()`, uncapped, for its own
-/// thread pool -- this just makes the walk consistent with it. Falls
-/// back to a single thread if the OS won't say (same fallback
-/// `content_filter_in_parallel` already uses).
+/// Every real entry under `root` minus VCS metadata directories: all of
+/// `ignore`'s own filters (`.gitignore`, hidden, `.ignore`) are off -- a
+/// gitignored file is still a real file to find. Threads scale with
+/// `available_parallelism()` instead of `ignore`'s cap of 12, like the
+/// content pool.
 fn build_walker(root: &Path) -> WalkBuilder {
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).max(1);
     let mut builder = WalkBuilder::new(root);
@@ -41,32 +23,11 @@ fn build_walker(root: &Path) -> WalkBuilder {
     builder
 }
 
-/// Recursively walks `root` in parallel (`ignore::WalkBuilder::build_parallel`
-/// — the same crate, and the same walking primitive, ripgrep itself
-/// uses for this exact job), returning every entry (file *or*
-/// directory) whose name matches `query_lower`, up to `max_results`,
-/// visiting at most `max_visited` entries in total. See `search/mod.rs`'s
-/// own doc comment for why a hand-rolled work-stealing walker wasn't
-/// attempted here instead — directory subtrees vary wildly in size, so
-/// a flat, evenly-sized chunking (the shape `content_filter_in_parallel`
-/// already uses for its own flat candidate list) doesn't fit a tree
-/// walk the way it fits a list.
-///
-/// The root path itself (`ignore`'s own depth-0 entry) is never checked
-/// against `query_lower` -- matches the original single-threaded walk's
-/// own behavior, which only ever iterated a directory's *children* via
-/// `fs::read_dir`, never asked whether the directory passed in was
-/// itself a match.
-///
-/// Multiple worker threads race to increment `progress.visited`/push
-/// into the shared `results` `Mutex` -- `WalkState::Quit` (returned once
-/// `cancel` is set, or either cap is reached) stops the walk "as soon as
-/// possible," per `ignore`'s own documented semantics, not instantly;
-/// a handful of entries past a cap can still be visited by other
-/// threads already mid-directory when the signal lands. Acceptable —
-/// the caps were never meant to be exact boundaries, just backstops
-/// against a huge tree, and this is the same trade-off already made for
-/// `cancel` in `content_filter_in_parallel`.
+/// Walks `root` in parallel, returning every entry (file or directory)
+/// whose name matches, up to `max_results`, visiting at most
+/// `max_visited`. The root itself is never matched. `WalkState::Quit`
+/// stops threads "as soon as possible", so a few entries past a cap may
+/// still be visited -- the caps are backstops, not exact bounds.
 pub(super) fn matched_names(root: &Path, query_lower: &str, progress: &SearchProgress, cancel: &AtomicBool, max_results: usize, max_visited: usize) -> Vec<PathBuf> {
     let results: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
     // Parsed once for the whole walk, not once per entry -- see

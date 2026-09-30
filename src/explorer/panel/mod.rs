@@ -11,66 +11,28 @@ mod natural_sort;
 
 use natural_sort::natural_compare;
 
-/// One of the two file-list panes. Holds its current directory, the
-/// entries within it, and which entry the cursor is on.
+/// One of the two file-list panes: its directory, entries and cursor.
 ///
-/// The entry list is displayed column-major (fill column 1 top to
-/// bottom, then column 2, ...) rather than as a single flat list, so
-/// `entries[i]`'s column is `i / column_height()` and its row is
-/// `i % column_height()`, relative to the currently visible page (see
-/// `scroll_offset` below) -- not to the whole list at once.
-/// `columns` is written by the renderer each frame from the panel's
-/// on-screen width — see `ui::draw`.
-///
-/// `column_height()` -- the row count column boundaries are actually
-/// computed from -- is `min(visible_rows, rows())`: as long as
-/// everything fits on screen, it's the whole list's own even split
-/// (`rows()`); once the list is longer than one page, the panel's own
-/// height (`visible_rows`) takes over and it starts paginating
-/// (`scroll_offset`) instead. Reported directly, twice: first that a
-/// directory with more entries than fit the panel's own height had no
-/// scrolling at all (`ui/mod.rs`'s renderer used to hand every one of a
-/// column's own entries straight to a plain `ratatui::widgets::List`
-/// with no `ListState`, which doesn't auto-scroll on its own); then,
-/// once scrolling existed, that column 2 was starting at the wrong
-/// entry -- an earlier version of this used `visible_rows` directly as
-/// the column height unconditionally, which is correct only once
-/// there's genuinely more than one page, and wrong for a short list
-/// that already fits (see `column_height`'s own doc comment for the
-/// exact failure shape).
+/// Entries are laid out column-major (fill column 1 top to bottom, then
+/// column 2, ...) within the visible page starting at `scroll_offset`:
+/// entry `i`'s column is `(i - scroll_offset) / column_height()`. The
+/// renderer writes `columns` and `visible_rows` each frame. History: docs/history/panel.md.
 #[derive(Debug)]
 pub struct Panel {
     pub path: PathBuf,
     pub entries: Vec<Entry>,
     pub selected: usize,
     pub columns: usize,
-    /// How far into the flat `entries` array the currently visible page
-    /// starts -- the same value applies to every column at once (Far
-    /// Manager's own multi-column scrolling: the whole grid slides
-    /// together, not one column at a time). Kept in
-    /// `[0, entries.len().saturating_sub(columns * column_height())]`
-    /// by `ensure_selected_visible`, called after every cursor move.
+    /// Where the visible page starts in `entries`. The whole grid scrolls
+    /// together, as in Far; kept in range by `ensure_selected_visible*`.
     scroll_offset: usize,
-    /// How many rows of each column actually fit on screen — written by
-    /// the renderer each frame from the panel's own inner height, same
-    /// pattern as `columns` above (`ui::draw_panel`/`event_loop::run`).
-    /// `0` means "not yet known" (before the first real frame) and
-    /// disables scroll adjustment entirely rather than dividing by
-    /// zero or scrolling based on a stale guess.
+    /// Rows per column that fit on screen, written by the renderer each
+    /// frame. `0` = not known yet (before the first frame): scrolling
+    /// is left alone rather than computed from a guess.
     visible_rows: usize,
-    /// Names of the entries currently marked (Far Manager-style
-    /// multi-select) in this panel -- `Ctrl+A` (`select_all`) and
-    /// `Ctrl+Up`/`Down`/`Left`/`Right` (`marks.rs`), rendered via
-    /// `ui::build_list_item`. Keyed by name rather than index into
-    /// `entries` so a mark survives an in-place `reload()` (a file
-    /// changing on disk, or the panel being refreshed after an
-    /// operation elsewhere) as long as the entry is still listed --
-    /// an index-based set would silently point at the wrong entry the
-    /// moment sorting or the entry count shifted. Cleared explicitly on
-    /// an actual directory change (`enter_selected`/`change_dir`)
-    /// instead, where carrying marks over would be meaningless (they'd
-    /// almost certainly land on unrelated entries in the new
-    /// directory).
+    /// Names of the marked entries (Far-style multi-select, `marks.rs`).
+    /// Keyed by name so marks survive an in-place `reload()`; cleared on
+    /// a real directory change.
     marked: HashSet<String>,
 }
 
@@ -133,15 +95,8 @@ impl Panel {
     }
 
 
-    /// Directories sort before files; within each group, names sort
-    /// case-insensitively and *naturally* -- digit runs compare by
-    /// numeric value, not character-by-character, so `2.txt` sorts
-    /// before `10.txt` the way Far Manager's own panel does. Reported
-    /// directly against a real 100-file directory: plain lexicographic
-    /// `to_lowercase().cmp()` put `100.txt` right after `10.txt` and
-    /// before `11.txt`, since `"1"` < `"1"` ties and then `"0"` < `"1"`
-    /// decides it -- every string-length-sensitive `N.txt` sequence
-    /// beyond 9 entries reads out of order.
+    /// Directories before files; within each group, case-insensitive and
+    /// natural (`2.txt` before `10.txt`), like Far's panel.
     fn compare_entries(a: &Entry, b: &Entry) -> Ordering {
         match (a.is_dir, b.is_dir) {
             (true, false) => Ordering::Less,
@@ -157,12 +112,8 @@ impl Panel {
     }
 
 
-    /// Number of rows the list would need if it all fit on screen at
-    /// once, split evenly into `columns` columns. Zero when there are
-    /// no entries or no columns have been assigned yet. This is *not*
-    /// what column-major layout actually uses once scrolling is
-    /// possible — see `column_height` below, which is what navigation
-    /// and rendering both read instead.
+    /// Rows per column if the whole list fit on screen. Layout and
+    /// navigation use `column_height` instead.
     fn rows(&self) -> usize {
         if self.columns == 0 {
             return 0;
@@ -171,32 +122,11 @@ impl Panel {
     }
 
 
-    /// The row height actually used for column-major layout, both for
-    /// navigation (`move_left`/`move_right`'s own jump size) and
-    /// rendering (`ui::draw_entry_grid`'s own per-column slice) --
-    /// `min(visible_rows, rows())`, deliberately not `visible_rows` on
-    /// its own.
-    ///
-    /// Reported directly against a real 101-entry directory: with a
-    /// naive `visible_rows`-as-column-height, column 1 started at
-    /// `1 * visible_rows` in the flat entry list -- correct once
-    /// there's genuinely more than fits (see the scrolling case below),
-    /// but wrong for a short list that already fits within the panel's
-    /// own height: `visible_rows` there is larger than `rows()` (the
-    /// list's own natural per-column count), so column 1 would start
-    /// far past where the *list itself* actually needs it to, leaving a
-    /// tall gap of nothing in column 0 and every later column empty.
-    /// Capping at `rows()` keeps a short list split evenly instead.
-    ///
-    /// Once the list is genuinely too long for one page (`rows() >
-    /// visible_rows`), `visible_rows` takes over as the real limiting
-    /// factor -- this is what turns "one flat list" into "one page of
-    /// `columns * column_height` entries at a time," which
-    /// `ensure_selected_visible` then scrolls through. Falls back to
-    /// `rows()` outright before the renderer has ever reported a real
-    /// `visible_rows` (`0`, the "not yet known" sentinel) -- e.g. the
-    /// very first frame, or any test that never calls
-    /// `set_visible_rows`.
+    /// The column height layout and navigation use: `min(visible_rows,
+    /// rows())`. A list that fits splits evenly across the columns; a
+    /// longer one becomes pages of `columns * visible_rows`. Plain
+    /// `rows()` until the renderer has reported `visible_rows`.
+    /// History: docs/history/panel.md.
     pub fn column_height(&self) -> usize {
         let rows = self.rows();
         if self.visible_rows == 0 || rows == 0 {
@@ -207,12 +137,9 @@ impl Panel {
     }
 
 
-    /// The row count last reported by the renderer (`set_visible_rows`)
-    /// -- `event_loop::run`'s own doc comment covers why a full-screen mode
-    /// (the built-in editor, Compare) needs to read this back rather
-    /// than just handing `set_visible_rows` a fresh value every frame:
-    /// there's nothing fresh to report while a panel isn't actually
-    /// being drawn at all.
+    /// The row count last reported by the renderer -- read back by
+    /// `ui::draw` while a full-screen mode hides the panels, so there's
+    /// nothing fresh to report.
     pub fn visible_rows(&self) -> usize {
         self.visible_rows
     }
@@ -228,27 +155,17 @@ impl Panel {
     }
 
 
-    /// Sets how many rows of each column actually fit on screen —
-    /// recomputed by the renderer each frame from the panel's own inner
-    /// height (`ui::draw_panel`), the same pattern `set_columns` above
-    /// already follows for width. Re-checks the scroll position in case
-    /// a resize changed how much is visible.
+    /// Sets the rows per column that fit on screen (renderer, each
+    /// frame), re-checking the scroll position.
     pub fn set_visible_rows(&mut self, visible_rows: usize) {
         self.visible_rows = visible_rows;
         self.ensure_selected_visible();
     }
 
 
-    /// Nudges `scroll_offset` by the minimum amount needed to bring the
-    /// selected entry back inside the currently visible *page* --
-    /// `[scroll_offset, scroll_offset + columns * column_height)` in the
-    /// flat `entries` array -- never re-centers or jumps further than
-    /// that, so a single `move_down`/`move_up` at the edge of the
-    /// visible window scrolls by exactly one row, matching Far
-    /// Manager's own multi-column scrolling (the whole grid slides
-    /// together one row at a time, not a full screen at once). A no-op
-    /// before the first real frame has reported `visible_rows` (`0` —
-    /// nothing to clamp against yet) or on an empty panel.
+    /// Scrolls by the minimum needed to bring the cursor back into the
+    /// visible page -- one row at a time at the edge, as in Far. A no-op
+    /// before `visible_rows` is known.
     fn ensure_selected_visible(&mut self) {
         if self.visible_rows == 0 {
             return;
@@ -270,17 +187,9 @@ impl Panel {
     }
 
 
-    /// Same purpose as `ensure_selected_visible` above, but for
-    /// `move_left`/`move_right` specifically: crossing the edge of the
-    /// currently visible page advances the whole page by one column's
-    /// width at a time (paginating) rather than the minimal single-row
-    /// nudge `move_up`/`move_down` use. Requested directly, after the
-    /// minimal-shift version was tried first and reported feeling
-    /// wrong here: unlike a single-row `Up`/`Down` step, a `Right`/
-    /// `Left` press already jumps by a whole `column_height` in the
-    /// flat list, so nudging the view by only one row left the cursor
-    /// sitting at an arbitrary row instead of at the top/bottom edge of
-    /// the newly-revealed column, where a page-turn puts it.
+    /// Like `ensure_selected_visible`, but pages a whole column at a
+    /// time -- for `move_left`/`move_right`, whose jump is a whole
+    /// column, so the cursor lands at the new column's edge.
     fn ensure_selected_visible_paginated(&mut self) {
         if self.visible_rows == 0 {
             return;
@@ -332,12 +241,9 @@ impl Panel {
     }
 
 
-    /// Moves the cursor one column left, keeping the same row, clamped
-    /// at the first column. Jumps by `column_height` (the *currently
-    /// visible* page's own row count), not the whole list's `rows()` --
-    /// the two only differ once scrolling is actually happening, and
-    /// jumping by `rows()` there would land in the wrong column
-    /// entirely (see `column_height`'s own doc comment).
+    /// Moves one column left, same row, clamped at the first column.
+    /// Jumps by `column_height`, not `rows()` -- they differ once
+    /// scrolling.
     pub fn move_left(&mut self) {
         let column_height = self.column_height();
         if column_height > 0 {
@@ -347,26 +253,10 @@ impl Panel {
     }
 
 
-    /// Moves the cursor one column right, keeping the same row. See
-    /// `move_left`'s own doc comment for why this jumps by
-    /// `column_height`, not `rows()`.
-    ///
-    /// When a full column-width jump would run past the end of the
-    /// list, this means one of two different things, told apart by
-    /// whether the cursor is already in the *last* column: if it
-    /// isn't, the same row just doesn't exist in the next column at
-    /// all (an unevenly divided short list, e.g. 5 entries in 2
-    /// columns) -- stays put, same as always. If it *is* already the
-    /// last column, there's nothing left to page a whole column at a
-    /// time, but the list doesn't necessarily end exactly at the last
-    /// full page either -- reported directly against a real 102-entry
-    /// directory: from the last visible column, `Right` did nothing at
-    /// all, even though there was a partial page's worth of entries
-    /// (and the trailing `generate_test_files.bat`) still unreached.
-    /// Jumps straight to the very last entry in that case, rather than
-    /// silently ignoring the press. `move_left` doesn't need the same
-    /// special case -- `saturating_sub` already floors at entry `0` on
-    /// its own for the mirror situation.
+    /// Moves one column right, same row. Past the end of the list: stays
+    /// put if the row just doesn't exist in the next column, but from
+    /// the last column jumps to the very last entry (a partial page
+    /// would otherwise be unreachable). History: docs/history/panel.md.
     pub fn move_right(&mut self) {
         let column_height = self.column_height();
         if column_height == 0 {
@@ -417,18 +307,11 @@ impl Panel {
     }
 
 
-    /// Changes to `target`, resolved relative to the current path (an
-    /// absolute `target` replaces it outright — `Path::join`'s own
-    /// behavior, no separate case needed) and lexically normalized
-    /// (`..` segments collapsed, so `cd ..` leaves a clean parent path
-    /// rather than `.../sub/..` — found by a test that (correctly)
-    /// expected the clean form). Used by the command line's `cd`
-    /// handling (`command_line::parse_cd_target`). A target that
-    /// doesn't resolve to a real directory leaves the panel untouched
-    /// and returns `false` rather than erroring -- a typo'd `cd` on the
-    /// command line shouldn't crash anything, but a multi-line user-menu
-    /// item needs to know it failed, so it can stop before running the
-    /// rest of its lines in the wrong directory.
+    /// Changes to `target`, relative to the current path (an absolute
+    /// one replaces it) and lexically normalized (`cd ..` leaves a clean
+    /// parent path). Returns `false`, panel untouched, if it isn't a
+    /// real directory -- a multi-line F2 item stops on that instead of
+    /// running the rest in the wrong place.
     pub fn change_dir(&mut self, target: &str) -> io::Result<bool> {
         let new_path = lexically_normalize(&self.path.join(target));
         if !new_path.is_dir() {

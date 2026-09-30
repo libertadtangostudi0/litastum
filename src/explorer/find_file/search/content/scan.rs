@@ -2,14 +2,9 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 
-/// Chunk size for `file_contains`'s own streaming read -- large enough
-/// that most real text files (source, logs) finish in one or two
-/// reads, small enough that a huge file's own match, once found, is
-/// found without reading much further past it. Also doubles as the
-/// binary-sniff window (`looks_binary`) -- see `file_contains_with_chunk_size`'s
-/// own doc comment for why one read serves both purposes now. Not
-/// tuned against real benchmarks, just a reasonable middle ground --
-/// revisit if a real case shows it matters.
+/// Streaming read size -- most text files finish in one or two reads,
+/// and a match in a huge file is found without reading far past it.
+/// Also the binary-sniff window. Not benchmarked.
 const CONTENT_CHUNK_SIZE: usize = 64 * 1024;
 
 /// Whether `path`'s own content contains `needle_lower` (already
@@ -18,64 +13,13 @@ pub(super) fn file_contains(path: &Path, needle_lower: &str) -> bool {
     file_contains_with_chunk_size(path, needle_lower, CONTENT_CHUNK_SIZE)
 }
 
-/// Streams `path` in fixed-size byte chunks (`std::io::Read`, not
-/// `fs::read_to_string`) and stops at the file's own first match,
-/// rather than always reading a candidate to the end -- same shape
-/// real Far Manager's own "Text to find" uses (see `search/mod.rs`'s
-/// own doc comment for the fuller comparison), and a real win for a
-/// large file whose match sits early: the old whole-file
-/// `fs::read_to_string` + `.to_lowercase()` read every byte and
-/// allocated two full copies of it (the read buffer and the lowercased
-/// string) no matter where -- or whether -- a match actually was.
-/// `chunk_size` is a parameter only so tests can force cross-chunk-
-/// boundary matches deterministically with a tiny value; `file_contains`
-/// itself always calls this with `CONTENT_CHUNK_SIZE`.
-///
-/// **Opens the file exactly once**, reading its own first chunk before
-/// deciding anything -- an earlier version opened `path` twice: once
-/// for a separate, smaller "does this look binary" sniff
-/// (`looks_binary`, then a standalone read of its own), then again for
-/// the real scan if that came back clean. Two file opens plus two reads
-/// is real, avoidable overhead multiplied by every name-matched
-/// candidate in a content-query search -- merged into one open + one
-/// first read here: `looks_binary` now just inspects whatever bytes
-/// this call already has in hand (the *whole* first `chunk_size`
-/// chunk, comfortably larger than the old dedicated 8000-byte sniff
-/// window, so accuracy only improved), and that same chunk becomes the
-/// real scan's own first iteration instead of being read a second time.
-///
-/// **Dispatches on whether `needle_lower` is itself ASCII** -- reported
-/// directly, compared file-by-file against real Far Manager on the same
-/// tree (litastum: 1778 results, Far: 1783 -- a handful of real files
-/// silently missing, not a cap: `find_file_max_results` wasn't hit).
-/// Root cause, confirmed by hand against one of the missing files: a
-/// `#pragma managed(push, off)` line sitting in plain ASCII, in a file
-/// that also has genuinely non-UTF-8 bytes elsewhere (a legacy source
-/// file with `Windows-1251`-encoded Cyrillic comments, common in an
-/// older, internationally-authored C++ codebase, saved before the
-/// project settled on UTF-8 throughout). The old, sole implementation
-/// here (now `scan_utf8_text`) decodes each chunk as UTF-8 and gives up
-/// the instant it hits a genuinely invalid byte sequence -- correct for
-/// a needle that itself needs real Unicode case-folding, but far too
-/// strict for the overwhelmingly common case of a plain ASCII needle
-/// (`"pragma"`, a function name, `TODO`, ...): an ASCII byte sequence
-/// reads identically whether the *rest* of the file is UTF-8,
-/// Windows-125x, ISO-8859-x, or any other encoding that's
-/// ASCII-compatible in the 0–127 range, which covers virtually every
-/// real-world 8-bit encoding actually used for source code (UTF-16 is
-/// the real exception -- its interleaved null bytes break a contiguous
-/// ASCII match regardless of how it's searched, and isn't what this fix
-/// targets). `scan_ascii_bytes` below searches raw bytes directly for
-/// exactly this case, with no UTF-8 validity requirement on the file at
-/// all -- real Far Manager's own search is evidently doing something
-/// equivalent, which is why it kept finding matches litastum's old
-/// UTF-8-only scan gave up on partway through the file. A non-ASCII
-/// needle (searching for literal non-ASCII text) still goes through
-/// `scan_utf8_text`, unchanged -- proper case-folding of non-ASCII text
-/// genuinely does need real decoding, so that path's own "only works
-/// within a file's own valid-UTF-8 prefix" limitation is accepted as
-/// before, just no longer forced onto the ASCII case that didn't need
-/// it.
+/// Streams `path` in chunks and stops at the first match. Opens the file
+/// once: the first chunk is both the binary sniff and the scan's first
+/// iteration. An ASCII needle is matched on raw bytes, so it's found in
+/// any ASCII-compatible encoding (a Windows-1251 file used to be missed);
+/// a non-ASCII needle needs real case folding and goes through the UTF-8
+/// scan. `chunk_size` is a parameter only so tests can force matches
+/// across chunk boundaries. History: docs/history/find-file-search.md.
 pub(super) fn file_contains_with_chunk_size(path: &Path, needle_lower: &str, chunk_size: usize) -> bool {
     if needle_lower.is_empty() {
         return true;
@@ -101,43 +45,18 @@ pub(super) fn file_contains_with_chunk_size(path: &Path, needle_lower: &str, chu
     }
 }
 
-/// A cheap, approximate "don't bother fully scanning this" check --
-/// looks for a null byte anywhere in `chunk` (a candidate's own first
-/// read, up to `CONTENT_CHUNK_SIZE`/64 KiB), the same heuristic git and
-/// ripgrep both use to skip binary files without a real parse. Added
-/// directly after a side-by-side comparison against Far Manager's own
-/// content search: a tree with a real mix of source files and binaries
-/// (`.exe`, `.dll`, images, ...) used to stream every single one of
-/// those binaries through the real scan in full, just to hit an
-/// invalid-UTF-8 byte and bail -- often not until well past the first
-/// chunk, since compiled binaries frequently have long valid-looking
-/// ASCII runs (string tables, padding) before the byte that actually
-/// breaks decoding. Reading a real file's whole content just to
-/// discover partway through that it was never text to begin with is
-/// exactly the wasted work this sniff avoids.
-///
-/// Not perfect -- a null byte can legitimately appear in some encodings
-/// this app doesn't otherwise search anyway (UTF-16, for instance,
-/// which `scan_utf8_text` would also reject as invalid UTF-8
-/// immediately regardless) -- but cheap, and right in the overwhelmingly
-/// common case this app's own file panel already sees: real binaries
-/// next to real UTF-8 text, not exotic encodings.
+/// A null byte in the first chunk means binary -- git's and ripgrep's
+/// heuristic. Skips compiled binaries without streaming them (they often
+/// have long ASCII runs before the first invalid byte). Also skips
+/// UTF-16, which the UTF-8 scan would reject anyway.
 fn looks_binary(chunk: &[u8]) -> bool {
     chunk.contains(&0)
 }
 
-/// Raw-byte, encoding-agnostic scan for an ASCII `needle_lower_bytes` --
-/// see `file_contains_with_chunk_size`'s own doc comment for why this
-/// exists at all. No UTF-8 validation anywhere: every byte is lowercased
-/// with `to_ascii_lowercase` (a pure byte-level operation, meaningless
-/// notion of "invalid" the way UTF-8 decoding has one) and matched with
-/// a plain sliding-window `windows(needle.len()).any(...)` scan.
-/// `carry` keeps the trailing `needle.len() - 1` bytes of the previous
-/// chunk so a match straddling a chunk boundary is still found, same
-/// role `scan_utf8_text`'s own `carry` plays, just over bytes instead of
-/// `char`s. `first_chunk` is the read `file_contains_with_chunk_size`
-/// already did (and sniffed for binary-ness) before dispatching here --
-/// fed into the loop as its own first iteration rather than read again.
+/// Encoding-agnostic scan for an ASCII needle: bytes lowercased with
+/// `to_ascii_lowercase`, sliding-window match. `carry` keeps the last
+/// `needle.len() - 1` bytes so a match across a chunk boundary is found.
+/// `first_chunk` is the read the caller already made.
 fn scan_ascii_bytes(mut reader: impl Read, first_chunk: &[u8], chunk_size: usize, needle_lower_bytes: &[u8]) -> bool {
     let mut raw = vec![0u8; chunk_size];
     let mut carry: Vec<u8> = Vec::new();
@@ -162,27 +81,11 @@ fn scan_ascii_bytes(mut reader: impl Read, first_chunk: &[u8], chunk_size: usize
     }
 }
 
-/// Correctness across chunk boundaries -- both a multi-byte UTF-8
-/// character and the needle itself can straddle two reads:
-/// `pending_bytes` carries over any trailing byte sequence that didn't
-/// yet decode as a complete character, so it's prepended to (not lost
-/// before) the next read; `carry` keeps the lowercased tail of
-/// already-decoded text, trimmed back down to roughly the needle's own
-/// length after each check, so a match starting a few bytes before a
-/// chunk boundary is still seen once the next chunk arrives instead of
-/// being split across two independent, non-overlapping searches.
-/// `first_chunk` -- see `scan_ascii_bytes`'s own doc comment, same
-/// reasoning.
-///
-/// Only reached for a non-ASCII `needle_lower` now -- see
-/// `file_contains_with_chunk_size`'s own doc comment. Still gives up
-/// entirely (returns `false`) the moment it hits a genuinely invalid
-/// UTF-8 byte sequence anywhere in the file, even if a match was
-/// already found in the valid prefix before that point -- that
-/// limitation is unchanged from before this file's own encoding-aware
-/// split, and is now scoped to the narrower, less common case where a
-/// real fix would require actual encoding detection, not just an
-/// ASCII-bytes fast path.
+/// Scan for a non-ASCII needle. `pending_bytes` carries a character
+/// split by the chunk boundary into the next read; `carry` keeps the
+/// lowercased tail so a match across the boundary is found. Gives up at
+/// the first invalid UTF-8 sequence -- non-ASCII case folding needs real
+/// decoding, and encoding detection isn't attempted.
 fn scan_utf8_text(mut reader: impl Read, first_chunk: &[u8], chunk_size: usize, needle_lower: &str) -> bool {
     let mut raw = vec![0u8; chunk_size];
     let mut pending_bytes: Vec<u8> = Vec::new();

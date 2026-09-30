@@ -5,35 +5,11 @@ mod content;
 mod matching;
 mod walk;
 
-/// Live counters a running search updates as it goes -- `visited` is
-/// entries walked (directory phase) or candidates content-checked
-/// (content-filter phase, sharing the same counter rather than a
-/// second one; "how far along the current phase is" reads fine either
-/// way for a plain progress line, and a real two-phase breakdown
-/// wasn't asked for), `found` is how many have actually become results
-/// so far. Both are updated from whichever thread happens to process a
-/// given entry or candidate -- the directory walk (`walk.rs`) and the
-/// content check (`content.rs`) are both parallel now, not just the
-/// content check. Read from the UI thread
-/// (`ui/find_file.rs::draw_searching`) while a background search
-/// (`background.rs::spawn_search`) is still running, so a
-/// "Searching... N visited, M found" line can update live instead of
-/// the popup just sitting blank until the whole search finishes.
-///
-/// `capped` -- set once, by whichever phase actually hits
-/// `find_file_max_results`/`find_file_max_visited` first
-/// (`walk.rs`/`content.rs`, wherever the real early-exit happens) --
-/// records that the search stopped *because of a cap*, not because it
-/// genuinely ran out of real matches. Added after a direct report: a
-/// search that hit exactly `find_file_max_results` (200, the default)
-/// silently looked like a complete, successful search with no way to
-/// tell it wasn't -- compared side by side against real Far Manager on
-/// the same tree, which found more than double that. `ui/find_file.rs`
-/// reads this once the search finishes (`FindFileState::results_capped`)
-/// to show a "+" on the result count instead of claiming a precise,
-/// possibly-wrong total. Never set on a plain `cancel` (`Esc`) --
-/// that's a deliberate, user-initiated stop, not a surprising
-/// incompleteness the popup needs to call out separately.
+/// Live counters a running search updates from any worker thread, read
+/// by the UI for its "Searching... N visited, M found" line. `visited`
+/// counts walked entries, then content-checked candidates (one counter
+/// for both phases). `capped` records that a result/visit cap stopped
+/// the search -- the count then shows "+" -- never set by `Esc`.
 #[derive(Default)]
 pub struct SearchProgress {
     pub visited: AtomicUsize,
@@ -41,86 +17,12 @@ pub struct SearchProgress {
     pub capped: AtomicBool,
 }
 
-/// **This module (`find_file/search/`) is Find file's actual search
-/// engine — see `find_file.rs`'s own doc comment for how it fits into
-/// the popup as a whole.** Split by concern once it passed this
-/// project's own ~500-line decomposition threshold (`code-conventions.md`):
-/// `walk.rs` (recursively finding candidate paths), `matching.rs` (does
-/// one name match a typed query/glob), `content.rs` (does a candidate
-/// file's own content match a "Text to find" substring), tied together
-/// here.
-///
-/// **History, roughly in the order real reports/requests landed, kept
-/// here since each one explains a real design choice still visible in
-/// this module today:**
-/// 1. A synchronous, single-threaded, plain recursive `fs::read_dir`
-///    walk, run directly on the key-handling thread, with only known
-///    VCS metadata directories (`.git`/`.svn`/`.hg`/`.bzr`,
-///    `is_vcs_dir_name`) pruned — added specifically after a report
-///    that searching a real Subversion working copy for a file several
-///    directories deep returned "No matches found": SVN's `.svn`
-///    metadata directory keeps a full pristine copy of every versioned
-///    file, easily large enough to exhaust the old visited-entry cap
-///    before the walk ever reached the real target directory.
-/// 2. Far Manager's own second "Text to find" field (a content
-///    substring, AND-combined with the name/mask match) — a *directory*
-///    is dropped entirely once this is set, since there's nothing
-///    inside one to search.
-/// 3. Reported almost immediately against a real tree with hundreds of
-///    thousands of files and a broad `*.*` mask: reading every
-///    name-matched file's own content one at a time, on the same
-///    thread already blocking the UI, made a genuinely large search
-///    indistinguishable from a hung one. Fixed by running the content
-///    check across a thread pool (`content.rs::content_filter_in_parallel`)
-///    — explicitly *not* by capping file size or count, since a large
-///    real tree was the normal case being reported, not something to
-///    search less of.
-/// 4. Asked directly for a comparison against real Far Manager's own
-///    dialog, which streams a candidate file in chunks and stops at its
-///    own first match rather than reading it whole — `content.rs::file_contains_with_chunk_size`
-///    replaced the old `fs::read_to_string` + `.to_lowercase()` whole-file
-///    read for the same reason `content_filter_in_parallel` above
-///    exists: real, reported cost, not a theoretical one.
-/// 5. Asked directly for the search to show live progress and support
-///    `Esc`-to-cancel, matching real Far's own dialog — `SearchProgress`
-///    (this file) plus an `AtomicBool` threaded through every walk/
-///    check function, and `find_file/background.rs`'s own background-
-///    thread machinery (mirroring `explorer::image_preview`'s already-
-///    established pattern) to actually run a search without blocking
-///    the UI at all.
-/// 6. **This rewrite**: asked directly, as an explicit next step once
-///    the above closed the "no feedback, no cancel" gap but left the
-///    walk itself exactly as single-threaded as before — `walk.rs` now
-///    walks in parallel too, via `ignore::WalkBuilder::build_parallel`
-///    (the same crate, and the same walking primitive, ripgrep itself
-///    uses for this exact job). A hand-rolled work-stealing walker
-///    (a shared directory queue drained by a fixed thread pool) was
-///    considered and rejected: `content_filter_in_parallel`'s own flat,
-///    evenly-sized chunking works precisely because its input is a flat
-///    list known up front — a directory tree isn't; subtree sizes vary
-///    wildly (a `.git` object store next to a single-file directory),
-///    so a hand-rolled equivalent would need its own real work-stealing
-///    logic to avoid one thread finishing in a millisecond while
-///    another chews through a huge subtree alone, which `ignore`
-///    already provides, tested, as the literal reason ripgrep is fast
-///    on huge trees. Every one of `ignore`'s own default filters
-///    (`.gitignore`, hidden files, `.ignore`, git excludes) is turned
-///    off (`walk.rs::build_walker`) — this app's own scope has always
-///    been "every real entry, minus VCS metadata directories," not
-///    gitignore-aware filtering, and turning `ignore`'s own filtering on
-///    would silently change what a search finds versus what it found
-///    before this rewrite.
-///
-/// **Still open**: no default exclusion of other common noise
-/// (`target/`, `node_modules/`, ...) beyond VCS metadata directories —
-/// only `MAX_RESULTS`/`MAX_VISITED` (`theming::config::limits()`) bound
-/// the damage on a tree full of it. `ignore`'s own gitignore-style
-/// pruning could cover this for free if ever wanted, but turning it on
-/// changes *what a search finds*, not just how fast it runs, so it's a
-/// real design question (silently skip gitignored real files, or ask
-/// for permission first), not free performance — left alone rather than
-/// bundled into this rewrite, which was scoped to speed, not to
-/// changing which files a search can find.
+/// Find file's search: a parallel walk (`walk.rs`, `ignore`'s walker
+/// with its own filters off -- every real entry minus VCS metadata
+/// directories), name matching (`matching.rs`), and, with "Text to
+/// find", a parallel content check (`content/`). Bounded by
+/// `limits().find_file_max_results`/`find_file_max_visited`; cancelled
+/// through `cancel`. History: docs/history/find-file-search.md.
 pub fn search_cancelable(root: &Path, query: &str, content_query: &str, progress: &SearchProgress, cancel: &AtomicBool) -> Vec<PathBuf> {
     let limits = crate::theming::config::limits();
     let query_lower = query.to_lowercase();
@@ -133,22 +35,8 @@ pub fn search_cancelable(root: &Path, query: &str, content_query: &str, progress
         content::content_filter_in_parallel(candidates, &content_query_lower, limits.find_file_max_results, progress, cancel)
     };
 
-    // Both walk paths above are parallel now, so results arrive in
-    // whatever order worker threads happened to finish in, not a
-    // stable, predictable one -- requested directly, compared side by
-    // side against real Far Manager's own results view, which groups
-    // matches by directory with both directories and files sorted
-    // within it. A plain case-insensitive sort of the full path string
-    // gets the same effect for free: paths sharing a directory share
-    // that directory's own prefix, so they land next to each other,
-    // and files within a directory sort alphabetically the same way
-    // Far's own listing does -- no separate "group by directory" pass
-    // needed. `sort_by_cached_key` (not a plain `sort_by` with the
-    // lowering done inline in the comparator) computes each path's
-    // lowercased key once, not once per comparison -- this runs after
-    // the walk/content-check entirely, on however many results survived
-    // `find_file_max_results`, so it's bounded by that cap, not by how
-    // large the tree searched actually was.
+    // Threads finish in any order. Sorting the full path groups results
+    // by directory, sorted within, like Far's view; bounded by the cap.
     results.sort_by_cached_key(|path| path.to_string_lossy().to_lowercase());
     results
 }

@@ -10,64 +10,23 @@ use crate::{command_line, compare, editor, explorer, keyboard_layout, theming};
 
 use super::drain_pending_mouse_events;
 
-/// `Up`/`Down`/`PageUp`/`PageDown`, held down, generate a rapid burst of
-/// distinct `KeyEventKind::Press` events via the OS's own key-repeat --
-/// `crossterm`'s Windows backend never reports a separate "repeat" kind
-/// distinguishing these from a fresh press (unlike some Unix terminals),
-/// so each one looks like an ordinary keystroke and gets its own full
-/// dispatch. These four are the ones actually meant to be held for a
-/// stretch to move through a long list/document/buffer, the exact same
-/// shape of problem `drain_pending_mouse_events` already fixed for a
-/// touchpad's own scroll-wheel burst -- reported directly against the
-/// built-in editor's own text caret specifically (it kept traveling
-/// past where the user stopped scrolling, and reversing direction took
-/// too long to catch up), but the same backlog can
-/// build up navigating a long file panel listing or popup list too,
-/// since `dispatch_key_event`'s own big match is one shared chokepoint
-/// for all of them.
+/// Keys meant to be held to scroll. Windows reports their auto-repeats
+/// as ordinary presses, so a held key queues a backlog that kept moving
+/// after release; these are drained and redrawn once.
 fn is_repeatable_navigation_key(code: KeyCode) -> bool {
     matches!(code, KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown)
 }
 
-/// Whether `next` reverses the axis `prev` was moving on -- `Up`/`Down`
-/// undo each other, `PageUp`/`PageDown` undo each other, but a
-/// same-key repeat or a switch between the two axes isn't a reversal at
-/// all (there's no "held down, then immediately Page Up" gesture this
-/// needs to special-case the way a scroll wheel's own two-directions-only
-/// axis does).
+/// Whether `next` reverses `prev` (`Up`/`Down`, `PageUp`/`PageDown`).
 fn is_navigation_reversal(prev: KeyCode, next: KeyCode) -> bool {
     matches!((prev, next), (KeyCode::Up, KeyCode::Down) | (KeyCode::Down, KeyCode::Up) | (KeyCode::PageUp, KeyCode::PageDown) | (KeyCode::PageDown, KeyCode::PageUp))
 }
 
-/// Dispatches `key`, then -- only when it was one of the four
-/// held-to-scroll keys above -- drains any further same-axis repeats
-/// already queued up, redrawing once for the whole burst instead of
-/// once per repeat, exactly mirroring `drain_pending_mouse_events`'s
-/// own reasoning and its immediate-stop-on-reversal behavior. Every
-/// other key (typing, `Left`/`Right`, `Enter`, `Esc`, ...) is completely
-/// unaffected -- dispatched once, same as always, since those don't
-/// have this repeat-burst shape (`Left`/`Right` move by a single
-/// character/column, not a whole page, so a repeat backlog there is
-/// nowhere near long enough to notice, and coalescing typed characters
-/// would be actively wrong).
-///
-/// Returns whether anything was actually dispatched -- `false` only for
-/// a bare `key.kind != KeyEventKind::Press` (`dispatch_key_event`'s own
-/// very first check no-ops on those unconditionally, for every mode).
-/// Windows' Console API reports a real key-up `KeyEventKind::Release`
-/// for every physical keypress, not just the down-stroke
-/// (`is_repeatable_navigation_key`'s own doc comment already covers the
-/// down-stroke's own repeat behavior) -- before this, `run()`'s own loop
-/// redrew once for *that* too, a real, reported symptom: the terminal's
-/// own real cursor briefly visits wherever `Release` leaves it during
-/// that spurious redraw (a screen redraw always ends by repositioning
-/// the terminal cursor for whatever `Mode` is now active) before the
-/// state genuinely settles, reading as a visible flicker/jump on
-/// certain terminals for keys whose own redraw is otherwise cheap
-/// enough to land inside one visible refresh window (`Delete`/`Backspace`
-/// on the command line, reported directly). Skipping the redraw
-/// entirely for a key `dispatch_key_event` never touched removes that
-/// spurious frame outright, for every key, not just the one reported.
+/// Dispatches `key`; for a held-to-scroll key, also drains queued
+/// same-axis repeats (stopping at a reversal) so the burst redraws once.
+/// Returns whether anything was dispatched: Windows also reports every
+/// key's `Release`, and redrawing for it made the cursor flicker.
+/// History: docs/history/event-loop.md.
 pub(super) fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
     // Normalized first so a `Ctrl+V` typed under a non-Latin layout is
     // still recognized by the swallow's own double-paste guard.

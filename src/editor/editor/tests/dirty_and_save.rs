@@ -55,8 +55,7 @@ fn navigation_keys_never_change_the_cached_dirty_state() {
 /// `h`/`j`/`k`/`l` navigation (not arrows) must get the identical
 /// dirty-caching exemption, or a Vim user navigating a pathologically
 /// long line with `hjkl` gets none of the perf fix's benefit at all
-/// (`can_mutate_buffer`'s own doc comment has the full story, including
-/// why `w`/`b`/`e`/etc. are deliberately *not* also exempted).
+/// (why `w`/`b`/`e`/... aren't exempt: docs/history/editor-keymap.md).
 #[test]
 fn vim_hjkl_navigation_never_changes_the_cached_dirty_state() {
     let path = unique_scratch_dir("editor").join("file.txt");

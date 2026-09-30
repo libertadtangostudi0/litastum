@@ -7,78 +7,33 @@ use super::links::MarkdownLink;
 use super::render::render_markdown;
 use super::{is_markdown_file, MarkdownLine, MarkdownSpanKind};
 
-/// `F3` on a `.md`/`.markdown` file: the file's content, already parsed
-/// into styled lines (`render_markdown`), and which line is scrolled to
-/// the top of the preview area. Shown live alongside the built-in
-/// editor for the same file (`App::markdown_edit_preview`) -- a real
-/// rendered preview (headings/bold/lists/quotes/code shown
-/// structurally, not as highlighted raw text) rather than a second copy
-/// of the editor's own syntax-highlighted raw-text view, and reuses
-/// none of the editor's own machinery, so it stays a genuinely separate,
-/// simpler code path; `reload()` is the one place they touch, called
-/// after every `Ctrl+S` so editing and rendering stay in sync.
+/// `F3` on a `.md` file: the rendered preview shown beside the editor
+/// (`App::markdown_edit_preview`) -- parsed lines plus scroll position.
+/// Shares nothing with the editor except `reload()` after each `Ctrl+S`.
+/// History: docs/history/markdown-preview.md.
 pub struct MarkdownPreviewState {
     path: PathBuf,
     lines: Vec<MarkdownLine>,
     scroll: usize,
-    /// Where the rendered content was last actually drawn on screen
-    /// (`x, y, width, height`) -- set by `ui::markdown_preview::draw_markdown_preview`
-    /// every frame, read by `handle_markdown_preview_mouse` to turn a
-    /// raw terminal `(column, row)` click into "which rendered line was
-    /// that." A plain tuple, not `ratatui::layout::Rect`, so this
-    /// otherwise-`ratatui`-free domain module doesn't need the
-    /// dependency just for this one field (same reasoning
-    /// `explorer::HighlightRole` already keeps colors out of `explorer`
-    /// entirely). `None` before the first draw.
+    /// Where the content was drawn last frame (`x, y, width, height`),
+    /// for turning a click into a position. A tuple rather than a
+    /// `ratatui::Rect`, to keep this module free of `ratatui`. `None`
+    /// before the first draw.
     content_area: Option<(u16, u16, u16, u16)>,
-    /// A one-line status describing what the *last* `Ctrl`+click
-    /// actually did -- "opening https://...", "no link here", "file not
-    /// found: ...", etc. (`handle_markdown_preview_mouse` sets this on
-    /// every attempt, success or not). Reported directly: a click that
-    /// silently does nothing (no link under the cursor, an unsupported
-    /// anchor, a failed open, or even just an uncertain "did that even
-    /// register?") left no way to tell what happened without checking
-    /// the log file. Rendered by `ui::markdown_preview::draw_markdown_preview`
-    /// as the panel's own bottom border title, so it's visible without
-    /// leaving the preview.
-    ///
-    /// Deliberately built from a link's *label* (`links::open_link`),
-    /// never its raw URL -- an earlier version embedded the full URL
-    /// here, and once one was long enough to get truncated by the
-    /// border's own width, the cut-off text still looked exactly like a
-    /// valid, complete URL/path (e.g. ".../blob/main/CONT") -- some
-    /// terminals (Windows Terminal included) auto-detect and linkify
-    /// URL-shaped plain text on their own, so a user could `Ctrl`+click
-    /// *that* (a click our own app never sees, handled entirely by the
-    /// host terminal) and land on a real, but broken, address --
-    /// reported directly as a link "looking shortened" and then 404ing.
-    /// A label is normally short human text, not URL-shaped, so it
-    /// can't be mistaken for a real link even when truncated.
+    /// What the last `Ctrl`+click did ("opening ...", "no link here",
+    /// ...), shown as the panel's bottom border title. Built from the
+    /// link's label, never its URL: a truncated URL still looks like a
+    /// real one, and the terminal may linkify it on its own.
     link_message: Option<String>,
-    /// The exact `(column_start, column_end, url)` link hitboxes for
-    /// each *rendered visual row*, relative to the content area's own
-    /// left edge -- set by `ui::markdown_preview::draw_markdown_preview`
-    /// every frame, from the very same word-wrapped rows it renders
-    /// (`wrap_markdown_line`). Replaces an earlier version that
-    /// approximated a click's target by mapping the raw screen row back
-    /// to a *logical* line index (`scroll() + row offset`), which
-    /// silently drifted once any earlier line actually wrapped --
-    /// reported directly against a real link that sat right after a
-    /// long, wrapping paragraph. Built from the same wrapping this
-    /// module already does for rendering, so hit-testing and what's
-    /// actually on screen can never disagree.
+    /// `(column_start, column_end, url)` link hitboxes per rendered row,
+    /// set by the renderer every frame from the same wrapped rows it
+    /// draws, so hit-testing matches the screen exactly.
     visible_row_links: Vec<Vec<(u16, u16, String)>>,
-    /// The source line (0-indexed) each entry of `lines` started at --
-    /// same length as `lines`, parallel by index, produced by
-    /// `render_markdown` alongside it. Only ever read through
-    /// `sync_to_editor_cursor`; see its own doc comment.
+    /// The source line each entry of `lines` started at (parallel to
+    /// `lines`), for `sync_to_editor_cursor`.
     line_source_rows: Vec<usize>,
-    /// Which entry of `lines` corresponds to the built-in editor's own
-    /// cursor line right now, if any -- set by `sync_to_editor_cursor`,
-    /// read by `ui::markdown_preview::draw_markdown_preview` to paint
-    /// that line with a highlighted background. `None` before the first
-    /// sync (nothing edited yet this session) or if the document is
-    /// empty.
+    /// The line matching the editor's cursor, painted highlighted; `None`
+    /// before the first sync or on an empty document.
     highlighted_line: Option<usize>,
 }
 
@@ -112,17 +67,8 @@ impl MarkdownPreviewState {
         })
     }
 
-    /// Re-reads and re-renders this preview's own file from disk --
-    /// called right after a successful `Editor::save()` so the embedded
-    /// preview (`App::markdown_edit_preview`) reflects what was just
-    /// written, without recreating a whole new `MarkdownPreviewState`
-    /// (which would also lose `scroll`). `scroll` is clamped to the
-    /// freshly re-rendered line count rather than reset to `0` --
-    /// editing near the end of a long document and saving shouldn't
-    /// jump the preview back to the top. Leaves everything untouched on
-    /// a read failure (logged, not surfaced -- same "never blocks on
-    /// this" convention as the rest of this module) rather than
-    /// blanking a previously-good preview over a transient disk error.
+    /// Re-reads and re-renders the file after a save. Keeps the scroll
+    /// position (clamped); a read failure leaves the preview as it was.
     pub fn reload(&mut self) {
         let content = match fs::read_to_string(&self.path) {
             Ok(content) => content,
@@ -154,10 +100,7 @@ impl MarkdownPreviewState {
         &self.path
     }
 
-    /// Set by `links::open_link` after every `Ctrl`+click/link-search
-    /// `Enter` attempt, whatever the outcome -- see `link_message`'s own
-    /// field doc comment for why this exists at all, and why it's built
-    /// from a link's label rather than its raw URL.
+    /// Set after every link-open attempt -- see the `link_message` field.
     pub(super) fn set_link_message(&mut self, message: impl Into<String>) {
         self.link_message = Some(message.into());
     }
@@ -174,13 +117,8 @@ impl MarkdownPreviewState {
         &self.lines
     }
 
-    /// Every link in the document, in first-appearance order --
-    /// `MarkdownLinkSearchState`'s own source list (`l` opens it,
-    /// `open_selected_link`'s own doc comment explains why this exists
-    /// alongside `Ctrl`+click at all: mouse hit-testing here is only
-    /// ever an approximation, this is exact). Collected fresh from
-    /// `self.lines` each time rather than cached at `open()` -- cheap,
-    /// and there's no later mutation of `lines` to go stale against.
+    /// Every link in first-appearance order -- the link search's list
+    /// (`l`), the exact alternative to mouse hit-testing.
     pub fn links(&self) -> Vec<MarkdownLink> {
         self.lines
             .iter()
@@ -204,13 +142,8 @@ impl MarkdownPreviewState {
         self.scroll = self.scroll.saturating_sub(1);
     }
 
-    /// A fixed scroll step (`theming::config::limits().markdown_preview_page_size`)
-    /// -- there's no per-frame feedback loop threading the preview
-    /// area's real visible height back into this state (unlike
-    /// `Panel`'s own `set_visible_rows`, fed back through `ui::draw`'s
-    /// return value), so this is a reasonable approximation rather than
-    /// an exact page, same tradeoff accepted elsewhere in this codebase
-    /// for things not worth that plumbing.
+    /// A fixed page step (`limits().markdown_preview_page_size`) -- the
+    /// preview's real height isn't fed back into this state.
     pub fn page_down(&mut self) {
         let page_size = crate::theming::config::limits().markdown_preview_page_size;
         self.scroll = (self.scroll + page_size).min(self.lines.len().saturating_sub(1));
@@ -221,27 +154,11 @@ impl MarkdownPreviewState {
         self.scroll = self.scroll.saturating_sub(page_size);
     }
 
-    /// Scrolls to and highlights the rendered line corresponding to the
-    /// built-in editor's own cursor row (`Editor::cursor_row`) -- called
-    /// every frame while a linked editor has keyboard focus (`ui::draw`,
-    /// only while `App::active == 0`, so a manual scroll through the
-    /// preview itself -- `App::active == 1` -- isn't immediately
-    /// overwritten).
-    ///
-    /// `relative_position` (`0.0` = the matched line lands at the very
-    /// top of the preview's own visible area, `1.0` = the very bottom)
-    /// is where the cursor currently sits within the *editor's* own
-    /// visible page -- `ui::draw` computes it from `Editor::cursor_row`/
-    /// `viewport_top_row`, this method just places the matched preview
-    /// line at the same fraction of `visible_height` (the preview's own
-    /// content row count). Requested directly, twice: first to scroll
-    /// the two panes together and highlight the matching line, then --
-    /// once a simpler always-top-aligned version was actually seen in
-    /// use -- to keep them roughly at the same level on the page, so
-    /// editing in the middle of the page shows the preview at that same
-    /// middle. Top-aligning technically kept them in sync but put the
-    /// highlighted line at a different *screen row* than the cursor's
-    /// own, which is what "held at the same level" actually meant.
+    /// Scrolls to and highlights the line matching the editor's cursor
+    /// row, placing it at `relative_position` (0.0 top .. 1.0 bottom) of
+    /// the preview's visible height -- the cursor's own position on the
+    /// editor's page -- so the two stay level. Called by `ui::draw` only
+    /// while the editor has focus. History: docs/history/markdown-preview.md.
     pub fn sync_to_editor_cursor(&mut self, source_row: usize, relative_position: f64, visible_height: usize) {
         let Some(line_index) = self.line_for_source_row(source_row) else {
             return;
@@ -281,22 +198,10 @@ impl MarkdownPreviewState {
         best.or_else(|| self.lines.iter().position(|line| !line.is_empty()))
     }
 
-    /// The URL of the link actually rendered at screen position
-    /// `(column, row)`, if any -- `None` if the click landed outside
-    /// the content area entirely, on a row with no link there, or
-    /// before the first frame has actually drawn anything
-    /// (`content_area`/`visible_row_links` still empty).
-    ///
-    /// Exact, not approximated: reads straight from `visible_row_links`
-    /// (`set_visible_row_links`'s own doc comment), which
-    /// `ui::markdown_preview::draw_markdown_preview` rebuilds every
-    /// frame from the *same* word-wrapped rows it actually renders
-    /// (`wrap_markdown_line`) -- so this can never disagree with what's
-    /// really on screen, unlike an earlier version that mapped a screen
-    /// row straight back to a *logical* line index (`scroll() + row
-    /// offset`) without accounting for word-wrap at all, and drifted
-    /// once any earlier line had wrapped (reported directly against a
-    /// real link that sat right after a long, wrapping paragraph).
+    /// The URL rendered at screen `(column, row)`, if any -- read from
+    /// `visible_row_links`, so it matches what's drawn even across
+    /// wrapped lines. `None` outside the content area or before the
+    /// first draw.
     pub(crate) fn link_at(&self, column: u16, row: u16) -> Option<&str> {
         let (x, y, width, height) = self.content_area?;
         if column < x || column >= x + width || row < y || row >= y + height {

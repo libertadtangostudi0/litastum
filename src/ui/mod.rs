@@ -54,76 +54,27 @@ use panel::build_list_item;
 /// `ui::draw` computes, but `Panel` (not `ui`) owns the cursor/scroll
 /// state that navigation needs them for.
 ///
-/// Also returns where the real terminal cursor should end up, if
-/// anywhere -- `None` means it should stay hidden. **Deliberately not
-/// applied via `frame.set_cursor_position` from within this function
-/// (or anything it calls) any more** -- every cursor-placing draw
-/// function in this app (`editor_pane::draw_editor`, `compare::draw_compare`,
-/// `find_file::draw_find_file`, `confirm::draw_confirm_transfer_popup`,
-/// ...) now *returns* the position instead, up to `event_loop::run`, which
-/// applies it once, itself, after `terminal.draw` has actually finished
-/// and the whole frame has reached the terminal.
-///
-/// This split exists to fix a real, reported flicker: `ratatui`'s own
-/// `Terminal::draw` (confirmed directly from its source,
-/// `ratatui-core::terminal::render`/`terminal::buffers`) applies
-/// `Frame::set_cursor_position` in two *separate* steps after the
-/// buffer diff is written -- `show_cursor()`, then `set_cursor_position()`
-/// -- and `ratatui-crossterm`'s own backend (also confirmed directly)
-/// implements each of those three cursor operations (`hide_cursor`/
-/// `show_cursor`/`set_cursor_position`) with `execute!`, which flushes
-/// immediately, on its own, rather than queuing alongside the diff the
-/// way cell writes themselves do (`queue!`). The result: `show_cursor()`
-/// flushes *before* the real target position is applied, briefly making
-/// the *real* OS cursor visible at wherever the diff-write's own last
-/// `MoveTo` happened to leave it (for an edit that shortens a line --
-/// `Delete` at the command line, reported directly -- that's the blank
-/// cells written to clear the now-empty tail, i.e. visually the *end*
-/// of the line) before the very next flush moves it to the actually
-/// intended spot. Applying `set_cursor_position` before `show_cursor`
-/// ourselves, once, after the whole frame is already on screen, means
-/// the cursor only ever becomes visible already sitting in the right
-/// place -- see `event_loop::run`'s own application of this return value.
+/// Also returns where the terminal cursor should go (`None` = hidden).
+/// Draw functions return it rather than calling
+/// `Frame::set_cursor_position`: `event_loop` places it after the frame
+/// is on screen, which avoids a flicker. History:
+/// docs/history/event-loop.md.
 pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Position>) {
     let theme = app.theme; // Theme is Copy -- see theme.rs for why
     let area = frame.area();
-    // Plain `F4` editing (no linked preview) takes over the *entire*
-    // frame. Once `App::markdown_edit_preview` is `Some` (`F3` on a
-    // `.md`/`.markdown` file, `explorer::markdown_preview::open_edit_preview`),
-    // it falls through instead to the ordinary panel-layout code below, which
-    // draws the editor into the *left* panel's own slot and the live
-    // preview into the *right* one -- see `left_columns`/`right_columns`.
+    // Plain F4 editing takes the whole frame. With a linked Markdown
+    // preview it goes through the panel layout below instead: editor in
+    // the left slot, preview in the right.
     let has_linked_preview = app.markdown_edit_preview.is_some();
-    // What every early-return branch below hands back in place of a
-    // real, freshly-rendered `(columns, visible_rows)` pair -- one of
-    // these modes (the built-in editor, Compare) doesn't draw either
-    // panel at all, so there's nothing new to report. Reported directly
-    // as a real, persistent glitch, not just a one-frame flash: closing
-    // the editor showed a single entry crammed into one narrow column
-    // for one whole extra frame, the same shape `event_loop::run`'s own
-    // priming-draw comment already describes for startup. Root cause
-    // here was the same "one frame stale" timing, just recurring on
-    // every full-screen-mode exit instead of only at startup: this
-    // function used to return the *placeholder* `[(1, 1), (1, 1)]`
-    // itself, which `event_loop::run`'s loop then applied to *both* panels
-    // via `Panel::set_columns`/`set_visible_rows` on *every single
-    // frame* the editor/Compare stayed open -- clobbering their real
-    // values down to a forced single column/row the whole time, not
-    // just leaving them stale. Reporting each panel's own
-    // already-known values instead (nothing panel-specific actually
-    // changed just because this frame drew something else) makes that
-    // blind apply a harmless no-op until a real panel frame is drawn
-    // again.
+    // What a full-screen branch returns as the panels' layout: their own
+    // current values, so `event_loop`'s apply is a no-op. A placeholder
+    // here crammed the panels into one column (docs/history/event-loop.md).
     let unchanged_layout = [(app.panels[0].columns, app.panels[0].visible_rows()), (app.panels[1].columns, app.panels[1].visible_rows())];
     match &mut app.mode {
         Mode::Editing(editor) if !has_linked_preview => {
             let mut cursor = draw_editor(frame, area, editor, &theme);
             if editor.search_box_open() {
-                // Drawn on top, like an overlay -- and, only while the
-                // box has keyboard focus, takes over the real terminal
-                // cursor from draw_editor's own buffer-cursor placement
-                // (with focus in the text, the caret there is the one
-                // that should show).
+                // Takes the terminal cursor only while the box has focus.
                 let box_cursor = editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme);
                 if editor.is_searching() {
                     cursor = Some(box_cursor);
@@ -132,13 +83,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
             draw_overlay(frame, area, app, &theme);
             return (unchanged_layout, cursor);
         }
-        // `Alt+F5`'s own full-screen comparer -- same "takes over the
-        // whole frame, `return` before the ordinary 2-panel layout runs
-        // at all" shape as `Mode::Editing` above, not the panel-slot
-        // shape `Mode::ImagePreview` uses below: a dedicated two-file
-        // comparison wants two full-width panes of its own, not one
-        // browser panel's worth of space (`TODO/file-compare.md`'s own
-        // "Rendering approach"/data-model sketch).
+        // Compare takes the whole frame for its two full-width panes.
         Mode::CompareFiles(state) => {
             let cursor = compare::draw_compare(frame, area, state, &theme, app.settings.compare_line_ending_display);
             draw_overlay(frame, area, app, &theme);
@@ -161,29 +106,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(root[0]);
 
-    // Keeps the embedded preview scrolled to (and highlighting) roughly
-    // the same *relative* line the editor's own cursor is on -- e.g.
-    // editing halfway down the editor's own visible page keeps the
-    // matching preview line roughly halfway down its own page too,
-    // rather than always snapping it to the very top. Requested
-    // directly, twice: first to scroll the two panes together and
-    // highlight the matching line, then -- once that top-aligned
-    // version was actually in use -- to keep them roughly at the same
-    // level on the page, so editing in the middle of the page shows the
-    // preview at that same middle, not just "together" at the very
-    // top. A top-aligned sync technically kept them "together" but put
-    // the highlighted line at a different *screen row* than the
-    // cursor whenever the cursor wasn't already at the editor's own top
-    // line, which is what "on the same level" actually meant. Both
-    // heights are derived the same way their own `draw_editor`/
-    // `draw_preview_frame` compute their real inner content area
-    // (editor: minus the border edtui's own Block draws, minus the
-    // one-row hint line below it; preview: minus its own border)
-    // rather than duplicating that layout math by guesswork. Gated on
-    // `app.active == 0` (the editor
-    // has keyboard focus) so Tab-ing over to the preview and scrolling
-    // it manually isn't immediately undone the next frame just because
-    // the cursor hasn't moved.
+    // Keeps the linked preview's highlighted line level with the editor's
+    // cursor on the page. Heights mirror `draw_editor`'s (border + hint
+    // row) and `draw_preview_frame`'s (border) content areas. Only while
+    // the editor has focus, so a manual preview scroll isn't undone.
+    // History: docs/history/markdown-preview.md.
     if has_linked_preview && app.active == 0 {
         let cursor_info = match &app.mode {
             Mode::Editing(editor) => Some((editor.cursor_row(), editor.viewport_top_row())),
@@ -214,21 +141,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         }
         _ => draw_panel(frame, panels[0], &app.panels[0], app.active == 0, &theme),
     };
-    // `F3` replaces the right panel's own file listing with the
-    // previewed image or rendered Markdown entirely
-    // (`explorer::image_preview`/`markdown_preview::open_edit_preview`'s
-    // own doc comments) -- not a popup drawn over it, unlike every other
-    // `Mode` handled in the match below. `Panel::set_columns`/
-    // `set_visible_rows` don't matter here: navigation commands never
-    // reach the right panel while either preview is showing (each has
-    // its own `handle_*_preview_key`/`app.active`-gated dispatch
-    // intercepting every key), and the very next frame after closing it
-    // recomputes real values again.
+    // `F3` replaces the right panel's listing with the image or the
+    // Markdown preview. Its reported layout doesn't matter meanwhile: the
+    // preview takes the keys, and the next frame after closing is real.
     let right_columns = if let Mode::ImagePreview(state) = &mut app.mode {
-        // Picks up a decode that finished in the brief window between
-        // `wait_for_event`'s own last poll and this draw -- without
-        // this, that result would sit ready-and-unused for one extra
-        // frame (until the *next* `wait_for_event` poll notices it).
+        // Picks up a decode that finished since the last poll.
         state.poll();
         image_preview::draw_image_preview(frame, panels[1], state, &theme);
         (1, 1)
@@ -243,11 +160,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     let prefix_len = command_line::draw_command_line(frame, root[1], &cwd, &app.command_line, &theme);
     draw_function_keys(frame, root[2], &theme, app.alt_held);
 
-    // Auto-popping history suggestions, Far Manager-style: shown right
-    // above the command line the instant there's a substring match,
-    // no explicit key needed to open it (unlike the Alt+F8 popup,
-    // which stays as an always-available manual search). Only on the
-    // bare browser -- under a popup it would show through.
+    // History suggestions pop up above the command line on a match, as
+    // in Far -- only on the bare browser.
     if matches!(app.mode, Mode::Browsing) && app.overlay.is_none() && !app.command_line_suggestion_dismissed {
         let suggestions = crate::command_line::suggest_history(&app.command_history, app.command_line.text());
         if !suggestions.is_empty() {
@@ -255,15 +169,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
         }
     }
 
-    // The real terminal cursor sits right after the typed text, same
-    // mechanism already used for the editor's cursor (see
-    // editor.rs::cursor_screen_position) -- only while nothing else is
-    // drawn over the command line (a popup below takes visual priority,
-    // and moving the cursor under it would be misleading). `CommandHistory`
-    // is the one exception: its popup filters live against this same
-    // command line rather than owning a text field of its own (Far
-    // Manager's own `Alt+F8` behaves the same way), so the cursor
-    // still belongs down here, visible under the popup.
+    // The cursor sits in the command line unless a popup covers it --
+    // except the history popup, which filters that same line.
     let command_line_owns_cursor = matches!(app.overlay, None | Some(Overlay::CommandHistory(_)));
     let mut cursor = if matches!(app.mode, Mode::Browsing) && command_line_owns_cursor {
         Some(Position {

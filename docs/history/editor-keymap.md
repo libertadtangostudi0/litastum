@@ -29,3 +29,30 @@ Code: `src/editor/editor_keymap/mod.rs`. Related:
   heavily unit-tested and would write a real history file into the cwd
   from every test. It's saved once at clean exit (`main.rs`), the same
   memory/disk split `command_line::history` uses.
+
+## `Editor::input` corrections (Standard keymap)
+
+- **`Ctrl+A`, `Backspace`, `Ctrl+Z` needed two `Ctrl+Z` presses.** The
+  table entry `DeleteSelection.chain(exit_selection())` captured an undo
+  checkpoint twice: once inside `DeleteSelection` (correct), then again
+  when `exit_selection()`'s `SwitchMode(Insert)` re-entered Insert mode
+  -- `edtui` captures unconditionally on that transition, with no opt-out
+  from outside. The second checkpoint held the already-deleted state, so
+  the first `Ctrl+Z` looked like a no-op. The five selection-consuming
+  keys (`Backspace`, `Delete`, `Ctrl+C/X/V`) now reset mode and selection
+  by direct field assignment (`is_selection_consuming_key`). (Undo for
+  `Standard` later moved to `Editor`'s own stack entirely --
+  `editor-undo.md`.)
+- **Typing over a selection dropped the character** (`Ctrl+A` then a
+  letter: nothing happened). A plain `Char` has no `Visual`-mode binding
+  in the table, and `edtui`'s "typing inserts" fallback only works in
+  Insert mode, so the key reached neither. It's handled ahead of
+  dispatch now; the selection-consuming path couldn't host it, since
+  that only clears the selection after a real binding already ran.
+- **`hjkl` navigation re-checked `dirty`** on every press in Vim mode,
+  missing the arrow-key exemption (`editor-performance.md`) on a
+  pathologically long line. `h`/`j`/`k`/`l` in Normal/Visual bind to the
+  same move actions as the arrows and never appear inside a multi-key
+  sequence (checked against `vim_keybindings()`), so they're exempt too.
+  `w`/`b`/`e`/... aren't: `w` also completes `dw`/`cw`, and a per-key
+  check can't see `edtui`'s pending sequence.
