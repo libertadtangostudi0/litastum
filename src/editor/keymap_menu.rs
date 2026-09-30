@@ -4,6 +4,7 @@ use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
 use crate::choice_menu::{ChoiceMenu, MenuOutcome};
+use crate::command_line::Effect;
 use crate::theming::config;
 
 use super::keymap_mode::EditorKeymapMode;
@@ -20,15 +21,15 @@ pub fn open_editor_keymap_menu(current: EditorKeymapMode) -> EditorKeymapMenu {
 /// `Enter` applies the highlighted mode to the editor underneath (live)
 /// and persists it as the default for new editors; `Esc` closes without
 /// changing anything.
-pub fn handle_editor_keymap_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_editor_keymap_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::EditorKeymapMenu(menu)) = &mut app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     let outcome = menu.handle_key(key);
     debug!(?key, ?outcome, "editor keymap menu key");
     if outcome == MenuOutcome::Open {
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     app.overlay = None;
@@ -39,7 +40,7 @@ pub fn handle_editor_keymap_menu_key(app: &mut App, key: KeyEvent) -> Result<()>
         app.settings.editor_keymap_mode = mode;
         config::save_settings(&app.settings);
     }
-    Ok(())
+    Ok(Effect::None)
 }
 
 

@@ -2,6 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Overlay};
+use crate::command_line::Effect;
 
 /// Key handling on the `Ins` add-item form (`Overlay::AddUserMenuItem`):
 /// `Esc` cancels back to browsing the menu untouched at any stage;
@@ -10,22 +11,22 @@ use crate::app::{App, Overlay};
 /// finished item (`UserMenuState::insert_item`, which also persists)
 /// and returns to browsing with it selected. Anything else edits
 /// whichever field is currently active.
-pub fn handle_add_user_menu_item_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_add_user_menu_item_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if key.code == KeyCode::Esc {
         let Some(Overlay::AddUserMenuItem(menu, _)) = app.overlay.take() else {
-            return Ok(());
+            return Ok(Effect::None);
         };
         app.overlay = Some(Overlay::UserMenu(menu));
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     if key.code == KeyCode::Enter {
         let Some(Overlay::AddUserMenuItem(_, form)) = &mut app.overlay else {
-            return Ok(());
+            return Ok(Effect::None);
         };
         if form.is_title_stage() {
             form.advance_from_title();
-            return Ok(());
+            return Ok(Effect::None);
         }
 
         let Some(Overlay::AddUserMenuItem(mut menu, form)) = app.overlay.take() else {
@@ -33,16 +34,16 @@ pub fn handle_add_user_menu_item_key(app: &mut App, key: KeyEvent) -> Result<()>
         };
         menu.insert_item(form.finish());
         app.overlay = Some(Overlay::UserMenu(menu));
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     let Some(Overlay::AddUserMenuItem(_, form)) = &mut app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
     let field = if form.is_title_stage() { &mut form.title } else { &mut form.command };
     field.apply_key(key);
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 

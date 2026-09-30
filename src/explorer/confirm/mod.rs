@@ -11,6 +11,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use tracing::debug;
 
 use crate::app::{App, Overlay, TransferOp};
+use crate::command_line::Effect;
 use crate::yes_no::{self, Answer};
 use super::fs_ops;
 
@@ -19,9 +20,9 @@ use super::fs_ops;
 /// Far does without asking twice) and reloads; `N`/`Esc` cancel. A failed
 /// delete is logged and the rest continue -- there's no message surface
 /// to show it yet.
-pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::ConfirmDelete(pending)) = &app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     let answer = yes_no::answer(key);
@@ -48,7 +49,7 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
         Answer::Ignore => {}
     }
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 
@@ -59,24 +60,25 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<()> {
 /// always needs it, and a move also changes the source side); `Esc`
 /// cancels with nothing touched. A failed transfer is only logged, same
 /// as `handle_confirm_delete_key` — no status-bar surface exists yet.
-pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if key.code == KeyCode::Enter {
-        return run_confirmed_transfer(app);
+        run_confirmed_transfer(app)?;
+        return Ok(Effect::None);
     }
     if key.code == KeyCode::Esc {
         app.overlay = None;
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     // Everything past this point only edits the destination field, so
     // borrow `pending` once instead of re-matching `Overlay::ConfirmTransfer`
     // per key (each of the arms below used to do its own `if let`).
     let Some(Overlay::ConfirmTransfer(pending)) = &mut app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
     pending.destination.apply_key(key);
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 

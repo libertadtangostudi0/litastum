@@ -4,6 +4,7 @@ use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
 use crate::choice_menu::{ChoiceMenu, MenuOutcome};
+use crate::command_line::Effect;
 
 use super::keymap_menu::open_editor_keymap_menu;
 
@@ -38,15 +39,15 @@ pub fn open_editor_menu() -> EditorMenu {
 
 /// `Enter` on `Keybindings` opens the keymap picker in its place; `Esc`
 /// closes (a leaf `Esc` closes all the way out, like the picker's own).
-pub fn handle_editor_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_editor_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::EditorMenu(menu)) = &mut app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     let outcome = menu.handle_key(key);
     debug!(?key, ?outcome, "editor menu key");
     app.overlay = match outcome {
-        MenuOutcome::Open => return Ok(()),
+        MenuOutcome::Open => return Ok(Effect::None),
         MenuOutcome::Chosen(EditorMenuItem::Keybindings) => {
             let current = match &app.mode {
                 Mode::Editing(editor) => editor.keymap_mode(),
@@ -56,7 +57,7 @@ pub fn handle_editor_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
         }
         MenuOutcome::Closed => None,
     };
-    Ok(())
+    Ok(Effect::None)
 }
 
 

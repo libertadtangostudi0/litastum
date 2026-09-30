@@ -4,6 +4,7 @@ use tracing::debug;
 
 use crate::app::{App, Overlay};
 use crate::choice_menu::{ChoiceMenu, MenuOutcome};
+use crate::command_line::Effect;
 use super::config;
 use super::popup_style::PopupStyle;
 
@@ -20,9 +21,9 @@ pub fn open_popup_style_menu(current: PopupStyle) -> PopupStyleMenu {
 /// `Enter` applies the highlighted style live (every popup reads
 /// `app.settings.popup_style` on the next render) and persists it; `Esc` closes
 /// without changing anything.
-pub fn handle_popup_style_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_popup_style_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::PopupStyleMenu(menu)) = &mut app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     let outcome = menu.handle_key(key);
@@ -36,7 +37,7 @@ pub fn handle_popup_style_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
             app.overlay = None;
         }
     }
-    Ok(())
+    Ok(Effect::None)
 }
 
 

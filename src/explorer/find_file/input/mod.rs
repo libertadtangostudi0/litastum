@@ -2,6 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, Overlay};
+use crate::command_line::Effect;
 
 use super::state::FindFilePhase;
 
@@ -15,7 +16,7 @@ mod test_support;
 /// editing), `Searching` (only `Esc`), and picking a result (`results`).
 /// `Esc` closes from any phase, handled once here; while searching it
 /// also cancels the background search.
-pub fn handle_find_file_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_find_file_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if key.code == KeyCode::Esc {
         if let Some(Overlay::FindFile(state)) = &app.overlay {
             if let Some(pending) = &state.pending {
@@ -23,16 +24,16 @@ pub fn handle_find_file_key(app: &mut App, key: KeyEvent) -> Result<()> {
             }
         }
         app.overlay = None;
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     let Some(Overlay::FindFile(state)) = &app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     match state.phase {
         FindFilePhase::Typing => typing::handle_typing_key(app, key),
-        FindFilePhase::Searching => Ok(()),
+        FindFilePhase::Searching => Ok(Effect::None),
         FindFilePhase::Results => results::handle_results_key(app, key),
     }
 }

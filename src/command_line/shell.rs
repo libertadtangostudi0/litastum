@@ -4,6 +4,7 @@ use tracing::debug;
 
 use crate::app::{App, Overlay, ShellMenu};
 use crate::choice_menu::{ChoiceMenu, MenuOutcome};
+use crate::command_line::Effect;
 
 
 /// A shell the command line can run typed input through — Windows
@@ -65,9 +66,9 @@ pub fn open_shell_menu(app: &App) -> ShellMenu {
 /// Key handling on the `Ctrl+P` shell picker: `Enter` sets
 /// `app.active_shell`, `Esc` cancels. Not persisted automatically (F9 ->
 /// Options -> Save setup does that).
-pub fn handle_shell_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_shell_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::ShellMenu(menu)) = &mut app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     let outcome = menu.handle_key(key);
@@ -80,7 +81,7 @@ pub fn handle_shell_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
             app.overlay = None;
         }
     }
-    Ok(())
+    Ok(Effect::None)
 }
 
 

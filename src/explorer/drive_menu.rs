@@ -9,6 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use tracing::debug;
 
 use crate::app::{App, Overlay};
+use crate::command_line::Effect;
 
 /// One drive/root a panel could be pointed at.
 pub struct DriveInfo {
@@ -128,36 +129,40 @@ pub fn format_bytes(bytes: u64) -> String {
 /// no need to arrow down to it first and press `Enter` separately),
 /// `Enter` itself navigates `target_panel` to the highlighted drive's
 /// root and closes, `Esc` cancels with nothing touched.
-pub fn handle_drive_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_drive_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::ChangeDrive(menu)) = &mut app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     match key.code {
         KeyCode::Up => {
             crate::list_cursor::move_up(&mut menu.selected);
-            Ok(())
+            Ok(Effect::None)
         }
         KeyCode::Down => {
             crate::list_cursor::move_down(&mut menu.selected, menu.drives.len());
-            Ok(())
+            Ok(Effect::None)
         }
         KeyCode::Enter => {
             let index = menu.selected;
-            select_drive(app, index)
+            select_drive(app, index)?;
+            Ok(Effect::None)
         }
         KeyCode::Esc => {
             app.overlay = None;
-            Ok(())
+            Ok(Effect::None)
         }
         KeyCode::Char(c) => {
             let starts_with_c = |drive: &DriveInfo| drive.label.chars().next().is_some_and(|first| first.eq_ignore_ascii_case(&c));
             match menu.drives.iter().position(starts_with_c) {
-                Some(index) => select_drive(app, index),
-                None => Ok(()),
+                Some(index) => {
+                    select_drive(app, index)?;
+                    Ok(Effect::None)
+                }
+                None => Ok(Effect::None),
             }
         }
-        _ => Ok(()),
+        _ => Ok(Effect::None),
     }
 }
 

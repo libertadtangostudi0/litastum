@@ -229,3 +229,8 @@ performs it (`apply_effect`). `key_effect` is the whole key routing
 without a terminal, so the browser's dispatch order, history recall and
 F2 menu execution are all unit-tested. A new handler that needs the
 console should add an `Effect` variant rather than take a `Terminal`.
+
+**Every key handler has the same shape**: `fn(&mut App, KeyEvent) ->
+Result<Effect>`, screens and overlays alike -- most return
+`Effect::None`. So any handler can start asking for terminal work
+without changing its signature or the dispatch in `key_effect`.

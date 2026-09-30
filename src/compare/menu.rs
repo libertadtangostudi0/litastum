@@ -4,6 +4,7 @@ use tracing::debug;
 
 use crate::app::{App, Overlay};
 use crate::choice_menu::{ChoiceMenu, MenuOutcome};
+use crate::command_line::Effect;
 
 use super::line_ending_menu::open_compare_line_ending_menu;
 
@@ -36,17 +37,17 @@ pub fn open_compare_menu() -> CompareMenu {
 
 /// `Enter` on `Line endings` opens that picker in its place; `Esc`
 /// closes.
-pub fn handle_compare_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_compare_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::CompareMenu(menu)) = &mut app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     let outcome = menu.handle_key(key);
     debug!(?key, ?outcome, "compare menu key");
     app.overlay = match outcome {
-        MenuOutcome::Open => return Ok(()),
+        MenuOutcome::Open => return Ok(Effect::None),
         MenuOutcome::Chosen(CompareMenuItem::LineEndings) => Some(Overlay::CompareLineEndingMenu(open_compare_line_ending_menu(app.settings.compare_line_ending_display))),
         MenuOutcome::Closed => None,
     };
-    Ok(())
+    Ok(Effect::None)
 }

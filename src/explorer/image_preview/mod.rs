@@ -3,12 +3,14 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::thread;
 
+use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use tracing::warn;
 
 use crate::app::{App, Mode};
+use crate::command_line::Effect;
 
 /// Extensions the image preview opens -- the formats requested. More
 /// also need `Cargo.toml`'s `image` features widened, kept narrow.
@@ -204,9 +206,9 @@ pub fn open_preview(app: &mut App) {
 
 
 /// `Left`/`Right` cycle images; `Esc` or `F3` close the preview.
-pub fn handle_image_preview_key(app: &mut App, key: KeyEvent) {
+pub fn handle_image_preview_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Mode::ImagePreview(state) = &mut app.mode else {
-        return;
+        return Ok(Effect::None);
     };
 
     match key.code {
@@ -215,6 +217,7 @@ pub fn handle_image_preview_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc | KeyCode::F(3) => app.mode = Mode::Browsing,
         _ => {}
     }
+    Ok(Effect::None)
 }
 
 

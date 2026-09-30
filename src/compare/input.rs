@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
+use crate::command_line::Effect;
 use crate::editor::edtui_supports_key;
 use crate::yes_no::{self, Answer};
 
@@ -46,9 +47,9 @@ fn resolve(key: KeyEvent) -> CompareCommand {
 /// understands is forwarded straight into whichever pane currently has
 /// focus (`CompareState::focused_mut`), exactly like plain typing
 /// already reaches `Editor::input` from `editor::handle_editor_key`.
-pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Mode::CompareFiles(state) = &mut app.mode else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     let command = resolve(key);
@@ -69,7 +70,7 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<()> {
         CompareCommand::Ignore => {}
     }
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 /// `Esc` on Compare: closes straight back to browsing if neither pane
@@ -93,7 +94,7 @@ fn close_compare_or_confirm(app: &mut App) -> Result<()> {
 }
 
 /// Key handling on Compare's own "discard unsaved changes?" prompt.
-pub fn handle_compare_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_compare_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let answer = yes_no::answer(key);
     debug!(?key, ?answer, "compare confirm-discard key");
 
@@ -106,7 +107,7 @@ pub fn handle_compare_confirm_discard_key(app: &mut App, key: KeyEvent) -> Resul
         Answer::Ignore => {}
     }
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 

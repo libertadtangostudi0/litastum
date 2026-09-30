@@ -2,6 +2,7 @@ use color_eyre::eyre::Result;
 use crossterm::event::KeyEvent;
 
 use crate::app::{App, Overlay};
+use crate::command_line::Effect;
 use crate::explorer::user_menu::state::{self, UserMenuState};
 use crate::yes_no::{self, Answer};
 
@@ -9,9 +10,9 @@ use crate::yes_no::{self, Answer};
 /// `Y` ports the file (`state::port_far_menu`) and opens the result; `N`/
 /// `Esc` only moves `FarMenu.ini` aside to `FarMenu.ini.bak` so it stops
 /// being offered, and says where in an `Overlay::Info`.
-pub fn handle_confirm_port_far_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_confirm_port_far_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::ConfirmPortFarMenu(_)) = &app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     match yes_no::answer(key) {
@@ -34,7 +35,7 @@ pub fn handle_confirm_port_far_menu_key(app: &mut App, key: KeyEvent) -> Result<
         Answer::Ignore => {}
     }
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 

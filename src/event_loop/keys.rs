@@ -186,11 +186,10 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
     app.alt_held = key.modifiers.contains(KeyModifiers::ALT);
 
     // An open overlay gets every key; the screen underneath gets none.
-    // Most handlers need nothing from the terminal and return `()`; the
-    // ones that can (history, the F2 menu, the browser) return their
-    // `Effect` directly.
+    // Every handler returns the `Effect` it wants applied (usually
+    // `Effect::None`).
     if let Some(overlay) = &app.overlay {
-        let handled = match overlay {
+        return match overlay {
             Overlay::ConfirmDiscard if matches!(app.mode, Mode::CompareFiles(_)) => compare::handle_compare_confirm_discard_key(app, key),
             Overlay::ConfirmDiscard => editor::handle_confirm_discard_key(app, key),
             Overlay::EditorMenu(_) => editor::handle_editor_menu_key(app, key),
@@ -204,44 +203,36 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
             Overlay::ShellMenu(_) => command_line::handle_shell_menu_key(app, key),
             Overlay::PopupStyleMenu(_) => theming::handle_popup_style_menu_key(app, key),
             Overlay::FindFile(_) => explorer::handle_find_file_key(app, key),
-            Overlay::CommandHistory(_) => return command_line::handle_history_key(app, key),
+            Overlay::CommandHistory(_) => command_line::handle_history_key(app, key),
             Overlay::ChangeDrive(_) => explorer::handle_drive_menu_key(app, key),
-            Overlay::UserMenu(_) => return explorer::handle_user_menu_key(app, key),
-            Overlay::UserMenuPrompt(_) => return explorer::handle_user_menu_prompt_key(app, key),
+            Overlay::UserMenu(_) => explorer::handle_user_menu_key(app, key),
+            Overlay::UserMenuPrompt(_) => explorer::handle_user_menu_prompt_key(app, key),
             Overlay::ConfirmPortFarMenu(_) => explorer::handle_confirm_port_far_menu_key(app, key),
             Overlay::AddUserMenuItem(..) => explorer::handle_add_user_menu_item_key(app, key),
-            Overlay::MarkdownLinkSearch(_) => {
-                explorer::handle_markdown_link_search_key(app, key);
-                Ok(())
-            }
+            Overlay::MarkdownLinkSearch(_) => explorer::handle_markdown_link_search_key(app, key),
             // Any key dismisses -- there's nothing to answer, just
             // something to acknowledge having read.
             Overlay::Info(_) => {
                 app.overlay = None;
-                Ok(())
+                Ok(Effect::None)
             }
         };
-        return handled.map(|()| Effect::None);
     }
 
-    let handled = match &app.mode {
+    match &app.mode {
         // `Tab` switches between editor and preview in a linked Markdown session,
         // ahead of both handlers; plain `F4` editing still sends `Tab` to the
         // editor.
         Mode::Editing(_) if app.markdown_edit_preview.is_some() && key.code == KeyCode::Tab => {
             app.active = 1 - app.active;
-            Ok(())
+            Ok(Effect::None)
         }
         Mode::Editing(_) if app.markdown_edit_preview.is_some() && app.active == 1 => explorer::handle_markdown_edit_preview_key(app, key),
         Mode::Editing(_) => editor::handle_editor_key(app, key),
         Mode::CompareFiles(_) => compare::handle_compare_key(app, key),
-        Mode::ImagePreview(_) => {
-            explorer::handle_image_preview_key(app, key);
-            Ok(())
-        }
-        Mode::Browsing => return command_line::handle_browsing_key(app, key),
-    };
-    handled.map(|()| Effect::None)
+        Mode::ImagePreview(_) => explorer::handle_image_preview_key(app, key),
+        Mode::Browsing => command_line::handle_browsing_key(app, key),
+    }
 }
 
 

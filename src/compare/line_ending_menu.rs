@@ -4,6 +4,7 @@ use tracing::debug;
 
 use crate::app::{App, Overlay};
 use crate::choice_menu::{ChoiceMenu, MenuOutcome};
+use crate::command_line::Effect;
 use crate::theming::config;
 
 use super::line_ending::LineEndingDisplay;
@@ -20,15 +21,15 @@ pub fn open_compare_line_ending_menu(current: LineEndingDisplay) -> CompareLineE
 /// `Enter` applies the highlighted choice live (`App::settings`,
 /// read by `ui/compare.rs` every frame) and persists it; `Esc` closes
 /// without changing anything.
-pub fn handle_compare_line_ending_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_compare_line_ending_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::CompareLineEndingMenu(menu)) = &mut app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     let outcome = menu.handle_key(key);
     debug!(?key, ?outcome, "compare line ending menu key");
     if outcome == MenuOutcome::Open {
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     app.overlay = None;
@@ -36,7 +37,7 @@ pub fn handle_compare_line_ending_menu_key(app: &mut App, key: KeyEvent) -> Resu
         app.settings.compare_line_ending_display = display;
         config::save_settings(&app.settings);
     }
-    Ok(())
+    Ok(Effect::None)
 }
 
 

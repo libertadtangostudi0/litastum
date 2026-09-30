@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
+use crate::command_line::Effect;
 use crate::editor::{self, Editor};
 
 use super::links::{open_link, MarkdownLinkSearchState};
@@ -36,17 +37,18 @@ pub fn open_edit_preview(app: &mut App) {
 /// `Esc`/`F3` close the whole session through
 /// `editor::close_editor_or_confirm`, so unsaved edits still get the
 /// discard prompt.
-pub fn handle_markdown_edit_preview_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_markdown_edit_preview_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if let KeyCode::Char('l' | 'L') = key.code {
         open_link_search(app);
-        return Ok(());
+        return Ok(Effect::None);
     }
     if matches!(key.code, KeyCode::Esc | KeyCode::F(3)) {
-        return editor::close_editor_or_confirm(app);
+        editor::close_editor_or_confirm(app)?;
+        return Ok(Effect::None);
     }
 
     let Some(preview) = &mut app.markdown_edit_preview else {
-        return Ok(());
+        return Ok(Effect::None);
     };
     match key.code {
         KeyCode::Up => preview.scroll_up(),
@@ -55,7 +57,7 @@ pub fn handle_markdown_edit_preview_key(app: &mut App, key: KeyEvent) -> Result<
         KeyCode::PageDown => preview.page_down(),
         _ => {}
     }
-    Ok(())
+    Ok(Effect::None)
 }
 
 
@@ -82,17 +84,17 @@ fn open_link_search(app: &mut App) {
 /// list, `Up`/`Down` move within it, `Enter` opens the highlighted link
 /// (`links::open_link`, against `App::markdown_edit_preview`) and
 /// closes, `Esc` just closes.
-pub fn handle_markdown_link_search_key(app: &mut App, key: KeyEvent) {
+pub fn handle_markdown_link_search_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if key.code == KeyCode::Esc {
         if matches!(app.overlay, Some(Overlay::MarkdownLinkSearch(_))) {
             app.overlay = None;
         }
-        return;
+        return Ok(Effect::None);
     }
 
     if key.code == KeyCode::Enter {
         let Some(Overlay::MarkdownLinkSearch(search)) = &app.overlay else {
-            return;
+            return Ok(Effect::None);
         };
         let selected = search.selected_link();
         app.overlay = None;
@@ -101,11 +103,11 @@ pub fn handle_markdown_link_search_key(app: &mut App, key: KeyEvent) {
                 open_link(preview, &link.url);
             }
         }
-        return;
+        return Ok(Effect::None);
     }
 
     let Some(Overlay::MarkdownLinkSearch(search)) = &mut app.overlay else {
-        return;
+        return Ok(Effect::None);
     };
     match key.code {
         KeyCode::Up => search.move_up(),
@@ -114,6 +116,7 @@ pub fn handle_markdown_link_search_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char(c) => search.push_char(c),
         _ => {}
     }
+    Ok(Effect::None)
 }
 
 

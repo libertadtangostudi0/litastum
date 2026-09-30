@@ -5,6 +5,7 @@ use tracing::debug;
 use crate::app::{App, Overlay};
 use crate::choice_menu::{ChoiceMenu, MenuOutcome};
 use crate::command_line::CommandHistoryMenu;
+use crate::command_line::Effect;
 use crate::explorer::FindFileState;
 use super::config;
 use super::popup_style_menu::open_popup_style_menu;
@@ -113,9 +114,9 @@ impl MainMenu {
 /// Key handling on the F9 top menu: `Up`/`Down` move, `Enter` descends
 /// into a submenu or runs a leaf item; `Esc` backs up one level, or
 /// closes the menu from the top.
-pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::MainMenu(menu)) = &mut app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     let outcome = menu.list.handle_key(key);
@@ -147,7 +148,7 @@ pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
         },
     }
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 

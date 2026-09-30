@@ -225,7 +225,7 @@ mod handle_image_preview_key_tests {
     fn esc_closes_the_preview() {
         let mut app = app_in_preview();
 
-        handle_image_preview_key(&mut app, key(KeyCode::Esc));
+        handle_image_preview_key(&mut app, key(KeyCode::Esc)).unwrap();
 
         assert!(matches!(app.mode, Mode::Browsing));
     }
@@ -234,7 +234,7 @@ mod handle_image_preview_key_tests {
     fn f3_again_also_closes_the_preview() {
         let mut app = app_in_preview();
 
-        handle_image_preview_key(&mut app, key(KeyCode::F(3)));
+        handle_image_preview_key(&mut app, key(KeyCode::F(3))).unwrap();
 
         assert!(matches!(app.mode, Mode::Browsing));
     }
@@ -244,7 +244,7 @@ mod handle_image_preview_key_tests {
         let mut app = app_in_preview();
         app.mode = Mode::Browsing;
 
-        handle_image_preview_key(&mut app, key(KeyCode::Esc));
+        handle_image_preview_key(&mut app, key(KeyCode::Esc)).unwrap();
 
         assert!(matches!(app.mode, Mode::Browsing));
     }

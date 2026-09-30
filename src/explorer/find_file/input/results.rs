@@ -5,6 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::{debug, warn};
 
 use crate::app::{App, Mode, Overlay};
+use crate::command_line::Effect;
 use crate::editor::Editor;
 
 use super::super::export::export_results;
@@ -14,7 +15,7 @@ use super::super::export::export_results;
 /// popup, `Tab` opens and keeps it, `F4` edits, `Ctrl+S` exports,
 /// `Ctrl+C` copies the highlighted path. `Esc` is handled one level up.
 /// History: docs/history/find-file-search.md.
-pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     match key.code {
         KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
             let Some(Overlay::FindFile(state)) = &mut app.overlay else {
@@ -42,22 +43,18 @@ pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<()> {
                 state.selected += 1;
             }
         }
-        KeyCode::Enter => return open_selected_result(app),
-        KeyCode::Tab => return goto_selected_result_directory(app),
-        KeyCode::F(4) => return edit_selected_result(app),
-        KeyCode::F(5) if key.modifiers.contains(KeyModifiers::ALT) => {
-            return compare_marked_results(app);
-        }
-        KeyCode::Char('s' | 'S') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            return run_export(app);
-        }
+        KeyCode::Enter => open_selected_result(app)?,
+        KeyCode::Tab => goto_selected_result_directory(app)?,
+        KeyCode::F(4) => edit_selected_result(app)?,
+        KeyCode::F(5) if key.modifiers.contains(KeyModifiers::ALT) => compare_marked_results(app)?,
+        KeyCode::Char('s' | 'S') if key.modifiers.contains(KeyModifiers::CONTROL) => run_export(app)?,
         KeyCode::Char('c' | 'C') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             copy_selected_result_path(app);
         }
         _ => {}
     }
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 /// `Alt+F5`: compares the two marked results -- search hits often live in

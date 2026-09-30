@@ -4,6 +4,7 @@ use ratatui::style::Color;
 use tracing::debug;
 
 use crate::app::{App, Overlay};
+use crate::command_line::Effect;
 use super::config;
 
 
@@ -110,9 +111,9 @@ pub fn resolve(key: KeyEvent) -> ThemeMenuCommand {
 /// Keys on the color-scheme picker: `Enter` applies the theme to both
 /// halves, `I`/`E` to one; `Esc` closes. Applies live and persists to
 /// `config.json` best-effort.
-pub fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::ThemeMenu(menu)) = &mut app.overlay else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     let command = resolve(key);
@@ -124,7 +125,7 @@ pub fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
         ThemeMenuCommand::Close => app.overlay = None,
         ThemeMenuCommand::ApplyBoth | ThemeMenuCommand::ApplyInterfaceOnly | ThemeMenuCommand::ApplyEditorOnly => {
             let Some(name) = menu.selected_theme().map(str::to_string) else {
-                return Ok(());
+                return Ok(Effect::None);
             };
             if matches!(command, ThemeMenuCommand::ApplyBoth | ThemeMenuCommand::ApplyInterfaceOnly) {
                 if let Some(theme) = config::set_interface_theme(&name) {
@@ -141,7 +142,7 @@ pub fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<()> {
         ThemeMenuCommand::Ignore => {}
     }
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 

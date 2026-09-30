@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use tracing::debug;
 
 use crate::app::{App, Overlay};
+use crate::command_line::Effect;
 use crate::text_field;
 
 use super::super::background::spawn_search;
@@ -15,9 +16,10 @@ use super::super::state::{FindFileField, FindFilePhase};
 /// field's own persisted history, and `Enter` to actually run a search
 /// (`run_search` below). `Esc` is handled one level up, in
 /// `handle_find_file_key`, ahead of this dispatch entirely.
-pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if key.code == KeyCode::Enter {
-        return run_search(app);
+        run_search(app)?;
+        return Ok(Effect::None);
     }
 
     let Some(Overlay::FindFile(state)) = &mut app.overlay else {
@@ -28,7 +30,7 @@ pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<()> {
             FindFileField::Name => FindFileField::Content,
             FindFileField::Content => FindFileField::Name,
         };
-        return Ok(());
+        return Ok(Effect::None);
     }
     // `Up`/`Down` browse the *active* field's own persisted history (a
     // shell's own `Up`-arrow convention, same shape
@@ -42,14 +44,14 @@ pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<()> {
             FindFileField::Name => state.name_history_up(&app.find_file_name_history),
             FindFileField::Content => state.content_history_up(&app.find_file_content_history),
         }
-        return Ok(());
+        return Ok(Effect::None);
     }
     if key.code == KeyCode::Down {
         match state.active_field {
             FindFileField::Name => state.name_history_down(&app.find_file_name_history),
             FindFileField::Content => state.content_history_down(&app.find_file_content_history),
         }
-        return Ok(());
+        return Ok(Effect::None);
     }
     let (field, history_index) = match state.active_field {
         FindFileField::Name => (&mut state.query, &mut state.name_history_index),
@@ -58,7 +60,7 @@ pub(super) fn handle_typing_key(app: &mut App, key: KeyEvent) -> Result<()> {
     if field.apply_key(key) == text_field::EditOutcome::TextChanged {
         *history_index = None; // editing means fresh typing, not still showing a recalled entry
     }
-    Ok(())
+    Ok(Effect::None)
 }
 
 /// `Enter` while typing: starts the search on a background thread and

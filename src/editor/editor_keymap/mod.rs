@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
+use crate::command_line::Effect;
 use crate::explorer;
 use crate::yes_no::{self, Answer};
 
@@ -94,7 +95,7 @@ pub(crate) fn edtui_supports_key(code: KeyCode) -> bool {
 /// first, then cancels a selection, then closes the editor (asking first
 /// if there are unsaved changes). Everything `edtui` understands is
 /// forwarded to `Editor::input`; anything else is ignored.
-pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if matches!(&app.mode, Mode::Editing(editor) if editor.is_searching()) {
         return handle_search_key(app, key);
     }
@@ -109,7 +110,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         if let Mode::Editing(editor) = &mut app.mode {
             if editor.search_box_open() {
                 editor.close_search_box();
-                return Ok(());
+                return Ok(Effect::None);
             }
         }
     }
@@ -118,21 +119,22 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         let has_selection = matches!(&app.mode, Mode::Editing(editor) if editor.has_selection());
         if has_selection {
             let Mode::Editing(active_editor) = &mut app.mode else {
-                return Ok(());
+                return Ok(Effect::None);
             };
             active_editor.input(key);
-            return Ok(());
+            return Ok(Effect::None);
         }
-        return close_editor_or_confirm(app);
+        close_editor_or_confirm(app)?;
+        return Ok(Effect::None);
     }
 
     if command == EditorCommand::OpenMenu {
         app.overlay = Some(Overlay::EditorMenu(super::menu::open_editor_menu()));
-        return Ok(());
+        return Ok(Effect::None);
     }
 
     let Mode::Editing(active_editor) = &mut app.mode else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     match command {
@@ -162,7 +164,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
         EditorCommand::Ignore => {}
     }
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 
@@ -172,9 +174,9 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<()> {
 /// Code); `Up`/`Down` browse the search history, like a shell; `End` at
 /// the end of the query accepts the ghost-text suggestion; `Esc` closes
 /// the box and records a non-empty query. History: docs/history/editor-keymap.md.
-fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<()> {
+fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Mode::Editing(active_editor) = &mut app.mode else {
-        return Ok(());
+        return Ok(Effect::None);
     };
 
     match key.code {
@@ -203,7 +205,7 @@ fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 
@@ -247,17 +249,17 @@ fn return_from_editor(app: &mut App) -> Result<()> {
 /// Key handling on the "discard unsaved changes?" prompt: `Y` discards
 /// and returns to browsing, `N`/`Esc` cancels back into the editor with
 /// nothing lost, anything else is ignored.
-pub fn handle_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<()> {
+pub fn handle_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let answer = yes_no::answer(key);
     debug!(?key, ?answer, "confirm-discard key");
 
     match answer {
-        Answer::Yes => return return_from_editor(app),
+        Answer::Yes => return_from_editor(app)?,
         Answer::No => app.overlay = None,
         Answer::Ignore => {}
     }
 
-    Ok(())
+    Ok(Effect::None)
 }
 
 
