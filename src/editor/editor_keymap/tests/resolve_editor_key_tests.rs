@@ -40,6 +40,12 @@ fn f7_resolves_to_find_like_in_far() {
 }
 
 #[test]
+fn shift_f7_and_alt_f7_step_through_matches_like_in_far() {
+    assert_eq!(resolve(KeyEvent::new(KeyCode::F(7), KeyModifiers::SHIFT)), EditorCommand::FindNext);
+    assert_eq!(resolve(KeyEvent::new(KeyCode::F(7), KeyModifiers::ALT)), EditorCommand::FindPrevious);
+}
+
+#[test]
 fn plain_f_without_ctrl_is_forwarded_not_find() {
     let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE);
     assert_eq!(resolve(key), EditorCommand::Forward);

@@ -56,7 +56,11 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
         KeyCode::Esc => EditorCommand::Close,
         KeyCode::Char('s' | 'S') if ctrl => EditorCommand::Save,
         KeyCode::Char('f' | 'F') if ctrl => EditorCommand::Find,
-        // Far's editor search key, same as `Ctrl+F`.
+        // Far's editor search keys: `F7` opens the search (as `Ctrl+F`),
+        // `Shift+F7`/`Alt+F7` step to the next/previous match (as `F3`/
+        // `Shift+F3`).
+        KeyCode::F(7) if shift => EditorCommand::FindNext,
+        KeyCode::F(7) if key.modifiers.contains(KeyModifiers::ALT) => EditorCommand::FindPrevious,
         KeyCode::F(7) => EditorCommand::Find,
         KeyCode::Char('a' | 'A') if ctrl => EditorCommand::SelectAll,
         KeyCode::Left if ctrl && shift => EditorCommand::WordSelect { forward: false },

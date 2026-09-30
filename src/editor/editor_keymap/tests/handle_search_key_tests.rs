@@ -422,6 +422,22 @@ fn f3_and_shift_f3_step_through_matches_from_the_caret_while_the_text_has_focus(
     assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 0 });
 }
 
+/// Far's `Shift+F7`/`Alt+F7` do what `F3`/`Shift+F3` do.
+#[test]
+fn shift_f7_and_alt_f7_step_through_matches_like_f3() {
+    let (mut app, _path) = open_editor_app("cat dog cat dog cat\n");
+    search_for(&mut app, "cat");
+    click_same_row_at_col(&mut app, 5);
+
+    handle_editor_key(&mut app, KeyEvent::new(KeyCode::F(7), KeyModifiers::SHIFT)).unwrap();
+    let Mode::Editing(editor) = &app.mode else { unreachable!() };
+    assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 8 });
+
+    handle_editor_key(&mut app, KeyEvent::new(KeyCode::F(7), KeyModifiers::ALT)).unwrap();
+    let Mode::Editing(editor) = &app.mode else { unreachable!() };
+    assert_eq!(editor.cursor(), edtui::Index2 { row: 0, col: 0 });
+}
+
 /// `Esc` with the text focused closes just the box -- not the
 /// editor -- and leaves the caret where it is.
 #[test]
