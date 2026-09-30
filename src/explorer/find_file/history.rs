@@ -2,7 +2,7 @@ use std::fs;
 
 use tracing::{debug, warn};
 
-use crate::history_dir::history_dir;
+use crate::app_data::history_dir;
 
 /// Longest either in-memory history is allowed to grow — oldest entries
 /// drop off the front once exceeded. Same cap as

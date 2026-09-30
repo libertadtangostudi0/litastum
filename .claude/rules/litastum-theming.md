@@ -26,9 +26,8 @@ both can name the same file, or both can be omitted.
 
 ## Where files live and how the active one is chosen
 
-- `<OS config dir>/litastum/config.json` (via the `directories` crate:
-  `%APPDATA%\litastum\`, `~/.config/litastum/`, `~/Library/Application
-  Support/litastum/`), each key naming a file stem in `themes/`.
+- `appdata/config.json` in the project (later `%APPDATA%\litastum\`,
+  see [[litastum-config]]), each key naming a file stem in `themes/`.
 - Theme files are searched in the config dir's `themes/`, then in
   `./themes/` relative to the cwd (`config.rs::theme_search_dirs`) --
   `config.json` itself is not searched that way.

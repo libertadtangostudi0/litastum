@@ -58,8 +58,8 @@ mod tests {
 
     /// Regression coverage for `open_user_menu` now targeting the
     /// common config directory on a fresh `F2` instead of the
-    /// active one: that directory (`%APPDATA%\litastum\` or
-    /// equivalent) may not exist yet at all on a machine that has
+    /// active one: that directory (`appdata/`, later `%APPDATA%\litastum\`)
+    /// may not exist yet at all on a machine that has
     /// never saved a theme/setup -- a plain `fs::write` would fail
     /// outright with its parent missing, so `create_menu_file` now
     /// `create_dir_all`s first.

@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::{debug, warn};
 
 use crate::app::{App, Overlay};
-use crate::history_dir::history_dir;
+use crate::app_data::history_dir;
 
 use super::browsing::submit_command_line;
 use super::effect::Effect;

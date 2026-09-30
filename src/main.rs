@@ -5,7 +5,7 @@ mod compare;
 mod editor;
 mod event_loop;
 mod explorer;
-mod history_dir;
+mod app_data;
 mod keyboard_layout;
 mod list_cursor;
 mod logging;

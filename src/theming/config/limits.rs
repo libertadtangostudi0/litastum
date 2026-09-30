@@ -63,10 +63,8 @@ pub fn limits() -> &'static Limits {
 fn load_limits() -> Limits {
     #[cfg(test)]
     {
-        // Same rule `config_dir()` itself follows, for the same reason:
-        // a test's result must never depend on whatever config.json (or
-        // `LITASTUM_CONFIG_DIR`-pointed directory) a developer running
-        // the suite actually has sitting there.
+        // Same rule as `config_dir()`: a test never depends on the
+        // developer's real config.json.
         Limits::default()
     }
     #[cfg(not(test))]

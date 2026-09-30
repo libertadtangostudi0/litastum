@@ -27,8 +27,7 @@ pub enum MenuFile {
 
 /// Finds the menu for `dir`: `dir` itself first, else the common config
 /// directory, so one menu works from anywhere (Far's local-then-common
-/// precedence). `LITASTUM_CONFIG_DIR` can point the common directory at a
-/// checkout for development. The lookup is split out
+/// precedence). The lookup is split out
 /// (`resolve_menu_with_fallback`) so tests use scratch directories, never
 /// the real config directory. History: docs/history/user-menu.md.
 pub fn resolve_menu(dir: &Path) -> MenuFile {

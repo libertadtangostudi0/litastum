@@ -2,8 +2,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-#[cfg(not(test))]
-use directories::ProjectDirs;
 use edtui::syntect::highlighting::Theme as SynTheme;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -18,32 +16,12 @@ mod limits;
 pub use limits::limits;
 
 
-/// Overrides `config_dir()` with any directory -- for local development
-/// (e.g. testing the F2 menu's common-directory fallback without files
-/// under `%APPDATA%`).
-// Only read from `#[cfg(not(test))]` code, hence the test-build allow.
-#[cfg_attr(test, allow(dead_code))]
-pub(crate) const CONFIG_DIR_ENV_VAR: &str = "LITASTUM_CONFIG_DIR";
-
-/// This app's config directory: `LITASTUM_CONFIG_DIR` if set, else
-/// `<OS config dir>/litastum/`, or `None` if the platform has none (not
-/// fatal -- just nothing custom).
-///
-/// **Always `None` in a test build**, so no test depends on a
-/// developer's real config (one did, once `LITASTUM_CONFIG_DIR` pointed
-/// at a real menu). Gated here, at the one choke point. History: docs/history/theming.md.
+/// This app's config directory -- `appdata/` in the project
+/// (`crate::app_data`), which becomes `%APPDATA%\litastum\` once there's
+/// an installer. `None` in a test build, so no test depends on or writes
+/// real config. History: docs/history/theming.md.
 pub(crate) fn config_dir() -> Option<PathBuf> {
-    #[cfg(test)]
-    {
-        None
-    }
-    #[cfg(not(test))]
-    {
-        if let Ok(dir) = std::env::var(CONFIG_DIR_ENV_VAR) {
-            return Some(PathBuf::from(dir));
-        }
-        ProjectDirs::from("", "", "litastum").map(|dirs| dirs.config_dir().to_path_buf())
-    }
+    crate::app_data::app_data_dir()
 }
 
 

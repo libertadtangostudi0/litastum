@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn handle_main_menu_key_select_save_setup_closes_the_menu() {
         // Doesn't assert the config.json write itself happened --
-        // config::save_setup goes through the real OS config dir, same
+        // config::save_setup goes through the real config dir, same
         // reason config.rs's own tests don't exercise it directly (see
         // that module). This only pins down the app-visible effect:
         // the action runs (doesn't panic) and the menu closes.

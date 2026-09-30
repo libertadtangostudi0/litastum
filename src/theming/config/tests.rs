@@ -155,7 +155,7 @@ mod theme_discovery_tests {
     use super::*;
 
     // Regression coverage for a real bug: theme lookup only checked the
-    // OS config dir, so the repo's own bundled `themes/apple-system-
+    // config dir, so the repo's own bundled `themes/apple-system-
     // colors.json` -- visible right there in the file panel when
     // running `cargo run` from the repo root -- never showed up in the
     // F9 picker. `cargo test`'s working directory is the package root,

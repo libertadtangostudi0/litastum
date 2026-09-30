@@ -63,7 +63,7 @@ family) -- this file stays the running feature/design log.
       `resolve_menu` (`state.rs`) now tries the active directory first,
       exactly as before, and only if *that* has neither
       `LitastumMenu.toml` nor `FarMenu.ini` falls back to the same two
-      files in the OS config directory (`<config dir>/litastum/`, the
+      files in the config directory (now `appdata/` in the project, the
       same directory `theming::config` already uses for
       `config.json`/`themes/`) -- so navigating there in a panel and
       pressing `F2` edits the common menu directly, no separate UI
@@ -77,13 +77,9 @@ family) -- this file stays the running feature/design log.
       template a fresh `F2` writes) doesn't count as "found" for
       fallback purposes either, so a directory where `F2` had been
       pressed once before this feature existed doesn't permanently
-      shadow the common menu from then on. `LITASTUM_CONFIG_DIR` (env
-      var, `theming::config::config_dir`) overrides the config
-      directory wholesale, for local development against the project's
-      own checkout instead of the real `%APPDATA%\litastum\` -- always
-      `None` in a test build regardless of this env var or the real OS
-      path, so `cargo test`'s result never depends on what a developer
-      running the suite actually has configured on their machine.
+      shadow the common menu from then on. `config_dir` is always
+      `None` in a test build, so `cargo test`'s result never depends
+      on what a developer actually has configured.
 - [x] **A fresh `F2` with nothing found anywhere creates the empty
       template in the *common* config directory, not the active one**
       -- reported directly, right after the fallback above: the

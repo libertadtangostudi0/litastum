@@ -69,28 +69,23 @@ not a "restructure these five modules" one.
 **Test isolation**: `limits()` always returns `Limits::default()` in a
 test build, unconditionally — same rule `config_dir()` itself already
 follows (`config_dir`'s own doc comment), for the same reason: a test's
-result must never depend on whatever `config.json`/`LITASTUM_CONFIG_DIR`
-a developer running the suite actually has configured. The per-field
+result must never depend on whatever `config.json` a developer
+running the suite actually has. The per-field
 overlay logic itself (`resolve_limits`) is still fully unit-tested,
 just against a plain in-memory `Config` value, never a real file.
 
 ## Environment variables: `LITASTUM_`-prefixed, one place to look
 
-Only one litastum-specific environment variable exists today:
-`LITASTUM_CONFIG_DIR` (`theming::config::limits`'s sibling constant
-`CONFIG_DIR_ENV_VAR`, in `theming/config/mod.rs`) — overrides the whole
-config directory (`config.json`, `themes/`) to any path, added for
-local development so testing config-directory-dependent features (the
-F2 user menu's common-menu fallback) doesn't mean creating real files
-under `%APPDATA%\litastum\` by hand.
+No litastum-specific environment variable exists today.
+`LITASTUM_CONFIG_DIR` used to override the config directory for local
+development; it went away with `appdata/` (see "Where app data lives"
+below), which is already inside the project.
 
-**Convention for any future one**: prefix it `LITASTUM_`, same as this
-one — avoids colliding with anything else in a user's environment, and
+**Convention for any future one**: prefix it `LITASTUM_` -- avoids colliding with anything else in a user's environment, and
 makes it immediately recognizable as this app's own in a `set`/`env`
 dump. Declare its literal name as a `pub(crate) const ..._ENV_VAR: &str`
-right next to whatever reads it (`CONFIG_DIR_ENV_VAR`'s own doc comment
-is the template — explain *why* the variable exists, not just what it
-does), and gate it the same way `config_dir()` does: read only from
+right next to whatever reads it (its doc comment explains *why* the
+variable exists, not just what it does), and read it only from
 `#[cfg(not(test))]` code, so `cargo test` never depends on whatever a
 developer's own shell happens to have set. `RUST_LOG` (read by
 `tracing_subscriber::EnvFilter::try_from_default_env()` in
@@ -99,3 +94,28 @@ litastum-specific at all, it's the standard `tracing` ecosystem
 convention every Rust app built on that crate already shares, so
 renaming it would just make this app *less* consistent with the
 tooling its users likely already know.
+
+## Where app data lives: `appdata/` in the project, for now
+
+There's no installer yet, so the app reads and writes nothing outside
+the project. Everything an installed build will keep in
+`%APPDATA%\litastum\` lives in `appdata/` at the project root
+(`src/app_data.rs::app_data_dir`, anchored with `CARGO_MANIFEST_DIR`),
+in the same layout:
+
+```
+appdata/
+  config.json          settings, themes, shell, Limits overrides
+  themes/              user theme files (the repo's themes/ stays the bundled set)
+  LitastumMenu.toml    the common F2 menu
+  history/             command line, editor search, Find file histories
+```
+
+`theming::config::config_dir()` and `app_data::history_dir()` both
+derive from it. `appdata/` is git-ignored. `logs/` stays at the project
+root for now.
+
+**When the installer lands**: switch `app_data_dir()` to the OS
+location (`directories::ProjectDirs`, per [[litastum-stack]]) and move
+the directory's contents over as-is. Not before.
+
