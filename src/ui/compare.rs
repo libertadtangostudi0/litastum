@@ -211,6 +211,101 @@ mod tests {
         assert!(right_top_row_text.contains('d'), "right's own top row should have followed left's scroll to \"d\", not stayed at \"a\" (row 0)");
     }
 
+    /// `F8` to a hunk below the screen centers it, like a `Ctrl+F` match.
+    /// The 12-row area leaves an 11-row pane above the hint row: 9 content
+    /// rows, so row 40 lands 4 rows down. History: docs/history/compare.md.
+    #[test]
+    fn a_hunk_jump_off_screen_is_centered() {
+        let left: String = (0..60).map(|row| format!("line {row}\n")).collect();
+        let right = left.replace("line 40\n", "changed\n");
+        let mut state = open_pair(&left, &right);
+        let theme = Theme::dark();
+        render(&mut state, &theme, LineEndingDisplay::Hidden);
+
+        state.jump_to_next_hunk();
+        render(&mut state, &theme, LineEndingDisplay::Hidden);
+
+        assert_eq!(state.left.cursor().row, 40);
+        assert_eq!(state.left.viewport_top_row(), 36);
+    }
+
+    /// With long lines wrapped in the narrow panes, the hunk still lands in
+    /// the middle -- counted in screen rows, not buffer rows -- and both
+    /// panes show the same rows. Before, the wrapped rows above pushed it
+    /// below the middle and `edtui`'s own re-scroll left the other pane a
+    /// row off.
+    #[test]
+    fn a_hunk_jump_is_centered_in_screen_rows_when_lines_wrap() {
+        // Every third line is 78 characters: 4 screen rows in a 25-column
+        // text area (28 inside the border, minus a 3-column gutter).
+        let left: String = (0..60).map(|row| format!("line {row} {}\n", "x".repeat(if row % 3 == 0 { 70 } else { 0 }))).collect();
+        let right = left.replacen("line 40 ", "CHANGED ", 1);
+        let mut state = open_pair(&left, &right);
+        let theme = Theme::dark();
+        render(&mut state, &theme, LineEndingDisplay::Hidden);
+
+        state.jump_to_next_hunk();
+        let buffer = render(&mut state, &theme, LineEndingDisplay::Hidden);
+
+        // Row 39 wraps to 4 screen rows, so the view starts there and the
+        // hunk (row 40) is on screen row 5 of 9 -- y = 5 past the border.
+        assert_eq!(state.left.viewport_top_row(), 39);
+        let row_text = |x_range: std::ops::Range<u16>| x_range.map(|x| buffer[(x, 5)].symbol().to_string()).collect::<String>();
+        assert!(row_text(0..30).contains("line 40"), "{}", row_text(0..30));
+        assert!(row_text(30..60).contains("CHANGED"), "the other pane shows the same row: {}", row_text(30..60));
+    }
+
+    /// A hunk already on screen is centered too, not left where it was.
+    #[test]
+    fn a_visible_hunk_is_centered_as_well() {
+        let left: String = (0..60).map(|row| format!("line {row}\n")).collect();
+        let right = left.replace("line 20\n", "c20\n").replace("line 24\n", "c24\n");
+        let mut state = open_pair(&left, &right);
+        let theme = Theme::dark();
+        render(&mut state, &theme, LineEndingDisplay::Hidden);
+        state.jump_to_next_hunk();
+        render(&mut state, &theme, LineEndingDisplay::Hidden);
+        assert_eq!(state.left.viewport_top_row(), 16);
+
+        state.jump_to_next_hunk();
+        render(&mut state, &theme, LineEndingDisplay::Hidden);
+
+        assert_eq!(state.left.cursor().row, 24, "row 24 was already on screen (rows 16-24)");
+        assert_eq!(state.left.viewport_top_row(), 20);
+    }
+
+    fn left_click(column: u16, row: u16) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    /// A click in the unfocused pane focuses it and puts the caret where
+    /// it was clicked. Panes are 30 columns wide with a 2-column gutter
+    /// ("1 ") inside the border, so text starts at x = 3 (left) and x = 33
+    /// (right); content row 2 is at y = 3.
+    #[test]
+    fn a_click_focuses_the_pane_and_places_the_caret() {
+        let mut state = open_pair("aaaa\nbbbb\ncccc\n", "aaaa\nxxxx\ncccc\n");
+        let theme = Theme::dark();
+        render(&mut state, &theme, LineEndingDisplay::Hidden);
+        assert_eq!(state.focus, crate::compare::Side::Left);
+
+        state.mouse(left_click(35, 3));
+        render(&mut state, &theme, LineEndingDisplay::Hidden);
+
+        assert_eq!(state.focus, crate::compare::Side::Right);
+        assert_eq!(state.right.cursor(), edtui::Index2::new(2, 2));
+
+        state.mouse(left_click(4, 2));
+
+        assert_eq!(state.focus, crate::compare::Side::Left);
+        assert_eq!(state.left.cursor(), edtui::Index2::new(1, 1));
+    }
+
     #[test]
     fn line_ending_markers_show_up_only_when_shown() {
         let mut state = open_pair("a\r\n", "a\n");

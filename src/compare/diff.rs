@@ -145,6 +145,14 @@ pub fn previous_hunk_start(kinds: &[DiffLineKind], from: usize) -> Option<usize>
     Some(hunk_start_at(kinds, last_row_of_previous_hunk))
 }
 
+/// The diff row holding real line `real_row` on this side, or the first
+/// real line after it -- diff rows include `Empty` padding, so the two
+/// numberings drift apart after every insertion on the other side.
+/// `source_index.len()` past the last line.
+pub fn diff_row_of(source_index: &[Option<usize>], real_row: usize) -> usize {
+    source_index.iter().position(|row| row.is_some_and(|row| row >= real_row)).unwrap_or(source_index.len())
+}
+
 /// The other pane's real row to put at its top, given the focused
 /// pane's top `from_real_row`: the diff row it lands on, then forward to
 /// the nearest real content on the other side -- forward, so a changed
@@ -203,6 +211,15 @@ mod tests {
         assert_eq!(left.kinds.len(), right.kinds.len());
         assert_eq!(left.kinds, vec![DiffLineKind::Removed, DiffLineKind::Empty, DiffLineKind::Empty]);
         assert!(right.kinds.iter().all(|k| *k == DiffLineKind::Added));
+    }
+
+    #[test]
+    fn diff_row_of_skips_padding_rows() {
+        let source_index = vec![Some(0), None, None, Some(1), Some(2)];
+        assert_eq!(diff_row_of(&source_index, 0), 0);
+        assert_eq!(diff_row_of(&source_index, 1), 3, "two padding rows sit before real line 1");
+        assert_eq!(diff_row_of(&source_index, 2), 4);
+        assert_eq!(diff_row_of(&source_index, 9), 5, "past the last line");
     }
 
     #[test]

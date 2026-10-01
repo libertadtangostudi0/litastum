@@ -190,13 +190,14 @@ fn drain_pending_mouse_events(app: &mut App, terminal: &mut Terminal<CrosstermBa
 }
 
 
-/// Mouse capture is on exactly while the editor is open, synced once per
-/// loop iteration rather than at each place an editor opens or closes.
+/// Mouse capture is on exactly while an editor is open (F4 or Compare),
+/// synced once per loop iteration rather than at each place one opens or
+/// closes.
 /// Scoped narrowly: capture takes over the terminal's own text
 /// selection, which the panels and command line need. Only set after the
 /// terminal call succeeds -- `restore_terminal` relies on it.
 fn sync_mouse_capture(app: &mut App) {
-    let wanted = matches!(app.mode, Mode::Editing(_));
+    let wanted = matches!(app.mode, Mode::Editing(_) | Mode::CompareFiles(_));
     if wanted == app.mouse_capture_enabled {
         return;
     }
@@ -214,9 +215,14 @@ fn sync_mouse_capture(app: &mut App) {
 /// no-ops without one) -- so the wheel scrolls whichever of the two is
 /// under the pointer, not both. A click into the editor half of an
 /// editor+preview session also gives it keyboard focus (`App::active`).
+/// Compare routes its own (`CompareState::mouse`).
 fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     // An overlay is modal: nothing underneath reacts to the mouse.
     if app.overlay.is_some() {
+        return;
+    }
+    if let Mode::CompareFiles(state) = &mut app.mode {
+        state.mouse(mouse);
         return;
     }
     if let Mode::Editing(editor) = &mut app.mode {

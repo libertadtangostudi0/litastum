@@ -144,7 +144,7 @@ impl Editor {
     pub fn search_next(&mut self) {
         let caret = self.state.cursor;
         if let Some(start) = self.search.as_mut().and_then(|search_box| search_box.session.select_next_after(caret)) {
-            self.jump_to_match(start);
+            self.jump_cursor_to(start);
         }
     }
 
@@ -153,7 +153,7 @@ impl Editor {
     pub fn search_previous(&mut self) {
         let caret = self.state.cursor;
         if let Some(start) = self.search.as_mut().and_then(|search_box| search_box.session.select_previous_before(caret)) {
-            self.jump_to_match(start);
+            self.jump_cursor_to(start);
         }
     }
 
@@ -184,30 +184,10 @@ impl Editor {
 
     fn jump_to_first_match(&mut self) {
         if let Some(start) = self.search.as_mut().and_then(|search_box| search_box.session.select_first_from_start()) {
-            self.jump_to_match(start);
+            self.jump_cursor_to(start);
         }
     }
 
-
-    /// Moves the cursor to a match. A match off screen is scrolled to the
-    /// middle of the view (VS Code-style) -- left to `edtui`, it only
-    /// scrolled into view, landing on the last row. A visible match
-    /// doesn't scroll. Near the end of the file the view stops at the
-    /// last line rather than centering over empty rows.
-    fn jump_to_match(&mut self, start: Index2) {
-        self.state.cursor = start;
-        let content_height = self.view_area.height.saturating_sub(2) as usize;
-        if content_height == 0 {
-            return;
-        }
-        let (offset_x, top) = self.state.viewport_offset();
-        if (top..top + content_height).contains(&start.row) {
-            return;
-        }
-        let last_top = self.state.lines.len().saturating_sub(content_height);
-        let centered_top = start.row.saturating_sub(content_height / 2).min(last_top);
-        self.state.set_viewport_offset(offset_x, centered_top);
-    }
 
     /// `Up`: the previous `history` entry, shell-style -- not the previous
     /// match (that's `Shift+Enter`/`Shift+F3`). No-op at the oldest entry or

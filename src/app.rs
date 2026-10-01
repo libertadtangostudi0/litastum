@@ -240,9 +240,9 @@ pub struct App {
     /// input -- the query uses raw escape sequences on stdio. `App::new`
     /// uses half-blocks so tests never touch real stdio.
     pub image_picker: Picker,
-    /// Whether mouse capture is on -- exactly while the editor is open,
-    /// synced by `event_loop::sync_mouse_capture` and set only after the
-    /// terminal call succeeded. `restore_terminal` sends
+    /// Whether mouse capture is on -- exactly while an editor (F4 or
+    /// Compare) is open, synced by `event_loop::sync_mouse_capture` and
+    /// set only after the terminal call succeeded. `restore_terminal` sends
     /// `DisableMouseCapture` only when this is `true` (disabling it
     /// without enabling first crashes on Windows).
     pub mouse_capture_enabled: bool,

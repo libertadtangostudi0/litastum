@@ -218,6 +218,19 @@ impl Editor {
         self.state.cursor = pos;
     }
 
+    /// Moves the cursor to `pos` for a jump (a `Ctrl+F` match, a Compare
+    /// hunk) and scrolls its row to the middle of the view, VS Code-style
+    /// -- left to `edtui`, a jump only scrolled into view, onto the last
+    /// row. Stops at the first and last lines rather than showing empty
+    /// rows. History: docs/history/editor-rendering.md.
+    pub fn jump_cursor_to(&mut self, pos: Index2) {
+        self.state.cursor = pos;
+        if let Some(top) = self.centered_top_row(pos.row) {
+            let (offset_x, _) = self.state.viewport_offset();
+            self.state.set_viewport_offset(offset_x, top);
+        }
+    }
+
     /// Forces this editor's viewport to start at `row`, keeping it there
     /// through the next render -- for the currently *unfocused* Compare
     /// pane, so its visible rows stay diff-aligned with whatever the

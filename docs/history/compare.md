@@ -44,3 +44,18 @@ real, saveable buffer would corrupt the file on save.
 - **Line endings drift after editing**: the `CRLF`/`LF` snapshot is by
   row index, so inserting lines shifts it. Accepted -- the use case is
   checking a lightly edited file.
+- **Hunk jumps land in the middle of the view**, like `Ctrl+F` matches
+  (requested right after the search change): `F7`/`F8` move the cursor
+  through `Editor::jump_cursor_to`. It first missed wrapped lines and
+  skipped targets already on screen (`editor-rendering.md`).
+- **The cursor landed below the hunk**, further down the file the
+  more lines the other side had inserted (reported with screenshots:
+  the left pane 2-3 rows below the red block, the right one better).
+  Hunks are found in diff rows, which include `Empty` padding, and that
+  diff row was used as the cursor's real row -- and the cursor's real
+  row as the search start. `jump_to_hunk` converts both ways
+  (`diff_row_of`, `source_index`).
+- **Clicking did nothing in Compare**: mouse capture was only on for
+  the F4 editor. Now a click in the other pane focuses it (as `Tab`)
+  and places the caret there; clicks and drags work like in the editor,
+  and the wheel scrolls the focused pane (`CompareState::mouse`).

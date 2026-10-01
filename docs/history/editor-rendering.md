@@ -94,6 +94,17 @@ selection does.
 
 Reported with a screenshot: a `Ctrl+F` match further down showed up on
 the view's last row -- `edtui` only scrolls just enough to bring the
-cursor into view. `jump_to_match` (`search/mod.rs`) now centers a match
-that is off screen, VS Code-style; a match already visible doesn't
-scroll, and near the end of the file the view stops at the last line.
+cursor into view. `Editor::jump_cursor_to` now centers the match;
+near the start and end of the file the view stops at the first/last
+line. Compare's hunk jumps use the same method (`compare.md`).
+
+The first version had two gaps, reported from Compare ("not always
+centered, away from the start and end"):
+- **Wrapped lines.** It counted buffer rows, but `edtui` wraps long
+  lines -- common in Compare's half-width panes -- so wrapped rows
+  above pushed the target below the middle, and `edtui` then scrolled
+  again, leaving the other pane a row off. The middle is now measured
+  in screen rows (`centered_top_row`: character wrap at the text width,
+  the view minus border and line-number gutter).
+- **A visible target didn't scroll** (copied from VS Code's search);
+  one in the lower half stayed there. Every jump centers now.

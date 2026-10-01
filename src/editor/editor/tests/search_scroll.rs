@@ -45,8 +45,9 @@ fn an_off_screen_match_is_centered() {
 }
 
 
+/// A match near the top can't be centered: the view stays at the start.
 #[test]
-fn a_visible_match_does_not_scroll() {
+fn a_match_near_the_start_keeps_the_view_at_the_first_line() {
     let (mut editor, _path) = open_test_editor(&numbered_lines_with_targets(&[3]));
     let mut terminal = Terminal::new(TestBackend::new(20, 12)).unwrap();
     render(&mut editor, &mut terminal);
@@ -56,6 +57,21 @@ fn a_visible_match_does_not_scroll() {
 
     assert_eq!(editor.cursor_row(), 3);
     assert_eq!(editor.viewport_top_row(), 0);
+}
+
+
+/// A match already on screen is centered too.
+#[test]
+fn a_visible_match_lower_down_is_centered() {
+    let (mut editor, _path) = open_test_editor(&numbered_lines_with_targets(&[8]));
+    let mut terminal = Terminal::new(TestBackend::new(20, 12)).unwrap();
+    render(&mut editor, &mut terminal);
+
+    search(&mut editor, "target");
+    render(&mut editor, &mut terminal);
+
+    assert_eq!(editor.cursor_row(), 8, "on screen before the jump (rows 0-9)");
+    assert_eq!(editor.viewport_top_row(), 3);
 }
 
 

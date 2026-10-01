@@ -1,12 +1,13 @@
 use std::io;
 use std::path::PathBuf;
 
+use crossterm::event::{MouseEvent, MouseEventKind};
 use edtui::syntect::highlighting::Theme as SynTheme;
 use edtui::Index2;
 
 use crate::editor::{Editor, EditorKeymapMode};
 
-use super::diff::{compute, next_hunk_start, previous_hunk_start};
+use super::diff::{compute, diff_row_of, next_hunk_start, previous_hunk_start, DiffLineKind, DiffLines};
 use super::line_ending::{self, LineEnding};
 
 /// Which pane currently owns the real terminal cursor and receives
@@ -108,6 +109,28 @@ impl CompareState {
         }
     }
 
+    /// A mouse event over Compare. A click in the unfocused pane focuses
+    /// it first (as `Tab`), so the caret lands where it was clicked;
+    /// clicks and drags then go to the focused pane like in the editor.
+    /// The wheel scrolls the focused pane wherever the pointer is -- the
+    /// other one follows it every frame anyway.
+    pub fn mouse(&mut self, mouse: MouseEvent) {
+        let over = if self.left.contains_screen_position(mouse.column, mouse.row) {
+            Some(Side::Left)
+        } else if self.right.contains_screen_position(mouse.column, mouse.row) {
+            Some(Side::Right)
+        } else {
+            None
+        };
+        let is_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown);
+        if matches!(mouse.kind, MouseEventKind::Down(_)) && over.is_some_and(|side| side != self.focus) {
+            self.toggle_focus();
+        }
+        if is_scroll || over == Some(self.focus) {
+            self.focused_mut().mouse(mouse);
+        }
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.left.is_dirty() || self.right.is_dirty()
     }
@@ -121,14 +144,11 @@ impl CompareState {
     }
 
     /// `F8`/`Ctrl+Down`: moves the focused pane's cursor to the first row of
-    /// the next hunk, diffed live. Passes the current row, not `row + 1`
-    /// (`next_hunk_start` skips the current hunk). No-op past the last one.
+    /// the next hunk, diffed live, centered (`Editor::jump_cursor_to`).
+    /// Starts from the current row, not `row + 1` (`next_hunk_start`
+    /// skips the current hunk). No-op past the last one.
     pub fn jump_to_next_hunk(&mut self) {
-        let focused_kinds = self.live_focused_kinds();
-        let from = self.focused().cursor().row;
-        if let Some(row) = next_hunk_start(&focused_kinds, from) {
-            self.focused_mut().set_cursor(Index2::new(row, 0));
-        }
+        self.jump_to_hunk(next_hunk_start);
     }
 
     /// `F7`/`Ctrl+Up` -- the other half of `jump_to_next_hunk`, landing
@@ -136,21 +156,30 @@ impl CompareState {
     /// own doc comment for why that's not simply the nearest changed
     /// line behind the cursor).
     pub fn jump_to_previous_hunk(&mut self) {
-        let focused_kinds = self.live_focused_kinds();
-        let from = self.focused().cursor().row;
-        if let Some(row) = previous_hunk_start(&focused_kinds, from) {
-            self.focused_mut().set_cursor(Index2::new(row, 0));
+        self.jump_to_hunk(previous_hunk_start);
+    }
+
+    /// Runs `find` over the focused pane's live diff and moves the cursor
+    /// to the hunk it returns. `find` works in diff rows, which include
+    /// `Empty` padding, so the cursor's real row is converted in and the
+    /// result back out -- using one as the other put the cursor rows
+    /// below the hunk, further the more lines the other side had inserted
+    /// above it. History: docs/history/compare.md.
+    fn jump_to_hunk(&mut self, find: fn(&[DiffLineKind], usize) -> Option<usize>) {
+        let diff = self.live_focused_diff();
+        let from = diff_row_of(&diff.source_index, self.focused().cursor().row);
+        if let Some(real_row) = find(&diff.kinds, from).and_then(|row| diff.source_index[row]) {
+            self.focused_mut().jump_cursor_to(Index2::new(real_row, 0));
         }
     }
 
-    /// The live diff's own row classification for whichever pane is
-    /// currently focused, recomputed fresh from both panes' current
-    /// text -- shared by the two hunk-jump methods above.
-    fn live_focused_kinds(&self) -> Vec<super::diff::DiffLineKind> {
+    /// The live diff of the focused pane, recomputed from both panes'
+    /// current text.
+    fn live_focused_diff(&self) -> DiffLines {
         let (left_diff, right_diff) = compute(&self.left.text(), &self.right.text());
         match self.focus {
-            Side::Left => left_diff.kinds,
-            Side::Right => right_diff.kinds,
+            Side::Left => left_diff,
+            Side::Right => right_diff,
         }
     }
 }
@@ -281,6 +310,29 @@ mod tests {
 
         state.jump_to_previous_hunk();
         assert_eq!(state.left.cursor().row, 2, "no hunk earlier than the file's own first one -- the cursor shouldn't move at all");
+    }
+
+    /// Lines inserted on the right add padding rows to the left's diff, so
+    /// diff rows and real rows drift apart. The jump lands on the real row
+    /// of the hunk ("d", row 3), not on its diff row (5) -- the cursor
+    /// used to end up below the highlighted hunk.
+    #[test]
+    fn hunk_jumps_land_on_the_real_row_after_padding_rows() {
+        let mut state = open_pair("a\nb\nc\nd\ne\n", "a\nnew1\nnew2\nb\nc\nX\ne\n");
+
+        state.jump_to_next_hunk();
+        assert_eq!(state.left.cursor().row, 3, "\"d\", the replaced line");
+
+        state.jump_to_next_hunk();
+        assert_eq!(state.left.cursor().row, 3, "no hunk after it on the left -- the insertion is only padding here");
+
+        state.toggle_focus();
+        state.jump_to_next_hunk();
+        assert_eq!(state.right.cursor().row, 1, "the insertion on the right");
+        state.jump_to_next_hunk();
+        assert_eq!(state.right.cursor().row, 5, "\"X\"");
+        state.jump_to_previous_hunk();
+        assert_eq!(state.right.cursor().row, 1);
     }
 
     #[test]

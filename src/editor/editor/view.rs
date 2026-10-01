@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use edtui::{EditorTheme, EditorView, Highlight, LineNumbers};
+use edtui::{EditorTheme, EditorView, Highlight, LineNumbers, Lines, RowIndex};
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Block;
@@ -83,6 +83,48 @@ impl Editor {
             .line_numbers(LineNumbers::Absolute)
     }
 
+    /// The top row that puts `row` in the middle of the view, measured in
+    /// screen rows: `edtui` wraps long lines, so counting buffer rows put
+    /// the target below the middle (and `edtui` then scrolled again).
+    /// Clamped so the view never runs past the last line. `None` before
+    /// the first draw (no size known yet).
+    pub(super) fn centered_top_row(&self, row: usize) -> Option<usize> {
+        let content_height = self.view_area.height.saturating_sub(2) as usize;
+        let text_width = self.text_width();
+        if content_height == 0 || text_width == 0 {
+            return None;
+        }
+        let height_of = |row: usize| screen_rows(&self.state.lines, row, text_width);
+
+        let target = height_of(row).min(content_height);
+        let wanted_above = (content_height - target + 1) / 2;
+        let mut top = row;
+        let mut above = 0;
+        while top > 0 && above + height_of(top - 1) <= wanted_above {
+            top -= 1;
+            above += height_of(top);
+        }
+
+        // The lowest top that still fills the view down to the last line.
+        let mut last_top = self.state.lines.len();
+        let mut filled = 0;
+        while last_top > 0 && filled < content_height {
+            last_top -= 1;
+            filled += height_of(last_top);
+        }
+        if filled > content_height {
+            last_top += 1;
+        }
+        Some(top.min(last_top))
+    }
+
+    /// Columns available for text: the view minus its border and the
+    /// line-number gutter (the widest number plus a space).
+    fn text_width(&self) -> usize {
+        let gutter = self.state.lines.len().max(1).to_string().len() + 1;
+        (self.view_area.width as usize).saturating_sub(2 + gutter)
+    }
+
     /// Moves the viewport so a multi-line bracket pair is fully visible
     /// when it fits -- `edtui` only keeps the cursor's row in view.
     /// `edtui` re-adjusts if the cursor would fall outside, so this can't
@@ -155,6 +197,14 @@ impl Editor {
 fn rows_that_can_be_visible(cursor_row: usize, area: Rect) -> std::ops::Range<usize> {
     let height = area.height as usize;
     cursor_row.saturating_sub(height)..cursor_row + height + 1
+}
+
+
+/// How many screen rows buffer `row` takes when wrapped at `text_width`
+/// (`edtui` wraps by character): at least one, even when empty.
+fn screen_rows(lines: &Lines, row: usize, text_width: usize) -> usize {
+    let len = lines.get(RowIndex::new(row)).map_or(0, |line| line.len());
+    len.div_ceil(text_width).max(1)
 }
 
 
