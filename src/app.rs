@@ -7,6 +7,7 @@ use ratatui_image::picker::Picker;
 use crate::choice_menu::ChoiceMenu;
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
 use crate::compare::{CompareLineEndingMenu, CompareMenu, CompareState};
+use crate::conflict::ConflictState;
 use crate::editor::{Editor, EditorKeymapMenu, EditorMenu};
 use crate::explorer::{
     AddUserMenuItemState, DriveMenu, FindFileState, ImagePreviewState, MarkdownLinkSearchState, MarkdownPreviewState, Panel, UserMenuCommandEdit, UserMenuPromptState,
@@ -35,6 +36,9 @@ pub enum Mode {
     /// `Alt+F5`: side-by-side compare of two files, both panes editable
     /// and kept row-aligned live. Design: `TODO/file-compare.md`.
     CompareFiles(CompareState),
+    /// `Alt+F5` on an SVN merge conflict's four files: the three-way
+    /// resolver over the incoming change's Compare (`crate::conflict`).
+    ResolveConflict(Box<ConflictState>),
 }
 
 
@@ -43,8 +47,8 @@ pub enum Mode {
 /// is. Keys go to the overlay while one is open
 /// (`event_loop::keys::key_effect`); mouse and paste ignore the screen.
 pub enum Overlay {
-    /// "Discard unsaved changes?" -- over `Mode::Editing` or
-    /// `Mode::CompareFiles`.
+    /// "Discard unsaved changes?" -- over `Mode::Editing`,
+    /// `Mode::CompareFiles` or `Mode::ResolveConflict`.
     ConfirmDiscard,
     /// The editor's own F9 menu.
     EditorMenu(EditorMenu),

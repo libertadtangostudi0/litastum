@@ -7,8 +7,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::compare::{compute, map_real_row, CompareState, DiffLineKind, LineEnding, LineEndingDisplay, Side};
+use crate::compare::{compute, map_real_row, CompareState, DiffLineKind, LineEnding, LineEndingDisplay, PathEdit, Side};
 use crate::editor::Editor;
+use crate::text_field::TextField;
 use crate::theming::Theme;
 
 /// `Alt+F5`: two ordinary, editable `Editor` panes side by side, with
@@ -19,7 +20,30 @@ use crate::theming::Theme;
 /// `Editor::set_viewport_top_row`. History: docs/history/compare.md.
 pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) -> Option<Position> {
     let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Min(3), Constraint::Length(1)]).split(area);
-    let panes = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(50), Constraint::Percentage(50)]).split(rows[0]);
+    let cursor = draw_compare_panes(frame, rows[0], state, theme, line_ending_display);
+
+    let hint = Line::from(vec![
+        Span::styled("Tab ", Style::default().fg(theme.accent)),
+        Span::styled("Switch pane   ", Style::default().fg(theme.text_dim)),
+        Span::styled("F7/F8 ", Style::default().fg(theme.accent)),
+        Span::styled("Prev/next diff   ", Style::default().fg(theme.text_dim)),
+        Span::styled("Ctrl+L ", Style::default().fg(theme.accent)),
+        Span::styled("Path   ", Style::default().fg(theme.text_dim)),
+        Span::styled("Ctrl+S ", Style::default().fg(theme.accent)),
+        Span::styled("Save   ", Style::default().fg(theme.text_dim)),
+        Span::styled("F9 ", Style::default().fg(theme.accent)),
+        Span::styled("Menu   ", Style::default().fg(theme.text_dim)),
+        Span::styled("Esc ", Style::default().fg(theme.accent)),
+        Span::styled("Close", Style::default().fg(theme.text_dim)),
+    ]);
+    frame.render_widget(hint, rows[1]);
+    cursor
+}
+
+/// The two diffed panes without the hint row -- also the conflict
+/// resolver's bottom half. Returns the focused pane's cursor.
+pub(super) fn draw_compare_panes(frame: &mut Frame, area: Rect, state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) -> Option<Position> {
+    let panes = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
 
     let left_text = state.left.text();
     let right_text = state.right.text();
@@ -41,38 +65,55 @@ pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &mut CompareSta
 
     let left_line_endings = state.line_endings(Side::Left).to_vec();
     let right_line_endings = state.line_endings(Side::Right).to_vec();
-    let left_cursor = draw_pane(frame, panes[0], &mut state.left, theme, state.focus == Side::Left, line_ending_display, &left_line_endings);
-    let right_cursor = draw_pane(frame, panes[1], &mut state.right, theme, state.focus == Side::Right, line_ending_display, &right_line_endings);
-
-    let hint = Line::from(vec![
-        Span::styled("Tab ", Style::default().fg(theme.accent)),
-        Span::styled("Switch pane   ", Style::default().fg(theme.text_dim)),
-        Span::styled("F7/F8 ", Style::default().fg(theme.accent)),
-        Span::styled("Prev/next diff   ", Style::default().fg(theme.text_dim)),
-        Span::styled("Ctrl+S ", Style::default().fg(theme.accent)),
-        Span::styled("Save   ", Style::default().fg(theme.text_dim)),
-        Span::styled("F9 ", Style::default().fg(theme.accent)),
-        Span::styled("Menu   ", Style::default().fg(theme.text_dim)),
-        Span::styled("Esc ", Style::default().fg(theme.accent)),
-        Span::styled("Close", Style::default().fg(theme.text_dim)),
-    ]);
-    frame.render_widget(hint, rows[1]);
-    left_cursor.or(right_cursor)
+    let (left_edit, right_edit) = match state.focus {
+        Side::Left => (state.path_edit.as_ref(), None),
+        Side::Right => (None, state.path_edit.as_ref()),
+    };
+    let left_cursor = draw_pane(frame, panes[0], &mut state.left, theme, line_ending_display, &left_line_endings, left_edit);
+    let right_cursor = draw_pane(frame, panes[1], &mut state.right, theme, line_ending_display, &right_line_endings, right_edit);
+    match state.focus {
+        Side::Left => left_cursor,
+        Side::Right => right_cursor,
+    }
 }
 
-fn draw_pane(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme, is_focused: bool, line_ending_display: LineEndingDisplay, line_endings: &[Option<LineEnding>]) -> Option<Position> {
+/// Draws one pane; returns where its caret would go if it has focus.
+fn draw_pane(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme, line_ending_display: LineEndingDisplay, line_endings: &[Option<LineEnding>], path_edit: Option<&PathEdit>) -> Option<Position> {
     let viewport_top_row = editor.viewport_top_row();
     frame.render_widget(editor.view(theme, area), area);
-    let cursor = if is_focused { editor.cursor_screen_position() } else { None };
+    let mut cursor = editor.cursor_screen_position();
     if line_ending_display == LineEndingDisplay::Shown {
         draw_line_ending_overlay(frame, area, line_endings, viewport_top_row, theme);
+    }
+    if let Some(edit) = path_edit {
+        cursor = draw_path_field(frame, editor.title_area(), &edit.field, theme);
     }
     cursor
 }
 
+/// The path field over a pane's top border (`PathEdit`): plain text, its
+/// selection styled like the panels' selected row (`selection_text`, so
+/// it stays readable on a bright selection color). Scrolls sideways to keep
+/// the caret in view -- it starts at the end, by the file name. Returns
+/// the caret's cell.
+pub(super) fn draw_path_field(frame: &mut Frame, area: Rect, field: &TextField, theme: &Theme) -> Option<Position> {
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+    let scroll = (field.cursor() + 1).saturating_sub(usize::from(area.width));
+    let style = Style::default().fg(theme.text).bg(theme.bg);
+    let line = Line::from(super::text_field::styled_field_spans(field, style, super::popup::selected_row_style(theme)));
+    // A `Paragraph` leaves the cells past its text alone, so the title
+    // under them showed through -- the caret cell at the end repeated the
+    // file name's last character.
+    frame.render_widget(ratatui::widgets::Clear, area);
+    frame.render_widget(Paragraph::new(line).style(style).scroll((0, scroll as u16)), area);
+    Some(Position::new(area.x + (field.cursor() - scroll) as u16, area.y))
+}
+
 /// One whole-line `Highlight` per `Removed`/`Added` row. A `Highlight`
 /// replaces the span's style, so a changed line is one flat color pair.
-fn row_highlights(kinds: &[DiffLineKind], source_index: &[Option<usize>], text: &str, changed_bg: Color, theme: &Theme) -> Vec<Highlight> {
+pub(super) fn row_highlights(kinds: &[DiffLineKind], source_index: &[Option<usize>], text: &str, changed_bg: Color, theme: &Theme) -> Vec<Highlight> {
     let real_lines: Vec<&str> = text.lines().collect();
     let style = Style::default().fg(theme.text).bg(changed_bg);
     let mut highlights = Vec::new();
@@ -304,6 +345,43 @@ mod tests {
 
         assert_eq!(state.focus, crate::compare::Side::Left);
         assert_eq!(state.left.cursor(), edtui::Index2::new(1, 1));
+    }
+
+    /// A click on the right pane's title opens its path field there,
+    /// focused, with the caret after the visible end of the path.
+    #[test]
+    fn a_click_on_a_title_edits_that_panes_path() {
+        let mut state = open_pair("aaaa\n", "bbbb\n");
+        // A bright selection color with dark text over it, like the scheme
+        // in the report -- plain `theme.text` there was unreadable.
+        let mut theme = Theme::dark();
+        theme.selection_text = Some(Color::Rgb(0, 0, 0));
+        render(&mut state, &theme, LineEndingDisplay::Hidden);
+
+        state.mouse(left_click(40, 0));
+        assert_eq!(state.focus, crate::compare::Side::Right);
+        assert!(state.path_edit.is_some());
+
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut cursor = None;
+        terminal.draw(|frame| cursor = draw_compare(frame, frame.area(), &mut state, &theme, LineEndingDisplay::Hidden)).unwrap();
+        assert_eq!(cursor.map(|position| position.y), Some(0), "the caret is in the field on the border row");
+        let caret = cursor.unwrap();
+        assert_eq!(terminal.backend().buffer()[(caret.x, caret.y)].symbol(), " ", "the cell after the path is empty, not the title's leftover");
+        let cell = &terminal.backend().buffer()[(31, 0)];
+        assert_eq!((cell.fg, cell.bg), (theme.text, theme.bg), "unselected text is plain");
+
+        // Reported: the whole field was filled and a selection cleared the
+        // fill; the selection is what gets it.
+        state.path_edit.as_mut().unwrap().field.select_all();
+        terminal.draw(|frame| { draw_compare(frame, frame.area(), &mut state, &theme, LineEndingDisplay::Hidden); }).unwrap();
+        let cell = &terminal.backend().buffer()[(31, 0)];
+        assert_eq!((cell.fg, cell.bg), (Color::Rgb(0, 0, 0), theme.current_row_bg), "the scheme's selection text color, as on a selected panel row");
+        assert!(cell.modifier.contains(ratatui::style::Modifier::BOLD));
+
+        state.mouse(left_click(40, 3));
+        assert!(state.path_edit.is_none(), "a click in the text puts the title back");
     }
 
     #[test]

@@ -1,0 +1,198 @@
+use color_eyre::eyre::Result;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tracing::debug;
+
+use crate::app::{App, Mode, Overlay};
+use crate::command_line::Effect;
+use crate::editor::edtui_supports_key;
+use crate::notice::Notice;
+
+use super::files::ConflictFiles;
+use super::state::ConflictState;
+
+/// `Alt+F5` on the four conflict files, from the panels or Find file.
+/// A file that can't be opened (not UTF-8, gone) shows as a notice.
+pub fn open_resolver(app: &mut App, files: ConflictFiles) {
+    let syntax_theme = app.syntax_theme.clone();
+    match ConflictState::open(files, syntax_theme, app.settings.editor_keymap_mode) {
+        Ok(state) => app.mode = Mode::ResolveConflict(Box::new(state)),
+        Err(err) => {
+            tracing::warn!(%err, "conflict: failed to open the resolver");
+            app.notice = Some(Notice::error(format!("Can't open the conflict: {err}")));
+        }
+    }
+}
+
+/// A key in the resolver: `Tab`/`Shift+Tab` move between the five panes;
+/// `F7`/`F8` (and `Ctrl+Up`/`Down`) step through the focused pane's
+/// changes, and the result's conflict markers (`ConflictState::stops`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConflictCommand {
+    Close,
+    Save,
+    NextPane,
+    PreviousPane,
+    EditPath,
+    Next,
+    Previous,
+    Forward,
+    Ignore,
+}
+
+fn resolve(key: KeyEvent) -> ConflictCommand {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+    match key.code {
+        KeyCode::Esc => ConflictCommand::Close,
+        KeyCode::Char('s' | 'S') if ctrl => ConflictCommand::Save,
+        KeyCode::Tab => ConflictCommand::NextPane,
+        KeyCode::BackTab => ConflictCommand::PreviousPane,
+        KeyCode::Char('l' | 'L') if ctrl => ConflictCommand::EditPath,
+        KeyCode::Down if ctrl => ConflictCommand::Next,
+        KeyCode::Up if ctrl => ConflictCommand::Previous,
+        KeyCode::F(8) => ConflictCommand::Next,
+        KeyCode::F(7) => ConflictCommand::Previous,
+        _ if edtui_supports_key(key.code) => ConflictCommand::Forward,
+        _ => ConflictCommand::Ignore,
+    }
+}
+
+/// Key handling for `Mode::ResolveConflict`: resolver commands first,
+/// anything `edtui` understands goes to the focused pane.
+pub fn handle_conflict_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
+    let Mode::ResolveConflict(state) = &mut app.mode else {
+        return Ok(Effect::None);
+    };
+
+    if state.is_editing_path() {
+        if let Err(err) = state.path_edit_key(key) {
+            app.notice = Some(Notice::error(format!("Can't open: {err}")));
+        }
+        return Ok(Effect::None);
+    }
+
+    let command = resolve(key);
+    debug!(?key, ?command, "conflict key");
+
+    match command {
+        ConflictCommand::Close if state.is_dirty() => app.overlay = Some(Overlay::ConfirmDiscard),
+        ConflictCommand::Close => app.mode = Mode::Browsing,
+        ConflictCommand::Save => {
+            if let Err(err) = state.save_focused() {
+                tracing::warn!(%err, "conflict: failed to save the focused pane");
+                app.notice = Some(Notice::error(format!("Save failed: {err}")));
+            }
+        }
+        ConflictCommand::NextPane => state.focus_next(),
+        ConflictCommand::PreviousPane => state.focus_previous(),
+        ConflictCommand::EditPath => state.start_path_edit(),
+        ConflictCommand::Next => state.jump_to_next(),
+        ConflictCommand::Previous => state.jump_to_previous(),
+        ConflictCommand::Forward => state.focused_mut().input(key),
+        ConflictCommand::Ignore => {}
+    }
+
+    Ok(Effect::None)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conflict::state::tests::open_conflict;
+    use crate::conflict::Pane;
+    use crate::test_support::{key, test_app, unique_scratch_dir};
+
+    fn app_with_conflict() -> App {
+        let mut app = test_app(unique_scratch_dir("conflict-input"));
+        app.mode = Mode::ResolveConflict(Box::new(open_conflict()));
+        app
+    }
+
+    fn state(app: &App) -> &crate::conflict::ConflictState {
+        let Mode::ResolveConflict(state) = &app.mode else { panic!("expected Mode::ResolveConflict") };
+        state
+    }
+
+    #[test]
+    fn typing_goes_into_the_result_pane_first() {
+        let mut app = app_with_conflict();
+
+        handle_conflict_key(&mut app, key(KeyCode::Char('z'))).unwrap();
+
+        assert!(state(&app).result.text().starts_with('z'));
+        assert_eq!(state(&app).working.text(), "one\nmine\n");
+    }
+
+    #[test]
+    fn tab_moves_to_the_next_pane_instead_of_typing() {
+        let mut app = app_with_conflict();
+
+        handle_conflict_key(&mut app, key(KeyCode::Tab)).unwrap();
+
+        assert_eq!(state(&app).focus, Pane::Theirs);
+        assert!(!state(&app).is_dirty());
+    }
+
+    #[test]
+    fn f8_in_the_result_pane_jumps_to_the_conflict() {
+        let mut app = app_with_conflict();
+
+        handle_conflict_key(&mut app, key(KeyCode::F(8))).unwrap();
+
+        assert_eq!(state(&app).result.cursor().row, 1, "the <<<<<<< row");
+    }
+
+    #[test]
+    fn f8_steps_through_the_bottom_compare_once_it_has_focus() {
+        let mut app = app_with_conflict();
+        handle_conflict_key(&mut app, key(KeyCode::Tab)).unwrap();
+        handle_conflict_key(&mut app, key(KeyCode::Tab)).unwrap();
+
+        handle_conflict_key(&mut app, key(KeyCode::F(8))).unwrap();
+
+        assert_eq!(state(&app).incoming.left.cursor().row, 1, "\"base\" -> \"theirs\"");
+    }
+
+    #[test]
+    fn esc_in_the_path_field_closes_only_the_field() {
+        let mut app = app_with_conflict();
+        handle_conflict_key(&mut app, KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)).unwrap();
+        handle_conflict_key(&mut app, key(KeyCode::Char('z'))).unwrap();
+
+        handle_conflict_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert!(!state(&app).is_editing_path());
+        assert!(!state(&app).is_dirty(), "the z went into the field");
+    }
+
+    #[test]
+    fn esc_closes_when_nothing_is_dirty() {
+        let mut app = app_with_conflict();
+
+        handle_conflict_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert!(matches!(app.mode, Mode::Browsing));
+    }
+
+    #[test]
+    fn esc_asks_to_confirm_discard_when_a_pane_is_dirty() {
+        let mut app = app_with_conflict();
+        handle_conflict_key(&mut app, key(KeyCode::Char('z'))).unwrap();
+
+        handle_conflict_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        assert!(matches!(app.overlay, Some(Overlay::ConfirmDiscard)));
+        assert!(matches!(app.mode, Mode::ResolveConflict(_)));
+    }
+
+    #[test]
+    fn ctrl_s_saves_the_focused_pane() {
+        let mut app = app_with_conflict();
+        handle_conflict_key(&mut app, key(KeyCode::Char('z'))).unwrap();
+
+        handle_conflict_key(&mut app, KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)).unwrap();
+
+        assert!(!state(&app).is_dirty());
+    }
+}

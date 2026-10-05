@@ -59,3 +59,15 @@ real, saveable buffer would corrupt the file on save.
   the F4 editor. Now a click in the other pane focuses it (as `Tab`)
   and places the caret there; clicks and drags work like in the editor,
   and the wheel scrolls the focused pane (`CompareState::mouse`).
+- **Editable path titles.** Reported with a screenshot: a long path in a
+  pane's top border showed only its start, cutting off the file name, and
+  couldn't be changed. The title now keeps the path's end behind a `…`
+  (`view.rs::fitted_title`, every editor), and a click on it or `Ctrl+L`
+  turns it into a field (`compare/path_edit.rs`) -- `Enter` loads the
+  typed path into that pane, as in Araxis; the diff follows on the next
+  frame. A pane with unsaved changes isn't replaced. The conflict
+  resolver's panes work the same way. The field first drew `theme.text` on the
+  selection color, unreadable on a scheme with a bright one; filling the
+  whole field with the panels' selected-row style (`selection_text`)
+  then made a selection look like the fill being removed. Now the text
+  is plain and only the selection gets that style.

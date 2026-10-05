@@ -2,6 +2,7 @@ mod app;
 mod choice_menu;
 mod command_line;
 mod compare;
+mod conflict;
 mod editor;
 mod event_loop;
 mod explorer;

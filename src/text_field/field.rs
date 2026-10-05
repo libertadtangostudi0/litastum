@@ -1,17 +1,30 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::undo::{Snapshot, UndoHistory};
 use super::EditOutcome;
 
 /// A single-line text field: the text, the cursor (a character index)
 /// and the selection anchor (`None` = no selection), kept together so a
 /// caller can't reset one and forget the others. Every method keeps
-/// `cursor <= text.chars().count()`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// `cursor <= text.chars().count()`. Two fields are equal when they show
+/// the same thing; the undo history isn't compared.
+#[derive(Debug, Clone, Default)]
 pub struct TextField {
     text: String,
     cursor: usize,
     anchor: Option<usize>,
+    /// Steps of `apply_key` edits only -- the command line edits through
+    /// the single-purpose methods below and has no undo.
+    history: UndoHistory,
 }
+
+impl PartialEq for TextField {
+    fn eq(&self, other: &Self) -> bool {
+        (&self.text, self.cursor, self.anchor) == (&other.text, other.cursor, other.anchor)
+    }
+}
+
+impl Eq for TextField {}
 
 
 impl TextField {
@@ -33,7 +46,7 @@ impl TextField {
     pub fn with_cursor_at(text: impl Into<String>, cursor: usize) -> Self {
         let text = text.into();
         let cursor = cursor.min(text.chars().count());
-        Self { text, cursor, anchor: None }
+        Self { text, cursor, anchor: None, history: UndoHistory::default() }
     }
 
 
@@ -42,7 +55,7 @@ impl TextField {
     pub fn at(text: impl Into<String>, cursor: usize, anchor: Option<usize>) -> Self {
         let text = text.into();
         assert!(cursor <= text.chars().count(), "cursor past the end of the text");
-        Self { text, cursor, anchor }
+        Self { text, cursor, anchor, history: UndoHistory::default() }
     }
 
 
@@ -93,9 +106,42 @@ impl TextField {
     }
 
 
-    /// The standard single-line key layout (`super::apply_edit_key`).
+    /// The standard single-line key layout (`super::apply_edit_key`), plus
+    /// `Ctrl+Z` to undo and `Ctrl+Y`/`Ctrl+Shift+Z` to redo
+    /// (`UndoHistory`).
     pub fn apply_key(&mut self, key: KeyEvent) -> EditOutcome {
-        super::apply_edit_key(&mut self.text, &mut self.cursor, &mut self.anchor, key)
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        match key.code {
+            KeyCode::Char('z' | 'Z') if ctrl && !shift => return self.restore(|history, current| history.undo(current)),
+            KeyCode::Char('y' | 'Y') if ctrl => return self.restore(|history, current| history.redo(current)),
+            KeyCode::Char('z' | 'Z') if ctrl => return self.restore(|history, current| history.redo(current)),
+            _ => {}
+        }
+        let before = self.snapshot();
+        let outcome = super::apply_edit_key(&mut self.text, &mut self.cursor, &mut self.anchor, key);
+        if outcome == EditOutcome::TextChanged && self.text != before.text {
+            self.history.record(before, matches!(key.code, KeyCode::Char(_)) && !ctrl);
+        } else {
+            self.history.break_run();
+        }
+        outcome
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot { text: self.text.clone(), cursor: self.cursor, anchor: self.anchor }
+    }
+
+    /// Undo or redo: `step` hands back the state to show, if there is one.
+    fn restore(&mut self, step: impl FnOnce(&mut UndoHistory, Snapshot) -> Option<Snapshot>) -> EditOutcome {
+        let current = self.snapshot();
+        match step(&mut self.history, current) {
+            Some(snapshot) => {
+                (self.text, self.cursor, self.anchor) = (snapshot.text, snapshot.cursor, snapshot.anchor);
+                EditOutcome::TextChanged
+            }
+            None => EditOutcome::NoTextChange,
+        }
     }
 
 
@@ -263,5 +309,78 @@ mod tests {
         field.extend_selection_left();
         field.extend_selection_left();
         assert_eq!(field.selection(), Some((1, 3)));
+    }
+
+    mod undo {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        use super::TextField;
+        use crate::test_support::key;
+
+        fn ctrl(c: char) -> KeyEvent {
+            KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+        }
+
+        fn type_text(field: &mut TextField, text: &str) {
+            for c in text.chars() {
+                field.apply_key(key(KeyCode::Char(c)));
+            }
+        }
+
+        /// Reported: Ctrl+Z did nothing in Compare's path field.
+        #[test]
+        fn ctrl_z_undoes_a_run_of_typing_in_one_step() {
+            let mut field = TextField::with_text("a.rs");
+            type_text(&mut field, "xyz");
+
+            field.apply_key(ctrl('z'));
+
+            assert_eq!((field.text(), field.cursor()), ("a.rs", 4));
+        }
+
+        #[test]
+        fn each_kind_of_edit_is_its_own_step() {
+            let mut field = TextField::with_text("ab");
+            type_text(&mut field, "c");
+            field.apply_key(key(KeyCode::Backspace));
+            field.apply_key(key(KeyCode::Backspace));
+            type_text(&mut field, "d");
+
+            let mut seen = Vec::new();
+            for _ in 0..5 {
+                field.apply_key(ctrl('z'));
+                seen.push(field.text().to_string());
+            }
+            assert_eq!(seen, ["a", "ab", "abc", "ab", "ab"], "typing, two backspaces, typing; then nothing left");
+        }
+
+        #[test]
+        fn a_cursor_move_ends_a_typing_run() {
+            let mut field = TextField::with_text("");
+            type_text(&mut field, "ab");
+            field.apply_key(key(KeyCode::Left));
+            type_text(&mut field, "x");
+
+            field.apply_key(ctrl('z'));
+            assert_eq!(field.text(), "ab");
+        }
+
+        #[test]
+        fn redo_brings_an_undone_edit_back_until_a_new_edit() {
+            let mut field = TextField::with_text("a");
+            type_text(&mut field, "b");
+            field.apply_key(ctrl('z'));
+
+            field.apply_key(ctrl('y'));
+            assert_eq!(field.text(), "ab");
+            field.apply_key(ctrl('z'));
+            field.apply_key(KeyEvent::new(KeyCode::Char('Z'), KeyModifiers::CONTROL | KeyModifiers::SHIFT));
+            assert_eq!(field.text(), "ab", "Ctrl+Shift+Z redoes too");
+
+            field.apply_key(ctrl('z'));
+            type_text(&mut field, "c");
+            field.apply_key(ctrl('y'));
+            assert_eq!(field.text(), "ac", "a new edit drops what was undone");
+        }
     }
 }

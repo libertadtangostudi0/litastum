@@ -19,6 +19,7 @@ enum CompareCommand {
     Close,
     Save,
     ToggleFocus,
+    EditPath,
     NextHunk,
     PreviousHunk,
     OpenMenu,
@@ -33,6 +34,7 @@ fn resolve(key: KeyEvent) -> CompareCommand {
         KeyCode::Esc => CompareCommand::Close,
         KeyCode::Char('s' | 'S') if ctrl => CompareCommand::Save,
         KeyCode::Tab => CompareCommand::ToggleFocus,
+        KeyCode::Char('l' | 'L') if ctrl => CompareCommand::EditPath,
         KeyCode::Down if ctrl => CompareCommand::NextHunk,
         KeyCode::Up if ctrl => CompareCommand::PreviousHunk,
         KeyCode::F(8) => CompareCommand::NextHunk,
@@ -53,6 +55,13 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         return Ok(Effect::None);
     };
 
+    if state.path_edit.is_some() {
+        if let Err(err) = state.path_edit_key(key) {
+            app.notice = Some(Notice::error(format!("Can't open: {err}")));
+        }
+        return Ok(Effect::None);
+    }
+
     let command = resolve(key);
     debug!(?key, ?command, "compare key");
 
@@ -65,6 +74,7 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
             }
         }
         CompareCommand::ToggleFocus => state.toggle_focus(),
+        CompareCommand::EditPath => state.start_path_edit(),
         CompareCommand::NextHunk => state.jump_to_next_hunk(),
         CompareCommand::PreviousHunk => state.jump_to_previous_hunk(),
         CompareCommand::OpenMenu => app.overlay = Some(Overlay::CompareMenu(open_compare_menu())),
@@ -95,7 +105,8 @@ fn close_compare_or_confirm(app: &mut App) -> Result<()> {
     Ok(())
 }
 
-/// Key handling on Compare's own "discard unsaved changes?" prompt.
+/// Key handling on the "discard unsaved changes?" prompt over Compare or
+/// the conflict resolver -- either way, `Yes` drops back to browsing.
 pub fn handle_compare_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let answer = yes_no::answer(key);
     debug!(?key, ?answer, "compare confirm-discard key");
@@ -230,6 +241,19 @@ mod tests {
 
         let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
         assert_eq!(state.left.cursor().row, 1, "should land back on the first hunk, not stay on the second");
+    }
+
+    #[test]
+    fn ctrl_l_edits_the_path_and_keys_go_into_the_field() {
+        let mut app = app_with_compare("a\n", "b\n");
+
+        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)).unwrap();
+        handle_compare_key(&mut app, key(KeyCode::Char('z'))).unwrap();
+        handle_compare_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        let Mode::CompareFiles(state) = &app.mode else { panic!("Esc closed the field, not Compare") };
+        assert!(state.path_edit.is_none());
+        assert_eq!(state.left.text(), "a\n", "typing went into the field, not the file");
     }
 
     #[test]

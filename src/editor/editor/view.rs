@@ -64,7 +64,7 @@ impl Editor {
             .block(
                 Block::bordered()
                     .border_style(Style::default().fg(theme.accent))
-                    .title(self.path.to_string_lossy().into_owned()),
+                    .title(fitted_title(&self.path, area.width)),
             )
             .selection_style(selection_style)
             .hide_status_line()
@@ -226,4 +226,37 @@ fn syntax_name_candidates(path: &Path) -> Vec<&str> {
         }
     }
     candidates
+}
+
+
+/// The path for the top border, `area_width` wide: a path too long to fit
+/// keeps its end -- the file name -- behind a leading `…`.
+pub(crate) fn fitted_title(path: &Path, area_width: u16) -> String {
+    let title = path.to_string_lossy();
+    let room = usize::from(area_width.saturating_sub(2));
+    let length = title.chars().count();
+    if length <= room {
+        return title.into_owned();
+    }
+    let tail: String = title.chars().skip(length - room.saturating_sub(1)).collect();
+    format!("…{tail}")
+}
+
+
+#[cfg(test)]
+mod fitted_title_tests {
+    use super::*;
+
+    #[test]
+    fn a_path_that_fits_is_shown_whole() {
+        assert_eq!(fitted_title(Path::new("src/a.rs"), 12), "src/a.rs");
+    }
+
+    /// Reported: a long path showed only its start, hiding the file name.
+    #[test]
+    fn a_long_path_keeps_its_end() {
+        let title = fitted_title(Path::new("W:/WorkCopies/lib/IcEdSelectionSetImpl.h"), 25);
+        assert_eq!(title, "…IcEdSelectionSetImpl.h");
+        assert_eq!(title.chars().count(), 23, "the width minus the two corners");
+    }
 }

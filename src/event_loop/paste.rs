@@ -79,6 +79,8 @@ fn paste_target(app: &App) -> Option<PasteTarget> {
         Mode::Editing(editor) if editor.is_searching() => Some(PasteTarget::TextField),
         Mode::Editing(_) => Some(PasteTarget::EditorBuffer),
         Mode::Browsing => Some(PasteTarget::TextField),
+        Mode::CompareFiles(state) if state.path_edit.is_some() => Some(PasteTarget::TextField),
+        Mode::ResolveConflict(state) if state.is_editing_path() => Some(PasteTarget::TextField),
         _ => None,
     }
 }

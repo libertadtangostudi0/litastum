@@ -10,6 +10,7 @@ mod command_line;
 mod compare;
 mod compare_line_ending_menu;
 mod compare_menu;
+mod conflict;
 mod confirm;
 mod drive_menu;
 mod editor_find;
@@ -90,6 +91,12 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
         // Compare takes the whole frame for its two full-width panes.
         Mode::CompareFiles(state) => {
             let cursor = compare::draw_compare(frame, area, state, &theme, app.settings.compare_line_ending_display);
+            draw_overlay(frame, area, app, &theme);
+            return (unchanged_layout, cursor);
+        }
+        // So does the conflict resolver, for its five panes.
+        Mode::ResolveConflict(state) => {
+            let cursor = conflict::draw_conflict(frame, area, state, &theme, app.settings.compare_line_ending_display);
             draw_overlay(frame, area, app, &theme);
             return (unchanged_layout, cursor);
         }

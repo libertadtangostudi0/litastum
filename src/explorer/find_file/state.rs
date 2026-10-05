@@ -205,12 +205,15 @@ impl FindFileState {
     /// which side is "left" and which is "right" predictable regardless
     /// of which of the two the user happened to mark first.
     pub fn two_marked_results(&self) -> Option<(PathBuf, PathBuf)> {
+        let [left, right] = self.marked_results().try_into().ok()?;
+        Some((left, right))
+    }
+
+    /// Every marked result, in ascending index order.
+    pub fn marked_results(&self) -> Vec<PathBuf> {
         let mut indices: Vec<usize> = self.marked.iter().copied().collect();
         indices.sort_unstable();
-        let [left, right] = indices.as_slice() else {
-            return None;
-        };
-        Some((self.results.get(*left)?.clone(), self.results.get(*right)?.clone()))
+        indices.into_iter().filter_map(|index| self.results.get(index).cloned()).collect()
     }
 }
 

@@ -145,6 +145,16 @@ pub fn previous_hunk_start(kinds: &[DiffLineKind], from: usize) -> Option<usize>
     Some(hunk_start_at(kinds, last_row_of_previous_hunk))
 }
 
+/// The real row each hunk starts on, on this side -- where `F8` stops.
+/// An insertion on the other side is only padding here, not a hunk.
+pub fn hunk_start_rows(diff: &DiffLines) -> Vec<usize> {
+    let is_changed = |kind: &DiffLineKind| matches!(kind, DiffLineKind::Removed | DiffLineKind::Added);
+    (0..diff.kinds.len())
+        .filter(|&row| is_changed(&diff.kinds[row]) && (row == 0 || !is_changed(&diff.kinds[row - 1])))
+        .filter_map(|row| diff.source_index[row])
+        .collect()
+}
+
 /// The diff row holding real line `real_row` on this side, or the first
 /// real line after it -- diff rows include `Empty` padding, so the two
 /// numberings drift apart after every insertion on the other side.
@@ -211,6 +221,13 @@ mod tests {
         assert_eq!(left.kinds.len(), right.kinds.len());
         assert_eq!(left.kinds, vec![DiffLineKind::Removed, DiffLineKind::Empty, DiffLineKind::Empty]);
         assert!(right.kinds.iter().all(|k| *k == DiffLineKind::Added));
+    }
+
+    #[test]
+    fn hunk_start_rows_are_real_rows_and_skip_padding() {
+        let (left, right) = compute("a\nb\nc\nd\ne\n", "a\nnew1\nnew2\nb\nc\nX\nY\ne\n");
+        assert_eq!(hunk_start_rows(&left), [3], "\"d\"; the insertion is only padding on the left");
+        assert_eq!(hunk_start_rows(&right), [1, 5], "the insertion, then \"X\" (one hunk with \"Y\")");
     }
 
     #[test]

@@ -155,6 +155,19 @@ impl Editor {
     }
 
 
+    /// Opens `path` as a new session with this one's syntax theme, keymap
+    /// and syntax-highlighting switch -- Compare's path field loading
+    /// another file into a pane.
+    pub fn reopen(&self, path: PathBuf) -> io::Result<Self> {
+        let mut editor = Self::open(path, self.custom_syntax_theme.clone(), self.keymap_mode)?;
+        editor.syntax_highlighting_enabled = self.syntax_highlighting_enabled;
+        Ok(editor)
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
     /// This session's currently active key-binding scheme -- read by
     /// `keymap_menu.rs` to open its own picker already highlighting the
     /// right entry.

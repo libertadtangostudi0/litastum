@@ -58,13 +58,19 @@ pub(super) fn handle_results_key(app: &mut App, key: KeyEvent) -> Result<Effect>
     Ok(Effect::None)
 }
 
-/// `Alt+F5`: compares the two marked results -- search hits often live in
-/// unrelated directories. No-op unless exactly two are marked and both can
-/// be compared.
+/// `Alt+F5`: the conflict resolver on an SVN conflict's four marked
+/// results, as in the panels; otherwise compares the two marked results
+/// -- search hits often live in unrelated directories. No-op unless
+/// exactly two are marked and both can be compared.
 fn compare_marked_results(app: &mut App) -> Result<()> {
     let Some(Overlay::FindFile(state)) = &app.overlay else {
         return Ok(());
     };
+    if let Some(files) = crate::conflict::detect(&state.marked_results()) {
+        app.overlay = None;
+        crate::conflict::open_resolver(app, files);
+        return Ok(());
+    }
     let Some((left_path, right_path)) = state.two_marked_results() else {
         return Ok(());
     };
@@ -308,6 +314,24 @@ mod tests {
 
         assert!(matches!(app.mode, Mode::CompareFiles(_)), "Alt+F5 with exactly two results marked should open the compare view");
         assert!(app.overlay.is_none(), "the Find file popup must not stay open over Compare");
+    }
+
+    /// The resolver opens from Find file too: a search for the file's name
+    /// lists all four conflict files -- the panel route was the only one
+    /// at first, and Alt+F5 on the marked results did nothing.
+    #[test]
+    fn alt_f5_on_four_marked_conflict_results_opens_the_resolver() {
+        let mut app = app_with_find_file(FindFileState::new());
+        let mut results_state = FindFileState::new();
+        results_state.phase = FindFilePhase::Results;
+        results_state.results = crate::conflict::state_tests::write_conflict_files(&app.panels[0].path);
+        results_state.marked = (0..4).collect();
+        app.overlay = Some(Overlay::FindFile(results_state));
+
+        handle_results_key(&mut app, KeyEvent::new(KeyCode::F(5), KeyModifiers::ALT)).unwrap();
+
+        assert!(matches!(app.mode, Mode::ResolveConflict(_)));
+        assert!(app.overlay.is_none(), "the Find file popup must not stay open over the resolver");
     }
 
     /// A silent no-op, matching `compare_targets`'s own convention --

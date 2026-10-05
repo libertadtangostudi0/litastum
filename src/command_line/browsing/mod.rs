@@ -126,9 +126,15 @@ fn perform(app: &mut App, action: BrowserAction) -> Result<Effect> {
 }
 
 
-/// `Alt+F5`: opens Compare on `compare_targets`; silently does nothing
-/// if a path can't be compared (e.g. a directory).
+/// `Alt+F5`: the conflict resolver on an SVN conflict's four marked
+/// files (`conflict::detect`), otherwise Compare on `compare_targets`;
+/// Compare silently does nothing if a path can't be compared (e.g. a
+/// directory).
 fn open_compare(app: &mut App) {
+    if let Some(files) = crate::conflict::detect(&marked_paths(app)) {
+        crate::conflict::open_resolver(app, files);
+        return;
+    }
     let Some((left_path, right_path)) = compare_targets(app) else {
         return;
     };
@@ -141,20 +147,23 @@ fn open_compare(app: &mut App) {
 
 /// Which two files `Alt+F5` compares: exactly two marked entries in the
 /// active panel if so, otherwise each panel's cursor file (active panel
-/// on the left). Any other marked count falls back too -- there's no
-/// sensible third pane. `None` if a panel has nothing selected.
+/// on the left). Any other marked count falls back too -- four make a
+/// conflict only when `conflict::detect` says so. `None` if a panel has
+/// nothing selected.
 fn compare_targets(app: &App) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
-    let marked_in_active_panel: Vec<std::path::PathBuf> = {
-        let panel = &app.panels[app.active];
-        panel.marked_entries().into_iter().map(|entry| panel.path.join(&entry.name)).collect()
-    };
-    if let [left, right] = marked_in_active_panel.as_slice() {
+    if let [left, right] = marked_paths(app).as_slice() {
         return Some((left.clone(), right.clone()));
     }
 
     let left_path = app.panels[app.active].selected_path()?;
     let right_path = app.panels[1 - app.active].selected_path()?;
     Some((left_path, right_path))
+}
+
+
+fn marked_paths(app: &App) -> Vec<std::path::PathBuf> {
+    let panel = &app.panels[app.active];
+    panel.marked_entries().into_iter().map(|entry| panel.path.join(&entry.name)).collect()
 }
 
 
@@ -187,6 +196,19 @@ mod compare_targets_tests {
         let (left, right) = compare_targets(&app).expect("exactly two marked entries");
         assert_eq!(left, dir.join("a.txt"));
         assert_eq!(right, dir.join("b.txt"));
+    }
+
+    #[test]
+    fn four_marked_conflict_files_open_the_resolver() {
+        let dir = unique_scratch_dir("compare-targets");
+        crate::conflict::state_tests::write_conflict_files(&dir);
+        let mut app = test_app(dir);
+        app.panels[app.active].select_all();
+
+        super::open_compare(&mut app);
+
+        let crate::app::Mode::ResolveConflict(state) = &app.mode else { panic!("expected the conflict resolver") };
+        assert!(state.result.text().contains("<<<<<<<"));
     }
 
     #[test]

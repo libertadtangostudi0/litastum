@@ -9,6 +9,7 @@ use crate::editor::{Editor, EditorKeymapMode};
 
 use super::diff::{compute, diff_row_of, next_hunk_start, previous_hunk_start, DiffLineKind, DiffLines};
 use super::line_ending::{self, LineEnding};
+use super::path_edit::{PathEdit, PathEditKey};
 
 /// Which pane currently owns the real terminal cursor and receives
 /// typed input -- `Tab` toggles this, matching the rest of this app's
@@ -38,6 +39,8 @@ pub struct CompareState {
     /// checking a lightly edited file for mixed endings is the use case.
     left_line_endings: Vec<Option<LineEnding>>,
     right_line_endings: Vec<Option<LineEnding>>,
+    /// The focused pane's path title while it's being edited.
+    pub path_edit: Option<PathEdit>,
 }
 
 impl CompareState {
@@ -62,7 +65,7 @@ impl CompareState {
         // the diff coloring the one thing drawing the eye here.
         left.disable_syntax_highlighting();
         right.disable_syntax_highlighting();
-        Ok(Self { left, right, focus: Side::Left, left_saved_cursor: None, right_saved_cursor: None, left_line_endings, right_line_endings })
+        Ok(Self { left, right, focus: Side::Left, left_saved_cursor: None, right_saved_cursor: None, left_line_endings, right_line_endings, path_edit: None })
     }
 
     pub fn line_endings(&self, side: Side) -> &[Option<LineEnding>] {
@@ -115,6 +118,24 @@ impl CompareState {
     /// The wheel scrolls the focused pane wherever the pointer is -- the
     /// other one follows it every frame anyway.
     pub fn mouse(&mut self, mouse: MouseEvent) {
+        if matches!(mouse.kind, MouseEventKind::Down(_)) {
+            let title = if self.left.title_row_contains(mouse.column, mouse.row) {
+                Some(Side::Left)
+            } else if self.right.title_row_contains(mouse.column, mouse.row) {
+                Some(Side::Right)
+            } else {
+                None
+            };
+            if let Some(side) = title {
+                if side != self.focus {
+                    self.toggle_focus();
+                }
+                self.start_path_edit();
+                return;
+            }
+            // A click anywhere else puts the title back.
+            self.path_edit = None;
+        }
         let over = if self.left.contains_screen_position(mouse.column, mouse.row) {
             Some(Side::Left)
         } else if self.right.contains_screen_position(mouse.column, mouse.row) {
@@ -133,6 +154,44 @@ impl CompareState {
 
     pub fn is_dirty(&self) -> bool {
         self.left.is_dirty() || self.right.is_dirty()
+    }
+
+    /// `Ctrl+L` or a click on the title: edit the focused pane's path.
+    pub fn start_path_edit(&mut self) {
+        self.path_edit = Some(PathEdit::new(self.focused().path()));
+    }
+
+    /// A key while the path field is open. `Err` if the typed path can't
+    /// be loaded -- the field stays open to fix it.
+    pub fn path_edit_key(&mut self, key: crossterm::event::KeyEvent) -> io::Result<()> {
+        let Some(edit) = self.path_edit.as_mut() else {
+            return Ok(());
+        };
+        match edit.key(key) {
+            PathEditKey::Editing => {}
+            PathEditKey::Cancel => self.path_edit = None,
+            PathEditKey::Submit(path) => {
+                self.replace_focused(path)?;
+                self.path_edit = None;
+            }
+        }
+        Ok(())
+    }
+
+    /// Loads `path` into the focused pane; the diff follows on the next
+    /// frame, since it's recomputed from the live text. Refused while the
+    /// pane has unsaved changes, which would be lost.
+    pub fn replace_focused(&mut self, path: PathBuf) -> io::Result<()> {
+        if self.focused().is_dirty() {
+            return Err(io::Error::other("this pane has unsaved changes -- save them first (Ctrl+S)"));
+        }
+        let line_endings = line_ending::detect(&std::fs::read_to_string(&path)?);
+        let editor = self.focused().reopen(path)?;
+        match self.focus {
+            Side::Left => (self.left, self.left_line_endings) = (editor, line_endings),
+            Side::Right => (self.right, self.right_line_endings) = (editor, line_endings),
+        }
+        Ok(())
     }
 
     /// `Ctrl+S` -- saves whichever pane currently has focus, same
@@ -236,6 +295,46 @@ mod tests {
 
         state.toggle_focus();
         assert_eq!(state.right.cursor(), Index2::new(1, 0), "right's own cursor should also have survived");
+    }
+
+    #[test]
+    fn a_submitted_path_loads_into_the_focused_pane() {
+        let mut state = open_pair("a\n", "b\n");
+        let other = unique_scratch_dir("compare-path-edit").join("other.txt");
+        std::fs::write(&other, "x\r\ny\n").unwrap();
+        state.toggle_focus();
+
+        state.start_path_edit();
+        state.path_edit.as_mut().unwrap().field.set_text(other.to_string_lossy().into_owned());
+        state.path_edit_key(crate::test_support::key(crossterm::event::KeyCode::Enter)).unwrap();
+
+        assert!(state.path_edit.is_none());
+        assert_eq!(state.right.path(), other);
+        assert_eq!(state.right.text(), "x\ny\n");
+        assert_eq!(state.line_endings(Side::Right), &[Some(LineEnding::Crlf), Some(LineEnding::Lf)]);
+        assert_eq!(state.left.text(), "a\n", "the other pane stays");
+    }
+
+    #[test]
+    fn a_path_that_cant_be_loaded_keeps_the_field_open() {
+        let mut state = open_pair("a\n", "b\n");
+        state.start_path_edit();
+        state.path_edit.as_mut().unwrap().field.set_text("no/such/file.txt");
+
+        assert!(state.path_edit_key(crate::test_support::key(crossterm::event::KeyCode::Enter)).is_err());
+        assert!(state.path_edit.is_some());
+        assert_eq!(state.left.text(), "a\n");
+    }
+
+    #[test]
+    fn a_dirty_pane_isnt_replaced() {
+        let mut state = open_pair("a\n", "b\n");
+        state.left.input(crate::test_support::key(crossterm::event::KeyCode::Char('!')));
+        let other = unique_scratch_dir("compare-path-edit").join("other.txt");
+        std::fs::write(&other, "x\n").unwrap();
+
+        assert!(state.replace_focused(other).is_err());
+        assert!(state.left.text().starts_with('!'));
     }
 
     #[test]

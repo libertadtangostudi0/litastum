@@ -10,14 +10,20 @@ use super::popup;
 /// `field`'s text as spans, its selection (if any) in the selected-text
 /// style every text field uses.
 pub(super) fn field_spans(field: &TextField, theme: &Theme) -> Vec<Span<'static>> {
-    let text_style = Style::default().fg(theme.text);
+    styled_field_spans(field, Style::default().fg(theme.text), popup::selected_text_style(theme))
+}
+
+
+/// `field`'s text as spans in `text_style`, its selection in
+/// `selected_style` -- for a field drawn on a background of its own.
+pub(super) fn styled_field_spans(field: &TextField, text_style: Style, selected_style: Style) -> Vec<Span<'static>> {
     let Some((start, end)) = field.selection() else {
         return vec![Span::styled(field.text().to_string(), text_style)];
     };
     let chars: Vec<char> = field.text().chars().collect();
     vec![
         Span::styled(chars[..start].iter().collect::<String>(), text_style),
-        Span::styled(chars[start..end].iter().collect::<String>(), popup::selected_text_style(theme)),
+        Span::styled(chars[start..end].iter().collect::<String>(), selected_style),
         Span::styled(chars[end..].iter().collect::<String>(), text_style),
     ]
 }

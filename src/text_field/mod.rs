@@ -13,6 +13,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::warn;
 
 mod field;
+mod undo;
 
 pub use field::TextField;
 

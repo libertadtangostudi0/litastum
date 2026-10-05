@@ -6,7 +6,7 @@ use ratatui::{prelude::CrosstermBackend, Terminal};
 
 use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
-use crate::{command_line, compare, editor, explorer, keyboard_layout, theming};
+use crate::{command_line, compare, conflict, editor, explorer, keyboard_layout, theming};
 
 use super::drain_pending_mouse_events;
 
@@ -194,7 +194,7 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
     // `Effect::None`).
     if let Some(overlay) = &app.overlay {
         return match overlay {
-            Overlay::ConfirmDiscard if matches!(app.mode, Mode::CompareFiles(_)) => compare::handle_compare_confirm_discard_key(app, key),
+            Overlay::ConfirmDiscard if matches!(app.mode, Mode::CompareFiles(_) | Mode::ResolveConflict(_)) => compare::handle_compare_confirm_discard_key(app, key),
             Overlay::ConfirmDiscard => editor::handle_confirm_discard_key(app, key),
             Overlay::EditorMenu(_) => editor::handle_editor_menu_key(app, key),
             Overlay::EditorKeymapMenu(_) => editor::handle_editor_keymap_menu_key(app, key),
@@ -234,6 +234,7 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
         Mode::Editing(_) if app.markdown_edit_preview.is_some() && app.active == 1 => explorer::handle_markdown_edit_preview_key(app, key),
         Mode::Editing(_) => editor::handle_editor_key(app, key),
         Mode::CompareFiles(_) => compare::handle_compare_key(app, key),
+        Mode::ResolveConflict(_) => conflict::handle_conflict_key(app, key),
         Mode::ImagePreview(_) => explorer::handle_image_preview_key(app, key),
         Mode::Browsing => command_line::handle_browsing_key(app, key),
     }
