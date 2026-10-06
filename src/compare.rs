@@ -19,7 +19,7 @@ mod menu;
 mod path_edit;
 mod state;
 
-pub use diff::{hunk_start_rows, map_real_row, DiffLineKind, DiffLines};
+pub use diff::{hunk_start_rows, inline_changes, map_real_row, DiffLineKind, DiffLines};
 pub use diff_cache::DiffCache;
 pub use input::{handle_compare_confirm_discard_key, handle_compare_key};
 pub use line_ending::{LineEnding, LineEndingDisplay};

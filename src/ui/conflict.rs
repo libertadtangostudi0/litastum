@@ -10,7 +10,7 @@ use crate::conflict::{ConflictRegion, ConflictState, Pane, RowRole};
 use crate::editor::Editor;
 use crate::theming::{blend_over_bg, Theme};
 
-use super::compare::{draw_compare_panes, draw_path_field, row_highlights};
+use super::compare::{draw_compare_panes, draw_path_field, row_highlights, ChangeColors};
 
 /// The conflict resolver, after Araxis Merge: `.working` | the file being
 /// resolved (twice as wide) | `.merge-right` on top, about three fifths
@@ -32,8 +32,10 @@ pub(super) fn draw_conflict(frame: &mut Frame, area: Rect, state: &mut ConflictS
     let key = (working.revision(), result.revision(), theirs.revision(), colors.key());
     if *highlighted != Some(key) {
         *highlighted = Some(key);
-        working.set_extra_highlights(row_highlights(&working_side.kinds, &working_side.source_index, |row| working.line_len(row), colors.mine_bg, theme));
-        theirs.set_extra_highlights(row_highlights(&theirs_side.kinds, &theirs_side.source_index, |row| theirs.line_len(row), colors.theirs_bg, theme));
+        let working_highlights = row_highlights(working_side, result_vs_working, true, working, result, ChangeColors::from(theme.success, colors.mine_bg, theme), theme);
+        let theirs_highlights = row_highlights(theirs_side, result_vs_theirs, false, theirs, result, ChangeColors::from(theme.accent, colors.theirs_bg, theme), theme);
+        working.set_extra_highlights(working_highlights);
+        theirs.set_extra_highlights(theirs_highlights);
         let highlights = result_highlights(regions, result_vs_working, result_vs_theirs, result, &colors, theme);
         result.set_extra_highlights(highlights);
     }

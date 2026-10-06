@@ -90,3 +90,13 @@ real, saveable buffer would corrupt the file on save.
   (`cancel_selection`). The rest of selection editing (`Shift`+arrows,
   `Shift+Home/End`, typing or `Backspace` over a selection, cut/paste,
   mouse) already went through the same `Editor`; tests pin it now.
+- **Only the change is highlighted** (reported with Araxis screenshots:
+  commenting a line out lit the whole line). A changed line with a
+  counterpart on the other side -- the same row of a replaced block --
+  gets a faint background, and only the characters that differ the
+  diff's color (`diff::inline_changes`: a character diff, changes with
+  at most 2 unchanged characters between them merged, whole for lines
+  over 2000 characters). Lines added or removed as a whole stay
+  strong. The conflict resolver's side panes do the same against the
+  result. The character highlights come before the line's: with no
+  syntax colors, `edtui` lets the first of two overlapping ones win.

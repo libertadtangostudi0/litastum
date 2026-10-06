@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use similar::{DiffOp, TextDiff};
 
 /// What a diff row actually is on one side -- drives the `Highlight`
@@ -85,6 +87,54 @@ pub fn compute(left_text: &str, right_text: &str) -> (DiffLines, DiffLines) {
 
     (left, right)
 }
+
+/// Lines longer than this (both together, in characters) are marked
+/// changed as a whole rather than diffed character by character.
+const MAX_INLINE_DIFF_CHARS: usize = 2000;
+
+/// Unchanged stretches this short between two changes are counted as
+/// changed, so a line reads as a few changed words rather than a speckle
+/// of single characters.
+const MERGE_GAP: usize = 2;
+
+
+/// The characters that differ between a changed line (`old`, the left
+/// side) and its counterpart (`new`): character ranges on each side, for
+/// highlighting just the change rather than the whole line. Both whole
+/// for a very long line.
+pub fn inline_changes(old: &str, new: &str) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    let (old_len, new_len) = (old.chars().count(), new.chars().count());
+    if old_len + new_len > MAX_INLINE_DIFF_CHARS {
+        return (std::iter::once(0..old_len).collect(), std::iter::once(0..new_len).collect());
+    }
+    let diff = TextDiff::from_chars(old, new);
+    let (mut old_changes, mut new_changes) = (Vec::new(), Vec::new());
+    for op in diff.ops() {
+        match *op {
+            DiffOp::Equal { .. } => {}
+            DiffOp::Delete { old_index, old_len, .. } => old_changes.push(old_index..old_index + old_len),
+            DiffOp::Insert { new_index, new_len, .. } => new_changes.push(new_index..new_index + new_len),
+            DiffOp::Replace { old_index, old_len, new_index, new_len } => {
+                old_changes.push(old_index..old_index + old_len);
+                new_changes.push(new_index..new_index + new_len);
+            }
+        }
+    }
+    (merge_close(old_changes), merge_close(new_changes))
+}
+
+
+fn merge_close(ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for range in ranges.into_iter().filter(|range| !range.is_empty()) {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end + MERGE_GAP => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    merged
+}
+
 
 /// The row of the next changed line with real content on *this* side
 /// (`Removed`/`Added`, never `Empty` padding -- there's nothing to jump
@@ -228,6 +278,26 @@ mod tests {
         let (left, right) = compute("a\nb\nc\nd\ne\n", "a\nnew1\nnew2\nb\nc\nX\nY\ne\n");
         assert_eq!(hunk_start_rows(&left), [3], "\"d\"; the insertion is only padding on the left");
         assert_eq!(hunk_start_rows(&right), [1, 5], "the insertion, then \"X\" (one hunk with \"Y\")");
+    }
+
+    #[test]
+    fn only_the_changed_characters_are_marked() {
+        assert_eq!(inline_changes("#define X", "//#define X"), (vec![], vec![0..2]));
+        assert_eq!(inline_changes("abc", "abd"), (vec![2..3], vec![2..3]));
+    }
+
+    #[test]
+    fn close_changes_merge_into_one() {
+        let (old, new) = inline_changes("a1b2c", "a9b8c");
+        assert_eq!(old, vec![1..4], "1, b, 2: one stretch rather than two speckles");
+        assert_eq!(new, vec![1..4]);
+    }
+
+    #[test]
+    fn a_very_long_line_is_changed_as_a_whole() {
+        let long = "x".repeat(MAX_INLINE_DIFF_CHARS);
+        let (old, new) = inline_changes(&long, "y");
+        assert_eq!((old, new), (vec![0..MAX_INLINE_DIFF_CHARS], vec![0..1]));
     }
 
     #[test]

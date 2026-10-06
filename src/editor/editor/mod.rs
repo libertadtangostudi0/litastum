@@ -290,6 +290,11 @@ impl Editor {
         self.state.lines.len()
     }
 
+    /// `row`'s text (empty past the end).
+    pub fn line_text(&self, row: usize) -> String {
+        self.state.lines.get(edtui::RowIndex::new(row)).map_or_else(String::new, |chars| chars.iter().collect())
+    }
+
     /// How many characters `row` has (0 past the end).
     pub fn line_len(&self, row: usize) -> usize {
         self.state.lines.len_col(row).unwrap_or(0)

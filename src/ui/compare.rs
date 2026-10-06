@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::compare::{map_real_row, CompareState, DiffLineKind, LineEnding, LineEndingDisplay, PathEdit, Side};
+use crate::compare::{inline_changes, map_real_row, DiffLines, CompareState, DiffLineKind, LineEnding, LineEndingDisplay, PathEdit, Side};
 use crate::editor::Editor;
 use crate::text_field::TextField;
 use crate::theming::Theme;
@@ -52,8 +52,12 @@ pub(super) fn draw_compare_panes(frame: &mut Frame, area: Rect, state: &mut Comp
     let colors = (theme.diff_removed_bg, theme.diff_added_bg);
     if fresh || *highlight_colors != Some(colors) {
         *highlight_colors = Some(colors);
-        left.set_extra_highlights(row_highlights(&left_diff.kinds, &left_diff.source_index, |row| left.line_len(row), theme.diff_removed_bg, theme));
-        right.set_extra_highlights(row_highlights(&right_diff.kinds, &right_diff.source_index, |row| right.line_len(row), theme.diff_added_bg, theme));
+        let removed = ChangeColors::from(theme.danger, theme.diff_removed_bg, theme);
+        let added = ChangeColors::from(theme.success, theme.diff_added_bg, theme);
+        let left_highlights = row_highlights(left_diff, right_diff, true, left, right, removed, theme);
+        let right_highlights = row_highlights(right_diff, left_diff, false, right, left, added, theme);
+        left.set_extra_highlights(left_highlights);
+        right.set_extra_highlights(right_highlights);
     }
 
     match focus {
@@ -115,18 +119,53 @@ pub(super) fn draw_path_field(frame: &mut Frame, area: Rect, field: &TextField, 
     Some(Position::new(area.x + (field.cursor() - scroll) as u16, area.y))
 }
 
-/// One whole-line `Highlight` per `Removed`/`Added` row. A `Highlight`
-/// replaces the span's style, so a changed line is one flat color pair.
-pub(super) fn row_highlights(kinds: &[DiffLineKind], source_index: &[Option<usize>], line_len: impl Fn(usize) -> usize, changed_bg: Color, theme: &Theme) -> Vec<Highlight> {
-    let style = Style::default().fg(theme.text).bg(changed_bg);
+/// The two backgrounds of one side's changes: `change` for what differs,
+/// `line` (fainter) for the rest of a changed line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ChangeColors {
+    pub line: Color,
+    pub change: Color,
+}
+
+impl ChangeColors {
+    /// `change` as given (the theme's diff color); `line` the same hue,
+    /// blended fainter over the background.
+    pub fn from(accent: Color, change: Color, theme: &Theme) -> Self {
+        Self { line: crate::theming::blend_over_bg(accent, theme.bg, 0.12), change }
+    }
+}
+
+
+/// One side's `Highlight`s, `this` diffed against `other` (row-aligned).
+/// A line added or removed as a whole is `change`-colored throughout. A
+/// changed line with a counterpart on the other side (the same row of a
+/// replaced block) is `line`-colored, with only the characters that
+/// differ (`inline_changes`) in `change` -- reported: the whole line
+/// lit up when one character changed. `this_is_old`: `this` is the left
+/// side of `compute`. The character highlights come first: Compare's
+/// panes (no syntax colors) let the first of two overlapping highlights
+/// win.
+pub(super) fn row_highlights(this: &DiffLines, other: &DiffLines, this_is_old: bool, this_editor: &Editor, other_editor: &Editor, colors: ChangeColors, theme: &Theme) -> Vec<Highlight> {
+    let style = |bg: Color| Style::default().fg(theme.text).bg(bg);
+    let span = |row: usize, columns: std::ops::Range<usize>, bg: Color| Highlight::new(Index2::new(row, columns.start), Index2::new(row, columns.end.saturating_sub(1)), style(bg));
     let mut highlights = Vec::new();
-    for (row, kind) in kinds.iter().enumerate() {
+    for (diff_row, kind) in this.kinds.iter().enumerate() {
         if !matches!(kind, DiffLineKind::Removed | DiffLineKind::Added) {
             continue;
         }
-        let Some(real_row) = source_index[row] else { continue };
-        let end_col = line_len(real_row).saturating_sub(1);
-        highlights.push(Highlight::new(Index2::new(real_row, 0), Index2::new(real_row, end_col), style));
+        let Some(real_row) = this.source_index[diff_row] else { continue };
+        let line_len = this_editor.line_len(real_row);
+        let counterpart = other.source_index.get(diff_row).copied().flatten().filter(|_| matches!(other.kinds[diff_row], DiffLineKind::Removed | DiffLineKind::Added));
+        match counterpart {
+            Some(other_row) => {
+                let (this_text, other_text) = (this_editor.line_text(real_row), other_editor.line_text(other_row));
+                let (old, new) = if this_is_old { inline_changes(&this_text, &other_text) } else { inline_changes(&other_text, &this_text) };
+                let changes = if this_is_old { old } else { new };
+                highlights.extend(changes.into_iter().map(|columns| span(real_row, columns, colors.change)));
+                highlights.push(span(real_row, 0..line_len, colors.line));
+            }
+            None => highlights.push(span(real_row, 0..line_len, colors.change)),
+        }
     }
     highlights
 }
@@ -406,6 +445,38 @@ bbbx
         let buffer = render(&mut state, &theme, LineEndingDisplay::Hidden);
 
         assert!(!row_has_bg(&buffer, 2), "bbbx now matches");
+    }
+
+    /// Reported with an Araxis screenshot: commenting a line out lit the
+    /// whole line. Only the `//` is in the strong color now; the rest of
+    /// the line is a fainter one.
+    #[test]
+    fn only_the_changed_characters_of_a_line_are_highlighted() {
+        let mut state = open_pair("#define X
+", "//#define X
+");
+        let theme = Theme::dark();
+        let buffer = render(&mut state, &theme, LineEndingDisplay::Hidden);
+        // Right pane: border at x = 30, a 2-column gutter, text from x = 33.
+        let bg = |x: u16| buffer[(x, 1)].bg;
+        let faint = ChangeColors::from(theme.success, theme.diff_added_bg, &theme).line;
+
+        assert_eq!((bg(33), bg(34)), (theme.diff_added_bg, theme.diff_added_bg), "//");
+        assert_eq!(bg(35), faint, "#define is unchanged");
+        assert_eq!(buffer[(3, 1)].bg, ChangeColors::from(theme.danger, theme.diff_removed_bg, &theme).line, "the left line has nothing removed");
+    }
+
+    /// A line added as a whole, with nothing opposite, stays strong
+    /// throughout.
+    #[test]
+    fn an_added_line_is_highlighted_whole() {
+        let mut state = open_pair("a
+", "a
+new
+");
+        let theme = Theme::dark();
+        let buffer = render(&mut state, &theme, LineEndingDisplay::Hidden);
+        assert!((33..36).all(|x| buffer[(x, 2)].bg == theme.diff_added_bg));
     }
 
     #[test]
