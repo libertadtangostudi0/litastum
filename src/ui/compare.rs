@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::compare::{compute, map_real_row, CompareState, DiffLineKind, LineEnding, LineEndingDisplay, PathEdit, Side};
+use crate::compare::{map_real_row, CompareState, DiffLineKind, LineEnding, LineEndingDisplay, PathEdit, Side};
 use crate::editor::Editor;
 use crate::text_field::TextField;
 use crate::theming::Theme;
@@ -45,21 +45,25 @@ pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &mut CompareSta
 pub(super) fn draw_compare_panes(frame: &mut Frame, area: Rect, state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) -> Option<Position> {
     let panes = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
 
-    let left_text = state.left.text();
-    let right_text = state.right.text();
-    let (left_diff, right_diff) = compute(&left_text, &right_text);
+    let CompareState { left, right, diff, highlight_colors, focus, .. } = state;
+    let ((left_diff, right_diff), fresh) = diff.get(left, right);
+    // Rebuilt only with the diff (or the theme): moving the caret used to
+    // rebuild every changed row's highlight each frame.
+    let colors = (theme.diff_removed_bg, theme.diff_added_bg);
+    if fresh || *highlight_colors != Some(colors) {
+        *highlight_colors = Some(colors);
+        left.set_extra_highlights(row_highlights(&left_diff.kinds, &left_diff.source_index, |row| left.line_len(row), theme.diff_removed_bg, theme));
+        right.set_extra_highlights(row_highlights(&right_diff.kinds, &right_diff.source_index, |row| right.line_len(row), theme.diff_added_bg, theme));
+    }
 
-    state.left.set_extra_highlights(row_highlights(&left_diff.kinds, &left_diff.source_index, &left_text, theme.diff_removed_bg, theme));
-    state.right.set_extra_highlights(row_highlights(&right_diff.kinds, &right_diff.source_index, &right_text, theme.diff_added_bg, theme));
-
-    match state.focus {
+    match focus {
         Side::Left => {
-            let target = map_real_row(&left_diff.source_index, &right_diff.source_index, state.left.viewport_top_row());
-            state.right.set_viewport_top_row(target);
+            let target = map_real_row(&left_diff.source_index, &right_diff.source_index, left.viewport_top_row());
+            right.set_viewport_top_row(target);
         }
         Side::Right => {
-            let target = map_real_row(&right_diff.source_index, &left_diff.source_index, state.right.viewport_top_row());
-            state.left.set_viewport_top_row(target);
+            let target = map_real_row(&right_diff.source_index, &left_diff.source_index, right.viewport_top_row());
+            left.set_viewport_top_row(target);
         }
     }
 
@@ -113,8 +117,7 @@ pub(super) fn draw_path_field(frame: &mut Frame, area: Rect, field: &TextField, 
 
 /// One whole-line `Highlight` per `Removed`/`Added` row. A `Highlight`
 /// replaces the span's style, so a changed line is one flat color pair.
-pub(super) fn row_highlights(kinds: &[DiffLineKind], source_index: &[Option<usize>], text: &str, changed_bg: Color, theme: &Theme) -> Vec<Highlight> {
-    let real_lines: Vec<&str> = text.lines().collect();
+pub(super) fn row_highlights(kinds: &[DiffLineKind], source_index: &[Option<usize>], line_len: impl Fn(usize) -> usize, changed_bg: Color, theme: &Theme) -> Vec<Highlight> {
     let style = Style::default().fg(theme.text).bg(changed_bg);
     let mut highlights = Vec::new();
     for (row, kind) in kinds.iter().enumerate() {
@@ -122,8 +125,7 @@ pub(super) fn row_highlights(kinds: &[DiffLineKind], source_index: &[Option<usiz
             continue;
         }
         let Some(real_row) = source_index[row] else { continue };
-        let Some(line) = real_lines.get(real_row) else { continue };
-        let end_col = line.chars().count().saturating_sub(1);
+        let end_col = line_len(real_row).saturating_sub(1);
         highlights.push(Highlight::new(Index2::new(real_row, 0), Index2::new(real_row, end_col), style));
     }
     highlights
@@ -382,6 +384,28 @@ mod tests {
 
         state.mouse(left_click(40, 3));
         assert!(state.path_edit.is_none(), "a click in the text puts the title back");
+    }
+
+    /// The diff and its highlights are kept between frames now; an edit
+    /// must still bring them up to date on the very next one.
+    #[test]
+    fn an_edit_updates_the_diff_highlight_on_the_next_frame() {
+        let mut state = open_pair("aaaa
+bbbb
+", "aaaa
+bbbx
+");
+        let theme = Theme::dark();
+        let buffer = render(&mut state, &theme, LineEndingDisplay::Hidden);
+        let row_has_bg = |buffer: &ratatui::buffer::Buffer, y: u16| (0..30).any(|x| buffer[(x, y)].bg == theme.diff_removed_bg);
+        assert!(row_has_bg(&buffer, 2), "bbbb differs");
+
+        state.left.set_cursor(edtui::Index2::new(1, 3));
+        state.left.input(crate::test_support::key(crossterm::event::KeyCode::Delete));
+        state.left.input(crate::test_support::key(crossterm::event::KeyCode::Char('x')));
+        let buffer = render(&mut state, &theme, LineEndingDisplay::Hidden);
+
+        assert!(!row_has_bg(&buffer, 2), "bbbx now matches");
     }
 
     #[test]

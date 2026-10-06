@@ -5,8 +5,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::compare::{compute, map_real_row, DiffLineKind, DiffLines, LineEndingDisplay};
-use crate::conflict::{find_conflicts, ConflictRegion, ConflictState, Pane, RowRole};
+use crate::compare::{map_real_row, DiffLineKind, DiffLines, LineEndingDisplay};
+use crate::conflict::{ConflictRegion, ConflictState, Pane, RowRole};
+use crate::editor::Editor;
 use crate::theming::{blend_over_bg, Theme};
 
 use super::compare::{draw_compare_panes, draw_path_field, row_highlights};
@@ -20,18 +21,24 @@ pub(super) fn draw_conflict(frame: &mut Frame, area: Rect, state: &mut ConflictS
     let [top, bottom] = Layout::vertical([Constraint::Fill(3), Constraint::Fill(2)]).areas(area);
     let [working_area, result_area, theirs_area] = Layout::horizontal([Constraint::Fill(1), Constraint::Fill(2), Constraint::Fill(1)]).areas(top);
 
-    let working_text = state.working.text();
-    let result_text = state.result.text();
-    let theirs_text = state.theirs.text();
-    let (working_diff, result_vs_working) = compute(&working_text, &result_text);
-    let (result_vs_theirs, theirs_diff) = compute(&result_text, &theirs_text);
-    let conflicts = find_conflicts(&result_text);
+    let ConflictState { working, result, theirs, working_diff, theirs_diff, conflicts, highlighted, focus, .. } = state;
+    let ((working_side, result_vs_working), _) = working_diff.get(working, result);
+    let ((result_vs_theirs, theirs_side), _) = theirs_diff.get(result, theirs);
+    let regions = conflicts.get(result);
 
+    // Highlights are rebuilt only when a text or the theme changed: moving
+    // the caret used to rebuild them, and both diffs, every frame.
     let colors = ConflictColors::new(theme);
-    state.working.set_extra_highlights(row_highlights(&working_diff.kinds, &working_diff.source_index, &working_text, colors.mine_bg, theme));
-    state.theirs.set_extra_highlights(row_highlights(&theirs_diff.kinds, &theirs_diff.source_index, &theirs_text, colors.theirs_bg, theme));
-    state.result.set_extra_highlights(result_highlights(&conflicts, &result_vs_working, &result_vs_theirs, &result_text, &colors, theme));
-    align_top_panes(state, &working_diff, &result_vs_working, &result_vs_theirs, &theirs_diff);
+    let key = (working.revision(), result.revision(), theirs.revision(), colors.key());
+    if *highlighted != Some(key) {
+        *highlighted = Some(key);
+        working.set_extra_highlights(row_highlights(&working_side.kinds, &working_side.source_index, |row| working.line_len(row), colors.mine_bg, theme));
+        theirs.set_extra_highlights(row_highlights(&theirs_side.kinds, &theirs_side.source_index, |row| theirs.line_len(row), colors.theirs_bg, theme));
+        let highlights = result_highlights(regions, result_vs_working, result_vs_theirs, result, &colors, theme);
+        result.set_extra_highlights(highlights);
+    }
+    let diffs = TopDiffs { working: working_side, result_vs_working, result_vs_theirs, theirs: theirs_side };
+    align_top_panes(*focus, working, result, theirs, &diffs);
 
     let focus = state.focus;
     let mut cursor = None;
@@ -56,30 +63,40 @@ pub(super) fn draw_conflict(frame: &mut Frame, area: Rect, state: &mut ConflictS
 }
 
 
+/// The top panes' two diffs, each side: `.working` against the result,
+/// the result against `.merge-right`.
+struct TopDiffs<'a> {
+    working: &'a DiffLines,
+    result_vs_working: &'a DiffLines,
+    result_vs_theirs: &'a DiffLines,
+    theirs: &'a DiffLines,
+}
+
+
 /// Scrolls the unfocused top panes level with the focused one, mapping
 /// its top row through the diffs (`map_real_row`); the side panes only
 /// relate to each other through the result. Untouched while the bottom
 /// Compare has focus.
-fn align_top_panes(state: &mut ConflictState, working_diff: &DiffLines, result_vs_working: &DiffLines, result_vs_theirs: &DiffLines, theirs_diff: &DiffLines) {
-    let result_top = match state.focus {
+fn align_top_panes(focus: Pane, working: &mut Editor, result: &mut Editor, theirs: &mut Editor, diffs: &TopDiffs) {
+    let result_top = match focus {
         Pane::Working => {
-            let top = map_real_row(&working_diff.source_index, &result_vs_working.source_index, state.working.viewport_top_row());
-            state.result.set_viewport_top_row(top);
+            let top = map_real_row(&diffs.working.source_index, &diffs.result_vs_working.source_index, working.viewport_top_row());
+            result.set_viewport_top_row(top);
             top
         }
         Pane::Theirs => {
-            let top = map_real_row(&theirs_diff.source_index, &result_vs_theirs.source_index, state.theirs.viewport_top_row());
-            state.result.set_viewport_top_row(top);
+            let top = map_real_row(&diffs.theirs.source_index, &diffs.result_vs_theirs.source_index, theirs.viewport_top_row());
+            result.set_viewport_top_row(top);
             top
         }
-        Pane::Result => state.result.viewport_top_row(),
+        Pane::Result => result.viewport_top_row(),
         Pane::Incoming => return,
     };
-    if state.focus != Pane::Working {
-        state.working.set_viewport_top_row(map_real_row(&result_vs_working.source_index, &working_diff.source_index, result_top));
+    if focus != Pane::Working {
+        working.set_viewport_top_row(map_real_row(&diffs.result_vs_working.source_index, &diffs.working.source_index, result_top));
     }
-    if state.focus != Pane::Theirs {
-        state.theirs.set_viewport_top_row(map_real_row(&result_vs_theirs.source_index, &theirs_diff.source_index, result_top));
+    if focus != Pane::Theirs {
+        theirs.set_viewport_top_row(map_real_row(&diffs.result_vs_theirs.source_index, &diffs.theirs.source_index, result_top));
     }
 }
 
@@ -96,6 +113,10 @@ struct ConflictColors {
 }
 
 impl ConflictColors {
+    fn key(&self) -> [Color; 4] {
+        [self.mine_bg, self.theirs_bg, self.base_bg, self.marker_bg]
+    }
+
     fn new(theme: &Theme) -> Self {
         Self {
             mine_bg: theme.diff_added_bg,
@@ -111,23 +132,23 @@ impl ConflictColors {
 /// where a line came from: differing only from `.working` means theirs
 /// (blue), only from `.merge-right` means mine (green), from both -- an
 /// edit of its own -- the marker wash without bold.
-fn result_highlights(conflicts: &[ConflictRegion], result_vs_working: &DiffLines, result_vs_theirs: &DiffLines, text: &str, colors: &ConflictColors, theme: &Theme) -> Vec<Highlight> {
-    let lines: Vec<&str> = text.lines().collect();
-    let mut differs_from_working = vec![false; lines.len()];
-    let mut differs_from_theirs = vec![false; lines.len()];
+fn result_highlights(conflicts: &[ConflictRegion], result_vs_working: &DiffLines, result_vs_theirs: &DiffLines, result: &Editor, colors: &ConflictColors, theme: &Theme) -> Vec<Highlight> {
+    let line_count = result.line_count();
+    let mut differs_from_working = vec![false; line_count];
+    let mut differs_from_theirs = vec![false; line_count];
     mark_changed_rows(result_vs_working, DiffLineKind::Added, &mut differs_from_working);
     mark_changed_rows(result_vs_theirs, DiffLineKind::Removed, &mut differs_from_theirs);
-    let mut in_conflict = vec![false; lines.len()];
+    let mut in_conflict = vec![false; line_count];
 
     let flat = |bg: Color| Style::default().fg(theme.text).bg(bg);
     let line_highlight = |row: usize, style: Style| {
-        let end_col = lines[row].chars().count().saturating_sub(1);
+        let end_col = result.line_len(row).saturating_sub(1);
         Highlight::new(Index2::new(row, 0), Index2::new(row, end_col), style)
     };
 
     let mut highlights = Vec::new();
     for (row, role) in conflicts.iter().flat_map(ConflictRegion::rows) {
-        if row >= lines.len() {
+        if row >= line_count {
             continue;
         }
         in_conflict[row] = true;
@@ -139,7 +160,7 @@ fn result_highlights(conflicts: &[ConflictRegion], result_vs_working: &DiffLines
         };
         highlights.push(line_highlight(row, style));
     }
-    for row in (0..lines.len()).filter(|&row| !in_conflict[row]) {
+    for row in (0..line_count).filter(|&row| !in_conflict[row]) {
         let bg = match (differs_from_working[row], differs_from_theirs[row]) {
             (true, false) => colors.theirs_bg,
             (false, true) => colors.mine_bg,

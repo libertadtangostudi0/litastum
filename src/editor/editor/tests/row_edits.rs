@@ -116,3 +116,14 @@ fn a_one_line_paste_snapshots_only_the_row_and_undoes_in_one_step() {
     assert_eq!(editor.text(), "ab\ncd\n");
     assert!(!editor.is_dirty());
 }
+
+#[test]
+fn only_the_highlights_on_the_given_rows_are_picked() {
+    let style = ratatui::style::Style::default();
+    let highlights: Vec<edtui::Highlight> = [1, 3, 3, 7].iter().map(|&row| edtui::Highlight::new(Index2::new(row, 0), Index2::new(row, 2), style)).collect();
+
+    let rows: Vec<usize> = super::super::highlights_on(&highlights, 2..7).iter().map(|highlight| highlight.start.row).collect();
+
+    assert_eq!(rows, [3, 3]);
+    assert!(super::super::highlights_on(&highlights, 8..20).is_empty());
+}

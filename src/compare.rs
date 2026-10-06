@@ -11,6 +11,7 @@
 //! - `menu`/`line_ending_menu`: the F9 menu.
 
 mod diff;
+mod diff_cache;
 mod input;
 mod line_ending;
 mod line_ending_menu;
@@ -18,7 +19,8 @@ mod menu;
 mod path_edit;
 mod state;
 
-pub use diff::{compute, hunk_start_rows, map_real_row, DiffLineKind, DiffLines};
+pub use diff::{hunk_start_rows, map_real_row, DiffLineKind, DiffLines};
+pub use diff_cache::DiffCache;
 pub use input::{handle_compare_confirm_discard_key, handle_compare_key};
 pub use line_ending::{LineEnding, LineEndingDisplay};
 pub use line_ending_menu::{handle_compare_line_ending_menu_key, CompareLineEndingMenu};

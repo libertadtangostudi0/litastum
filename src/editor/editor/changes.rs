@@ -1,7 +1,18 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use edtui::{Lines, RowIndex};
 
 use super::super::word_highlight::{has_pathologically_long_line, MAX_HIGHLIGHTED_LINE_LEN};
 use super::Editor;
+
+/// A number for the buffer's content, new after every change and unique
+/// across editors (`Editor::revision`): what Compare and the conflict
+/// resolver key their diffs on.
+pub(super) fn next_revision() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 
 /// Where the buffer differs from what was loaded or saved -- `is_dirty`
 /// without comparing the whole buffer after every keystroke, which cost
@@ -93,6 +104,7 @@ impl Editor {
         let clean = self.saved.as_ref().is_some_and(|saved| saved.matches(&self.state.lines));
         self.differing = if clean { Differing::Nowhere } else { Differing::Elsewhere };
         self.has_long_line = has_pathologically_long_line(&self.state.lines);
+        self.revision = next_revision();
         self.refresh_search_matches();
     }
 
@@ -106,6 +118,7 @@ impl Editor {
             .as_ref()
             .is_some_and(|saved| self.state.lines.len() == saved.len() && saved.row_matches(row, current.map_or(&[], Vec::as_slice)));
         self.differing = after_row_edit(self.differing, row, same);
+        self.revision = next_revision();
         if current.is_some_and(|current| current.len() > MAX_HIGHLIGHTED_LINE_LEN) {
             self.has_long_line = true;
         } else if self.has_long_line {

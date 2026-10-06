@@ -45,6 +45,8 @@ pub struct Editor {
     /// (`has_pathologically_long_line`), kept per edit rather than
     /// scanned every frame.
     has_long_line: bool,
+    /// Changes with every change to the text (`changes::next_revision`).
+    revision: u64,
     /// Overrides `SYNTAX_THEME` when a custom `editor_theme` is
     /// configured (`.claude/rules/litastum-theming.md`).
     custom_syntax_theme: Option<SynTheme>,
@@ -79,8 +81,10 @@ pub struct Editor {
     /// This session's key-binding scheme: decides `event_handler` and
     /// whether `input`'s correction passes run (`Standard` only).
     keymap_mode: EditorKeymapMode,
-    /// Extra highlights merged over `view()`'s own -- Compare's diff
-    /// backgrounds on an otherwise ordinary `Editor`. Empty elsewhere.
+    /// Extra highlights merged over `view()`'s own -- Compare's and the
+    /// conflict resolver's row backgrounds on an otherwise ordinary
+    /// `Editor`. Empty elsewhere. One row each, sorted by row, so a frame
+    /// hands `edtui` only the visible ones (`highlights_on`).
     extra_highlights: Vec<Highlight>,
     /// Off only for Compare (`disable_syntax_highlighting`): token colors
     /// competed with the diff backgrounds.
@@ -149,6 +153,7 @@ impl Editor {
             saved: None,
             differing: changes::Differing::Nowhere,
             has_long_line,
+            revision: changes::next_revision(),
             custom_syntax_theme,
             first_line,
             word_select_touch: WordSelectTouch::Untouched,
@@ -273,16 +278,36 @@ impl Editor {
         self.state.set_viewport_offset(offset_x, row);
     }
 
+    /// A number for the text's current content: different after any
+    /// change, and never shared with another editor. Compare and the
+    /// conflict resolver redo their diffs only when it moves.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// How many rows the buffer has.
+    pub fn line_count(&self) -> usize {
+        self.state.lines.len()
+    }
+
+    /// How many characters `row` has (0 past the end).
+    pub fn line_len(&self, row: usize) -> usize {
+        self.state.lines.len_col(row).unwrap_or(0)
+    }
+
     /// The buffer's current content -- Compare recomputes its live diff
     /// from this.
     pub fn text(&self) -> String {
         changes::lines_to_string(&self.state.lines)
     }
 
-    /// See the `extra_highlights` field.
-    pub fn set_extra_highlights(&mut self, highlights: Vec<Highlight>) {
+    /// See the `extra_highlights` field: one row each.
+    pub fn set_extra_highlights(&mut self, mut highlights: Vec<Highlight>) {
+        highlights.sort_by_key(|highlight| highlight.start.row);
         self.extra_highlights = highlights;
     }
+
+
 
     /// Turns syntax highlighting off for the session. One-way: callers
     /// want it always on (F4) or always off (Compare).
@@ -336,6 +361,18 @@ impl Editor {
     pub fn is_dirty(&self) -> bool {
         self.differing != changes::Differing::Nowhere
     }
+}
+
+
+
+/// The highlights in `sorted` (by row, one row each) on `rows`. `edtui`
+/// checks every highlight it's given while drawing, so passing all of a
+/// large diff's rows made a frame several times slower, the more so the
+/// more lines a small font put on screen.
+fn highlights_on(sorted: &[Highlight], rows: std::ops::Range<usize>) -> &[Highlight] {
+    let first = sorted.partition_point(|highlight| highlight.start.row < rows.start);
+    let end = sorted.partition_point(|highlight| highlight.start.row < rows.end);
+    &sorted[first..end.max(first)]
 }
 
 

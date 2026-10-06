@@ -57,7 +57,8 @@ impl Editor {
         } else {
             Vec::new()
         };
-        self.state.highlights.extend(self.extra_highlights.iter().cloned());
+        let visible = super::highlights_on(&self.extra_highlights, rows_that_can_be_visible(self.state.cursor.row, area));
+        self.state.highlights.extend(visible.iter().cloned());
 
         let editor_theme = EditorTheme::default()
             .base(Style::default().fg(theme.text).bg(theme.bg))
@@ -159,7 +160,8 @@ impl Editor {
         if !pathologically_long_line && cursor_is_on_a_matched_bracket(&self.state.lines, self.state.cursor) {
             return Some(highlight_style);
         }
-        self.extra_highlights.iter().find(|highlight| highlight.contains(&self.state.cursor)).map(|highlight| highlight.style)
+        let row = self.state.cursor.row;
+        super::highlights_on(&self.extra_highlights, row..row + 1).iter().find(|highlight| highlight.contains(&self.state.cursor)).map(|highlight| highlight.style)
     }
 
 

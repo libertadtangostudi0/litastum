@@ -71,9 +71,14 @@ root `Cargo.toml`): a frame went from ~40 ms to ~4 ms. litastum's own
 code stays unoptimized there, so the first edit after opening such a
 file pauses ~0.9 s to hash its rows (~0.1 s in release).
 
-Still O(buffer): opening (~0.3 s release), `Editor::text()` (Compare and
-the conflict resolver call it every frame), and the first character
-typed into the `Ctrl+F` box (~150 ms release on that log).
+Compare and the conflict resolver diff only when a text changes
+(`compare::DiffCache`, keyed on `Editor::revision`), and an editor hands
+`edtui` only the visible rows' extra highlights (`highlights_on`): it
+checks every highlight it gets per visible line.
+
+Still O(buffer): opening (~0.3 s release), the diff after an edit in
+Compare, and the first character typed into the `Ctrl+F` box (~150 ms
+release on that log).
 
 ## The general lesson
 

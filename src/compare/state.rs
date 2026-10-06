@@ -7,7 +7,8 @@ use edtui::Index2;
 
 use crate::editor::{Editor, EditorKeymapMode};
 
-use super::diff::{compute, diff_row_of, next_hunk_start, previous_hunk_start, DiffLineKind, DiffLines};
+use super::diff::{diff_row_of, next_hunk_start, previous_hunk_start, DiffLineKind};
+use super::diff_cache::DiffCache;
 use super::line_ending::{self, LineEnding};
 use super::path_edit::{PathEdit, PathEditKey};
 
@@ -41,6 +42,11 @@ pub struct CompareState {
     right_line_endings: Vec<Option<LineEnding>>,
     /// The focused pane's path title while it's being edited.
     pub path_edit: Option<PathEdit>,
+    /// The panes' diff, redone only when a text changes.
+    pub diff: DiffCache,
+    /// The colors the row highlights were last built with; a theme
+    /// change rebuilds them though the diff didn't change.
+    pub highlight_colors: Option<(ratatui::style::Color, ratatui::style::Color)>,
 }
 
 impl CompareState {
@@ -65,7 +71,7 @@ impl CompareState {
         // the diff coloring the one thing drawing the eye here.
         left.disable_syntax_highlighting();
         right.disable_syntax_highlighting();
-        Ok(Self { left, right, focus: Side::Left, left_saved_cursor: None, right_saved_cursor: None, left_line_endings, right_line_endings, path_edit: None })
+        Ok(Self { left, right, focus: Side::Left, left_saved_cursor: None, right_saved_cursor: None, left_line_endings, right_line_endings, path_edit: None, diff: DiffCache::default(), highlight_colors: None })
     }
 
     pub fn line_endings(&self, side: Side) -> &[Option<LineEnding>] {
@@ -225,20 +231,15 @@ impl CompareState {
     /// below the hunk, further the more lines the other side had inserted
     /// above it. History: docs/history/compare.md.
     fn jump_to_hunk(&mut self, find: fn(&[DiffLineKind], usize) -> Option<usize>) {
-        let diff = self.live_focused_diff();
-        let from = diff_row_of(&diff.source_index, self.focused().cursor().row);
-        if let Some(real_row) = find(&diff.kinds, from).and_then(|row| diff.source_index[row]) {
-            self.focused_mut().jump_cursor_to(Index2::new(real_row, 0));
-        }
-    }
-
-    /// The live diff of the focused pane, recomputed from both panes'
-    /// current text.
-    fn live_focused_diff(&self) -> DiffLines {
-        let (left_diff, right_diff) = compute(&self.left.text(), &self.right.text());
-        match self.focus {
+        let cursor_row = self.focused().cursor().row;
+        let ((left_diff, right_diff), _) = self.diff.get(&self.left, &self.right);
+        let diff = match self.focus {
             Side::Left => left_diff,
             Side::Right => right_diff,
+        };
+        let from = diff_row_of(&diff.source_index, cursor_row);
+        if let Some(real_row) = find(&diff.kinds, from).and_then(|row| diff.source_index[row]) {
+            self.focused_mut().jump_cursor_to(Index2::new(real_row, 0));
         }
     }
 }

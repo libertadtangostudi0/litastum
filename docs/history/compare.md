@@ -71,3 +71,14 @@ real, saveable buffer would corrupt the file on save.
   whole field with the panels' selected-row style (`selection_text`)
   then made a selection look like the fill being removed. Now the text
   is plain and only the selection gets that style.
+- **Moving the caret crawled on large files, worse at a small font**
+  (reported from the window with the font zoomed out): every frame built
+  both texts and diffed them (~1.3 s a frame for two 20k-line files in a
+  debug build), then handed `edtui` a highlight for every changed row of
+  the file, which it checks per visible line -- so the more lines on
+  screen, the slower. The diff is now kept until a text changes
+  (`DiffCache`, keyed on `Editor::revision`), highlights are rebuilt only
+  with it, and a frame passes `edtui` just the visible rows' highlights
+  (`highlights_on`). A frame with a caret move: 1.3 s -> 2 ms (160x45),
+  -> 18 ms (400x120). The conflict resolver caches its two diffs and its
+  conflicts the same way.

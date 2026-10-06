@@ -5,11 +5,11 @@ use crossterm::event::{KeyEvent, MouseEvent, MouseEventKind};
 use edtui::syntect::highlighting::Theme as SynTheme;
 use edtui::Index2;
 
-use crate::compare::{compute, hunk_start_rows, CompareState, PathEdit, PathEditKey, Side};
+use crate::compare::{hunk_start_rows, CompareState, DiffCache, PathEdit, PathEditKey, Side};
 use crate::editor::{Editor, EditorKeymapMode};
 
 use super::files::ConflictFiles;
-use super::markers::find_conflicts;
+use super::markers::{find_conflicts, ConflictRegion};
 
 /// Which of the resolver's panes has focus. The bottom Compare counts as
 /// one pane here; it tracks its own left/right focus (`CompareState::focus`).
@@ -43,6 +43,33 @@ pub struct ConflictState {
     /// aligning an unfocused pane overwrites its cursor every frame
     /// (`Editor::set_viewport_top_row`), as in Compare.
     saved_cursors: [Option<Index2>; 3],
+    /// `.working` against the result and the result against
+    /// `.merge-right`, and the result's conflicts -- redone only when a
+    /// text changes, not every frame.
+    pub working_diff: DiffCache,
+    pub theirs_diff: DiffCache,
+    pub conflicts: ConflictsCache,
+    /// What the top panes' highlights were last built from (revisions and
+    /// colors); `ui/conflict.rs` rebuilds them when it changes.
+    pub highlighted: Option<(u64, u64, u64, [ratatui::style::Color; 4])>,
+}
+
+
+/// The result's conflicts, kept until its text changes.
+#[derive(Default)]
+pub struct ConflictsCache {
+    revision: Option<u64>,
+    regions: Vec<ConflictRegion>,
+}
+
+impl ConflictsCache {
+    pub fn get(&mut self, result: &Editor) -> &[ConflictRegion] {
+        if self.revision != Some(result.revision()) {
+            self.revision = Some(result.revision());
+            self.regions = find_conflicts(&result.text());
+        }
+        &self.regions
+    }
 }
 
 impl ConflictState {
@@ -57,7 +84,19 @@ impl ConflictState {
         for editor in [&mut working, &mut result, &mut theirs] {
             editor.disable_syntax_highlighting();
         }
-        Ok(Self { working, result, theirs, incoming, focus: Pane::Result, path_edit: None, saved_cursors: [None; 3] })
+        Ok(Self {
+            working,
+            result,
+            theirs,
+            incoming,
+            focus: Pane::Result,
+            path_edit: None,
+            saved_cursors: [None; 3],
+            working_diff: DiffCache::default(),
+            theirs_diff: DiffCache::default(),
+            conflicts: ConflictsCache::default(),
+            highlighted: None,
+        })
     }
 
     pub fn focused_mut(&mut self) -> &mut Editor {
@@ -220,15 +259,16 @@ impl ConflictState {
     /// `.merge-right` against the result). The result is diffed against
     /// both and also stops on every conflict marker row -- stopping only
     /// on each conflict's `<<<<<<<` skipped too much.
-    fn stops(&self, pane: Pane) -> Vec<usize> {
-        let result_text = self.result.text();
+    fn stops(&mut self, pane: Pane) -> Vec<usize> {
+        let ((working_side, result_vs_working), _) = self.working_diff.get(&self.working, &self.result);
+        let ((result_vs_theirs, theirs_side), _) = self.theirs_diff.get(&self.result, &self.theirs);
         let mut stops = match pane {
-            Pane::Working => hunk_start_rows(&compute(&self.working.text(), &result_text).0),
-            Pane::Theirs => hunk_start_rows(&compute(&result_text, &self.theirs.text()).1),
+            Pane::Working => hunk_start_rows(working_side),
+            Pane::Theirs => hunk_start_rows(theirs_side),
             Pane::Result => {
-                let mut stops = hunk_start_rows(&compute(&self.working.text(), &result_text).1);
-                stops.extend(hunk_start_rows(&compute(&result_text, &self.theirs.text()).0));
-                for region in find_conflicts(&result_text) {
+                let mut stops = hunk_start_rows(result_vs_working);
+                stops.extend(hunk_start_rows(result_vs_theirs));
+                for region in self.conflicts.get(&self.result) {
                     stops.extend([Some(region.start), region.base, Some(region.separator), Some(region.end)].into_iter().flatten());
                 }
                 stops

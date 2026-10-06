@@ -15,7 +15,7 @@ mod state;
 
 pub use files::detect;
 pub use input::{handle_conflict_key, open_resolver};
-pub use markers::{find_conflicts, ConflictRegion, RowRole};
+pub use markers::{ConflictRegion, RowRole};
 pub use state::{ConflictState, Pane};
 #[cfg(test)]
 pub(crate) use state::tests as state_tests;
