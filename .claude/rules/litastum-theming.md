@@ -28,8 +28,11 @@ both can name the same file, or both can be omitted.
 
 - `appdata/config.json` in the project (later `%APPDATA%\litastum\`,
   see [[litastum-config]]), each key naming a file stem in `themes/`.
-- Theme files are searched in the config dir's `themes/`, then in
-  `./themes/` relative to the cwd (`config.rs::theme_search_dirs`) --
+- Theme files are searched in the config dir's `themes/`, then the
+  bundled set: `themes/` next to the executable (`cargo xtask dist`
+  copies it there), then the project's `themes/`
+  (`config::bundled_themes_dirs`). Never relative to the cwd -- started
+  elsewhere, as litastum's own window does, that found nothing.
   `config.json` itself is not searched that way.
 - Anything missing or broken falls back **per half** to
   `config.rs::default_theme` (the bundled default above), and one level

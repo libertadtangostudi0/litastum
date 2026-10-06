@@ -218,3 +218,16 @@ fn settings_fall_back_field_by_field() {
     assert_eq!(settings.popup_style, PopupStyle::default());
     assert_eq!(settings.compare_line_ending_display, LineEndingDisplay::default());
 }
+
+
+/// Reported: started from another directory (litastum's own window opens
+/// it where it was launched), the picker found no themes. The bundled set
+/// is found by the executable's and the project's location, never the
+/// current directory.
+#[test]
+fn bundled_themes_dont_depend_on_the_current_directory() {
+    let dirs = bundled_themes_dirs(Some(std::path::Path::new(r"C:\tools\litastum.exe")));
+    assert_eq!(dirs[0], std::path::Path::new(r"C:\tools\themes"));
+    assert!(dirs[1].is_absolute());
+    assert!(dirs[1].join("github-dark-default.json").is_file(), "the project's own bundled default theme");
+}

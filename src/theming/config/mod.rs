@@ -26,15 +26,31 @@ pub(crate) fn config_dir() -> Option<PathBuf> {
 
 
 /// Directories searched for theme files, in order: the config dir's
-/// `themes/`, then `./themes/` (so a theme next to the binary or the
-/// repo shows up in the picker without copying). `config.json` itself is
-/// only ever read from the config dir.
+/// `themes/` (the user's own), then the bundled set
+/// (`bundled_themes_dirs`). `config.json` itself is only ever read from
+/// the config dir.
 fn theme_search_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(dir) = config_dir() {
         dirs.push(dir.join("themes"));
     }
-    dirs.push(PathBuf::from("themes"));
+    dirs.extend(bundled_themes_dirs(std::env::current_exe().ok().as_deref()));
+    dirs
+}
+
+
+/// Where the bundled themes are: `themes/` next to the executable (a
+/// `cargo xtask dist` layout), then the project's own `themes/`. Never
+/// relative to the current directory: that used to be the only place,
+/// and litastum started anywhere else -- as its own window does, in the
+/// directory it was opened from -- found no themes at all, not even the
+/// default one. History: docs/history/theming.md.
+fn bundled_themes_dirs(exe: Option<&std::path::Path>) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(dir) = exe.and_then(std::path::Path::parent) {
+        dirs.push(dir.join("themes"));
+    }
+    dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("themes"));
     dirs
 }
 

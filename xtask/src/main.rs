@@ -53,6 +53,15 @@ fn dist(release: bool) -> Result<PathBuf, String> {
     for (source, target) in shipping_names(cfg!(windows)) {
         std::fs::copy(built.join(source), dist.join(target)).map_err(|err| format!("couldn't copy {source} to {target}: {err} -- is litastum running from dist/?"))?;
     }
+    // The bundled themes, found next to the executable.
+    let themes = dist.join("themes");
+    std::fs::create_dir_all(&themes).map_err(|err| format!("couldn't create {}: {err}", themes.display()))?;
+    let entries = std::fs::read_dir(root.join("themes")).map_err(|err| format!("couldn't read themes/: {err}"))?;
+    for entry in entries.flatten() {
+        if entry.path().extension().is_some_and(|extension| extension == "json") {
+            std::fs::copy(entry.path(), themes.join(entry.file_name())).map_err(|err| format!("couldn't copy a theme: {err}"))?;
+        }
+    }
     Ok(dist)
 }
 

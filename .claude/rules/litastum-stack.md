@@ -34,7 +34,9 @@ small terminal emulator that runs it in a pseudoconsole: `winit`,
 framework (`egui` and Slint were both turned down; neither has a
 character grid). Anything the window needs from the app goes through
 the terminal, as it would in Windows Terminal; don't add window-only
-code paths to the app. History: `docs/history/launching.md`.
+code paths to the app. The one exception is a hint the terminal can't
+carry through ConPTY: `LITASTUM_HOST_CELL_SIZE`, which picks iTerm2
+images at the window's cell size. History: `docs/history/launching.md`.
 
 ## Built-in editor: `edtui`, with our own non-modal keymap
 

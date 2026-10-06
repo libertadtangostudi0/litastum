@@ -216,3 +216,14 @@ off. Switched to `"dracula"`, spelled one way everywhere.
 after `github-dark-default` read too burgundy, then reported washed out
 across the themes tried; it went back up, to 30%, on a request for a
 brighter highlight.
+
+## Bundled themes are found by location, not the current directory
+
+The bundled `themes/` used to be searched as `./themes/`, relative to
+the current directory -- fine while litastum was always started from the
+project root. Its own window (`gui/`) starts it in the directory it was
+opened from, and the F9 picker reported "No themes found" (the default
+theme silently fell back to the hard-coded one too). Now it's `themes/`
+next to the executable (a `cargo xtask dist` layout, which copies them),
+then the project's own, anchored with `CARGO_MANIFEST_DIR` like
+`appdata/`.

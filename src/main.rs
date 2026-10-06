@@ -6,6 +6,7 @@ mod conflict;
 mod editor;
 mod event_loop;
 mod explorer;
+mod image_host;
 mod app_data;
 mod keyboard_layout;
 mod list_cursor;
@@ -38,8 +39,11 @@ fn main() -> Result<()> {
     let mut app = App::new(start_dir, theme, syntax_theme)?;
     // Queried after entering the alternate screen but before `run()` reads
     // events: the query uses raw escape sequences on stdio. On error,
-    // `App::new`'s half-blocks stay.
-    if let Ok(picker) = ratatui_image::picker::Picker::from_query_stdio() {
+    // `App::new`'s half-blocks stay. In litastum's own window there's
+    // nothing to ask: it says what it draws (`image_host`).
+    if let Some(cell) = image_host::host_cell_size() {
+        app.image_picker = image_host::hosted_picker(cell);
+    } else if let Ok(picker) = ratatui_image::picker::Picker::from_query_stdio() {
         app.image_picker = picker;
     }
     // The query wrote to the real screen behind `ratatui`'s buffer, and stray

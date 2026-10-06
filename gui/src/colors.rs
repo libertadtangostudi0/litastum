@@ -43,6 +43,21 @@ pub fn resolve(color: Color, colors: &Colors) -> Rgb {
 }
 
 
+/// A color by its index in `Colors` (0-255 the palette, then the named
+/// colors from `NamedColor::Foreground`), for answering a color query.
+pub fn resolve_index(index: usize, colors: &Colors) -> Rgb {
+    if let Some(color) = colors[index] {
+        return color;
+    }
+    match index {
+        0..=255 => indexed_default(index as u8),
+        _ if index == NamedColor::Foreground as usize => FOREGROUND,
+        _ if index == NamedColor::Background as usize => BACKGROUND,
+        _ => CURSOR,
+    }
+}
+
+
 fn named_default(named: NamedColor) -> Rgb {
     match named {
         NamedColor::Foreground | NamedColor::BrightForeground => FOREGROUND,

@@ -76,10 +76,14 @@ just against a plain in-memory `Config` value, never a real file.
 
 ## Environment variables: `LITASTUM_`-prefixed, one place to look
 
-No litastum-specific environment variable exists today.
-`LITASTUM_CONFIG_DIR` used to override the config directory for local
-development; it went away with `appdata/` (see "Where app data lives"
-below), which is already inside the project.
+One litastum-specific environment variable exists:
+`LITASTUM_HOST_CELL_SIZE` (`image_host.rs`), set by litastum's own
+window (`gui/`) for the console app it hosts -- its cell size in pixels,
+so F3 images use iTerm2 inline images at that size (ConPTY makes asking
+impossible; `docs/history/launching.md`). `LITASTUM_CONFIG_DIR` used to
+override the config directory for local development; it went away with
+`appdata/` (see "Where app data lives" below), which is already inside
+the project.
 
 **Convention for any future one**: prefix it `LITASTUM_` -- avoids colliding with anything else in a user's environment, and
 makes it immediately recognizable as this app's own in a `set`/`env`

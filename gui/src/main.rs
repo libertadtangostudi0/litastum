@@ -8,6 +8,8 @@
 
 mod colors;
 mod font;
+mod images;
+mod intercept;
 mod icon;
 // xterm key sequences are the Unix path; Windows speaks `win32_input`.
 #[cfg_attr(windows, allow(dead_code))]
@@ -158,7 +160,8 @@ impl App {
             let origin = render::grid_origin(size.width, self.grid.columns, font.cell_width);
             let cursor_visible = self.cursor_shown || !term.cursor_style().blinking;
             let mut frame = Frame { pixels: &mut buffer, width: size.width, height: size.height, origin, cursor_visible };
-            render::draw(&term, font, &mut frame);
+            let mut images = session.images.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            render::draw(&term, font, &mut images, &mut frame);
         }
         let _ = buffer.present();
     }
@@ -380,6 +383,25 @@ impl ApplicationHandler<UserEvent> for App {
             Event::PtyWrite(text) => {
                 if let Some(session) = &self.session {
                     session.write(text.into_bytes());
+                }
+            }
+            // `CSI 14 t`: the text area's size in pixels.
+            Event::TextAreaSizeRequest(format) => {
+                if let (Some(session), Some(font)) = (&self.session, &self.font) {
+                    let size = alacritty_terminal::event::WindowSize {
+                        num_lines: self.grid.lines as u16,
+                        num_cols: self.grid.columns as u16,
+                        cell_width: font.cell_width as u16,
+                        cell_height: font.cell_height as u16,
+                    };
+                    session.write(format(size).into_bytes());
+                }
+            }
+            // `OSC 10/11/12 ; ?`: a color's current value.
+            Event::ColorRequest(index, format) => {
+                if let Some(session) = &self.session {
+                    let color = colors::resolve_index(index, session.term.lock().colors());
+                    session.write(format(color).into_bytes());
                 }
             }
             Event::Exit | Event::ChildExit(_) => event_loop.exit(),

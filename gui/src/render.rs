@@ -1,10 +1,13 @@
 use alacritty_terminal::event::EventListener;
+use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 
 use crate::colors;
 use crate::font::{CellFont, FontStyle};
+use crate::images::PlacedImage;
 
 /// A window's pixels, `0x00RRGGBB` per pixel, row by row. `origin` is
 /// where the grid's top-left cell starts (`grid_origin`).
@@ -27,6 +30,16 @@ impl Frame<'_> {
         }
     }
 
+    fn blit(&mut self, x: u32, y: u32, image: &PlacedImage) {
+        for row in 0..image.height {
+            for column in 0..image.width {
+                let index = ((row * image.width + column) * 4) as usize;
+                let [r, g, b, alpha] = [image.rgba[index], image.rgba[index + 1], image.rgba[index + 2], image.rgba[index + 3]];
+                self.blend((x + column) as i32, (y + row) as i32, Rgb { r, g, b }, alpha);
+            }
+        }
+    }
+
     fn blend(&mut self, x: i32, y: i32, color: Rgb, coverage: u8) {
         if x < 0 || y < 0 || x as u32 >= self.width || y as u32 >= self.height {
             return;
@@ -40,7 +53,7 @@ impl Frame<'_> {
 /// Draws the whole visible grid, then the cursor. Every cell is drawn
 /// every frame; the grid is small enough that the glyph cache, not damage
 /// tracking, is what keeps this cheap.
-pub fn draw<T: EventListener>(term: &Term<T>, font: &mut CellFont, frame: &mut Frame) {
+pub fn draw<T: EventListener>(term: &Term<T>, font: &mut CellFont, images: &mut Vec<PlacedImage>, frame: &mut Frame) {
     let (cell_width, cell_height) = (font.cell_width, font.cell_height);
     let content = term.renderable_content();
     let colors = content.colors;
@@ -78,6 +91,12 @@ pub fn draw<T: EventListener>(term: &Term<T>, font: &mut CellFont, frame: &mut F
         }
     }
 
+    drop_overwritten_images(term, images, (cell_width, cell_height));
+    for image in images.iter() {
+        let (x, y) = (frame.origin.0 + image.column as u32 * cell_width, frame.origin.1 + image.line as u32 * cell_height);
+        frame.blit(x, y, image);
+    }
+
     if !frame.cursor_visible {
         return;
     }
@@ -100,6 +119,25 @@ pub fn draw<T: EventListener>(term: &Term<T>, font: &mut CellFont, frame: &mut F
             frame.fill(x + cell_width - 1, y, 1, cell_height, color);
         }
     }
+}
+
+
+/// Drops every image something has been written over: an image lives on
+/// cells left blank for it (`ratatui-image` clears them first, then
+/// skips them), so text in any of them means the program has moved on --
+/// the F3 preview closed, the panels came back, the screen switched.
+fn drop_overwritten_images<T>(term: &Term<T>, images: &mut Vec<PlacedImage>, cell: (u32, u32)) {
+    let grid = term.grid();
+    let (lines, columns) = (grid.screen_lines(), grid.columns());
+    images.retain(|image| {
+        let (width, height) = image.cells(cell);
+        (image.line..(image.line + height).min(lines)).all(|line| {
+            (image.column..(image.column + width).min(columns)).all(|column| {
+                let cell = &grid[Line(line as i32)][Column(column)];
+                cell.c == ' ' || cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+            })
+        })
+    });
 }
 
 
@@ -156,7 +194,7 @@ mod tests {
         let (width, height) = (4 * font.cell_width, 2 * font.cell_height);
         let mut pixels = vec![0u32; (width * height) as usize];
 
-        draw(&term, &mut font, &mut Frame { pixels: &mut pixels, width, height, origin: (0, 0), cursor_visible: true });
+        draw(&term, &mut font, &mut Vec::new(), &mut Frame { pixels: &mut pixels, width, height, origin: (0, 0), cursor_visible: true });
 
         let red = pack(colors::resolve(Color::Named(NamedColor::Red), term.colors()));
         let first_cell = |pixel: &u32| *pixel == red;
@@ -191,10 +229,51 @@ mod tests {
         let (width, height) = (2 * font.cell_width + 6, font.cell_height);
         let mut pixels = vec![0u32; (width * height) as usize];
 
-        draw(&term, &mut font, &mut Frame { pixels: &mut pixels, width, height, origin: (3, 0), cursor_visible: false });
+        draw(&term, &mut font, &mut Vec::new(), &mut Frame { pixels: &mut pixels, width, height, origin: (3, 0), cursor_visible: false });
 
         assert_eq!(pixels[0], 0x123456, "the margin");
         assert_eq!(pixels[(3 + font.cell_width + 2) as usize], 0x123456, "an unpainted cell");
+    }
+
+    fn term_with(text: &[u8], columns: usize, lines: usize) -> Term<alacritty_terminal::event::VoidListener> {
+        use alacritty_terminal::term::Config;
+        use alacritty_terminal::vte::ansi::Processor;
+
+        let mut term = Term::new(Config::default(), &crate::session::GridSize { columns, lines }, alacritty_terminal::event::VoidListener);
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut term, text);
+        term
+    }
+
+    fn image_at(line: usize, column: usize, width: u32, height: u32) -> PlacedImage {
+        PlacedImage { line, column, width, height, rgba: [0, 255, 0, 255].repeat((width * height) as usize) }
+    }
+
+    #[test]
+    fn an_image_is_drawn_over_its_cells() {
+        let term = term_with(b"", 4, 2);
+        let mut font = CellFont::new(16.0);
+        let (width, height) = (4 * font.cell_width, 2 * font.cell_height);
+        let mut pixels = vec![0u32; (width * height) as usize];
+        let mut images = vec![image_at(1, 1, 3, 2)];
+
+        draw(&term, &mut font, &mut images, &mut Frame { pixels: &mut pixels, width, height, origin: (0, 0), cursor_visible: false });
+
+        let top_left = (font.cell_height * width + font.cell_width) as usize;
+        assert_eq!(pixels[top_left], 0x00ff00);
+        assert_eq!(images.len(), 1, "its cells are blank, so it stays");
+    }
+
+    /// The F3 preview closing: text drawn into the image's cells ends it.
+    #[test]
+    fn an_image_goes_once_text_is_written_over_it() {
+        let term = term_with(b"\x1b[2;2Hx", 4, 2);
+        let mut images = vec![image_at(1, 1, 3, 2), image_at(0, 0, 1, 1)];
+
+        drop_overwritten_images(&term, &mut images, (10, 20));
+
+        assert_eq!(images.len(), 1);
+        assert_eq!((images[0].line, images[0].column), (0, 0), "the image elsewhere stays");
     }
 
     #[test]

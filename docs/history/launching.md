@@ -140,3 +140,30 @@ looks for `litastum.com`, then `litastum.exe`, never itself.
 - **Bold and italic** from the font's own faces (glyphs cached per
   style), **dim** text mixed toward the background, **underlines** and
   **strikeout** as one-pixel lines.
+
+### Stage 5: images in F3
+
+Probed ConPTY directly (a process printing each protocol through it):
+it passes iTerm2 inline images (`OSC 1337 ; File=`) through untouched,
+but drops Sixel (`DCS`) and kitty (`APC`) -- so iTerm2 it is. It also
+answers `CSI c`, `5n` and `6n` itself, and forwards `CSI 14t`/`16t`.
+
+- **The window cuts images out of the stream** (`intercept.rs`): its
+  own pty I/O thread replaced `alacritty_terminal`'s event loop, so the
+  bytes are seen before parsing and an image lands at the cursor cell it
+  arrived at. The PNG is decoded (`images.rs`) and drawn over its cells;
+  it goes once text is written into any of them (`ratatui-image` clears
+  the area first, then skips those cells, so text means the preview
+  closed or the screen moved on) or the grid is resized.
+- **litastum is told, not asked** (`image_host.rs`): `ratatui-image`'s
+  query ends on the `CSI 5n` reply, which ConPTY gives before the
+  window's cell-size reply can arrive, so it fell back to half-blocks.
+  The window sets `LITASTUM_HOST_CELL_SIZE` (`"10x20"`) for the console
+  app, which then picks iTerm2 at that cell size without querying.
+  `Picker::from_fontsize` is deprecated in favor of the query that can't
+  work here.
+- The window answers `CSI 14t` (text area in pixels) and `OSC 10/11/12
+  ; ?` color queries itself, which `alacritty_terminal`'s loop used to.
+
+The cell size is passed once, at start: after a DPI change images are
+still sized for the old cells until litastum restarts.
