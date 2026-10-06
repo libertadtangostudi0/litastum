@@ -1,0 +1,13 @@
+[package]
+name = "litastum-gui"
+version = "0.1.0"
+edition = "2021"
+description = "litastum in a window of its own: a small terminal emulator hosting the console app"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+alacritty_terminal = "0.26.0"
+arboard = { version = "3.6.1", default-features = false }
+cosmic-text = "0.19.0"
+softbuffer = "0.4.8"
+winit = "0.30.13"

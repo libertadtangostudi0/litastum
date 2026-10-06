@@ -8,6 +8,10 @@ description = "A cross-platform, keyboard-driven dual-pane file manager (Far Man
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/YOUR_USERNAME/litastum"
 
+# `gui/`: the windowed host (docs/history/launching.md).
+[workspace]
+members = ["gui"]
+
 [dependencies]
 crossterm = "0.29"
 ratatui = "0.30"

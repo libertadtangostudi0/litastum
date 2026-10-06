@@ -26,6 +26,16 @@ highlighting, so it wouldn't save meaningful work over building the TUI
 directly, and a windowed app loses the "runs inside any terminal / over
 SSH" property that matters here.
 
+## Own window: a host terminal, not a GUI rewrite
+
+litastum stays a console app. Its window (`gui/`, `litastum-gui`) is a
+small terminal emulator that runs it in a pseudoconsole: `winit`,
+`softbuffer` + `cosmic-text`, `alacritty_terminal` -- pure Rust, no GUI
+framework (`egui` and Slint were both turned down; neither has a
+character grid). Anything the window needs from the app goes through
+the terminal, as it would in Windows Terminal; don't add window-only
+code paths to the app. History: `docs/history/launching.md`.
+
 ## Built-in editor: `edtui`, with our own non-modal keymap
 
 First tried `tui-textarea` (see history below), then switched to `edtui`

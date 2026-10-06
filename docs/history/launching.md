@@ -38,3 +38,69 @@ out:
   `commandline` assumes the installer puts litastum in
   `%LOCALAPPDATA%\Programs\litastum\`. Once installed, a shortcut can
   run `wt -w new -p litastum`.
+
+## Then: a window of its own (`gui/`)
+
+Opening into Windows Terminal still read as "it runs in the terminal".
+Far looked self-contained because it ran in a classic console window;
+asked for a real window by default that still runs in any terminal.
+
+Two ways were weighed:
+- **A. A window backend for ratatui** in the app itself: input moves off
+  crossterm everywhere, and running shell commands and `Ctrl+O` would
+  need an embedded pseudoconsole and terminal parser anyway.
+- **B. A small terminal emulator hosting the unchanged console app** --
+  chosen. The console app keeps a real console (ConPTY), so commands,
+  their output and `Ctrl+O` work as they do in any terminal; the
+  pseudoconsole and the parser exist once, in the host.
+
+Slint was raised again (it has a markup language, which `winit` and
+`egui` don't). It still has no character grid -- the screen would be
+one image drawn by our own code -- so its markup would only pay off for
+real GUI elements around the terminal (tabs, toolbars, dialogs), which
+aren't wanted. `egui` was ruled out outright.
+
+The host (`gui/`, workspace member `litastum-gui`): `winit` for the
+window and input, `softbuffer` + `cosmic-text` (swash) drawing cells on
+the CPU, `alacritty_terminal` (also behind Zed's terminal) for the
+pseudoconsole and the screen state -- all pure Rust. Every glyph is
+shaped once and placed by column, never by a shaped line's advances, so
+a fallback glyph can't shift the row. The default colors are the bundled
+default theme. Keys go to the console app as xterm sequences (`keys.rs`),
+which ConPTY turns back into console key events.
+
+Stages: 1. the window with litastum running in it (this); 2. full input
+(`win32-input-mode` for combinations xterm can't express, mouse, paste,
+DPI changes); 3. shipping as `litastum.exe` (window) + `litastum.com`
+(console, preferred by `cmd` for a bare `litastum`), replacing
+`litastum-window.exe`; 4. looks (theme colors, cursor, bold/italic);
+5. images in F3.
+
+### Stage 2: input
+
+- **Keys as `win32-input-mode` records on Windows** (`win32_input.rs`):
+  every press and release goes to ConPTY as
+  `ESC [ Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`, which it turns into the exact
+  `KEY_EVENT` a real console delivers -- what Windows Terminal sends.
+  xterm sequences (`keys.rs`, still the Unix path) can't carry
+  `Ctrl+Shift+Z` apart from `Ctrl+Z`, nor key releases. `Ctrl+letter`
+  goes by the physical key, so it works on the Russian layout.
+- **Paste as Windows Terminal does it**: `Ctrl+V`/`Shift+Insert` never
+  reach litastum as keys; the window types the clipboard's text in.
+  litastum already reads the clipboard itself on the physical `Ctrl+V`
+  and swallows that typed copy (`windows_terminal::paste_hotkey`,
+  `PasteFlood`), so both hosts behave the same.
+- **Mouse** reports (`mouse.rs`): clicks, drags and the wheel as SGR
+  (`ESC [ < b ; x ; y M/m`), only while the program asked for them --
+  ConPTY asks while litastum has mouse capture on.
+- **DPI**: moving to a monitor with another scale rebuilds the font at
+  that size and resizes the pseudoconsole even when the grid stays the
+  same (the cell's pixel size changed).
+- **Even side margins** (reported with a screenshot): the width that
+  doesn't fill a whole cell all sat on the right. The grid is centered
+  now (`render::grid_origin`); the mouse maps through the same origin.
+  A border's `│` still sits mid-cell, as in any terminal.
+- **A dark window frame** (reported: the title bar was the system's
+  yellow accent above the dark grid): the window asks for the dark
+  theme, and on Windows 11 its title bar, title text and border take the
+  terminal's background and foreground colors.
