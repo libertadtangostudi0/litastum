@@ -10,7 +10,6 @@
 //! that converts between the two.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tracing::warn;
 
 mod field;
 mod undo;
@@ -256,40 +255,27 @@ fn selected_text(text: &str, cursor: usize, anchor: Option<usize>) -> Option<Str
 }
 
 
-/// Copies the active selection (nothing, if there isn't one) to the real
-/// OS clipboard -- a failure (no clipboard available in this
+/// Copies the active selection (nothing, if there isn't one) to the
+/// clipboard (`clipboard`) -- a failure (no clipboard available in this
 /// environment, or the OS call itself failing) is only logged, same
 /// "don't fail the keystroke over it" rule
 /// `editor::clipboard::OsClipboardBridge` already follows.
 fn copy_selection(text: &str, cursor: usize, anchor: Option<usize>) {
-    let Some(selected) = selected_text(text, cursor, anchor) else {
-        return;
-    };
-    let Some(mut clipboard) = os_clipboard() else {
-        return;
-    };
-    if let Err(err) = clipboard.set_text(selected) {
-        warn!(%err, "text field: clipboard set_text failed");
+    if let Some(selected) = selected_text(text, cursor, anchor) {
+        clipboard::set(selected);
     }
 }
 
 
-/// Pastes the real OS clipboard's text at the cursor, replacing the
-/// active selection first if there is one -- the same "replace on type"
+/// Pastes the clipboard's text at the cursor, replacing the active
+/// selection first if there is one -- the same "replace on type"
 /// convention typing follows. Control characters (line breaks, tabs)
 /// are dropped: every user of this is a single-line field. A missing/
 /// unavailable clipboard or non-text contents is only logged, same as
 /// `copy_selection`.
 fn paste_clipboard(text: &mut String, cursor: &mut usize, anchor: &mut Option<usize>) {
-    let Some(mut clipboard) = os_clipboard() else {
+    let Some(pasted) = clipboard::get() else {
         return;
-    };
-    let pasted = match clipboard.get_text() {
-        Ok(pasted) => pasted,
-        Err(err) => {
-            warn!(%err, "text field: clipboard get_text failed");
-            return;
-        }
     };
     delete_selection(text, cursor, anchor);
     for c in pasted.chars().filter(|c| !c.is_control()) {
@@ -298,21 +284,58 @@ fn paste_clipboard(text: &mut String, cursor: &mut usize, anchor: &mut Option<us
 }
 
 
-/// The real OS clipboard -- `None` if it isn't available (logged), and
-/// always `None` in a test build: a test pressing `Ctrl+C`/`Ctrl+X` must
-/// never overwrite the clipboard of whoever happens to be running the
-/// suite (the same isolation rule `theming::config::limits()` follows
-/// for `config.json`).
-fn os_clipboard() -> Option<arboard::Clipboard> {
-    if cfg!(test) {
-        return None;
-    }
-    match arboard::Clipboard::new() {
-        Ok(clipboard) => Some(clipboard),
-        Err(err) => {
-            warn!(%err, "text field: clipboard unavailable");
-            None
+/// The clipboard text fields copy to and paste from: the real OS one,
+/// or in a test build an in-memory one per test thread -- a test pressing
+/// `Ctrl+C` must never overwrite the clipboard of whoever runs the suite
+/// (the isolation rule `theming::config::limits()` follows for
+/// `config.json`), yet copying still needs to be checkable.
+pub(crate) mod clipboard {
+    #[cfg(not(test))]
+    pub fn set(text: String) {
+        let Some(mut clipboard) = os_clipboard() else {
+            return;
+        };
+        if let Err(err) = clipboard.set_text(text) {
+            tracing::warn!(%err, "text field: clipboard set_text failed");
         }
+    }
+
+    #[cfg(not(test))]
+    pub fn get() -> Option<String> {
+        match os_clipboard()?.get_text() {
+            Ok(text) => Some(text),
+            Err(err) => {
+                tracing::warn!(%err, "text field: clipboard get_text failed");
+                None
+            }
+        }
+    }
+
+    /// `None` if the clipboard isn't available (logged).
+    #[cfg(not(test))]
+    fn os_clipboard() -> Option<arboard::Clipboard> {
+        match arboard::Clipboard::new() {
+            Ok(clipboard) => Some(clipboard),
+            Err(err) => {
+                tracing::warn!(%err, "text field: clipboard unavailable");
+                None
+            }
+        }
+    }
+
+    #[cfg(test)]
+    thread_local! {
+        static TEST_CLIPBOARD: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    }
+
+    #[cfg(test)]
+    pub fn set(text: String) {
+        TEST_CLIPBOARD.with(|clipboard| *clipboard.borrow_mut() = Some(text));
+    }
+
+    #[cfg(test)]
+    pub fn get() -> Option<String> {
+        TEST_CLIPBOARD.with(|clipboard| clipboard.borrow().clone())
     }
 }
 

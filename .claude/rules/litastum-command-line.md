@@ -24,6 +24,8 @@ line. Order matters and the table is grouped by it:
    otherwise fall through to (`Alt+F5` above `F5` = Copy).
 2. Selection and word moves in the command line (`Shift`/`Ctrl` +
    arrows); `Shift+Left/Right` select only while something is typed.
+   `Ctrl+C`/`Ctrl+Insert` copy and `Ctrl+X`/`Shift+Delete` cut the
+   selection, on a typed line only (above `Delete` = delete forward).
 3. Marking -- `Shift+arrows`, and `Shift+A` on an empty line only.
 4. The typed line -- `Enter` runs it; while history suggestions show,
    `Up`/`Down`/`Tab` work on them (never `Enter`); `Tab` completes.

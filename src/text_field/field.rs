@@ -128,6 +128,18 @@ impl TextField {
         outcome
     }
 
+    /// Copies the selection to the clipboard; nothing without one.
+    pub fn copy_selection(&self) {
+        super::copy_selection(&self.text, self.cursor, self.anchor);
+    }
+
+    /// Copies the selection to the clipboard and deletes it. Returns
+    /// whether there was one.
+    pub fn cut_selection(&mut self) -> bool {
+        super::copy_selection(&self.text, self.cursor, self.anchor);
+        super::delete_selection(&mut self.text, &mut self.cursor, &mut self.anchor)
+    }
+
     fn snapshot(&self) -> Snapshot {
         Snapshot { text: self.text.clone(), cursor: self.cursor, anchor: self.anchor }
     }

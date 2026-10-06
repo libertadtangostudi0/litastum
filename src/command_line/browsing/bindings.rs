@@ -50,6 +50,8 @@ pub(super) enum BrowserAction {
     SelectRight,
     WordLeft,
     WordRight,
+    CopySelection,
+    CutSelection,
     Submit,
     SuggestionUp,
     SuggestionDown,
@@ -118,6 +120,11 @@ pub(super) static BINDINGS: &[Binding] = &[
     without(KeyCode::Right, SHIFT, CTRL, TypedLine, A::SelectRight),
     without(KeyCode::Left, CTRL, SHIFT, Always, A::WordLeft),
     without(KeyCode::Right, CTRL, SHIFT, Always, A::WordRight),
+    // Clipboard, Windows and Far style. Above `Delete` = delete forward.
+    with(KeyCode::Char('c'), CTRL, TypedLine, A::CopySelection),
+    with(KeyCode::Insert, CTRL, TypedLine, A::CopySelection),
+    with(KeyCode::Char('x'), CTRL, TypedLine, A::CutSelection),
+    with(KeyCode::Delete, SHIFT, TypedLine, A::CutSelection),
     // Marking (`panel/marks.rs`). Shift+A only on an empty line, or a
     // command could never start with a capital letter.
     without(KeyCode::Char('a'), SHIFT, CTRL, EmptyLine, A::Command(Command::SelectAll)),
@@ -187,6 +194,16 @@ mod tests {
 
     fn chord(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
         KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn clipboard_chords_work_only_on_a_typed_line() {
+        assert_eq!(lookup(chord(KeyCode::Char('c'), CTRL), TYPED), Some(A::CopySelection));
+        assert_eq!(lookup(chord(KeyCode::Insert, CTRL), TYPED), Some(A::CopySelection));
+        assert_eq!(lookup(chord(KeyCode::Char('x'), CTRL), TYPED), Some(A::CutSelection));
+        assert_eq!(lookup(chord(KeyCode::Delete, SHIFT), TYPED), Some(A::CutSelection));
+        assert_eq!(lookup(chord(KeyCode::Delete, NONE), TYPED), Some(A::DeleteForward));
+        assert_eq!(lookup(chord(KeyCode::Char('c'), CTRL), EMPTY), None);
     }
 
     #[test]

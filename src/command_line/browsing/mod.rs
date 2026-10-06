@@ -121,6 +121,12 @@ fn perform(app: &mut App, action: BrowserAction) -> Result<Effect> {
             app.command_line.delete_forward();
             line_edited(app);
         }
+        BrowserAction::CopySelection => app.command_line.copy_selection(),
+        BrowserAction::CutSelection => {
+            if app.command_line.cut_selection() {
+                line_edited(app);
+            }
+        }
     }
     Ok(Effect::None)
 }
@@ -243,6 +249,55 @@ mod handle_browsing_key_tests {
         let mut app = test_app(unique_scratch_dir("browsing-keys"));
         app.command_line.set_text(line);
         app
+    }
+
+    fn select_last_chars(app: &mut App, count: usize) {
+        for _ in 0..count {
+            handle_browsing_key(app, shift_key(KeyCode::Left)).unwrap();
+        }
+    }
+
+    /// Reported: a selected part of a typed command couldn't be copied.
+    #[test]
+    fn ctrl_c_copies_the_selected_part_of_the_line() {
+        let mut app = typed("svn merge -c 172418,172507 --accept postpone");
+        select_last_chars(&mut app, 8);
+
+        handle_browsing_key(&mut app, ctrl_key('c')).unwrap();
+
+        assert_eq!(crate::text_field::clipboard::get().as_deref(), Some("postpone"));
+        assert_eq!(app.command_line.text(), "svn merge -c 172418,172507 --accept postpone", "copying leaves the line alone");
+    }
+
+    #[test]
+    fn ctrl_insert_copies_too() {
+        let mut app = typed("cd src");
+        select_last_chars(&mut app, 3);
+
+        handle_browsing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Insert, crossterm::event::KeyModifiers::CONTROL)).unwrap();
+
+        assert_eq!(crate::text_field::clipboard::get().as_deref(), Some("src"));
+    }
+
+    #[test]
+    fn ctrl_x_cuts_the_selected_part_of_the_line() {
+        let mut app = typed("svn up trunk");
+        select_last_chars(&mut app, 5);
+
+        handle_browsing_key(&mut app, ctrl_key('x')).unwrap();
+
+        assert_eq!(crate::text_field::clipboard::get().as_deref(), Some("trunk"));
+        assert_eq!(app.command_line.text(), "svn up ");
+    }
+
+    #[test]
+    fn ctrl_c_without_a_selection_copies_nothing_and_types_nothing() {
+        let mut app = typed("dir");
+
+        handle_browsing_key(&mut app, ctrl_key('c')).unwrap();
+
+        assert_eq!(crate::text_field::clipboard::get(), None);
+        assert_eq!(app.command_line.text(), "dir");
     }
 
     #[test]
