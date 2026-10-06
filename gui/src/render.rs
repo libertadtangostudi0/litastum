@@ -1,73 +1,141 @@
+use std::ops::Range;
+
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::term::Term;
+use alacritty_terminal::term::{Term, TermDamage};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 
 use crate::colors;
-use crate::font::{CellFont, FontStyle};
+use crate::font::{CellFont, FontStyle, GlyphMask};
 use crate::images::PlacedImage;
 
-/// A window's pixels, `0x00RRGGBB` per pixel, row by row. `origin` is
-/// where the grid's top-left cell starts (`grid_origin`).
-pub struct Frame<'a> {
-    pub pixels: &'a mut [u32],
+/// What a frame is drawn for: the window's size in pixels, where the
+/// grid's top-left cell starts (`grid_origin`), and whether a blinking
+/// cursor is in its shown half.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct View {
     pub width: u32,
     pub height: u32,
     pub origin: (u32, u32),
-    /// Off during the dark half of a blink (`App::cursor_blink`).
     pub cursor_visible: bool,
 }
 
-impl Frame<'_> {
-    fn fill(&mut self, x: u32, y: u32, width: u32, height: u32, color: Rgb) {
-        let packed = pack(color);
-        for row in y..(y + height).min(self.height) {
-            let start = (row * self.width + x.min(self.width)) as usize;
-            let end = (row * self.width + (x + width).min(self.width)) as usize;
-            self.pixels[start..end].fill(packed);
-        }
+
+/// Draws the terminal into a back buffer of its own and keeps it between
+/// frames, redrawing only the lines that changed: the terminal's damage,
+/// the cursor's old and new line, and the lines under images. Typing a
+/// character redraws a line or two rather than every cell and glyph of
+/// the window, which every frame used to.
+pub struct Renderer {
+    back: Vec<u32>,
+    view: Option<View>,
+    /// Redraw everything next frame (`invalidate`).
+    full: bool,
+    cursor_line: Option<usize>,
+    image_lines: Vec<Range<usize>>,
+    background: Option<Rgb>,
+}
+
+impl Renderer {
+    pub fn new() -> Self {
+        Self { back: Vec::new(), view: None, full: true, cursor_line: None, image_lines: Vec::new(), background: None }
     }
 
-    fn blit(&mut self, x: u32, y: u32, image: &PlacedImage) {
-        for row in 0..image.height {
-            for column in 0..image.width {
-                let index = ((row * image.width + column) * 4) as usize;
-                let [r, g, b, alpha] = [image.rgba[index], image.rgba[index + 1], image.rgba[index + 2], image.rgba[index + 3]];
-                self.blend((x + column) as i32, (y + row) as i32, Rgb { r, g, b }, alpha);
+    /// The next frame redraws everything -- after the font (cell size)
+    /// changed, which nothing in the terminal reports.
+    pub fn invalidate(&mut self) {
+        self.full = true;
+    }
+
+    /// Brings the back buffer up to date with `term` and returns it, one
+    /// `0x00RRGGBB` per pixel, row by row. Drops images written over
+    /// (`drop_overwritten_images`) on the way.
+    pub fn draw<T: EventListener>(&mut self, term: &mut Term<T>, font: &mut CellFont, images: &mut Vec<PlacedImage>, view: View) -> &[u32] {
+        let cell = (font.cell_width, font.cell_height);
+        if self.view.map(|old| (old.width, old.height, old.origin)) != Some((view.width, view.height, view.origin)) {
+            self.back = vec![0; (view.width * view.height) as usize];
+            self.full = true;
+        }
+        let lines = term.screen_lines();
+        let mut dirty = vec![false; lines];
+        match term.damage() {
+            TermDamage::Full => self.full = true,
+            TermDamage::Partial(damaged) => {
+                for bounds in damaged {
+                    if let Some(line) = dirty.get_mut(bounds.line) {
+                        *line = true;
+                    }
+                }
             }
         }
-    }
+        term.reset_damage();
 
-    fn blend(&mut self, x: i32, y: i32, color: Rgb, coverage: u8) {
-        if x < 0 || y < 0 || x as u32 >= self.width || y as u32 >= self.height {
-            return;
+        let background = colors::resolve(Color::Named(NamedColor::Background), term.colors());
+        if self.background != Some(background) {
+            self.full = true;
         }
-        let index = (y as u32 * self.width + x as u32) as usize;
-        self.pixels[index] = pack(mix(unpack(self.pixels[index]), color, coverage));
+        let mut canvas = Canvas { pixels: &mut self.back, width: view.width, height: view.height };
+        if self.full {
+            // The margins take the program's background (`OSC 11`), like
+            // the cells it leaves unpainted.
+            canvas.fill(0, 0, view.width, view.height, background);
+            dirty.fill(true);
+        }
+
+        let content = term.renderable_content();
+        let cursor_line = usize::try_from(content.cursor.point.line.0 + content.display_offset as i32).ok();
+        for line in [self.cursor_line, cursor_line].into_iter().flatten() {
+            mark(&mut dirty, line..line + 1);
+        }
+        drop_overwritten_images(term, images, cell);
+        let image_lines: Vec<Range<usize>> = images.iter().map(|image| image.line..image.line + image.cells(cell).1).collect();
+        for range in self.image_lines.iter().chain(&image_lines) {
+            mark(&mut dirty, range.clone());
+        }
+
+        for (line, _) in dirty.iter().enumerate().filter(|(_, dirty)| **dirty) {
+            draw_line(&mut canvas, term, font, line, view.origin);
+        }
+        for image in images.iter() {
+            canvas.blit(view.origin.0 + image.column as u32 * cell.0, view.origin.1 + image.line as u32 * cell.1, image);
+        }
+        if view.cursor_visible {
+            if let Some(line) = cursor_line {
+                let (x, y) = (view.origin.0 + content.cursor.point.column.0 as u32 * cell.0, view.origin.1 + line as u32 * cell.1);
+                draw_cursor(&mut canvas, content.cursor.shape, x, y, cell, colors::resolve(Color::Named(NamedColor::Cursor), content.colors));
+            }
+        }
+
+        self.view = Some(view);
+        self.full = false;
+        self.cursor_line = cursor_line;
+        self.image_lines = image_lines;
+        self.background = Some(background);
+        &self.back
     }
 }
 
 
-/// Draws the whole visible grid, then the cursor. Every cell is drawn
-/// every frame; the grid is small enough that the glyph cache, not damage
-/// tracking, is what keeps this cheap.
-pub fn draw<T: EventListener>(term: &Term<T>, font: &mut CellFont, images: &mut Vec<PlacedImage>, frame: &mut Frame) {
-    let (cell_width, cell_height) = (font.cell_width, font.cell_height);
-    let content = term.renderable_content();
-    let colors = content.colors;
-    // The margins take the program's background (`OSC 11`), like the
-    // cells it leaves unpainted.
-    frame.fill(0, 0, frame.width, frame.height, colors::resolve(Color::Named(NamedColor::Background), colors));
+fn mark(dirty: &mut [bool], range: Range<usize>) {
+    let end = range.end.min(dirty.len());
+    if range.start < end {
+        dirty[range.start..end].fill(true);
+    }
+}
 
-    for indexed in content.display_iter {
-        let line = indexed.point.line.0 + content.display_offset as i32;
-        if line < 0 {
-            continue;
-        }
-        let cell = indexed.cell;
-        let (x, y) = (frame.origin.0 + indexed.point.column.0 as u32 * cell_width, frame.origin.1 + line as u32 * cell_height);
+
+/// One grid line: every cell's background, glyph and decorations.
+fn draw_line<T>(canvas: &mut Canvas, term: &Term<T>, font: &mut CellFont, line: usize, origin: (u32, u32)) {
+    let (cell_width, cell_height) = (font.cell_width, font.cell_height);
+    let grid = term.grid();
+    let row = &grid[Line(line as i32 - grid.display_offset() as i32)];
+    let colors = term.colors();
+    let y = origin.1 + line as u32 * cell_height;
+    for column in 0..grid.columns() {
+        let cell = &row[Column(column)];
+        let x = origin.0 + column as u32 * cell_width;
         let mut foreground = colors::resolve(cell.fg, colors);
         let mut background = colors::resolve(cell.bg, colors);
         if cell.flags.contains(Flags::INVERSE) {
@@ -76,47 +144,40 @@ pub fn draw<T: EventListener>(term: &Term<T>, font: &mut CellFont, images: &mut 
         if cell.flags.contains(Flags::DIM) {
             foreground = mix(background, foreground, 0xaa);
         }
+        if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+            // Its glyph is the wide character's to the left.
+            continue;
+        }
         let width = if cell.flags.contains(Flags::WIDE_CHAR) { cell_width * 2 } else { cell_width };
-        frame.fill(x, y, width, cell_height, background);
-        if cell.flags.intersects(Flags::HIDDEN | Flags::WIDE_CHAR_SPACER) {
+        canvas.fill(x, y, width, cell_height, background);
+        if cell.flags.contains(Flags::HIDDEN) {
             continue;
         }
         let style = FontStyle { bold: cell.flags.intersects(Flags::BOLD), italic: cell.flags.intersects(Flags::ITALIC) };
-        font.rasterize(cell.c, style, |glyph_x, glyph_y, coverage| frame.blend(x as i32 + glyph_x, y as i32 + glyph_y, foreground, coverage));
+        if let Some(mask) = font.mask(cell.c, style) {
+            canvas.draw_mask(x as i32, y as i32, &mask, foreground, y..y + cell_height);
+        }
         if cell.flags.intersects(Flags::ALL_UNDERLINES) {
-            frame.fill(x, y + cell_height - 2, width, 1, foreground);
+            canvas.fill(x, y + cell_height - 2, width, 1, foreground);
         }
         if cell.flags.contains(Flags::STRIKEOUT) {
-            frame.fill(x, y + cell_height / 2, width, 1, foreground);
+            canvas.fill(x, y + cell_height / 2, width, 1, foreground);
         }
     }
+}
 
-    drop_overwritten_images(term, images, (cell_width, cell_height));
-    for image in images.iter() {
-        let (x, y) = (frame.origin.0 + image.column as u32 * cell_width, frame.origin.1 + image.line as u32 * cell_height);
-        frame.blit(x, y, image);
-    }
 
-    if !frame.cursor_visible {
-        return;
-    }
-
-    let cursor = content.cursor;
-    let line = cursor.point.line.0 + content.display_offset as i32;
-    if line < 0 {
-        return;
-    }
-    let (x, y) = (frame.origin.0 + cursor.point.column.0 as u32 * cell_width, frame.origin.1 + line as u32 * cell_height);
-    let color = colors::resolve(Color::Named(NamedColor::Cursor), colors);
-    match cursor.shape {
+fn draw_cursor(canvas: &mut Canvas, shape: CursorShape, x: u32, y: u32, cell: (u32, u32), color: Rgb) {
+    let (cell_width, cell_height) = cell;
+    match shape {
         CursorShape::Hidden => {}
-        CursorShape::Beam => frame.fill(x, y, 2, cell_height, color),
-        CursorShape::Underline => frame.fill(x, y + cell_height - 2, cell_width, 2, color),
+        CursorShape::Beam => canvas.fill(x, y, 2, cell_height, color),
+        CursorShape::Underline => canvas.fill(x, y + cell_height - 2, cell_width, 2, color),
         CursorShape::Block | CursorShape::HollowBlock => {
-            frame.fill(x, y, cell_width, 1, color);
-            frame.fill(x, y + cell_height - 1, cell_width, 1, color);
-            frame.fill(x, y, 1, cell_height, color);
-            frame.fill(x + cell_width - 1, y, 1, cell_height, color);
+            canvas.fill(x, y, cell_width, 1, color);
+            canvas.fill(x, y + cell_height - 1, cell_width, 1, color);
+            canvas.fill(x, y, 1, cell_height, color);
+            canvas.fill(x + cell_width - 1, y, 1, cell_height, color);
         }
     }
 }
@@ -150,6 +211,60 @@ pub fn grid_origin(width: u32, columns: usize, cell_width: u32) -> (u32, u32) {
 }
 
 
+/// Pixels being drawn into, `0x00RRGGBB` row by row.
+struct Canvas<'a> {
+    pixels: &'a mut [u32],
+    width: u32,
+    height: u32,
+}
+
+impl Canvas<'_> {
+    fn fill(&mut self, x: u32, y: u32, width: u32, height: u32, color: Rgb) {
+        let packed = pack(color);
+        let (left, right) = (x.min(self.width), x.saturating_add(width).min(self.width));
+        for row in y..y.saturating_add(height).min(self.height) {
+            let start = (row * self.width) as usize;
+            self.pixels[start + left as usize..start + right as usize].fill(packed);
+        }
+    }
+
+    /// A glyph's coverage in `color`, kept within the rows `rows` (its own
+    /// grid line), so redrawing one line never leaves a neighbor's glyph
+    /// half drawn.
+    fn draw_mask(&mut self, x: i32, y: i32, mask: &GlyphMask, color: Rgb, rows: Range<u32>) {
+        let packed = pack(color);
+        for mask_row in 0..mask.height {
+            let pixel_y = y + mask.y + mask_row as i32;
+            if pixel_y < rows.start as i32 || pixel_y >= rows.end.min(self.height) as i32 {
+                continue;
+            }
+            let line_start = pixel_y as usize * self.width as usize;
+            let coverage_row = &mask.coverage[(mask_row * mask.width) as usize..((mask_row + 1) * mask.width) as usize];
+            for (mask_column, &coverage) in coverage_row.iter().enumerate() {
+                let pixel_x = x + mask.x + mask_column as i32;
+                if coverage == 0 || pixel_x < 0 || pixel_x >= self.width as i32 {
+                    continue;
+                }
+                let pixel = &mut self.pixels[line_start + pixel_x as usize];
+                *pixel = if coverage == 255 { packed } else { pack(mix(unpack(*pixel), color, coverage)) };
+            }
+        }
+    }
+
+    fn blit(&mut self, x: u32, y: u32, image: &PlacedImage) {
+        for row in 0..image.height.min(self.height.saturating_sub(y)) {
+            let line_start = ((y + row) * self.width) as usize;
+            for column in 0..image.width.min(self.width.saturating_sub(x)) {
+                let index = ((row * image.width + column) * 4) as usize;
+                let [r, g, b, alpha] = [image.rgba[index], image.rgba[index + 1], image.rgba[index + 2], image.rgba[index + 3]];
+                let pixel = &mut self.pixels[line_start + (x + column) as usize];
+                *pixel = pack(mix(unpack(*pixel), Rgb { r, g, b }, alpha));
+            }
+        }
+    }
+}
+
+
 fn pack(color: Rgb) -> u32 {
     (u32::from(color.r) << 16) | (u32::from(color.g) << 8) | u32::from(color.b)
 }
@@ -166,121 +281,4 @@ fn mix(under: Rgb, over: Rgb, coverage: u8) -> Rgb {
 
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mixing_runs_from_the_background_to_the_glyph_color() {
-        let (black, white) = (Rgb { r: 0, g: 0, b: 0 }, Rgb { r: 255, g: 255, b: 255 });
-        assert_eq!(mix(black, white, 0), black);
-        assert_eq!(mix(black, white, 255), white);
-        assert_eq!(mix(black, white, 128).r, 128);
-    }
-
-    /// The real terminal engine fed a red "A": its cell gets the default
-    /// background and some glyph pixels in the ANSI red.
-    #[test]
-    fn draws_what_the_program_printed() {
-        use alacritty_terminal::event::VoidListener;
-        use alacritty_terminal::term::Config;
-        use alacritty_terminal::vte::ansi::Processor;
-
-        use crate::session::GridSize;
-
-        let mut term = Term::new(Config::default(), &GridSize { columns: 4, lines: 2 }, VoidListener);
-        let mut parser: Processor = Processor::new();
-        parser.advance(&mut term, b"[31mA");
-        let mut font = CellFont::new(16.0);
-        let (width, height) = (4 * font.cell_width, 2 * font.cell_height);
-        let mut pixels = vec![0u32; (width * height) as usize];
-
-        draw(&term, &mut font, &mut Vec::new(), &mut Frame { pixels: &mut pixels, width, height, origin: (0, 0), cursor_visible: true });
-
-        let red = pack(colors::resolve(Color::Named(NamedColor::Red), term.colors()));
-        let first_cell = |pixel: &u32| *pixel == red;
-        let cell_rows = (0..font.cell_height).flat_map(|y| (0..font.cell_width).map(move |x| (y * width + x) as usize));
-        assert!(cell_rows.clone().any(|index| first_cell(&pixels[index])), "the A is drawn in red");
-        assert_eq!(pixels[(font.cell_height * width + 3 * font.cell_width + 1) as usize], pack(colors::BACKGROUND), "an empty cell is background");
-    }
-
-    /// Reported: the side margins were uneven, all of the leftover width
-    /// sitting on the right.
-    #[test]
-    fn the_leftover_width_is_split_between_both_sides() {
-        assert_eq!(grid_origin(1000, 90, 11), (5, 0), "1000 - 990 = 10 pixels, 5 a side");
-        assert_eq!(grid_origin(990, 90, 11), (0, 0));
-        assert_eq!(grid_origin(100, 90, 11), (0, 0), "a grid wider than the window starts at the edge");
-    }
-
-    /// litastum hands its theme's background over with `OSC 11`; the
-    /// cells it doesn't paint, and the margins, follow it.
-    #[test]
-    fn the_programs_background_color_fills_unpainted_cells() {
-        use alacritty_terminal::event::VoidListener;
-        use alacritty_terminal::term::Config;
-        use alacritty_terminal::vte::ansi::Processor;
-
-        use crate::session::GridSize;
-
-        let mut term = Term::new(Config::default(), &GridSize { columns: 2, lines: 1 }, VoidListener);
-        let mut parser: Processor = Processor::new();
-        parser.advance(&mut term, b"\x1b]11;rgb:12/34/56\x1b\\");
-        let mut font = CellFont::new(16.0);
-        let (width, height) = (2 * font.cell_width + 6, font.cell_height);
-        let mut pixels = vec![0u32; (width * height) as usize];
-
-        draw(&term, &mut font, &mut Vec::new(), &mut Frame { pixels: &mut pixels, width, height, origin: (3, 0), cursor_visible: false });
-
-        assert_eq!(pixels[0], 0x123456, "the margin");
-        assert_eq!(pixels[(3 + font.cell_width + 2) as usize], 0x123456, "an unpainted cell");
-    }
-
-    fn term_with(text: &[u8], columns: usize, lines: usize) -> Term<alacritty_terminal::event::VoidListener> {
-        use alacritty_terminal::term::Config;
-        use alacritty_terminal::vte::ansi::Processor;
-
-        let mut term = Term::new(Config::default(), &crate::session::GridSize { columns, lines }, alacritty_terminal::event::VoidListener);
-        let mut parser: Processor = Processor::new();
-        parser.advance(&mut term, text);
-        term
-    }
-
-    fn image_at(line: usize, column: usize, width: u32, height: u32) -> PlacedImage {
-        PlacedImage { line, column, width, height, rgba: [0, 255, 0, 255].repeat((width * height) as usize) }
-    }
-
-    #[test]
-    fn an_image_is_drawn_over_its_cells() {
-        let term = term_with(b"", 4, 2);
-        let mut font = CellFont::new(16.0);
-        let (width, height) = (4 * font.cell_width, 2 * font.cell_height);
-        let mut pixels = vec![0u32; (width * height) as usize];
-        let mut images = vec![image_at(1, 1, 3, 2)];
-
-        draw(&term, &mut font, &mut images, &mut Frame { pixels: &mut pixels, width, height, origin: (0, 0), cursor_visible: false });
-
-        let top_left = (font.cell_height * width + font.cell_width) as usize;
-        assert_eq!(pixels[top_left], 0x00ff00);
-        assert_eq!(images.len(), 1, "its cells are blank, so it stays");
-    }
-
-    /// The F3 preview closing: text drawn into the image's cells ends it.
-    #[test]
-    fn an_image_goes_once_text_is_written_over_it() {
-        let term = term_with(b"\x1b[2;2Hx", 4, 2);
-        let mut images = vec![image_at(1, 1, 3, 2), image_at(0, 0, 1, 1)];
-
-        drop_overwritten_images(&term, &mut images, (10, 20));
-
-        assert_eq!(images.len(), 1);
-        assert_eq!((images[0].line, images[0].column), (0, 0), "the image elsewhere stays");
-    }
-
-    #[test]
-    fn fill_clips_at_the_frame_edge() {
-        let mut pixels = vec![0u32; 4 * 2];
-        let mut frame = Frame { pixels: &mut pixels, width: 4, height: 2, origin: (0, 0), cursor_visible: true };
-        frame.fill(3, 1, 5, 5, Rgb { r: 1, g: 2, b: 3 });
-        assert_eq!(pixels, [0, 0, 0, 0, 0, 0, 0, 0x010203]);
-    }
-}
+mod tests;

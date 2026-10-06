@@ -167,3 +167,35 @@ answers `CSI c`, `5n` and `6n` itself, and forwards `CSI 14t`/`16t`.
 
 The cell size is passed once, at start: after a DPI change images are
 still sized for the old cells until litastum restarts.
+
+## Review pass: refactor, bugs, performance
+
+`main.rs` was split (`app`, `input`, `window_style`), and a review
+turned up:
+
+- **Touchpad scrolling did nothing**: pixel deltas, and fractional
+  lines from fine-grained wheels, were rounded per event, to 0.
+  `input::WheelAccumulator` carries the remainder.
+- **The wheel did nothing in the panels**: without mouse reports, on the
+  alternate screen it now sends arrow keys, as Windows Terminal and
+  xterm's alternate scroll mode do (`input::alternate_scroll`).
+- **Emoji typed in were broken**: a console key record carries one
+  UTF-16 unit; text outside the BMP now goes as plain UTF-8.
+- **IME input (Win+., CJK) was lost**: `Ime::Commit` is written as text.
+- **Focus was never reported** though ConPTY asks for it (`?1004h`).
+- **An oversized image printed its base64 as text** once dropped
+  mid-stream; it's now skipped to its terminator.
+- **An image whose `ESC \` terminator was split between two reads never
+  ended** -- the `ESC` went into the body. Found by a new test; the cut
+  `ESC` is held for the next read.
+- **Up to 16 ms of lag per key after a quiet spell**: input didn't reset
+  the I/O thread's polling backoff.
+
+**Performance**: every frame redrew every cell and glyph, a glyph pixel
+at a time through a closure. `render::Renderer` keeps a back buffer and
+redraws only what changed -- the terminal's damage, the cursor's old
+and new line, the lines under images -- and glyphs are cached as
+coverage masks (`font::GlyphMask`) drawn by a plain loop. Measured on a
+200x60 grid full of text: a full redraw 4.3 ms (release) / 107 ms
+(debug); typing one character 0.04 ms / 0.8 ms. The I/O thread also
+locks the terminal once per read and hands text over without copying.

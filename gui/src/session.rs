@@ -13,7 +13,7 @@ use alacritty_terminal::vte::ansi::Processor;
 use winit::event_loop::EventLoopProxy;
 
 use crate::images::{self, PlacedImage};
-use crate::intercept::{Interceptor, Segment};
+use crate::intercept::Interceptor;
 
 /// What the terminal thread tells the window thread.
 #[derive(Debug)]
@@ -132,7 +132,12 @@ impl Io {
         let mut buffer = vec![0u8; 64 * 1024];
         loop {
             match receiver.recv_timeout(wait) {
-                Ok(message) => self.handle(&mut pty, message),
+                Ok(message) => {
+                    self.handle(&mut pty, message);
+                    // The program answers input: look again soon, not after
+                    // the quiet-time backoff (up to 16 ms of lag per key).
+                    wait = POLL_MIN;
+                }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
@@ -156,7 +161,7 @@ impl Io {
                 self.proxy.send_event(Event::Wakeup);
                 wait = POLL_MIN;
             } else {
-                wait = (wait * 2).min(POLL_MAX);
+                wait = backoff(wait);
             }
 
             if let Some(ChildEvent::Exited(status)) = pty.next_child_event() {
@@ -173,25 +178,32 @@ impl Io {
         }
     }
 
+    /// One read: text to the terminal engine, inline images onto the
+    /// grid at the cursor cell they arrive at. The term is locked once per
+    /// read, not per piece.
     fn output(&mut self, bytes: &[u8]) {
-        for segment in self.interceptor.feed(bytes) {
-            match segment {
-                Segment::Bytes(bytes) => {
-                    let mut term = self.term.lock();
-                    self.parser.advance(&mut *term, &bytes);
+        let Self { term, images, parser, interceptor, .. } = self;
+        let term = std::cell::RefCell::new(term.lock());
+        interceptor.feed(
+            bytes,
+            |text| parser.advance(&mut **term.borrow_mut(), text),
+            |body| {
+                let cursor = term.borrow().grid().cursor.point;
+                if let Some(image) = images::decode(&body, cursor.line.0.max(0) as usize, cursor.column.0) {
+                    let mut images = images.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    // A new image where another was replaces it.
+                    images.retain(|old| (old.line, old.column) != (image.line, image.column));
+                    images.push(image);
                 }
-                Segment::InlineImage(body) => {
-                    let cursor = self.term.lock().grid().cursor.point;
-                    if let Some(image) = images::decode(&body, cursor.line.0.max(0) as usize, cursor.column.0) {
-                        let mut images = self.images.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                        // A new image where another was replaces it.
-                        images.retain(|old| (old.line, old.column) != (image.line, image.column));
-                        images.push(image);
-                    }
-                }
-            }
-        }
+            },
+        );
     }
+}
+
+
+/// The next wait while the program is quiet: doubling up to `POLL_MAX`.
+fn backoff(wait: Duration) -> Duration {
+    (wait * 2).min(POLL_MAX)
 }
 
 
@@ -212,4 +224,17 @@ fn write_all(pty: &mut tty::Pty, mut bytes: &[u8]) {
 
 fn window_size(size: GridSize, cell: (u32, u32)) -> WindowSize {
     WindowSize { num_lines: size.lines as u16, num_cols: size.columns as u16, cell_width: cell.0 as u16, cell_height: cell.1 as u16 }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_quiet_program_is_polled_less_often_up_to_a_cap() {
+        assert_eq!(backoff(POLL_MIN), POLL_MIN * 2);
+        assert_eq!(backoff(POLL_MAX), POLL_MAX);
+        assert_eq!(backoff(Duration::from_millis(12)), POLL_MAX);
+    }
 }

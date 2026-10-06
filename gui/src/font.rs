@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
-use cosmic_text::{Attrs, Buffer, CacheKey, Color, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight};
+use cosmic_text::{Attrs, Buffer, CacheKey, Family, FontSystem, Metrics, Shaping, Style, SwashCache, SwashContent, Weight};
 
 /// Monospace families tried in order; the first one installed wins.
 /// Cascadia Mono ships with Windows 11 and Windows Terminal.
@@ -31,6 +32,18 @@ struct CellGlyph {
     y: i32,
 }
 
+
+/// A rasterized glyph: its coverage (0-255) row by row, `width` wide,
+/// placed at `(x, y)` from the cell's top-left corner. Kept per character
+/// and style, so drawing a cell is a plain loop over bytes.
+pub struct GlyphMask {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub coverage: Vec<u8>,
+}
+
 /// The terminal font: every character is drawn into one fixed-size cell,
 /// so glyphs are shaped one character at a time (once, then cached) and
 /// placed by column, never by a shaped line's advances -- a fallback
@@ -42,28 +55,28 @@ pub struct CellFont {
     family: Option<String>,
     pub cell_width: u32,
     pub cell_height: u32,
-    glyphs: HashMap<(char, FontStyle), Option<CellGlyph>>,
+    masks: HashMap<(char, FontStyle), Option<Rc<GlyphMask>>>,
 }
 
 impl CellFont {
     /// Scans the installed fonts -- slow, so done once per run;
-    /// `with_size` reuses the result.
+    /// `set_size` reuses the result.
     pub fn new(font_size_px: f32) -> Self {
-        Self::build(FontSystem::new(), font_size_px)
-    }
-
-    /// The same fonts at another size (the window's DPI scale).
-    pub fn with_size(self, font_size_px: f32) -> Self {
-        Self::build(self.font_system, font_size_px)
-    }
-
-    fn build(font_system: FontSystem, font_size_px: f32) -> Self {
+        let font_system = FontSystem::new();
         let family = installed_family(&font_system);
-        let metrics = Metrics::new(font_size_px, (font_size_px * LINE_HEIGHT_FACTOR).ceil());
-        let mut font = Self { font_system, swash_cache: SwashCache::new(), metrics, family, cell_width: 1, cell_height: 1, glyphs: HashMap::new() };
-        font.cell_width = font.advance_of('M').round().max(1.0) as u32;
-        font.cell_height = metrics.line_height.max(1.0) as u32;
+        let metrics = Metrics::new(font_size_px, 1.0);
+        let mut font = Self { font_system, swash_cache: SwashCache::new(), metrics, family, cell_width: 1, cell_height: 1, masks: HashMap::new() };
+        font.set_size(font_size_px);
         font
+    }
+
+    /// The same fonts at another size (the window's DPI scale); every
+    /// cached glyph is redrawn at the new size.
+    pub fn set_size(&mut self, font_size_px: f32) {
+        self.metrics = Metrics::new(font_size_px, (font_size_px * LINE_HEIGHT_FACTOR).ceil());
+        self.masks.clear();
+        self.cell_width = self.advance_of('M').round().max(1.0) as u32;
+        self.cell_height = self.metrics.line_height.max(1.0) as u32;
     }
 
     fn attrs(&self, style: FontStyle) -> Attrs<'_> {
@@ -95,27 +108,34 @@ impl CellFont {
         self.shaped(c, FontStyle::REGULAR).map_or(self.metrics.font_size * 0.6, |(advance, _)| advance)
     }
 
-    /// Calls `put(x, y, coverage)` for every pixel of `c`'s glyph, `x`/`y`
-    /// relative to the cell's top-left corner. Nothing for a space or a
-    /// character no installed font has.
-    pub fn rasterize(&mut self, c: char, style: FontStyle, mut put: impl FnMut(i32, i32, u8)) {
+    /// `c`'s glyph in `style`, rasterized once and then cached; `None`
+    /// for a space or a character no installed font has.
+    pub fn mask(&mut self, c: char, style: FontStyle) -> Option<Rc<GlyphMask>> {
         if c == ' ' {
-            return;
+            return None;
         }
-        let glyph = match self.glyphs.get(&(c, style)) {
-            Some(glyph) => *glyph,
-            None => {
-                let glyph = self.shaped(c, style).map(|(_, glyph)| glyph);
-                self.glyphs.insert((c, style), glyph);
-                glyph
-            }
+        if let Some(mask) = self.masks.get(&(c, style)) {
+            return mask.clone();
+        }
+        let mask = self.rasterized(c, style).map(Rc::new);
+        self.masks.insert((c, style), mask.clone());
+        mask
+    }
+
+    fn rasterized(&mut self, c: char, style: FontStyle) -> Option<GlyphMask> {
+        let (_, glyph) = self.shaped(c, style)?;
+        let image = self.swash_cache.get_image_uncached(&mut self.font_system, glyph.cache_key)?;
+        let placement = image.placement;
+        let pixels = (placement.width * placement.height) as usize;
+        let coverage = match image.content {
+            SwashContent::Mask => image.data,
+            // A color glyph (emoji) keeps its shape: alpha as coverage.
+            SwashContent::Color | SwashContent::SubpixelMask => image.data.as_chunks::<4>().0.iter().map(|pixel| pixel[3]).collect(),
         };
-        let Some(glyph) = glyph else {
-            return;
-        };
-        self.swash_cache.with_pixels(&mut self.font_system, glyph.cache_key, Color::rgb(0xff, 0xff, 0xff), |x, y, color| {
-            put(glyph.x + x, glyph.y + y, color.a());
-        });
+        if coverage.len() < pixels {
+            return None;
+        }
+        Some(GlyphMask { x: glyph.x + placement.left, y: glyph.y - placement.top, width: placement.width, height: placement.height, coverage })
     }
 }
 
