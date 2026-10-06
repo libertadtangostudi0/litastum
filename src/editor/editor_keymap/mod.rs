@@ -10,6 +10,7 @@ use crate::yes_no::{self, Answer};
 
 use super::find_history;
 use super::keymap_mode::EditorKeymapMode;
+use super::Editor;
 
 
 /// An editor key resolved before (or instead of) `Editor::input`: things
@@ -72,6 +73,35 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
         _ => EditorCommand::Ignore,
     }
 }
+
+/// A key for the text itself, the same in every editor -- F4's and each
+/// pane of Compare and the conflict resolver: `Ctrl+Shift+Left`/`Right`
+/// (word-wise selection), `Ctrl+A`, and everything `edtui` handles.
+/// Compare used to forward keys straight to `Editor::input`, so word
+/// selection and `Ctrl+A` did nothing there. Keys that need the app (save,
+/// search, menu, close) are the caller's; they're ignored here.
+pub fn text_key(editor: &mut Editor, key: KeyEvent) {
+    match resolve(key) {
+        EditorCommand::SelectAll => editor.select_all(),
+        // Standard-only logic; under Vim the raw key goes to `edtui`,
+        // where it's unbound. History: docs/history/editor-keymap.md.
+        EditorCommand::WordSelect { forward } if editor.keymap_mode() == EditorKeymapMode::Standard => editor.extend_word_selection(forward),
+        EditorCommand::WordSelect { .. } | EditorCommand::Forward => editor.input(key),
+        _ => {}
+    }
+}
+
+
+/// `Esc` in an editor pane: cancels a selection if there is one (`true`),
+/// as in F4, rather than closing Compare or the resolver with it.
+pub fn cancel_selection(editor: &mut Editor, key: KeyEvent) -> bool {
+    if !editor.has_selection() {
+        return false;
+    }
+    editor.input(key);
+    true
+}
+
 
 /// The keys `edtui`'s own key conversion handles; it hits
 /// `unimplemented!()` for any other (`F10` crashed the app). An
@@ -161,17 +191,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         EditorCommand::Find => active_editor.start_search(),
         EditorCommand::FindNext => active_editor.search_next(),
         EditorCommand::FindPrevious => active_editor.search_previous(),
-        EditorCommand::SelectAll => active_editor.select_all(),
-        // Standard-only logic; under Vim the raw key goes to `edtui`,
-        // where it's unbound. History: docs/history/editor-keymap.md.
-        EditorCommand::WordSelect { forward } => {
-            if active_editor.keymap_mode() == EditorKeymapMode::Vim {
-                active_editor.input(key);
-            } else {
-                active_editor.extend_word_selection(forward);
-            }
-        }
-        EditorCommand::Forward => active_editor.input(key),
+        EditorCommand::SelectAll | EditorCommand::WordSelect { .. } | EditorCommand::Forward => text_key(active_editor, key),
         EditorCommand::Ignore => {}
     }
 

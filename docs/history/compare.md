@@ -82,3 +82,11 @@ real, saveable buffer would corrupt the file on save.
   (`highlights_on`). A frame with a caret move: 1.3 s -> 2 ms (160x45),
   -> 18 ms (400x120). The conflict resolver caches its two diffs and its
   conflicts the same way.
+- **Selecting by word did nothing in Compare** (reported), nor did
+  `Ctrl+A`, and `Esc` with a selection closed Compare: keys went straight
+  to `Editor::input`, past F4's own layer, where word selection and
+  select-all live. F4, Compare and the conflict resolver now share it
+  (`editor_keymap::text_key`), and `Esc` cancels a selection first
+  (`cancel_selection`). The rest of selection editing (`Shift`+arrows,
+  `Shift+Home/End`, typing or `Backspace` over a selection, cut/paste,
+  mouse) already went through the same `Editor`; tests pin it now.

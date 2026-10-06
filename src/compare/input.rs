@@ -4,7 +4,7 @@ use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
-use crate::editor::edtui_supports_key;
+use crate::editor::{cancel_selection, edtui_supports_key, text_key};
 use crate::notice::Notice;
 use crate::yes_no::{self, Answer};
 
@@ -66,6 +66,7 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     debug!(?key, ?command, "compare key");
 
     match command {
+        CompareCommand::Close if cancel_selection(state.focused_mut(), key) => {}
         CompareCommand::Close => close_compare_or_confirm(app)?,
         CompareCommand::Save => {
             if let Err(err) = state.save_focused() {
@@ -78,7 +79,7 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         CompareCommand::NextHunk => state.jump_to_next_hunk(),
         CompareCommand::PreviousHunk => state.jump_to_previous_hunk(),
         CompareCommand::OpenMenu => app.overlay = Some(Overlay::CompareMenu(open_compare_menu())),
-        CompareCommand::Forward => state.focused_mut().input(key),
+        CompareCommand::Forward => text_key(state.focused_mut(), key),
         CompareCommand::Ignore => {}
     }
 
@@ -265,6 +266,66 @@ mod tests {
         let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
         assert!(state.left.text().starts_with('z'), "should have typed into the focused (left) pane");
         assert_eq!(state.right.text(), "b\n", "the unfocused pane should be untouched");
+    }
+
+    fn left_text(app: &App) -> String {
+        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
+        state.left.text()
+    }
+
+    fn ctrl_shift(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+    }
+
+    /// Reported: Ctrl+Shift+arrows didn't select in Compare -- its keys
+    /// went to `Editor::input`, past F4's word selection.
+    #[test]
+    fn ctrl_shift_right_selects_a_word_as_in_the_editor() {
+        let mut app = app_with_compare("hello world\n", "x\n");
+
+        handle_compare_key(&mut app, ctrl_shift(KeyCode::Right)).unwrap();
+        handle_compare_key(&mut app, key(KeyCode::Char('X'))).unwrap();
+
+        assert_eq!(left_text(&app), "X world\n", "the word was selected, then typed over");
+    }
+
+    #[test]
+    fn ctrl_a_selects_everything_in_the_pane() {
+        let mut app = app_with_compare("one\ntwo\n", "x\n");
+
+        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)).unwrap();
+        handle_compare_key(&mut app, key(KeyCode::Char('Z'))).unwrap();
+
+        assert_eq!(left_text(&app).trim_end(), "Z");
+    }
+
+    /// Esc with a selection cancels it, as in F4, instead of closing
+    /// Compare.
+    #[test]
+    fn esc_cancels_a_selection_before_it_closes_compare() {
+        let mut app = app_with_compare("hello\n", "x\n");
+        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT)).unwrap();
+
+        handle_compare_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+        let Mode::CompareFiles(state) = &app.mode else { panic!("Compare closed instead") };
+        assert!(!state.left.has_selection());
+        handle_compare_key(&mut app, key(KeyCode::Esc)).unwrap();
+        assert!(matches!(app.mode, Mode::Browsing), "the next Esc closes");
+    }
+
+    /// The rest of selection editing goes through the same `Editor` as
+    /// F4: Shift+End and typing over, Shift+Left and Backspace.
+    #[test]
+    fn selection_editing_matches_the_editor() {
+        let mut app = app_with_compare("hello world\n", "x\n");
+        handle_compare_key(&mut app, KeyEvent::new(KeyCode::End, KeyModifiers::SHIFT)).unwrap();
+        handle_compare_key(&mut app, key(KeyCode::Char('Y'))).unwrap();
+        assert_eq!(left_text(&app), "Y\n");
+
+        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap();
+        handle_compare_key(&mut app, key(KeyCode::Backspace)).unwrap();
+        assert_eq!(left_text(&app), "\n");
     }
 
     #[test]

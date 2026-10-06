@@ -18,4 +18,4 @@ pub use menu::{handle_editor_menu_key, EditorMenu};
 #[cfg(test)]
 pub use menu::EditorMenuItem;
 pub(crate) use editor_keymap::close_editor_or_confirm;
-pub(crate) use editor_keymap::edtui_supports_key;
+pub(crate) use editor_keymap::{cancel_selection, edtui_supports_key, text_key};

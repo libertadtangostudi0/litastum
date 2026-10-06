@@ -4,7 +4,7 @@ use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
-use crate::editor::edtui_supports_key;
+use crate::editor::{cancel_selection, edtui_supports_key, text_key};
 use crate::notice::Notice;
 
 use super::files::ConflictFiles;
@@ -75,6 +75,7 @@ pub fn handle_conflict_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     debug!(?key, ?command, "conflict key");
 
     match command {
+        ConflictCommand::Close if cancel_selection(state.focused_mut(), key) => {}
         ConflictCommand::Close if state.is_dirty() => app.overlay = Some(Overlay::ConfirmDiscard),
         ConflictCommand::Close => app.mode = Mode::Browsing,
         ConflictCommand::Save => {
@@ -88,7 +89,7 @@ pub fn handle_conflict_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         ConflictCommand::EditPath => state.start_path_edit(),
         ConflictCommand::Next => state.jump_to_next(),
         ConflictCommand::Previous => state.jump_to_previous(),
-        ConflictCommand::Forward => state.focused_mut().input(key),
+        ConflictCommand::Forward => text_key(state.focused_mut(), key),
         ConflictCommand::Ignore => {}
     }
 
@@ -184,6 +185,20 @@ mod tests {
 
         assert!(matches!(app.overlay, Some(Overlay::ConfirmDiscard)));
         assert!(matches!(app.mode, Mode::ResolveConflict(_)));
+    }
+
+    /// The resolver's panes are editors like Compare's: word selection
+    /// works, and Esc cancels a selection before it closes anything.
+    #[test]
+    fn word_selection_and_esc_work_in_the_result_pane() {
+        let mut app = app_with_conflict();
+
+        handle_conflict_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT)).unwrap();
+        assert!(state(&app).result.has_selection());
+
+        handle_conflict_key(&mut app, key(KeyCode::Esc)).unwrap();
+        assert!(matches!(app.mode, Mode::ResolveConflict(_)), "Esc only cancelled the selection");
+        assert!(!state(&app).result.has_selection());
     }
 
     #[test]
