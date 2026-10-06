@@ -10,7 +10,7 @@ use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::ModifiersState;
-use winit::window::{Window, WindowId};
+use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::colors;
 use crate::font::CellFont;
@@ -168,6 +168,12 @@ impl App {
             self.cursor_shown = true;
             self.next_blink = Instant::now() + BLINK_INTERVAL;
         }
+        if input::is_fullscreen_key(event.physical_key, self.modifiers) {
+            if pressed && !event.repeat {
+                self.toggle_fullscreen();
+            }
+            return;
+        }
         if let Some(zoom) = input::zoom_chord(event.physical_key, self.modifiers) {
             if pressed {
                 self.zoom(zoom);
@@ -274,6 +280,19 @@ impl App {
 
     fn cursor_blinks(&self) -> bool {
         self.shown.as_ref().is_some_and(|shown| shown.session.term.lock().cursor_style().blinking)
+    }
+
+    /// `F11`: borderless full screen on the window's monitor, and back.
+    /// The resize that follows gives litastum the new grid.
+    fn toggle_fullscreen(&self) {
+        let Some(shown) = &self.shown else {
+            return;
+        };
+        let fullscreen = match shown.window.fullscreen() {
+            Some(_) => None,
+            None => Some(Fullscreen::Borderless(shown.window.current_monitor())),
+        };
+        shown.window.set_fullscreen(fullscreen);
     }
 
     /// `Ctrl+=`/`Ctrl+-`/`Ctrl+0` or `Ctrl`+wheel: a bigger or smaller

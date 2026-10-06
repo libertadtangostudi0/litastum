@@ -206,3 +206,6 @@ locks the terminal once per read and hands text over without copying.
   size, so the grid changes and litastum gets a resize. F3 images stay
   sized for the starting cell size (`LITASTUM_HOST_CELL_SIZE` is passed
   once) until litastum restarts.
+- **Full screen** on `F11` (requested), as in Windows Terminal: the
+  window goes borderless full screen on its monitor and back; litastum
+  binds no `F11`, so the window keeps it (`input::is_fullscreen_key`).

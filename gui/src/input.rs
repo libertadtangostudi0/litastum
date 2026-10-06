@@ -53,6 +53,13 @@ pub fn zoomed(current: f32, zoom: Zoom, default: f32) -> f32 {
 }
 
 
+/// `F11` alone: the window's full screen on and off, as in Windows
+/// Terminal -- litastum binds no `F11`.
+pub fn is_fullscreen_key(physical: PhysicalKey, mods: ModifiersState) -> bool {
+    physical == PhysicalKey::Code(KeyCode::F11) && mods.is_empty()
+}
+
+
 /// The clipboard's text as the program's input: line breaks as Enter,
 /// bracketed when the program asked for it (`bracketed`).
 pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
@@ -190,6 +197,13 @@ mod tests {
         assert_eq!(zoomed(30.0, Zoom::Reset, 15.0), 15.0);
         assert_eq!(zoomed(MAX_FONT_SIZE, Zoom::In, 15.0), MAX_FONT_SIZE);
         assert_eq!(zoomed(MIN_FONT_SIZE, Zoom::Out, 15.0), MIN_FONT_SIZE);
+    }
+
+    #[test]
+    fn plain_f11_toggles_full_screen_and_nothing_else_does() {
+        assert!(is_fullscreen_key(PhysicalKey::Code(KeyCode::F11), ModifiersState::empty()));
+        assert!(!is_fullscreen_key(PhysicalKey::Code(KeyCode::F11), ModifiersState::SHIFT));
+        assert!(!is_fullscreen_key(PhysicalKey::Code(KeyCode::F10), ModifiersState::empty()));
     }
 
     #[test]
