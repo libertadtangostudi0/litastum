@@ -14,13 +14,14 @@ use winit::window::{Window, WindowId};
 
 use crate::colors;
 use crate::font::CellFont;
-use crate::input::{self, WheelAccumulator};
+use crate::input::{self, WheelAccumulator, Zoom};
 use crate::mouse::{self, MouseAction};
 use crate::render::{self, Renderer, View};
 use crate::session::{EventProxy, GridSize, Session, UserEvent};
 use crate::window_style;
 
-/// Font size in logical pixels; scaled by the monitor's DPI.
+/// The starting font size in logical pixels (`Ctrl+0`); scaled by the
+/// monitor's DPI.
 const FONT_SIZE: f32 = 15.0;
 /// Half a blink: how long the cursor stays shown, then hidden.
 const BLINK_INTERVAL: Duration = Duration::from_millis(530);
@@ -47,6 +48,8 @@ pub struct App {
     next_blink: Instant,
     /// The background and text colors the window frame was last given.
     frame_colors: Option<(Rgb, Rgb)>,
+    /// The font size in logical pixels, changed by zoom.
+    font_size: f32,
 }
 
 struct Shown {
@@ -71,6 +74,7 @@ impl App {
             cursor_shown: true,
             next_blink: Instant::now() + BLINK_INTERVAL,
             frame_colors: None,
+            font_size: FONT_SIZE,
         }
     }
 
@@ -164,6 +168,12 @@ impl App {
             self.cursor_shown = true;
             self.next_blink = Instant::now() + BLINK_INTERVAL;
         }
+        if let Some(zoom) = input::zoom_chord(event.physical_key, self.modifiers) {
+            if pressed {
+                self.zoom(zoom);
+            }
+            return;
+        }
         if input::is_paste_chord(&event.logical_key, event.physical_key, self.modifiers) {
             if pressed {
                 self.paste();
@@ -227,6 +237,13 @@ impl App {
     fn wheel(&mut self, delta: MouseScrollDelta) {
         let cell_height = self.shown.as_ref().map_or(16, |shown| shown.font.cell_height);
         let lines = self.wheel.lines(delta, cell_height);
+        if self.modifiers.control_key() {
+            let zoom = if lines > 0 { Zoom::In } else { Zoom::Out };
+            for _ in 0..lines.unsigned_abs() {
+                self.zoom(zoom);
+            }
+            return;
+        }
         let mode = self.mode();
         if let Some(arrows) = input::alternate_scroll(lines, mode) {
             self.write(arrows);
@@ -259,11 +276,23 @@ impl App {
         self.shown.as_ref().is_some_and(|shown| shown.session.term.lock().cursor_style().blinking)
     }
 
+    /// `Ctrl+=`/`Ctrl+-`/`Ctrl+0` or `Ctrl`+wheel: a bigger or smaller
+    /// font in the same window, so more or fewer cells -- litastum gets
+    /// the new grid size as for any resize.
+    fn zoom(&mut self, zoom: Zoom) {
+        self.font_size = input::zoomed(self.font_size, zoom, FONT_SIZE);
+        if let Some(scale_factor) = self.shown.as_ref().map(|shown| shown.window.scale_factor()) {
+            self.scale_changed(scale_factor);
+        }
+    }
+
+    /// The font at `font_size` for this monitor's scale: after a zoom, or
+    /// moving to a monitor with another DPI.
     fn scale_changed(&mut self, scale_factor: f64) {
         let Some(shown) = &mut self.shown else {
             return;
         };
-        shown.font.set_size(FONT_SIZE * scale_factor as f32);
+        shown.font.set_size(self.font_size * scale_factor as f32);
         shown.renderer.invalidate();
         let size = shown.window.inner_size();
         self.resized(size, true);

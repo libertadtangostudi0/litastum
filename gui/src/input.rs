@@ -11,6 +11,48 @@ pub fn is_paste_chord(logical: &Key, physical: PhysicalKey, mods: ModifiersState
 }
 
 
+/// A font size change asked for with the keyboard or `Ctrl`+wheel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Zoom {
+    In,
+    Out,
+    Reset,
+}
+
+/// Smallest and largest font size zoom allows, in logical pixels.
+pub const MIN_FONT_SIZE: f32 = 6.0;
+pub const MAX_FONT_SIZE: f32 = 72.0;
+/// One zoom step.
+const ZOOM_STEP: f32 = 1.0;
+
+
+/// `Ctrl+=` (`Ctrl++`), `Ctrl+-` and `Ctrl+0`, on the main row or the
+/// numpad, by physical key so any layout works -- handled by the window,
+/// as Windows Terminal does, never sent to the program.
+pub fn zoom_chord(physical: PhysicalKey, mods: ModifiersState) -> Option<Zoom> {
+    if !mods.control_key() || mods.alt_key() {
+        return None;
+    }
+    match physical {
+        PhysicalKey::Code(KeyCode::Equal | KeyCode::NumpadAdd) => Some(Zoom::In),
+        PhysicalKey::Code(KeyCode::Minus | KeyCode::NumpadSubtract) => Some(Zoom::Out),
+        PhysicalKey::Code(KeyCode::Digit0 | KeyCode::Numpad0) if !mods.shift_key() => Some(Zoom::Reset),
+        _ => None,
+    }
+}
+
+
+/// The font size after `zoom`, from `current`, within the allowed range.
+pub fn zoomed(current: f32, zoom: Zoom, default: f32) -> f32 {
+    let size = match zoom {
+        Zoom::In => current + ZOOM_STEP,
+        Zoom::Out => current - ZOOM_STEP,
+        Zoom::Reset => default,
+    };
+    size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+}
+
+
 /// The clipboard's text as the program's input: line breaks as Enter,
 /// bracketed when the program asked for it (`bracketed`).
 pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
@@ -128,6 +170,26 @@ mod tests {
     fn pasted_line_breaks_become_enter() {
         assert_eq!(paste_bytes("a\r\nb\nc", false), b"a\rb\rc");
         assert_eq!(paste_bytes("x", true), b"\x1b[200~x\x1b[201~");
+    }
+
+    #[test]
+    fn zoom_chords_by_physical_key() {
+        let ctrl = ModifiersState::CONTROL;
+        assert_eq!(zoom_chord(PhysicalKey::Code(KeyCode::Equal), ctrl), Some(Zoom::In));
+        assert_eq!(zoom_chord(PhysicalKey::Code(KeyCode::Equal), ctrl | ModifiersState::SHIFT), Some(Zoom::In), "Ctrl++");
+        assert_eq!(zoom_chord(PhysicalKey::Code(KeyCode::NumpadSubtract), ctrl), Some(Zoom::Out));
+        assert_eq!(zoom_chord(PhysicalKey::Code(KeyCode::Digit0), ctrl), Some(Zoom::Reset));
+        assert_eq!(zoom_chord(PhysicalKey::Code(KeyCode::Minus), ModifiersState::empty()), None, "a plain minus is typed");
+        assert_eq!(zoom_chord(PhysicalKey::Code(KeyCode::Minus), ctrl | ModifiersState::ALT), None);
+    }
+
+    #[test]
+    fn zoom_steps_and_stays_in_range() {
+        assert_eq!(zoomed(15.0, Zoom::In, 15.0), 16.0);
+        assert_eq!(zoomed(15.0, Zoom::Out, 15.0), 14.0);
+        assert_eq!(zoomed(30.0, Zoom::Reset, 15.0), 15.0);
+        assert_eq!(zoomed(MAX_FONT_SIZE, Zoom::In, 15.0), MAX_FONT_SIZE);
+        assert_eq!(zoomed(MIN_FONT_SIZE, Zoom::Out, 15.0), MIN_FONT_SIZE);
     }
 
     #[test]

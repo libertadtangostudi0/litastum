@@ -199,3 +199,10 @@ coverage masks (`font::GlyphMask`) drawn by a plain loop. Measured on a
 200x60 grid full of text: a full redraw 4.3 ms (release) / 107 ms
 (debug); typing one character 0.04 ms / 0.8 ms. The I/O thread also
 locks the terminal once per read and hands text over without copying.
+- **Zoom** (reported missing): `Ctrl+=`/`Ctrl++`, `Ctrl+-`, `Ctrl+0`
+  and `Ctrl`+wheel change the font size in the window, as in Windows
+  Terminal -- by physical key, never sent to litastum, 6-72 logical
+  pixels (`input::zoom_chord`, `input::zoomed`). The window keeps its
+  size, so the grid changes and litastum gets a resize. F3 images stay
+  sized for the starting cell size (`LITASTUM_HOST_CELL_SIZE` is passed
+  once) until litastum restarts.
