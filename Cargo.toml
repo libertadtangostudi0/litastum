@@ -2,15 +2,14 @@
 name = "litastum"
 version = "0.1.0"
 edition = "2021"
-# `src/bin/litastum-window.rs` is a second binary; `cargo run` means the app.
-default-run = "litastum"
 description = "A cross-platform, keyboard-driven dual-pane file manager (Far Manager-inspired), written in Rust"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/YOUR_USERNAME/litastum"
 
-# `gui/`: the windowed host (docs/history/launching.md).
+# `gui/`: the windowed host; `xtask/`: `cargo xtask dist`
+# (docs/history/launching.md).
 [workspace]
-members = ["gui"]
+members = ["gui", "xtask"]
 
 [dependencies]
 crossterm = "0.29"

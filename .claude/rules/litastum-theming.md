@@ -176,9 +176,17 @@ A future "extension X has no highlighting" report: first check whether
 `syntect` lacks the grammar, has it but the scopes aren't mapped above,
 or can't reach it by name -- before bundling anything.
 
+## The terminal's own colors follow the theme
+
+`terminal_palette.rs` hands the interface theme's `text`, `bg` and
+`accent` to the terminal as `OSC 10`/`11`/`12` (text, background, cursor
+color -- `accent` comes from `cursorColor`), synced once per loop
+iteration when the theme changes (`event_loop::sync_terminal_palette`)
+and reset with `OSC 110`/`111`/`112` on exit. The screen litastum
+doesn't paint -- most of it -- then matches the theme in any terminal,
+and its own window (`gui/`) colors its margins and title bar from it.
+
 ## Explicitly out of scope for now
 
 - No hot-reload of an edited theme file — roadmap stage 5 (`notify`).
-- Real terminal cursor *color* isn't set from `cursorColor` -- would
-  need an OSC 12 escape sequence crossterm doesn't wrap (shape is
-  themed via `SetCursorStyle` in `terminal_setup.rs`).
+

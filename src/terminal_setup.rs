@@ -55,7 +55,8 @@ pub(crate) fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>
         terminal.backend_mut(),
         DisableBracketedPaste,
         LeaveAlternateScreen,
-        SetCursorStyle::DefaultUserShape
+        SetCursorStyle::DefaultUserShape,
+        crossterm::style::Print(crate::terminal_palette::RESET_PALETTE)
     )?;
     Ok(())
 }

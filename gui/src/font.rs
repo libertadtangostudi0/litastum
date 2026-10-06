@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cosmic_text::{Attrs, Buffer, CacheKey, Color, Family, FontSystem, Metrics, Shaping, SwashCache};
+use cosmic_text::{Attrs, Buffer, CacheKey, Color, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight};
 
 /// Monospace families tried in order; the first one installed wins.
 /// Cascadia Mono ships with Windows 11 and Windows Terminal.
@@ -9,6 +9,18 @@ const PREFERRED_FAMILIES: &[&str] = &["Cascadia Mono", "Consolas", "DejaVu Sans 
 /// Line height as a multiple of the font size -- room for box drawing to
 /// meet between rows without clipping descenders.
 const LINE_HEIGHT_FACTOR: f32 = 1.2;
+
+/// A cell's typeface variant, from the terminal's bold/italic attributes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FontStyle {
+    pub bold: bool,
+    pub italic: bool,
+}
+
+impl FontStyle {
+    pub const REGULAR: Self = Self { bold: false, italic: false };
+}
+
 
 /// One shaped glyph, ready to rasterize at a cell: `x`/`y` place the
 /// glyph's own pixels relative to the cell's top-left corner.
@@ -30,7 +42,7 @@ pub struct CellFont {
     family: Option<String>,
     pub cell_width: u32,
     pub cell_height: u32,
-    glyphs: HashMap<char, Option<CellGlyph>>,
+    glyphs: HashMap<(char, FontStyle), Option<CellGlyph>>,
 }
 
 impl CellFont {
@@ -54,17 +66,23 @@ impl CellFont {
         font
     }
 
-    fn attrs(&self) -> Attrs<'_> {
-        match &self.family {
+    fn attrs(&self, style: FontStyle) -> Attrs<'_> {
+        let attrs = match &self.family {
             Some(name) => Attrs::new().family(Family::Name(name)),
             None => Attrs::new().family(Family::Monospace),
+        };
+        let attrs = if style.bold { attrs.weight(Weight::BOLD) } else { attrs };
+        if style.italic {
+            attrs.style(Style::Italic)
+        } else {
+            attrs
         }
     }
 
-    fn shaped(&mut self, c: char) -> Option<(f32, CellGlyph)> {
+    fn shaped(&mut self, c: char, style: FontStyle) -> Option<(f32, CellGlyph)> {
         let mut text = [0u8; 4];
         let mut buffer = Buffer::new(&mut self.font_system, self.metrics);
-        let attrs = self.attrs().clone();
+        let attrs = self.attrs(style).clone();
         buffer.set_text(c.encode_utf8(&mut text), &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut self.font_system, false);
         let run = buffer.layout_runs().next()?;
@@ -74,21 +92,21 @@ impl CellFont {
     }
 
     fn advance_of(&mut self, c: char) -> f32 {
-        self.shaped(c).map_or(self.metrics.font_size * 0.6, |(advance, _)| advance)
+        self.shaped(c, FontStyle::REGULAR).map_or(self.metrics.font_size * 0.6, |(advance, _)| advance)
     }
 
     /// Calls `put(x, y, coverage)` for every pixel of `c`'s glyph, `x`/`y`
     /// relative to the cell's top-left corner. Nothing for a space or a
     /// character no installed font has.
-    pub fn rasterize(&mut self, c: char, mut put: impl FnMut(i32, i32, u8)) {
+    pub fn rasterize(&mut self, c: char, style: FontStyle, mut put: impl FnMut(i32, i32, u8)) {
         if c == ' ' {
             return;
         }
-        let glyph = match self.glyphs.get(&c) {
+        let glyph = match self.glyphs.get(&(c, style)) {
             Some(glyph) => *glyph,
             None => {
-                let glyph = self.shaped(c).map(|(_, glyph)| glyph);
-                self.glyphs.insert(c, glyph);
+                let glyph = self.shaped(c, style).map(|(_, glyph)| glyph);
+                self.glyphs.insert((c, style), glyph);
                 glyph
             }
         };

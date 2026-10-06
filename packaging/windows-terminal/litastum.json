@@ -3,7 +3,7 @@
     {
       "guid": "{6d1c2a7e-4f3b-4c8e-9a51-2b7d0e9f3c41}",
       "name": "litastum",
-      "commandline": "%LOCALAPPDATA%\\Programs\\litastum\\litastum.exe",
+      "commandline": "%LOCALAPPDATA%\\Programs\\litastum\\litastum.com",
       "startingDirectory": "%USERPROFILE%",
       "tabTitle": "litastum",
       "colorScheme": "litastum GitHub Dark Default",

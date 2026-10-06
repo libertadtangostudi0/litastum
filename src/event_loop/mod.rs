@@ -51,6 +51,7 @@ pub(crate) fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut A
 
     while !app.should_quit {
         sync_mouse_capture(app);
+        sync_terminal_palette(app);
         let layout = draw_and_apply_cursor(terminal, app)?;
         for (panel, (cols, rows)) in app.panels.iter_mut().zip(layout) {
             panel.set_columns(cols);
@@ -207,6 +208,27 @@ fn sync_mouse_capture(app: &mut App) {
         Ok(()) => app.mouse_capture_enabled = wanted,
         Err(err) => warn!(%err, wanted, "failed to toggle mouse capture"),
     }
+}
+
+
+/// Hands the theme's colors to the terminal whenever they change -- on
+/// the first frame and after F9 -> Color schemes -- rather than at each
+/// place the theme is set. `restore_terminal` gives the terminal its own
+/// back.
+fn sync_terminal_palette(app: &mut App) {
+    let wanted = crate::terminal_palette::palette_sequence(&app.theme);
+    if wanted == app.terminal_palette {
+        return;
+    }
+    if let Some(sequence) = &wanted {
+        use std::io::Write;
+        let mut stdout = std::io::stdout();
+        if let Err(err) = stdout.write_all(sequence.as_bytes()).and_then(|()| stdout.flush()) {
+            warn!(%err, "failed to set the terminal's colors");
+            return;
+        }
+    }
+    app.terminal_palette = wanted;
 }
 
 

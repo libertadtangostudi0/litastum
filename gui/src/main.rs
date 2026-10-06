@@ -8,6 +8,7 @@
 
 mod colors;
 mod font;
+mod icon;
 // xterm key sequences are the Unix path; Windows speaks `win32_input`.
 #[cfg_attr(windows, allow(dead_code))]
 mod keys;
@@ -20,15 +21,18 @@ mod win32_input;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::Event;
+use alacritty_terminal::vte::ansi::{Color as TermColor, NamedColor, Rgb};
 use alacritty_terminal::term::TermMode;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+use winit::event::StartCause;
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
-use winit::window::{Theme, Window, WindowAttributes, WindowId};
+use winit::window::{Icon, Theme, Window, WindowAttributes, WindowId};
 
 use font::CellFont;
 use mouse::MouseAction;
@@ -37,6 +41,8 @@ use session::{EventProxy, GridSize, Session, UserEvent};
 
 /// Font size in logical pixels; scaled by the monitor's DPI.
 const FONT_SIZE: f32 = 15.0;
+/// Half a blink: how long the cursor stays shown, then hidden.
+const BLINK_INTERVAL: Duration = Duration::from_millis(530);
 /// The window's first size, in cells.
 const START_GRID: GridSize = GridSize { columns: 140, lines: 40 };
 
@@ -65,6 +71,12 @@ struct App {
     pointer_cell: (usize, usize),
     /// The mouse button held down, for drag reports.
     held_button: Option<winit::event::MouseButton>,
+    /// Whether a blinking cursor is in its shown half, and when it flips.
+    cursor_shown: bool,
+    next_blink: Instant,
+    /// The background and text colors the window frame was last given
+    /// (`sync_frame_colors`).
+    frame_colors: Option<(Rgb, Rgb)>,
     /// Why there's no session, shown in the title.
     failure: Option<String>,
 }
@@ -82,6 +94,9 @@ impl App {
             pointer_cell: (0, 0),
             held_button: None,
             failure: None,
+            cursor_shown: true,
+            next_blink: Instant::now() + BLINK_INTERVAL,
+            frame_colors: None,
         }
     }
 
@@ -141,7 +156,8 @@ impl App {
         {
             let term = session.term.lock();
             let origin = render::grid_origin(size.width, self.grid.columns, font.cell_width);
-            let mut frame = Frame { pixels: &mut buffer, width: size.width, height: size.height, origin };
+            let cursor_visible = self.cursor_shown || !term.cursor_style().blinking;
+            let mut frame = Frame { pixels: &mut buffer, width: size.width, height: size.height, origin, cursor_visible };
             render::draw(&term, font, &mut frame);
         }
         let _ = buffer.present();
@@ -153,6 +169,11 @@ impl App {
     /// (`windows_terminal::paste_hotkey`) and swallows the typed copy.
     fn key(&mut self, event: winit::event::KeyEvent) {
         let pressed = event.state == ElementState::Pressed;
+        if pressed {
+            // Typing keeps the cursor steady, as in other terminals.
+            self.cursor_shown = true;
+            self.next_blink = Instant::now() + BLINK_INTERVAL;
+        }
         if is_paste_chord(&event.logical_key, event.physical_key, self.modifiers) {
             if pressed {
                 self.paste();
@@ -220,6 +241,38 @@ impl App {
         }
     }
 
+    /// The window frame (title bar, its text, the border) in the
+    /// program's background and text colors, which litastum hands over
+    /// with `OSC 10`/`11` when its theme changes. Windows 11 only.
+    fn sync_frame_colors(&mut self) {
+        let (Some(window), Some(session)) = (&self.window, &self.session) else {
+            return;
+        };
+        let wanted = {
+            let term = session.term.lock();
+            let colors = term.colors();
+            (colors::resolve(TermColor::Named(NamedColor::Background), colors), colors::resolve(TermColor::Named(NamedColor::Foreground), colors))
+        };
+        if self.frame_colors == Some(wanted) {
+            return;
+        }
+        self.frame_colors = Some(wanted);
+        #[cfg(windows)]
+        {
+            use winit::platform::windows::{Color, WindowExtWindows};
+            let (background, text) = wanted;
+            window.set_title_background_color(Some(Color::from_rgb(background.r, background.g, background.b)));
+            window.set_title_text_color(Color::from_rgb(text.r, text.g, text.b));
+            window.set_border_color(Some(Color::from_rgb(background.r, background.g, background.b)));
+        }
+        #[cfg(not(windows))]
+        let _ = window;
+    }
+
+    fn cursor_blinks(&self) -> bool {
+        self.session.as_ref().is_some_and(|session| session.term.lock().cursor_style().blinking)
+    }
+
     fn scale_changed(&mut self, scale_factor: f64) {
         if let Some(font) = self.font.take() {
             self.font = Some(font.with_size(FONT_SIZE * scale_factor as f32));
@@ -280,10 +333,33 @@ impl ApplicationHandler<UserEvent> for App {
         }
     }
 
+    /// The blink timer firing: flip the cursor and wait for the next one.
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+        if let StartCause::ResumeTimeReached { .. } = cause {
+            self.cursor_shown = !self.cursor_shown;
+            self.next_blink = Instant::now() + BLINK_INTERVAL;
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+        }
+    }
+
+    /// Sleeps until the next blink while the cursor blinks, else until
+    /// an event.
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.cursor_blinks() {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_blink));
+        } else {
+            self.cursor_shown = true;
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
+    }
+
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         let UserEvent::Term(event) = event;
         match event {
             Event::Wakeup | Event::MouseCursorDirty | Event::CursorBlinkingChange => {
+                self.sync_frame_colors();
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -318,12 +394,14 @@ impl ApplicationHandler<UserEvent> for App {
 /// in the report) above a dark grid. The exact colors are Windows 11's;
 /// elsewhere the dark theme is as far as it goes.
 fn themed(attributes: WindowAttributes) -> WindowAttributes {
-    let attributes = attributes.with_theme(Some(Theme::Dark));
+    let icon = Icon::from_rgba(icon::rgba(), icon::SIZE, icon::SIZE).ok();
+    let attributes = attributes.with_theme(Some(Theme::Dark)).with_window_icon(icon.clone());
     #[cfg(windows)]
     let attributes = {
         use winit::platform::windows::{Color, WindowAttributesExtWindows};
         let color = |rgb: alacritty_terminal::vte::ansi::Rgb| Color::from_rgb(rgb.r, rgb.g, rgb.b);
         attributes
+            .with_taskbar_icon(icon)
             .with_title_background_color(Some(color(colors::BACKGROUND)))
             .with_title_text_color(color(colors::FOREGROUND))
             .with_border_color(Some(color(colors::BACKGROUND)))
@@ -346,9 +424,20 @@ fn grid_for(size: PhysicalSize<u32>, font: &CellFont) -> GridSize {
 }
 
 
-/// The console `litastum` next to this program -- they ship together.
+/// The console litastum next to this program -- they ship together:
+/// `litastum.com` in `dist/` (where this program is `litastum.exe`
+/// itself, so never that), `litastum.exe` in `target/`.
 fn console_litastum() -> Option<PathBuf> {
-    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let program = dir.join(if cfg!(windows) { "litastum.exe" } else { "litastum" });
-    program.exists().then_some(program)
+    let me = std::env::current_exe().ok()?;
+    let dir = me.parent()?;
+    let names: &[&str] = if cfg!(windows) { &["litastum.com", "litastum.exe"] } else { &["litastum"] };
+    names.iter().map(|name| dir.join(name)).find(|program| program.exists() && !is_same_file(program, &me))
+}
+
+
+fn is_same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
 }

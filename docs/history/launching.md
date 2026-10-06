@@ -1,7 +1,9 @@
 # Launching litastum in a window of its own -- history
 
-Code: `src/bin/litastum-window.rs`, `terminal_setup::setup_terminal`
-(`SetTitle`), `packaging/windows-terminal/litastum.json`.
+Code: `gui/` (the window), `xtask/` (`cargo xtask dist`),
+`terminal_setup::setup_terminal` (`SetTitle`),
+`packaging/windows-terminal/litastum.json`. The first launcher,
+`src/bin/litastum-window.rs`, is gone (stage 3 below).
 
 ## Why litastum opens in Windows Terminal
 
@@ -104,3 +106,37 @@ DPI changes); 3. shipping as `litastum.exe` (window) + `litastum.com`
   yellow accent above the dark grid): the window asks for the dark
   theme, and on Windows 11 its title bar, title text and border take the
   terminal's background and foreground colors.
+
+### Stage 3: shipping names
+
+`cargo xtask dist [--release]` builds the two programs and lays them out
+in `dist/` (git-ignored): on Windows the window becomes `litastum.exe`
+and the console app `litastum.com`. A double click or a shortcut opens
+the window; `litastum` typed in cmd, PowerShell or Far runs the console
+twin in that terminal, since `.COM` precedes `.EXE` in `PATHEXT` --
+Visual Studio's `devenv.exe`/`devenv.com` trick; a `.com` here is an
+ordinary executable. In `target/` nothing is renamed, so
+`cargo test --bin litastum` and `cargo run` are unchanged; the window
+looks for `litastum.com`, then `litastum.exe`, never itself.
+
+- The window and taskbar icon is drawn in code (`gui/src/icon.rs`): two
+  panels with a highlighted row, in the default theme's colors. The exe
+  file's own icon in Explorer needs a compiled `.ico` resource -- left
+  for when there's a real icon design.
+- `litastum-window.exe` is removed: the window replaces it. The Windows
+  Terminal fragment now points at `litastum.com`, the console app.
+
+### Stage 4: looks
+
+- **Theme colors through the terminal**: litastum sends its theme's
+  text, background and cursor colors as `OSC 10`/`11`/`12` whenever the
+  theme changes, and resets them on exit (`terminal_palette.rs`). The
+  window reads them like any terminal would -- margins, unpainted cells
+  and the Windows 11 title bar follow -- and Windows Terminal picks them
+  up too. Reading `config.json` in the window instead would have been a
+  second copy of the theming code.
+- **Cursor blinking** for a blinking cursor style (litastum's bar):
+  530 ms halves, steady while typing.
+- **Bold and italic** from the font's own faces (glyphs cached per
+  style), **dim** text mixed toward the background, **underlines** and
+  **strikeout** as one-pixel lines.

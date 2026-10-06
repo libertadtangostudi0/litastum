@@ -250,6 +250,10 @@ pub struct App {
     /// `DisableMouseCapture` only when this is `true` (disabling it
     /// without enabling first crashes on Windows).
     pub mouse_capture_enabled: bool,
+    /// The colors last handed to the terminal (`terminal_palette`),
+    /// synced by `event_loop::sync_terminal_palette` when the theme
+    /// changes; `None` before the first sync.
+    pub terminal_palette: Option<String>,
     /// `F3` on a `.md` file: the live preview shown beside the editor
     /// (`Mode::Editing` drawn split), refreshed on `Ctrl+S`. Lives here,
     /// not in `Mode::Editing`, so other editor call sites don't carry an
@@ -292,6 +296,7 @@ impl App {
             user_menu_command_edit: None,
             image_picker: Picker::halfblocks(),
             mouse_capture_enabled: false,
+            terminal_palette: None,
             markdown_edit_preview: None,
             notice: None,
         })

@@ -120,3 +120,6 @@ LitastumMenu.toml
 LitastumMenu.toml.bak
 FarMenu.ini
 FarMenu.ini.bak
+
+# `cargo xtask dist` output: the shipping layout, rebuilt on demand.
+/dist/
