@@ -173,6 +173,14 @@ fn an_image_goes_once_text_is_written_over_it() {
 }
 
 #[test]
+fn copy_clips_at_the_canvas_edge() {
+    let mut pixels = vec![0u32; 3 * 2];
+    let mut canvas = Canvas { pixels: &mut pixels, width: 3, height: 2 };
+    canvas.copy(1, 1, &[1, 2, 3, 4, 5, 6], 3, 2);
+    assert_eq!(pixels, [0, 0, 0, 0, 1, 2]);
+}
+
+#[test]
 fn fill_clips_at_the_canvas_edge() {
     let mut pixels = vec![0u32; 4 * 2];
     let mut canvas = Canvas { pixels: &mut pixels, width: 4, height: 2 };

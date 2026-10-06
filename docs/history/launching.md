@@ -209,3 +209,12 @@ locks the terminal once per read and hands text over without copying.
 - **Full screen** on `F11` (requested), as in Windows Terminal: the
   window goes borderless full screen on its monitor and back; litastum
   binds no `F11`, so the window keeps it (`input::is_fullscreen_key`).
+- **Jumpy scrolling with held arrow keys** (reported): scrolling the
+  editor changes every line, and a full redraw took ~100 ms on the
+  window's thread in a debug build -- frames were skipped, key repeats
+  queued up behind the drawing, and scrolling ran on after the key was
+  let go. Cells are now drawn once per look and then copied
+  (`render::tiles::TileCache`), and the window with the crates it spends
+  its time in is optimized even in debug builds (`[profile.dev.package]`
+  in the root `Cargo.toml`). A full 200x60 redraw in a debug build: 107
+  ms before, 3 ms after.

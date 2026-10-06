@@ -11,6 +11,10 @@ use crate::colors;
 use crate::font::{CellFont, FontStyle, GlyphMask};
 use crate::images::PlacedImage;
 
+mod tiles;
+
+use tiles::{TileCache, TileKey};
+
 /// What a frame is drawn for: the window's size in pixels, where the
 /// grid's top-left cell starts (`grid_origin`), and whether a blinking
 /// cursor is in its shown half.
@@ -36,11 +40,12 @@ pub struct Renderer {
     cursor_line: Option<usize>,
     image_lines: Vec<Range<usize>>,
     background: Option<Rgb>,
+    tiles: TileCache,
 }
 
 impl Renderer {
     pub fn new() -> Self {
-        Self { back: Vec::new(), view: None, full: true, cursor_line: None, image_lines: Vec::new(), background: None }
+        Self { back: Vec::new(), view: None, full: true, cursor_line: None, image_lines: Vec::new(), background: None, tiles: TileCache::default() }
     }
 
     /// The next frame redraws everything -- after the font (cell size)
@@ -96,7 +101,7 @@ impl Renderer {
         }
 
         for (line, _) in dirty.iter().enumerate().filter(|(_, dirty)| **dirty) {
-            draw_line(&mut canvas, term, font, line, view.origin);
+            draw_line(&mut canvas, term, font, &mut self.tiles, line, view.origin);
         }
         for image in images.iter() {
             canvas.blit(view.origin.0 + image.column as u32 * cell.0, view.origin.1 + image.line as u32 * cell.1, image);
@@ -126,8 +131,8 @@ fn mark(dirty: &mut [bool], range: Range<usize>) {
 }
 
 
-/// One grid line: every cell's background, glyph and decorations.
-fn draw_line<T>(canvas: &mut Canvas, term: &Term<T>, font: &mut CellFont, line: usize, origin: (u32, u32)) {
+/// One grid line: every cell as its finished tile (`TileCache`).
+fn draw_line<T>(canvas: &mut Canvas, term: &Term<T>, font: &mut CellFont, tiles: &mut TileCache, line: usize, origin: (u32, u32)) {
     let (cell_width, cell_height) = (font.cell_width, font.cell_height);
     let grid = term.grid();
     let row = &grid[Line(line as i32 - grid.display_offset() as i32)];
@@ -148,21 +153,16 @@ fn draw_line<T>(canvas: &mut Canvas, term: &Term<T>, font: &mut CellFont, line: 
             // Its glyph is the wide character's to the left.
             continue;
         }
-        let width = if cell.flags.contains(Flags::WIDE_CHAR) { cell_width * 2 } else { cell_width };
-        canvas.fill(x, y, width, cell_height, background);
-        if cell.flags.contains(Flags::HIDDEN) {
-            continue;
-        }
         let style = FontStyle { bold: cell.flags.intersects(Flags::BOLD), italic: cell.flags.intersects(Flags::ITALIC) };
-        if let Some(mask) = font.mask(cell.c, style) {
-            canvas.draw_mask(x as i32, y as i32, &mask, foreground, y..y + cell_height);
-        }
-        if cell.flags.intersects(Flags::ALL_UNDERLINES) {
-            canvas.fill(x, y + cell_height - 2, width, 1, foreground);
-        }
-        if cell.flags.contains(Flags::STRIKEOUT) {
-            canvas.fill(x, y + cell_height / 2, width, 1, foreground);
-        }
+        let key = TileKey {
+            underline: cell.flags.intersects(Flags::ALL_UNDERLINES),
+            strikeout: cell.flags.contains(Flags::STRIKEOUT),
+            hidden: cell.flags.contains(Flags::HIDDEN),
+            wide: cell.flags.contains(Flags::WIDE_CHAR),
+            ..TileKey::new(cell.c, style, foreground, background)
+        };
+        let (tile, width) = tiles.tile(key, font);
+        canvas.copy(x, y, tile, width, cell_height);
     }
 }
 
@@ -248,6 +248,16 @@ impl Canvas<'_> {
                 let pixel = &mut self.pixels[line_start + pixel_x as usize];
                 *pixel = if coverage == 255 { packed } else { pack(mix(unpack(*pixel), color, coverage)) };
             }
+        }
+    }
+
+    /// A `width` by `height` block of pixels at `(x, y)`, clipped.
+    fn copy(&mut self, x: u32, y: u32, pixels: &[u32], width: u32, height: u32) {
+        let visible = width.min(self.width.saturating_sub(x)) as usize;
+        for row in 0..height.min(self.height.saturating_sub(y)) {
+            let target = ((y + row) * self.width + x) as usize;
+            let source = (row * width) as usize;
+            self.pixels[target..target + visible].copy_from_slice(&pixels[source..source + visible]);
         }
     }
 

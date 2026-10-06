@@ -37,3 +37,25 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_WindowsProgramming",
 ] }
 winreg = "0.52"
+
+# The window (gui/) draws every cell of the screen when the editor
+# scrolls; unoptimized, that took ~100 ms a frame, so held arrow keys
+# piled up and the text jumped. Optimized even in debug builds, with the
+# crates it spends its time in; the console app's build is unchanged.
+[profile.dev.package.litastum-gui]
+opt-level = 3
+
+[profile.dev.package.cosmic-text]
+opt-level = 3
+
+[profile.dev.package.swash]
+opt-level = 3
+
+[profile.dev.package.alacritty_terminal]
+opt-level = 3
+
+[profile.dev.package.vte]
+opt-level = 3
+
+[profile.dev.package.softbuffer]
+opt-level = 3
