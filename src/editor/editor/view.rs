@@ -173,12 +173,15 @@ impl Editor {
     /// bar cursor draws at its cell's left edge, so on the last selected
     /// character it looked like the selection stopped one short. Not on
     /// the leading edge (extending backward), where the shift would do
-    /// the opposite. History: docs/history/editor-rendering.md.
+    /// the opposite, nor on a line break (`(row, len)`, a selection of
+    /// whole lines), which has no character to step past.
+    /// History: docs/history/editor-rendering.md.
     pub fn cursor_screen_position(&self) -> Option<ratatui::layout::Position> {
         let mut pos = self.state.cursor_screen_position()?;
         if let Some(selection) = &self.state.selection {
             let cursor_is_trailing_edge = (self.state.cursor.row, self.state.cursor.col) >= (selection.start.row, selection.start.col);
-            if cursor_is_trailing_edge {
+            let on_line_break = self.state.cursor.col >= self.state.lines.len_col(self.state.cursor.row).unwrap_or(0);
+            if cursor_is_trailing_edge && !on_line_break {
                 pos.x = pos.x.saturating_add(1);
             }
         }

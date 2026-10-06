@@ -2,6 +2,18 @@ use crossterm::event::KeyCode;
 use edtui::actions::{Execute, MoveBackward, MoveForward, SwitchMode};
 use edtui::{EditorMode, EditorState, Index2};
 
+/// Where a `Shift+Up`/`Down` selection started (`Editor::vertical_shift_anchor`),
+/// before any trim, and whether its live end sits on a line break.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::editor) struct VerticalAnchor {
+    pub position: Index2,
+    /// Set while a selection from column 0 runs downward: `edtui` has no
+    /// column before 0 to trim to, so the end (and cursor) sits at
+    /// `(row, len)` -- that row's line break, which `edtui` counts as
+    /// selected -- one row above where the caret is meant to be.
+    pub ends_on_line_break: bool,
+}
+
 /// Resolves the first press of a fresh `Shift+Left`/`Right` selection so
 /// N presses select exactly N characters. `SwitchMode(Visual)` already
 /// anchors a one-cell selection on the current cell (vim's `v`), so the
@@ -30,53 +42,150 @@ pub(in crate::editor) fn anchor_fresh_shift_selection(state: &mut EditorState, k
 /// `Down` trims the destination (`state.cursor`, kept equal to
 /// `selection.end`); `Up` trims `selection.start`, the bottom edge --
 /// whichever raw field sits on the larger row is an inclusive bound on
-/// that row. Column 0 is left alone.
-pub(in crate::editor) fn exclude_landing_column_on_fresh_vertical_selection(state: &mut EditorState, key_code: KeyCode) {
+/// that row. Column 0 has nothing to trim to, and used to select the far
+/// row's first character: the bound moves to the line break of the row
+/// before it instead (`row_len` -- `edtui` counts `(row, len)` as that
+/// line break), so whole lines are selected, as in VS Code.
+pub(in crate::editor) fn exclude_landing_column_on_fresh_vertical_selection(state: &mut EditorState, key_code: KeyCode, mut anchor: VerticalAnchor) -> VerticalAnchor {
+    let moved = state.cursor.row != anchor.position.row;
     match key_code {
-        KeyCode::Down => {
-            if state.cursor.col == 0 {
-                return;
+        KeyCode::Down if state.cursor.col == 0 => {
+            if moved {
+                let row = state.cursor.row - 1;
+                set_selection_end(state, Index2::new(row, row_len(state, row)));
+                anchor.ends_on_line_break = true;
             }
+        }
+        KeyCode::Down => {
             state.cursor.col -= 1;
             if let Some(selection) = state.selection.as_mut() {
                 selection.end = state.cursor;
             }
         }
         KeyCode::Up => {
+            let line_break_above = anchor.position.row.checked_sub(1).map(|row| Index2::new(row, row_len(state, row)));
             if let Some(selection) = state.selection.as_mut() {
                 if selection.start.col > 0 {
                     selection.start.col -= 1;
+                } else if let (true, Some(bound)) = (moved, line_break_above) {
+                    selection.start = bound;
                 }
             }
         }
         _ => {}
     }
+    anchor
+}
+
+/// `Shift+Up`/`Down` while the selection ends on a line break
+/// (`VerticalAnchor::ends_on_line_break`): `edtui`'s own move would leave
+/// the break for a column, so the end goes to the next or previous row's
+/// break instead. Back up to the anchor's row, the cursor returns to the
+/// anchor for `close_selection_if_back_on_the_anchors_row`. A selection
+/// changed some other way (`Shift+Left`) no longer ends on a break and
+/// goes back to the plain behavior.
+pub(in crate::editor) fn follow_line_break_selection(state: &mut EditorState, key_code: KeyCode, cursor_before: Index2, vertical: &mut Option<VerticalAnchor>) {
+    let Some(anchor) = vertical.as_mut() else {
+        return;
+    };
+    if !anchor.ends_on_line_break || !matches!(key_code, KeyCode::Up | KeyCode::Down) {
+        return;
+    }
+    if state.selection.is_none() || cursor_before.col != row_len(state, cursor_before.row) {
+        anchor.ends_on_line_break = false;
+        return;
+    }
+    match key_code {
+        KeyCode::Down => {
+            let next = cursor_before.row + 1;
+            let end = if next < state.lines.len() { Index2::new(next, row_len(state, next)) } else { cursor_before };
+            set_selection_end(state, end);
+        }
+        _ if cursor_before.row == anchor.position.row => {
+            anchor.ends_on_line_break = false;
+            state.cursor = anchor.position;
+        }
+        _ => {
+            let row = cursor_before.row - 1;
+            set_selection_end(state, Index2::new(row, row_len(state, row)));
+        }
+    }
 }
 
 /// Runs on every `Shift+Up`/`Down` press: once the cursor is back on the
 /// anchor's row, closes the selection (`edtui` can't represent an empty
-/// one) and restores the untrimmed column from `true_anchor_col`
-/// (`Editor::vertical_shift_anchor_col`), so the fresh-press trim above
-/// doesn't leave the cursor one column short after a round trip.
-pub(in crate::editor) fn close_selection_if_back_on_the_anchors_row(
-    state: &mut EditorState,
-    key_code: KeyCode,
-    true_anchor_col: &mut Option<usize>,
-) {
+/// one) and restores the anchor's untrimmed column, so the fresh-press
+/// trim above doesn't leave the cursor one column short after a round
+/// trip. Without a stored anchor (a selection started sideways), the
+/// selection's own start row stands in.
+pub(in crate::editor) fn close_selection_if_back_on_the_anchors_row(state: &mut EditorState, key_code: KeyCode, vertical: &mut Option<VerticalAnchor>) {
     if !matches!(key_code, KeyCode::Up | KeyCode::Down) {
         return;
     }
     let Some(selection) = state.selection.as_ref() else {
         return;
     };
-    if state.cursor.row != selection.start.row {
+    if vertical.is_some_and(|anchor| anchor.ends_on_line_break) {
         return;
     }
-    if let Some(col) = true_anchor_col.take() {
-        state.cursor.col = col;
+    let anchor_row = vertical.map_or(selection.start.row, |anchor| anchor.position.row);
+    if state.cursor.row != anchor_row {
+        return;
+    }
+    if let Some(anchor) = vertical.take() {
+        state.cursor.col = anchor.position.col;
     }
     SwitchMode(EditorMode::Normal).execute(state);
     SwitchMode(EditorMode::Insert).execute(state);
+}
+
+/// A fresh `Shift+Home`/`Shift+End`: `SwitchMode(Visual)` anchored the
+/// cell under the cursor, which `Home` must not take (the caret sits
+/// before it) -- the anchor moves one cell left. Nothing to select
+/// (`Home` at column 0, `End` at the line's end) closes the selection.
+pub(in crate::editor) fn anchor_fresh_shift_home_end(state: &mut EditorState, key_code: KeyCode, cursor_before: Index2) {
+    let len = row_len(state, cursor_before.row);
+    match key_code {
+        KeyCode::Home if cursor_before.col == 0 => close_at(state, cursor_before),
+        KeyCode::End if cursor_before.col >= len => close_at(state, cursor_before),
+        KeyCode::Home => {
+            if let Some(selection) = state.selection.as_mut() {
+                selection.start = Index2::new(cursor_before.row, cursor_before.col.min(len) - 1);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `Shift+End`: `MoveToEndOfLine` in `Visual` lands on `(row, len)`, the
+/// line break, which `edtui` would select too -- the end goes back onto
+/// the last character.
+pub(in crate::editor) fn keep_shift_end_off_the_line_break(state: &mut EditorState, key_code: KeyCode) {
+    if key_code != KeyCode::End || state.mode != EditorMode::Visual {
+        return;
+    }
+    let row = state.cursor.row;
+    let len = row_len(state, row);
+    if len > 0 && state.cursor.col >= len {
+        set_selection_end(state, Index2::new(row, len - 1));
+    }
+}
+
+fn close_at(state: &mut EditorState, cursor: Index2) {
+    SwitchMode(EditorMode::Normal).execute(state);
+    SwitchMode(EditorMode::Insert).execute(state);
+    state.cursor = cursor;
+}
+
+fn set_selection_end(state: &mut EditorState, end: Index2) {
+    state.cursor = end;
+    if let Some(selection) = state.selection.as_mut() {
+        selection.end = end;
+    }
+}
+
+fn row_len(state: &EditorState, row: usize) -> usize {
+    state.lines.len_col(row).unwrap_or(0)
 }
 
 /// `Right`: the anchor cell (where the cursor already sits) is exactly
@@ -114,7 +223,7 @@ mod tests {
     use edtui::{EditorMode, EditorState, Lines};
 
     use super::{
-        anchor_fresh_shift_selection, close_selection_if_back_on_the_anchors_row, exclude_landing_column_on_fresh_vertical_selection,
+        anchor_fresh_shift_selection, close_selection_if_back_on_the_anchors_row, exclude_landing_column_on_fresh_vertical_selection, VerticalAnchor,
     };
 
     /// Uses the real `SwitchMode(Visual)` action: `Selection` is
@@ -214,8 +323,8 @@ mod tests {
     #[test]
     fn restores_the_true_anchor_column_once_closed() {
         let mut state = state_for("terminal one\nterminal two", 4); // between 't' and 'e'
-        let mut true_anchor_col = Some(state.cursor.col);
-        exclude_landing_column_on_fresh_vertical_selection(&mut state, crossterm::event::KeyCode::Down);
+        let anchor = VerticalAnchor { position: state.cursor, ends_on_line_break: false };
+        let mut true_anchor_col = Some(exclude_landing_column_on_fresh_vertical_selection(&mut state, crossterm::event::KeyCode::Down, anchor));
         assert_eq!(state.cursor.col, 3, "should have trimmed the landing column by one");
 
         let anchor_row = state.selection.as_ref().unwrap().start.row;
@@ -237,7 +346,7 @@ mod tests {
             selection.end.row = 1;
         }
 
-        exclude_landing_column_on_fresh_vertical_selection(&mut state, crossterm::event::KeyCode::Down);
+        exclude_landing_column_on_fresh_vertical_selection(&mut state, crossterm::event::KeyCode::Down, anchor_at(0, 4));
 
         assert_eq!(state.cursor.col, 3);
         assert_eq!(state.selection.unwrap().end.col, 3, "selection.end must stay in lock-step with the cursor");
@@ -256,23 +365,31 @@ mod tests {
         }
         state.cursor.row = 0; // as if MoveUp(1) already ran
 
-        exclude_landing_column_on_fresh_vertical_selection(&mut state, crossterm::event::KeyCode::Up);
+        exclude_landing_column_on_fresh_vertical_selection(&mut state, crossterm::event::KeyCode::Up, anchor_at(1, 4));
 
         assert_eq!(state.selection.unwrap().start.col, 3);
         assert_eq!(state.cursor.col, 4, "MoveUp never touches .col -- this function must not either, for Up");
     }
 
-    /// Column 0 has nothing to trim into -- must not underflow.
+    fn anchor_at(row: usize, col: usize) -> VerticalAnchor {
+        VerticalAnchor { position: edtui::Index2::new(row, col), ends_on_line_break: false }
+    }
+
+    /// Column 0 has nothing to trim into: the end moves to the line break
+    /// of the row above (`(0, 12)`, past "terminal one") instead of taking
+    /// the landing row's first character, as it used to.
     #[test]
-    fn makes_no_adjustment_at_column_zero() {
+    fn down_from_column_zero_ends_on_the_line_break_above() {
         let mut state = state_for("terminal one\nterminal two", 0);
         state.cursor.row = 1;
         if let Some(selection) = state.selection.as_mut() {
             selection.end.row = 1;
         }
 
-        exclude_landing_column_on_fresh_vertical_selection(&mut state, crossterm::event::KeyCode::Down);
+        let anchor = exclude_landing_column_on_fresh_vertical_selection(&mut state, crossterm::event::KeyCode::Down, anchor_at(0, 0));
 
-        assert_eq!(state.cursor.col, 0);
+        assert_eq!(state.cursor, edtui::Index2::new(0, 12));
+        assert_eq!(state.selection.unwrap().end, state.cursor, "selection.end must stay in lock-step with the cursor");
+        assert!(anchor.ends_on_line_break);
     }
 }

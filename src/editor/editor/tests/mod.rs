@@ -30,6 +30,7 @@ mod dirty_and_save;
 mod highlighting;
 mod search_scroll;
 mod keymap_modes;
+mod line_selection;
 mod rendering;
 mod selection;
 mod undo_and_paste;

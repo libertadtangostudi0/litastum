@@ -210,10 +210,7 @@ fn paste_text_splices_and_records_an_undo_snapshot() {
 }
 
 
-/// A bracketed paste while text is selected should clear the selection
-/// and drop back to typing mode -- same simplification `Ctrl+V` itself
-/// already has (see `paste_text`'s own doc comment), replicated by hand
-/// here since it bypasses `edtui`'s own dispatch.
+/// A paste over a selection ends it and drops back to typing mode.
 #[test]
 fn paste_text_over_an_active_selection_clears_it_and_returns_to_insert_mode() {
     let (mut editor, _path) = open_test_editor("hello world");
@@ -224,6 +221,85 @@ fn paste_text_over_an_active_selection_clears_it_and_returns_to_insert_mode() {
 
     assert!(!editor.has_selection());
     assert_eq!(editor.state.mode, EditorMode::Insert);
+}
+
+
+fn select_chars_right(editor: &mut Editor, from: Index2, count: usize) {
+    editor.state.cursor = from;
+    for _ in 0..count {
+        editor.input(shift_key(KeyCode::Right));
+    }
+}
+
+
+/// Reported: pasting a block over a selected one left the selected text
+/// in place and pasted next to it.
+#[test]
+fn paste_text_replaces_the_selected_text() {
+    let (mut editor, _path) = open_test_editor("hello world
+");
+    select_chars_right(&mut editor, Index2::new(0, 6), 5); // "world"
+
+    editor.paste_text("there");
+
+    assert_eq!(editor.state.lines, Lines::from("hello there
+"));
+}
+
+
+#[test]
+fn a_multi_line_paste_replaces_the_selected_text_too() {
+    let (mut editor, _path) = open_test_editor("let x = old;
+rest
+");
+    select_chars_right(&mut editor, Index2::new(0, 8), 3); // "old"
+
+    editor.paste_text("f(
+    1,
+)");
+
+    assert_eq!(editor.state.lines, Lines::from("let x = f(
+    1,
+);
+rest
+"));
+}
+
+
+/// A selection across lines (Shift+Down from column 1 takes "bb", the
+/// line break and "c", as in VS Code), replaced by a multi-line block.
+#[test]
+fn a_paste_replaces_a_selection_across_lines() {
+    let (mut editor, _path) = open_test_editor("a
+xbb
+cc
+d
+");
+    editor.state.cursor = Index2::new(1, 1);
+    editor.input(shift_key(KeyCode::Down));
+
+    editor.paste_text("X
+Y");
+
+    assert_eq!(editor.state.lines, Lines::from("a
+xX
+Yc
+d
+"));
+}
+
+
+#[test]
+fn undoing_a_paste_over_a_selection_brings_the_selected_text_back_in_one_step() {
+    let (mut editor, _path) = open_test_editor("hello world
+");
+    select_chars_right(&mut editor, Index2::new(0, 6), 5);
+
+    editor.paste_text("there");
+    editor.input(ctrl_key('z'));
+
+    assert_eq!(editor.state.lines, Lines::from("hello world
+"));
 }
 
 

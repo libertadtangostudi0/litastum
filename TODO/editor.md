@@ -226,10 +226,8 @@
       and `u` (Undo) both correctly update `is_dirty`, including
       undoing back to exactly the saved content correctly clearing it
       again.
-- [ ] Ctrl+V over an active selection doesn't replace it (clears the
-      selection, then pastes at the cursor instead) — `edtui`'s real
-      "paste over selection" action isn't publicly exported; see
-      [[litastum-stack]]
+- [x] Ctrl+V over an active selection replaces it now --
+      `Editor::paste_text` deletes the selection first, one undo step
 - [ ] **Typing over an active selection doesn't replace it either — same
       class of bug as the Ctrl+V one above, but for plain character
       input.** Reported directly: current behavior is select, delete,

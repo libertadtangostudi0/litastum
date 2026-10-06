@@ -16,6 +16,7 @@ mod fast_paste;
 mod input;
 mod mouse;
 mod search;
+mod selection_delete;
 mod undo;
 mod view;
 mod word_select_touch;
@@ -49,13 +50,12 @@ pub struct Editor {
     /// What `Ctrl+Shift+Left`/`Right` has done to the current selection
     /// so far (`WordSelectTouch`). History: docs/history/word-select.md.
     word_select_touch: WordSelectTouch,
-    /// The column a `Shift+Up`/`Down` selection started at, before
-    /// `exclude_landing_column_on_fresh_vertical_selection` trimmed it;
-    /// `None` when no such selection is open. Lives here because the trim
-    /// overwrites both `EditorState` fields that could have held it;
-    /// `close_selection_if_back_on_the_anchors_row` restores it. History:
-    /// docs/history/shift-select.md.
-    vertical_shift_anchor_col: Option<usize>,
+    /// Where a `Shift+Up`/`Down` selection started, before
+    /// `exclude_landing_column_on_fresh_vertical_selection` trimmed it, and
+    /// whether its end sits on a line break; `None` when no such selection
+    /// is open. Lives here because the trim overwrites the `EditorState`
+    /// fields that could have held it. History: docs/history/shift-select.md.
+    vertical_shift_anchor: Option<super::bindings::VerticalAnchor>,
     /// Where a `Ctrl+Shift+Left`-built selection started, before
     /// `trim_anchor_off_a_word_it_never_visited` trimmed `selection.start`;
     /// `None` when no such selection is open. Retracing the walk back past
@@ -141,7 +141,7 @@ impl Editor {
             custom_syntax_theme,
             first_line,
             word_select_touch: WordSelectTouch::Untouched,
-            vertical_shift_anchor_col: None,
+            vertical_shift_anchor: None,
             word_select_true_anchor: None,
             search_history_index: None,
             search: None,

@@ -36,18 +36,16 @@ impl Editor {
         }
 
         self.push_undo_snapshot();
-        self.state.cursor = splice_paste(&mut self.state.lines, self.state.cursor, text);
-
-        // Matches the pre-existing simplification for `Ctrl+V` over an
-        // active selection (see `bindings.rs`'s own module doc comment):
-        // clears the selection and lands in typing mode rather than
-        // replacing the selected text -- unchanged behavior, just
-        // reached without going through `edtui`'s own dispatch this
-        // time, so it has to be replicated here by hand.
+        // A paste over a selection replaces it, like typing over one
+        // (`Editor::input`); it used to clear the selection and paste at
+        // the cursor, leaving the selected block in place. One snapshot
+        // covers both, so it undoes as one step.
         if self.state.mode == EditorMode::Visual {
+            self.delete_selection();
             self.state.selection = None;
             self.state.mode = EditorMode::Insert;
         }
+        self.state.cursor = splice_paste(&mut self.state.lines, self.state.cursor, text);
 
         self.buffer_changed();
     }

@@ -58,6 +58,10 @@ tests, not by inspection):
   real reports shaped this, including one that generalized a
   `Left`/`Right` fix to all four directions and broke `Down` -- they are
   different kinds of motion. Full record: `docs/history/shift-select.md`.
+  A selection from column 0 ends on a line break (`(row, len)`), and
+  deleting a selection goes through our `Editor::delete_selection`:
+  `edtui`'s `DeleteSelection` removes a fully selected row, break and
+  all.
 - **The `Standard` keymap owns undo/redo**, not `edtui` -- see
   [[litastum-editor-undo]]. `KeyEventHandler::new(register, true)`
   (`capture_on_insert`) still matters for the raw table and for Vim:
@@ -68,9 +72,8 @@ tests, not by inspection):
   see [[litastum-performance]]). The table's own `PasteBefore` entry
   (vim's `P`, inserts *at* the cursor; `Paste`/vim's `p` inserts
   *after* it) is only reached by the raw-table tests. Over a selection,
-  paste clears the selection and pastes at the cursor rather than
-  replacing it -- `edtui`'s `PasteOverSelection` isn't exported. See
-  `TODO/editor.md`.
+  `paste_text` replaces it: `DeleteSelection` first, under the same undo
+  snapshot (`edtui`'s `PasteOverSelection` isn't exported).
 - **`Ctrl+Shift+Left`/`Right` (word-wise selection) is hand-rolled**
   (`editor/bindings/word_select.rs`), intercepted in `editor_keymap`
   ahead of `Editor::input` -- no sequence of `edtui`'s declarative

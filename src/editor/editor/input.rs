@@ -1,11 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use edtui::actions::{DeleteSelection, Execute, InsertChar};
+use edtui::actions::{CopySelection, Execute, InsertChar};
 use edtui::EditorMode;
 
-use super::super::bindings::{
-    anchor_fresh_shift_selection, close_selection_if_back_on_the_anchors_row, exclude_landing_column_on_fresh_vertical_selection,
-    is_selection_consuming_key, wrap_line_boundary_arrow_movement,
-};
+use super::super::bindings::correct_after_dispatch;
 use super::super::keymap_mode::EditorKeymapMode;
 use super::Editor;
 
@@ -46,23 +43,9 @@ fn should_capture_undo_snapshot(mode_before: EditorMode, code: KeyCode, modifier
 
 impl Editor {
     /// Feeds one key event to the editor. For the `Standard` keymap,
-    /// correction passes run around `edtui`'s own dispatch, each adding
-    /// what the declarative table can't express:
-    ///
-    /// 0. `is_selection_consuming_key` -- after `Backspace`/`Delete`/
-    ///    `Ctrl+C/X/V` on a selection, back to plain typing by field
-    ///    assignment (`SwitchMode(Insert)` would add an undo checkpoint).
-    /// 1. `anchor_fresh_shift_selection` -- a fresh `Shift+Left/Right`
-    ///    selects exactly one character.
-    /// 2. `wrap_line_boundary_arrow_movement` -- `Left`/`Right` that
-    ///    didn't move at a line boundary crosses it; skipped when step 1
-    ///    stopped on a character on purpose.
-    /// 3. `exclude_landing_column_on_fresh_vertical_selection` -- a
-    ///    fresh `Shift+Up/Down` doesn't select the aligned landing
-    ///    column; the pre-trim column goes to `vertical_shift_anchor_col`.
-    /// 4. `close_selection_if_back_on_the_anchors_row` -- every
-    ///    `Shift+Up/Down`: back on the anchor's row closes the selection
-    ///    and restores that column.
+    /// correction passes run after `edtui`'s own dispatch
+    /// (`bindings::correct_after_dispatch`), each adding what the
+    /// declarative table can't express.
     ///
     /// `Standard` also owns undo/redo here (`Ctrl+Z`/`Ctrl+Y` intercepted,
     /// a snapshot before each mutating key -- `edtui`'s `capture()` is
@@ -82,25 +65,7 @@ impl Editor {
         // The correction passes are tuned for `Standard`'s table; Vim's
         // modal multi-key sequences were never considered.
         if self.keymap_mode == EditorKeymapMode::Standard {
-            if mode_before == EditorMode::Visual && is_selection_consuming_key(&key) {
-                self.state.selection = None;
-                self.state.mode = EditorMode::Insert;
-            }
-
-            let freshly_entered_visual = mode_before != EditorMode::Visual && self.state.mode == EditorMode::Visual;
-            let anchored_on_a_real_character =
-                freshly_entered_visual && anchor_fresh_shift_selection(&mut self.state, key.code, cursor_before);
-
-            if !anchored_on_a_real_character {
-                wrap_line_boundary_arrow_movement(&mut self.state, key.code, key.modifiers, cursor_before);
-            }
-
-            if freshly_entered_visual && matches!(key.code, KeyCode::Up | KeyCode::Down) {
-                self.vertical_shift_anchor_col = Some(cursor_before.col);
-                exclude_landing_column_on_fresh_vertical_selection(&mut self.state, key.code);
-            }
-
-            close_selection_if_back_on_the_anchors_row(&mut self.state, key.code, &mut self.vertical_shift_anchor_col);
+            correct_after_dispatch(&mut self.state, key, cursor_before, mode_before, &mut self.vertical_shift_anchor);
         }
 
         if can_mutate_buffer(self.keymap_mode, mode_before, key.code) {
@@ -141,13 +106,28 @@ impl Editor {
         if self.state.mode == EditorMode::Visual {
             if let KeyCode::Char(c) = key.code {
                 if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) {
-                    DeleteSelection.execute(&mut self.state);
+                    self.delete_selection();
                     InsertChar(c).execute(&mut self.state);
-                    self.state.mode = EditorMode::Insert;
                     self.buffer_changed();
                     return true;
                 }
             }
+        }
+
+        // Backspace/Delete/Ctrl+X on a selection: our delete, not the
+        // table's `DeleteSelection`, which takes a fully selected line's
+        // break with it (`delete_selection`). `CopySelection` still does
+        // the copy for Ctrl+X.
+        let is_cut = ctrl && matches!(key.code, KeyCode::Char('x'));
+        if self.state.mode == EditorMode::Visual && (is_cut || matches!(key.code, KeyCode::Backspace | KeyCode::Delete)) {
+            if is_cut {
+                let selection = self.state.selection.clone();
+                CopySelection.execute(&mut self.state);
+                self.state.selection = selection;
+            }
+            self.delete_selection();
+            self.buffer_changed();
+            return true;
         }
 
         false

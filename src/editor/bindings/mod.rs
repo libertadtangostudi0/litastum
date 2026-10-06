@@ -9,14 +9,13 @@ use edtui::actions::{
 use edtui::events::{KeyEventHandler, KeyEventRegister, KeyInput};
 use edtui::EditorMode;
 
+mod corrections;
 mod line_wrap;
 mod shift_select;
 mod word_select;
 
-pub(super) use line_wrap::wrap_line_boundary_arrow_movement;
-pub(super) use shift_select::{
-    anchor_fresh_shift_selection, close_selection_if_back_on_the_anchors_row, exclude_landing_column_on_fresh_vertical_selection,
-};
+pub(super) use corrections::correct_after_dispatch;
+pub(super) use shift_select::VerticalAnchor;
 pub(super) use word_select::extend_word_selection;
 
 /// The non-modal (VS Code/Windows-convention) keymap. `edtui` ships only
@@ -71,6 +70,13 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         (v(KeyInput::shift(KeyCode::Right)), MoveForward(1).into()),
         (v(KeyInput::shift(KeyCode::Up)), MoveUp(1).into()),
         (v(KeyInput::shift(KeyCode::Down)), MoveDown(1).into()),
+        // Shift+Home/End select to the line's start/end (they used to drop
+        // the selection like plain Home/End); a fresh Shift+Home's anchor
+        // is fixed by `shift_select::anchor_fresh_shift_home_end`.
+        (i(KeyInput::shift(KeyCode::Home)), SwitchMode(EditorMode::Visual).chain(MoveToStartOfLine()).into()),
+        (i(KeyInput::shift(KeyCode::End)), SwitchMode(EditorMode::Visual).chain(MoveToEndOfLine()).into()),
+        (v(KeyInput::shift(KeyCode::Home)), MoveToStartOfLine().into()),
+        (v(KeyInput::shift(KeyCode::End)), MoveToEndOfLine().into()),
         // `Ctrl+Shift+Left`/`Right` aren't here: `editor_keymap` calls
         // `extend_word_selection` directly, ahead of the table. History: docs/history/word-select.md.
 
@@ -102,9 +108,9 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         (i(KeyInput::ctrl('z')), Undo.into()),
         (i(KeyInput::ctrl('y')), Redo.into()),
 
-        // Clipboard. Copy/cut need a selection; paste over one clears it and
-        // pastes at the cursor rather than replacing it (`TODO/editor.md`).
-        // `PasteBefore` (vim's `P`) inserts at the cursor; `Paste` (vim's `p`)
+        // Clipboard. Copy/cut need a selection. `Ctrl+V` normally never
+        // gets here (`Editor::paste_text` intercepts it and replaces a
+        // selection); these entries serve the raw-table tests. `PasteBefore` (vim's `P`) inserts at the cursor; `Paste` (vim's `p`)
         // would insert after it. None chain `exit_selection()`, as above.
         (v(KeyInput::ctrl('c')), CopySelection.into()),
         (v(KeyInput::ctrl('x')), DeleteSelection.into()),

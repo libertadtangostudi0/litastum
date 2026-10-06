@@ -75,3 +75,30 @@ one character.
    `close_selection_if_back_on_the_anchors_row` restores it and closes
    the selection whenever the cursor returns to the anchor's row --
    `edtui` can't represent an empty selection any other way.
+6. **`Shift+Down` from column 0 took the next row's first character**
+   -- the trim in 4 has no column before 0 to back off to, so it left
+   column 0 alone. A paste or cut over the selection then ate that
+   character. The end now sits on the line break of the row above
+   instead (`(row, len)`, which `edtui` counts as the break -- checked
+   with its own `DeleteSelection`), with `VerticalAnchor::ends_on_line_break`
+   set so further presses move from break to break
+   (`follow_line_break_selection`); `Shift+Up` from column 0 moves the
+   bottom bound to the break above the anchor the same way. The anchor's
+   row is now stored too (`VerticalAnchor::position`), since that bound
+   is no longer on it. The caret shows at the end of the last selected
+   line rather than the start of the next -- `edtui` places it from the
+   cursor, which has to stay on the selection's end.
+7. **`Shift+Home`/`Shift+End` dropped the selection** -- only the plain
+   keys were bound. Now bound; a fresh `Shift+Home` moves the anchor off
+   the cell under the caret, and `Shift+End` stops on the last character
+   rather than the line break `MoveToEndOfLine` lands on in `Visual`.
+8. **Deleting a fully selected line removed it, break and all** --
+   `edtui`'s `DeleteSelection` behaves like vim there, so a paste over a
+   line selected with `Shift+End` ran into the next one. `Backspace`,
+   `Delete`, `Ctrl+X`, typing and paste over a selection now go through
+   `Editor::delete_selection` (`selection_delete.rs`), which only takes
+   a line break that's actually selected.
+
+The correction passes now live in one function,
+`bindings::correct_after_dispatch`, which both `Editor::input` and the
+binding tests' harness call -- they had been two copies.

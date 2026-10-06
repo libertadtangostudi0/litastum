@@ -16,39 +16,21 @@ fn test_state(contents: &str) -> (EditorState, EditorEventHandler) {
     (state, EditorEventHandler::new(standard_key_handler()))
 }
 
-/// One key through the real table plus the correction passes, in
-/// `Editor::input`'s order -- the fresh `Shift`+arrow tests need both
-/// halves, and a first `Shift+Left` test that used the raw table alone
-/// missed half of the fix. `vertical_shift_anchor_col` stands in for
-/// `Editor`'s field: each test declares one and threads it through.
+/// One key through the real table plus the correction passes
+/// (`correct_after_dispatch`, as `Editor::input` runs them) -- the fresh
+/// `Shift`+arrow tests need both halves. `vertical_shift_anchor_col`
+/// stands in for `Editor::vertical_shift_anchor`: each test declares one
+/// and threads it through.
 fn input(
     state: &mut EditorState,
     handler: &mut EditorEventHandler,
     key_event: crossterm::event::KeyEvent,
-    vertical_shift_anchor_col: &mut Option<usize>,
+    vertical_shift_anchor_col: &mut Option<VerticalAnchor>,
 ) {
     let cursor_before = state.cursor;
     let mode_before = state.mode;
     handler.on_key_event(key_event, state);
-
-    if mode_before == EditorMode::Visual && is_selection_consuming_key(&key_event) {
-        state.selection = None;
-        state.mode = EditorMode::Insert;
-    }
-
-    let freshly_entered_visual = mode_before != EditorMode::Visual && state.mode == EditorMode::Visual;
-    let anchored_on_a_real_character = freshly_entered_visual && anchor_fresh_shift_selection(state, key_event.code, cursor_before);
-
-    if !anchored_on_a_real_character {
-        wrap_line_boundary_arrow_movement(state, key_event.code, key_event.modifiers, cursor_before);
-    }
-
-    if freshly_entered_visual && matches!(key_event.code, KeyCode::Up | KeyCode::Down) {
-        *vertical_shift_anchor_col = Some(cursor_before.col);
-        exclude_landing_column_on_fresh_vertical_selection(state, key_event.code);
-    }
-
-    close_selection_if_back_on_the_anchors_row(state, key_event.code, vertical_shift_anchor_col);
+    correct_after_dispatch(state, key_event, cursor_before, mode_before, vertical_shift_anchor_col);
 }
 
 #[test]

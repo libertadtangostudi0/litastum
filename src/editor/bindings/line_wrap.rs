@@ -40,7 +40,7 @@ mod tests {
     use edtui::clipboard::InternalClipboard;
     use edtui::{EditorEventHandler, EditorMode, EditorState, Lines};
 
-    use super::{super::{anchor_fresh_shift_selection, standard_key_handler}, wrap_line_boundary_arrow_movement};
+    use super::{super::{shift_select::anchor_fresh_shift_selection, standard_key_handler}, wrap_line_boundary_arrow_movement};
     use crate::test_support::{key, shift_key};
 
     /// Same shape as `bindings::tests::test_state` -- a raw
