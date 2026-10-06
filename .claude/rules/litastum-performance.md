@@ -48,10 +48,32 @@ case-insensitive comparison allocates per character and reran over the
 whole buffer on every query edit (2.46s per typed character on 100k
 lines). Ours is allocation-free and incremental.
 
-## Known cost, not fixed
+## Editing: nothing O(buffer) per keystroke
 
-An edit in the editor's own text costs ~29ms on a 100k-line file,
-almost all of it the undo snapshot's full-buffer clone.
+Measured on a 300k-line, 53 MB log, typing a character cost 246 ms in
+a release build (367 ms in debug) -- three whole-buffer passes per key.
+Now ~2 ms:
+
+- **Undo keeps one row for one-row edits** (`undo::Change::Row`):
+  typing, Tab, Backspace/Delete within a row, a one-line paste. Enter,
+  multi-line paste and deleting a selection still copy the buffer.
+- **`edtui`'s own history is off** (`standard_key_handler(false)`): it
+  copied the buffer before every typed character, unused, unbounded.
+- **`is_dirty` is tracked per edit** (`changes::Differing`) against one
+  hash per saved row (`changes::SavedRows`), hashed lazily before the
+  first edit -- no second copy of the buffer in memory.
+- **The long-line check is cached** (`Editor::has_long_line`), not a
+  scan per frame.
+
+A debug build also optimizes the editor's heavy crates (`edtui`,
+`ratatui`, `syntect`, `similar`, ...; `[profile.dev.package]` in the
+root `Cargo.toml`): a frame went from ~40 ms to ~4 ms. litastum's own
+code stays unoptimized there, so the first edit after opening such a
+file pauses ~0.9 s to hash its rows (~0.1 s in release).
+
+Still O(buffer): opening (~0.3 s release), `Editor::text()` (Compare and
+the conflict resolver call it every frame), and the first character
+typed into the `Ctrl+F` box (~150 ms release on that log).
 
 ## The general lesson
 

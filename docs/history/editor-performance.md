@@ -154,3 +154,33 @@ Three separate causes:
 Found along the way, not fixed: an edit in the editor's own text costs
 ~29ms on the same file, almost all of it the undo snapshot's
 full-buffer clone.
+
+## Typing on a 300k-line file: three whole-buffer passes per key
+
+Asked to look for what's slow on files of hundreds of thousands of
+lines. Measured first, on the project's own 50k-line log and the same
+log six times over (300k lines, 53 MB). Typing a character: 246 ms in a
+release build, 367 ms in debug. It was:
+
+1. our undo snapshot, a full clone (~170 ms release);
+2. `edtui`'s own history, which `capture_on_insert` made copy the buffer
+   before every typed character -- unused by the `Standard` keymap,
+   which owns undo, and never trimmed (~140 ms; found only after 1 was
+   fixed and the time barely moved);
+3. `is_dirty`'s full comparison with the saved copy (~37 ms).
+
+Fixed by one-row undo entries, turning `edtui`'s capture off, and
+tracking where the buffer differs per edit against per-row hashes
+(`changes.rs`). Typing now costs ~2 ms. The saved copy is gone too:
+~200 MB less for that file; the hashes are taken just before the first
+edit, which pauses once (~0.1 s release, ~0.9 s debug -- the standard
+library's hasher, called per character, was 3x slower there).
+
+Also: the long-line check scanned the buffer every frame (cached now);
+the first `Ctrl+F` character copied every match a second time and
+compared characters the general way (380 ms -> 150 ms release, an ASCII
+fast path that still finds a Kelvin sign for `k`); `text()` formatted
+the buffer a character at a time (`lines_to_string`). In debug builds
+`edtui`, `ratatui`, `syntect` and friends are now optimized: a frame
+went from ~40 ms to ~4 ms.
+

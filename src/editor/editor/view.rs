@@ -9,7 +9,7 @@ use crate::theming::Theme;
 
 use super::super::bracket_match::{bracket_match_highlights, cursor_is_on_a_matched_bracket, matched_bracket_row_span};
 use super::super::syntax::resolve_syntax_highlighter;
-use super::super::word_highlight::{has_pathologically_long_line, word_occurrence_highlights};
+use super::super::word_highlight::word_occurrence_highlights;
 use super::Editor;
 
 impl Editor {
@@ -23,7 +23,7 @@ impl Editor {
         // for `bracket_match_highlights` -- both would otherwise pay an
         // O(remaining line length) cost against the same pathological
         // line (`has_pathologically_long_line`'s own doc comment).
-        let pathologically_long_line = has_pathologically_long_line(&self.state.lines);
+        let pathologically_long_line = self.has_long_line;
 
         // `syntect` tokenizes whole lines on every redraw, visible or not.
         let syntax_highlighter = if pathologically_long_line || !self.syntax_highlighting_enabled {

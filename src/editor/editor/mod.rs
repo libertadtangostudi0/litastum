@@ -12,6 +12,7 @@ use super::bindings::standard_key_handler;
 use super::clipboard::OsClipboardBridge;
 use super::keymap_mode::EditorKeymapMode;
 
+mod changes;
 mod fast_paste;
 mod input;
 mod mouse;
@@ -27,19 +28,23 @@ use word_select_touch::WordSelectTouch;
 
 /// A single open-file editing session, backed by `edtui`. Owns the path
 /// it was loaded from (for `save`) and the content as of the last
-/// load/save (`saved_snapshot`, for `is_dirty`).
+/// load/save (`saved`, for `is_dirty`).
 pub struct Editor {
     path: PathBuf,
     state: EditorState,
     event_handler: EditorEventHandler,
-    saved_snapshot: Lines,
-    /// Cached `state.lines != saved_snapshot`. Recomputed only after keys
-    /// that can mutate the buffer (`can_mutate_buffer`) and in
-    /// `buffer_changed` -- proving two buffers equal walks every
+    /// `None` until the first edit since load or save (`remember_saved_rows`).
+    saved: Option<changes::SavedRows>,
+    /// Where `state.lines` differs from `saved` (`changes.rs`),
+    /// kept up to date per edit -- proving two buffers equal walks every
     /// character, and `is_dirty` runs every frame, which made arrow keys
     /// lag on a file with one enormous line. History:
     /// docs/history/editor-performance.md.
-    dirty: bool,
+    differing: changes::Differing,
+    /// Whether some row is too long to highlight
+    /// (`has_pathologically_long_line`), kept per edit rather than
+    /// scanned every frame.
+    has_long_line: bool,
     /// Overrides `SYNTAX_THEME` when a custom `editor_theme` is
     /// configured (`.claude/rules/litastum-theming.md`).
     custom_syntax_theme: Option<SynTheme>,
@@ -86,6 +91,10 @@ pub struct Editor {
     undo_stack: Vec<Snapshot>,
     /// Redo stack, the mirror of `undo_stack`; cleared by a new edit.
     redo_stack: Vec<Snapshot>,
+    /// The row the key being handled edits, when it edits only that one
+    /// (`input::edits_only_the_cursor_row`): set before `edtui`'s
+    /// dispatch, taken after it.
+    row_edit: Option<usize>,
     /// The whole screen area this editor was last drawn into
     /// (`view()`'s own `area`) -- lets a mouse event be routed to the
     /// editor only when it actually lands on it (`contains_screen_position`),
@@ -102,7 +111,7 @@ pub struct Editor {
 /// correction passes on top of it.
 fn event_handler_for(mode: EditorKeymapMode) -> EditorEventHandler {
     match mode {
-        EditorKeymapMode::Standard => EditorEventHandler::new(standard_key_handler()),
+        EditorKeymapMode::Standard => EditorEventHandler::new(standard_key_handler(false)),
         EditorKeymapMode::Vim => EditorEventHandler::vim_mode(),
     }
 }
@@ -128,7 +137,8 @@ impl Editor {
         let lines = Lines::from(contents.as_str());
         let first_line = contents.lines().next().unwrap_or("").to_string();
 
-        let mut state = EditorState::new(lines.clone());
+        let has_long_line = super::word_highlight::has_pathologically_long_line(&lines);
+        let mut state = EditorState::new(lines);
         state.mode = starting_mode(keymap_mode);
         state.set_clipboard(OsClipboardBridge);
 
@@ -136,8 +146,9 @@ impl Editor {
             path,
             state,
             event_handler: event_handler_for(keymap_mode),
-            saved_snapshot: lines,
-            dirty: false,
+            saved: None,
+            differing: changes::Differing::Nowhere,
+            has_long_line,
             custom_syntax_theme,
             first_line,
             word_select_touch: WordSelectTouch::Untouched,
@@ -150,6 +161,7 @@ impl Editor {
             syntax_highlighting_enabled: true,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            row_edit: None,
             view_area: ratatui::layout::Rect::default(),
         })
     }
@@ -264,7 +276,7 @@ impl Editor {
     /// The buffer's current content -- Compare recomputes its live diff
     /// from this.
     pub fn text(&self) -> String {
-        self.state.lines.to_string()
+        changes::lines_to_string(&self.state.lines)
     }
 
     /// See the `extra_highlights` field.
@@ -302,12 +314,12 @@ impl Editor {
 
     /// Writes the current buffer back to the file it was opened from.
     pub fn save(&mut self) -> io::Result<()> {
-        let contents = String::from(self.state.lines.clone());
+        let contents = changes::lines_to_string(&self.state.lines);
         debug!(path = %self.path.display(), bytes = contents.len(), "editor save: writing");
         match fs::write(&self.path, &contents) {
             Ok(()) => {
-                self.saved_snapshot = self.state.lines.clone();
-                self.dirty = false;
+                self.saved = None;
+                self.differing = changes::Differing::Nowhere;
                 debug!(path = %self.path.display(), "editor save: ok");
                 Ok(())
             }
@@ -319,22 +331,10 @@ impl Editor {
     }
 
 
-    /// Everything that has to follow a change to the buffer's contents:
-    /// the cached `dirty` flag (see its own doc comment) and, if the
-    /// `Ctrl+F` box is open, its matches -- the box can stay open while
-    /// the text is edited (`is_searching`'s own doc comment). One place
-    /// for every mutation path (typing, paste, undo/redo) so neither can
-    /// be forgotten on one of them.
-    fn buffer_changed(&mut self) {
-        self.dirty = self.state.lines != self.saved_snapshot;
-        self.refresh_search_matches();
-    }
-
-
     /// Whether the buffer differs from the last loaded/saved content --
-    /// an O(1) read of the cached `dirty`.
+    /// an O(1) read of `differing`.
     pub fn is_dirty(&self) -> bool {
-        self.dirty
+        self.differing != changes::Differing::Nowhere
     }
 }
 

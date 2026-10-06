@@ -34,3 +34,4 @@ mod line_selection;
 mod rendering;
 mod selection;
 mod undo_and_paste;
+mod row_edits;

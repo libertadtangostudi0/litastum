@@ -22,6 +22,13 @@ Nothing outside `edtui` can record a checkpoint on its undo stack.
   (`should_capture_undo_snapshot` = `can_mutate_buffer` minus `Ctrl+C`),
   and by `paste_text` itself. Enter, typing and paste each push exactly
   one boundary, so a paste undoes as one block even after later edits.
+- A snapshot holds just the cursor's row when the edit can only change
+  that row (`input::edits_only_the_cursor_row`, a one-line paste),
+  otherwise the whole buffer (`undo::Change`). A row entry is exact
+  because entries come back newest first.
+- `Ctrl+Z`/`Ctrl+Y` never reach `edtui`'s `Undo`/`Redo`, even with
+  nothing to undo: its history is off for this keymap
+  (`standard_key_handler(false)`) and holds only stray checkpoints.
 - Navigation leaves the stack alone; a new edit clears `redo_stack`.
 - **No before/after buffer diff to skip no-op snapshots** -- that would
   be O(buffer) per keystroke. False positives get a cheap explicit
@@ -33,11 +40,12 @@ Nothing outside `edtui` can record a checkpoint on its undo stack.
 
 ## Memory: `Limits::max_paste_undo_stack`
 
-Each `Snapshot` is a full buffer clone (the same shape `edtui`'s own
-stack uses). At this project's scale ([[litastum-performance]]) the
-stack is capped -- default 20, overridable in `config.json`
-([[litastum-config]]) -- oldest dropped first. The name predates the
-stack covering every edit, not just pastes.
+A whole-buffer entry is a full clone; at this project's scale
+([[litastum-performance]]) at most `max_paste_undo_stack` of them are
+kept -- default 20, overridable in `config.json` ([[litastum-config]])
+-- oldest dropped first. One-row entries are small; the stack keeps up
+to 1000 entries in all (`undo::MAX_UNDO_ENTRIES`). The setting's name
+predates the stack covering every edit, not just pastes.
 
 ## Regression coverage
 

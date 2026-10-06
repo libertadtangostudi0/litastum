@@ -22,7 +22,7 @@ pub(super) use word_select::extend_word_selection;
 /// Vim and Emacs presets but takes any binding table. The editor stays in
 /// `Insert`; `Visual` only lasts for a `Shift`+arrow selection and always
 /// returns to `Insert`, never `Normal`.
-pub(super) fn standard_key_handler() -> KeyEventHandler {
+pub(super) fn standard_key_handler(capture_on_insert: bool) -> KeyEventHandler {
     /// Exits an active selection back to plain typing. Goes through
     /// `Normal` on the way, since `SwitchMode(Insert)` alone doesn't
     /// clear `state.selection` (only `SwitchMode(Normal)` does) and
@@ -118,12 +118,12 @@ pub(super) fn standard_key_handler() -> KeyEventHandler {
         (v(KeyInput::ctrl('v')), PasteBefore.into()),
     ]);
 
-    // `capture_on_insert: true` -- a checkpoint before every typed character.
-    // With `false`, `edtui` only checkpoints on `SwitchMode(Insert)`, which
-    // this keymap almost never goes through, so `Ctrl+Z` did nothing (found
-    // by a failing test). Grouping by typing burst would need the
-    // crate-private `EditorState::capture`.
-    KeyEventHandler::new(register, true)
+    // `capture_on_insert`: `edtui` copying the whole buffer into its own
+    // history before every typed character. `Editor` passes `false` -- it
+    // keeps its own history (`editor/undo.rs`), and that copy cost ~140 ms
+    // per keystroke on a 300k-line file and grew without limit. The raw
+    // table's tests pass `true` to exercise `edtui`'s `Undo` entries.
+    KeyEventHandler::new(register, capture_on_insert)
 }
 
 

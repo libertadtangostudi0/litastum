@@ -27,7 +27,10 @@ pub(super) struct SearchSession {
     candidates: Vec<Vec<Index2>>,
     /// The greedy, non-overlapping subset of `candidates.last()` -- what
     /// `Enter`/`Shift+Enter` step through and what gets highlighted.
-    matches: Vec<Index2>,
+    /// Empty for a one-character pattern, whose matches are its
+    /// candidates as they are (`matches`): no copy of what can be millions
+    /// of positions in a large file.
+    overlap_free: Vec<Index2>,
     selected: Option<usize>,
     /// Where the cursor was when the box opened -- where typing
     /// searches forward from, and where `Esc` returns to when nothing
@@ -93,8 +96,8 @@ impl SearchSession {
     /// the very first match if there's none after it) and returns it --
     /// `edtui`'s own `SearchState::first`.
     pub(super) fn select_first_from_start(&mut self) -> Option<Index2> {
-        let after_start = self.matches.iter().position(|&start| start >= self.start_cursor);
-        self.selected = after_start.or_else(|| (!self.matches.is_empty()).then_some(0));
+        let after_start = self.matches().iter().position(|&start| start >= self.start_cursor);
+        self.selected = after_start.or_else(|| (!self.matches().is_empty()).then_some(0));
         self.selected_match()
     }
 
@@ -103,20 +106,20 @@ impl SearchSession {
     /// in the box the caret is on the selected match, so this steps to the
     /// next one.
     pub(super) fn select_next_after(&mut self, caret: Index2) -> Option<Index2> {
-        if self.matches.is_empty() {
+        if self.matches().is_empty() {
             return None;
         }
-        self.selected = Some(self.matches.iter().position(|&start| start > caret).unwrap_or(0));
+        self.selected = Some(self.matches().iter().position(|&start| start > caret).unwrap_or(0));
         self.selected_match()
     }
 
     /// `Shift+Enter`/`Shift+F3`: the mirror of `select_next_after` -- the
     /// last match starting before `caret`, wrapping to the very last one.
     pub(super) fn select_previous_before(&mut self, caret: Index2) -> Option<Index2> {
-        if self.matches.is_empty() {
+        if self.matches().is_empty() {
             return None;
         }
-        self.selected = Some(self.matches.iter().rposition(|&start| start < caret).unwrap_or(self.matches.len() - 1));
+        self.selected = Some(self.matches().iter().rposition(|&start| start < caret).unwrap_or(self.matches().len() - 1));
         self.selected_match()
     }
 
@@ -139,27 +142,39 @@ impl SearchSession {
         for c in pattern {
             self.push(lines, c);
         }
-        self.selected = previous.and_then(|previous| self.matches.iter().position(|&start| start >= previous));
+        self.selected = previous.and_then(|previous| self.matches().iter().position(|&start| start >= previous));
+    }
+
+    /// Every match, in buffer order.
+    pub(super) fn matches(&self) -> &[Index2] {
+        match (self.pattern.len(), self.candidates.last()) {
+            (1, Some(candidates)) => candidates,
+            _ => &self.overlap_free,
+        }
     }
 
     /// The currently selected match's own start, if any.
     pub(super) fn selected_match(&self) -> Option<Index2> {
-        self.selected.and_then(|index| self.matches.get(index).copied())
+        self.selected.and_then(|index| self.matches().get(index).copied())
     }
 
     fn recompute_matches(&mut self) {
-        self.matches.clear();
+        self.overlap_free.clear();
         self.selected = None;
         let Some(candidates) = self.candidates.last() else {
             return;
         };
         let len = self.pattern.len();
+        if len == 1 {
+            // One character can't overlap itself: every candidate counts.
+            return;
+        }
         let mut next_allowed: Option<Index2> = None;
         for &start in candidates {
             if next_allowed.is_some_and(|allowed| allowed.row == start.row && start.col < allowed.col) {
                 continue;
             }
-            self.matches.push(start);
+            self.overlap_free.push(start);
             next_allowed = Some(Index2::new(start.row, start.col + len));
         }
     }
@@ -171,12 +186,18 @@ impl SearchSession {
 /// first character.
 fn all_positions_of(lines: &Lines, c: char) -> Vec<Index2> {
     let mut positions = Vec::new();
+    // An ASCII letter matches its two cases and nothing else ASCII: two
+    // plain comparisons per character instead of the general one, which
+    // took ~380 ms over a 300k-line log for the first typed character.
+    // Non-ASCII text still takes the general path (a Kelvin sign is a k).
+    let (lower, upper) = (c.to_ascii_lowercase(), c.to_ascii_uppercase());
     for row_index in 0..lines.len() {
         let Some(row) = lines.get(RowIndex::new(row_index)) else {
             continue;
         };
         for (col, &found) in row.iter().enumerate() {
-            if chars_eq_ignore_case(found, c) {
+            let matched = if c.is_ascii() && found.is_ascii() { found == lower || found == upper } else { chars_eq_ignore_case(found, c) };
+            if matched {
                 positions.push(Index2::new(row_index, col));
             }
         }
@@ -221,19 +242,27 @@ mod tests {
     #[test]
     fn matches_the_same_positions_edtui_did() {
         let (_, session) = session_for("aaBcaabc\n\naabc.", "abc");
-        assert_eq!(session.matches, vec![Index2::new(0, 1), Index2::new(0, 5), Index2::new(2, 1)]);
+        assert_eq!(session.matches(), vec![Index2::new(0, 1), Index2::new(0, 5), Index2::new(2, 1)]);
     }
 
     #[test]
     fn is_case_insensitive_including_non_ascii() {
         let (_, session) = session_for("Привет мир\nПРИВЕТ", "привет");
-        assert_eq!(session.matches, vec![Index2::new(0, 0), Index2::new(1, 0)]);
+        assert_eq!(session.matches(), vec![Index2::new(0, 0), Index2::new(1, 0)]);
+    }
+
+    /// The ASCII fast path for the first character must not lose a
+    /// non-ASCII character that lowercases to it (the Kelvin sign is k).
+    #[test]
+    fn the_first_character_still_finds_its_non_ascii_twins() {
+        let (_, session) = session_for("\u{212A}elvin Kk", "k");
+        assert_eq!(session.matches(), vec![Index2::new(0, 0), Index2::new(0, 7), Index2::new(0, 8)]);
     }
 
     #[test]
     fn matches_never_overlap() {
         let (_, session) = session_for("aaaa", "aa");
-        assert_eq!(session.matches, vec![Index2::new(0, 0), Index2::new(0, 2)], "not 0, 1, 2");
+        assert_eq!(session.matches(), vec![Index2::new(0, 0), Index2::new(0, 2)], "not 0, 1, 2");
     }
 
     /// Why candidates keep overlapping positions even though matches
@@ -243,27 +272,27 @@ mod tests {
     #[test]
     fn growing_the_pattern_still_finds_a_match_that_overlapped_a_shorter_one() {
         let (_, session) = session_for("aaab", "aab");
-        assert_eq!(session.matches, vec![Index2::new(0, 1)]);
+        assert_eq!(session.matches(), vec![Index2::new(0, 1)]);
     }
 
     #[test]
     fn a_match_never_spans_a_line_break() {
         let (_, session) = session_for("ab\ncd", "bc");
-        assert!(session.matches.is_empty());
+        assert!(session.matches().is_empty());
     }
 
     #[test]
     fn shortening_the_pattern_restores_the_shorter_patterns_own_matches() {
         let (lines, mut session) = session_for("cat car cab", "cat");
-        assert_eq!(session.matches, vec![Index2::new(0, 0)]);
+        assert_eq!(session.matches(), vec![Index2::new(0, 0)]);
 
         session.set_pattern(&lines, "ca");
 
         assert_eq!(session.pattern(), "ca");
-        assert_eq!(session.matches, vec![Index2::new(0, 0), Index2::new(0, 4), Index2::new(0, 8)]);
+        assert_eq!(session.matches(), vec![Index2::new(0, 0), Index2::new(0, 4), Index2::new(0, 8)]);
 
         session.push(&lines, 'b');
-        assert_eq!(session.matches, vec![Index2::new(0, 8)], "pushing again after shortening filters from the restored level");
+        assert_eq!(session.matches(), vec![Index2::new(0, 8)], "pushing again after shortening filters from the restored level");
     }
 
     /// An edit in the middle of the query (typing over a selection,
@@ -277,14 +306,14 @@ mod tests {
 
         let (_, fresh) = session_for("cart cat cab cot", "cot");
         assert_eq!(session.pattern(), "cot");
-        assert_eq!(session.matches, fresh.matches);
+        assert_eq!(session.matches(), fresh.matches());
     }
 
     #[test]
     fn set_pattern_to_empty_clears_everything() {
         let (lines, mut session) = session_for("abc", "ab");
         session.set_pattern(&lines, "");
-        assert!(session.matches.is_empty());
+        assert!(session.matches().is_empty());
         assert_eq!(session.pattern_len(), 0);
     }
 
@@ -331,7 +360,7 @@ mod tests {
         let edited = Lines::from("xx cat cat");
         session.rebuild(&edited);
 
-        assert_eq!(session.matches, vec![Index2::new(0, 3), Index2::new(0, 7)]);
+        assert_eq!(session.matches(), vec![Index2::new(0, 3), Index2::new(0, 7)]);
         assert_eq!(session.selected_match(), Some(Index2::new(0, 7)), "the first match at or after where the selected one was");
     }
 }

@@ -75,10 +75,10 @@ tests, not by inspection):
   `edtui`'s `DeleteSelection` removes a fully selected row, break and
   all.
 - **The `Standard` keymap owns undo/redo**, not `edtui` -- see
-  [[litastum-editor-undo]]. `KeyEventHandler::new(register, true)`
-  (`capture_on_insert`) still matters for the raw table and for Vim:
-  with `false`, `edtui` only checkpoints on `SwitchMode(Insert)`, which
-  this keymap almost never goes through, so Ctrl+Z was a silent no-op.
+  [[litastum-editor-undo]]. `Editor` builds the table with
+  `capture_on_insert` off (`standard_key_handler(false)`): `edtui`'s
+  history copied the whole buffer before every typed character, unused.
+  The raw-table tests pass `true` to exercise `edtui`'s own `Undo`.
 - **`Ctrl+V` is `Editor::fast_paste_from_clipboard`/`paste_text`**,
   intercepted in `Editor::input` ahead of `edtui` (speed and undo --
   see [[litastum-performance]]). The table's own `PasteBefore` entry

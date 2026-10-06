@@ -38,7 +38,7 @@ ever changeable by editing source and rebuilding:
 | `panel_min_column_width`       | `ui/panel.rs::MIN_COLUMN_WIDTH`         | 24          |
 | `markdown_preview_page_size`   | `markdown_preview.rs::PAGE_SIZE`        | 15          |
 | `max_log_bytes`                | `logging.rs::MAX_LOG_BYTES`             | 30 MiB      |
-| `max_paste_undo_stack`         | (new -- editor undo stack cap, `editor/editor/undo.rs`) | 20 |
+| `max_paste_undo_stack`         | (new -- whole-buffer undo entries kept, `editor/editor/undo.rs`) | 20 |
 
 Each is an independent `Option<T>` field on the same `Config` struct
 `interface_theme`/`popup_style`/... already use — an unset field keeps

@@ -41,6 +41,27 @@ fn should_capture_undo_snapshot(mode_before: EditorMode, code: KeyCode, modifier
 }
 
 
+/// Whether `key` can only change the cursor's own row: typing, Tab, and
+/// Backspace/Delete that don't join two rows, with nothing selected and
+/// no `Ctrl`/`Alt` (word-wise deletes, chords). Such an edit gets a
+/// one-row undo snapshot and change tracking (`undo::Change::Row`).
+fn edits_only_the_cursor_row(state: &edtui::EditorState, key: KeyEvent) -> bool {
+    if state.mode != EditorMode::Insert || state.selection.is_some() || key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+        return false;
+    }
+    let Some(row_len) = state.lines.len_col(state.cursor.row) else {
+        // No row there (an empty buffer): typing would create one.
+        return false;
+    };
+    match key.code {
+        KeyCode::Char(_) | KeyCode::Tab => true,
+        KeyCode::Backspace => state.cursor.col > 0,
+        KeyCode::Delete => state.cursor.col < row_len,
+        _ => false,
+    }
+}
+
+
 impl Editor {
     /// Feeds one key event to the editor. For the `Standard` keymap,
     /// correction passes run after `edtui`'s own dispatch
@@ -56,6 +77,9 @@ impl Editor {
         let cursor_before = self.state.cursor;
         let mode_before = self.state.mode;
 
+        if can_mutate_buffer(self.keymap_mode, mode_before, key.code) {
+            self.remember_saved_rows();
+        }
         if self.keymap_mode == EditorKeymapMode::Standard && self.handle_standard_key_ahead_of_dispatch(key, mode_before) {
             return;
         }
@@ -68,7 +92,9 @@ impl Editor {
             correct_after_dispatch(&mut self.state, key, cursor_before, mode_before, &mut self.vertical_shift_anchor);
         }
 
-        if can_mutate_buffer(self.keymap_mode, mode_before, key.code) {
+        if let Some(row) = self.row_edit.take() {
+            self.row_changed(row);
+        } else if can_mutate_buffer(self.keymap_mode, mode_before, key.code) {
             self.buffer_changed();
         }
     }
@@ -87,16 +113,23 @@ impl Editor {
             self.fast_paste_from_clipboard();
             return true;
         }
+        // Always ours, even with nothing to undo: `edtui`'s own history
+        // holds only stray checkpoints here (`standard_key_handler`).
         if ctrl && key.code == KeyCode::Char('z') {
-            if self.undo() {
-                return true;
+            self.undo();
+            return true;
+        }
+        if ctrl && key.code == KeyCode::Char('y') {
+            self.redo();
+            return true;
+        }
+        if should_capture_undo_snapshot(mode_before, key.code, key.modifiers) {
+            if edits_only_the_cursor_row(&self.state, key) {
+                self.push_row_undo_snapshot(self.state.cursor.row);
+                self.row_edit = Some(self.state.cursor.row);
+            } else {
+                self.push_undo_snapshot();
             }
-        } else if ctrl && key.code == KeyCode::Char('y') {
-            if self.redo() {
-                return true;
-            }
-        } else if should_capture_undo_snapshot(mode_before, key.code, key.modifiers) {
-            self.push_undo_snapshot();
         }
 
         // Typing over a selection replaces it. A plain `Char` has no

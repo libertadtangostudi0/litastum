@@ -59,3 +59,40 @@ opt-level = 3
 
 [profile.dev.package.softbuffer]
 opt-level = 3
+
+# The same for the console app's editor: on a 300k-line file a frame
+# took ~40 ms in a debug build, nearly all of it in these crates (edtui's
+# rendering, syntect, the diff for Compare). litastum's own code stays
+# unoptimized, so stepping through it in a debugger is unchanged.
+[profile.dev.package.edtui]
+opt-level = 3
+
+[profile.dev.package."edtui-jagged"]
+opt-level = 3
+
+[profile.dev.package."ratatui-core"]
+opt-level = 3
+
+[profile.dev.package."ratatui-widgets"]
+opt-level = 3
+
+[profile.dev.package.syntect]
+opt-level = 3
+
+[profile.dev.package.onig]
+opt-level = 3
+
+[profile.dev.package."onig_sys"]
+opt-level = 3
+
+[profile.dev.package."fancy-regex"]
+opt-level = 3
+
+[profile.dev.package."regex-automata"]
+opt-level = 3
+
+[profile.dev.package.similar]
+opt-level = 3
+
+[profile.dev.package."unicode-width"]
+opt-level = 3

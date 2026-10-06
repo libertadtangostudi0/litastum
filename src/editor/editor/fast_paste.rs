@@ -35,7 +35,16 @@ impl Editor {
             return;
         }
 
-        self.push_undo_snapshot();
+        self.remember_saved_rows();
+        // A paste of one line with nothing selected (a word, a path)
+        // changes only the cursor's row: a one-row snapshot, like typing.
+        let row = self.state.cursor.row;
+        let single_row = self.state.mode != EditorMode::Visual && !text.contains('\n') && self.state.lines.len_col(row).is_some();
+        if single_row {
+            self.push_row_undo_snapshot(row);
+        } else {
+            self.push_undo_snapshot();
+        }
         // A paste over a selection replaces it, like typing over one
         // (`Editor::input`); it used to clear the selection and paste at
         // the cursor, leaving the selected block in place. One snapshot
@@ -47,7 +56,11 @@ impl Editor {
         }
         self.state.cursor = splice_paste(&mut self.state.lines, self.state.cursor, text);
 
-        self.buffer_changed();
+        if single_row {
+            self.row_changed(row);
+        } else {
+            self.buffer_changed();
+        }
     }
 }
 

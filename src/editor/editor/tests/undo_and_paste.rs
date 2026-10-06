@@ -33,10 +33,10 @@ fn ctrl_z_restores_the_fast_paste_snapshot_in_one_press() {
 
     // Simulate what fast_paste_from_clipboard itself would have just
     // done: save the snapshot, then mutate the live buffer.
-    editor.undo_stack.push(Snapshot { lines: pre_paste_lines.clone(), cursor: pre_paste_cursor });
+    editor.undo_stack.push(Snapshot::buffer(pre_paste_lines.clone(), pre_paste_cursor));
     editor.state.lines = Lines::from("hello pasted stuff\n");
     editor.state.cursor = Index2::new(0, 18);
-    editor.dirty = true;
+    editor.buffer_changed();
 
     editor.input(ctrl_key('z'));
 
@@ -89,11 +89,28 @@ fn paste_undo_stack_is_capped_dropping_the_oldest_entry() {
     let (mut editor, _path) = open_test_editor("");
     let cap = crate::theming::config::limits().max_paste_undo_stack;
 
+    // Multi-line pastes: whole-buffer entries, the ones the cap is for.
     for i in 0..cap + 3 {
-        editor.paste_text(&format!("{i} "));
+        editor.paste_text(&format!("{i}
+next"));
     }
 
     assert_eq!(editor.undo_stack.len(), cap, "the stack must never grow past the configured cap");
+}
+
+
+/// One-row entries (typing) are cheap and kept far longer than the
+/// whole-buffer ones, but not without end either.
+#[test]
+fn typing_keeps_up_to_a_thousand_undo_steps() {
+    let (mut editor, _path) = open_test_editor("x
+");
+
+    for _ in 0..1005 {
+        editor.input(key(KeyCode::Char('a')));
+    }
+
+    assert_eq!(editor.undo_stack.len(), 1000);
 }
 
 
@@ -164,7 +181,7 @@ fn a_new_edit_after_undo_clears_redo_history() {
 #[test]
 fn navigation_leaves_a_pending_snapshot_untouched_but_a_real_edit_pushes_its_own() {
     let (mut editor, _path) = open_test_editor("hello\n");
-    editor.undo_stack.push(Snapshot { lines: editor.state.lines.clone(), cursor: editor.state.cursor });
+    editor.undo_stack.push(Snapshot::buffer(editor.state.lines.clone(), editor.state.cursor));
 
     editor.input(key(KeyCode::Right));
     assert_eq!(editor.undo_stack.len(), 1, "pure navigation must not touch the undo stack at all");

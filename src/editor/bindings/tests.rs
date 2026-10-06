@@ -13,7 +13,7 @@ fn test_state(contents: &str) -> (EditorState, EditorEventHandler) {
     let mut state = EditorState::new(Lines::from(contents));
     state.mode = EditorMode::Insert;
     state.set_clipboard(InternalClipboard::default());
-    (state, EditorEventHandler::new(standard_key_handler()))
+    (state, EditorEventHandler::new(standard_key_handler(true)))
 }
 
 /// One key through the real table plus the correction passes
