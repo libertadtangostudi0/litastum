@@ -5,7 +5,7 @@ use crossterm::{
     cursor::SetCursorStyle,
     event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle},
 };
 use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::debug;
@@ -32,7 +32,10 @@ pub(crate) fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     // Windows backend never produces `Event::Paste` -- Windows goes
     // through `windows_terminal::paste_hotkey` instead. History:
     // docs/history/editor-performance.md.
-    execute!(stdout, EnterAlternateScreen, SetCursorStyle::BlinkingBar, EnableBracketedPaste)?;
+    //
+    // `SetTitle`: the window or tab reads "litastum" rather than the path
+    // of the exe (docs/history/launching.md).
+    execute!(stdout, EnterAlternateScreen, SetCursorStyle::BlinkingBar, EnableBracketedPaste, SetTitle("litastum"))?;
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
 }
 

@@ -54,7 +54,7 @@ tests, not by inspection):
   (`Right`: the cell under the cursor; `Left`: the cell it moves onto),
   so N presses select N characters. `Up`/`Down` keep the chained move,
   plus a one-time trim of the aligned landing column and a column
-  restore (`Editor::vertical_shift_anchor_col`) on a round trip. Five
+  restore (`Editor::vertical_shift_anchor`) on a round trip. Five
   real reports shaped this, including one that generalized a
   `Left`/`Right` fix to all four directions and broke `Down` -- they are
   different kinds of motion. Full record: `docs/history/shift-select.md`.
@@ -72,8 +72,8 @@ tests, not by inspection):
   see [[litastum-performance]]). The table's own `PasteBefore` entry
   (vim's `P`, inserts *at* the cursor; `Paste`/vim's `p` inserts
   *after* it) is only reached by the raw-table tests. Over a selection,
-  `paste_text` replaces it: `DeleteSelection` first, under the same undo
-  snapshot (`edtui`'s `PasteOverSelection` isn't exported).
+  `paste_text` replaces it: `Editor::delete_selection` first, under the
+  same undo snapshot (`edtui`'s `PasteOverSelection` isn't exported).
 - **`Ctrl+Shift+Left`/`Right` (word-wise selection) is hand-rolled**
   (`editor/bindings/word_select.rs`), intercepted in `editor_keymap`
   ahead of `Editor::input` -- no sequence of `edtui`'s declarative
