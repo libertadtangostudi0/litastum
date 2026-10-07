@@ -43,6 +43,7 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Terminal<CrosstermBackend<S
     let mut redraw = true;
     loop {
         if command.take_changed() || redraw {
+            type_ahead.observe(&mut app.command_line, &command.text_before_cursor());
             draw_console(terminal, app, Some(&command.view(usize::from(rows))))?;
             redraw = false;
         }
@@ -60,13 +61,13 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Terminal<CrosstermBackend<S
                 }
                 // A full-screen program's keys are commands, not text.
                 if !command.full_screen() {
-                    type_ahead.key(&mut app.command_line, key, command.output_line());
+                    type_ahead.key(&mut app.command_line, key, command.output_line(), &command.text_before_cursor());
                     redraw = true;
                 }
             }
             Event::Paste(text) => {
                 if !command.full_screen() {
-                    type_ahead.paste(&mut app.command_line, &text, command.output_line());
+                    type_ahead.paste(&mut app.command_line, &text, command.output_line(), &command.text_before_cursor());
                     redraw = true;
                 }
                 command.write(text.into_bytes());

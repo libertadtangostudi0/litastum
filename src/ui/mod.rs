@@ -74,6 +74,16 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
     // current values, so `event_loop`'s apply is a no-op. A placeholder
     // here crammed the panels into one column (docs/history/event-loop.md).
     let unchanged_layout = [(app.panels[0].columns, app.panels[0].visible_rows()), (app.panels[1].columns, app.panels[1].visible_rows())];
+    // `Ctrl+O`: the user screen instead of the panels, popups over it.
+    if matches!(app.mode, Mode::Browsing) && app.panels_hidden {
+        app.user_screen.set_visible_rows(usize::from(console_rows(area.height)));
+        let command_line_owns_cursor = matches!(app.overlay, None | Some(Overlay::CommandHistory(_)));
+        let mut cursor = draw_console(frame, app, None).filter(|_| command_line_owns_cursor);
+        if let Some(overlay_cursor) = draw_overlay(frame, area, app, &theme) {
+            cursor = Some(overlay_cursor);
+        }
+        return (unchanged_layout, cursor);
+    }
     match &mut app.mode {
         Mode::Editing(editor) if !has_linked_preview => {
             let mut cursor = draw_editor(frame, area, editor, &theme);

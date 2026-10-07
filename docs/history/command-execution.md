@@ -135,4 +135,8 @@ fix, Far's own design: the user screen is ours.
   in a pseudoconsole.
 - The `Ctrl+C` handler above stays: harmless, though a program in its
   own pseudoconsole gets `Ctrl+C` there, not on our console.
+- `Ctrl+O` began as a blocking loop of its own (like the old hidden
+  console). Requested next: `F2`, `F9`, `F10`, `Alt+F7` there too --
+  overlays only the main loop draws. It became a browser state
+  (`App::panels_hidden`), drawn by the main loop, popups and all.
 

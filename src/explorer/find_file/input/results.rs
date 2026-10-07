@@ -184,6 +184,8 @@ fn navigate_active_panel_to_result(app: &mut App, path: &Path) -> Result<()> {
     let Some(parent) = path.parent() else {
         return Ok(());
     };
+    // Opened over the user screen (`Ctrl+O`): going to a file shows it.
+    app.panels_hidden = false;
     app.panels[app.active].path = parent.to_path_buf();
     app.panels[app.active].reload()?;
     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {

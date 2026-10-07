@@ -1,6 +1,7 @@
 use ratatui::{
     layout::{Constraint, Layout, Position, Rect},
-    text::Line,
+    style::{Modifier, Style},
+    text::{Line, Span},
     widgets::Paragraph,
     Frame,
 };
@@ -48,12 +49,51 @@ fn draw_screen_lines(frame: &mut Frame, area: Rect, app: &App, live: Option<&Liv
     let scroll = if live.is_some() { 0 } else { app.user_screen.scroll() };
     let end = total.saturating_sub(scroll);
     let start = end.saturating_sub(usize::from(area.height));
-    let lines: Vec<Line> = (start..end).map(|index| if index < kept.len() { kept[index].clone() } else { running[index - kept.len()].clone() }).collect();
+    let selection = app.user_screen.selection();
+    let lines: Vec<Line> = (start..end)
+        .map(|index| match (index < kept.len(), selection) {
+            (true, Some(((first, from), (last, to)))) if (first..=last).contains(&index) => {
+                let from = if index == first { from } else { 0 };
+                let to = if index == last { to + 1 } else { usize::MAX };
+                highlighted(&kept[index], from, to)
+            }
+            (true, _) => kept[index].clone(),
+            (false, _) => running[index - kept.len()].clone(),
+        })
+        .collect();
     frame.render_widget(Paragraph::new(lines), area);
 
     let (row, column) = live?.cursor?;
     let index = kept.len() + row;
     (start..end).contains(&index).then(|| at(index - start, column))
+}
+
+
+/// `line` with its characters `from..to` shown selected (reversed); a
+/// selection past the text reaches the line's end.
+fn highlighted(line: &Line<'static>, from: usize, to: usize) -> Line<'static> {
+    let selected = Style::default().add_modifier(Modifier::REVERSED);
+    let mut spans = Vec::new();
+    let mut column = 0;
+    for span in &line.spans {
+        let mut part = String::new();
+        let mut part_selected = false;
+        for c in span.content.chars() {
+            let is_selected = (from..to).contains(&column);
+            if is_selected != part_selected && !part.is_empty() {
+                let style = if part_selected { span.style.patch(selected) } else { span.style };
+                spans.push(Span::styled(std::mem::take(&mut part), style));
+            }
+            part_selected = is_selected;
+            part.push(c);
+            column += 1;
+        }
+        if !part.is_empty() {
+            let style = if part_selected { span.style.patch(selected) } else { span.style };
+            spans.push(Span::styled(part, style));
+        }
+    }
+    Line::from(spans)
 }
 
 
@@ -114,5 +154,15 @@ mod tests {
 
         assert_eq!(rows[0], "editor");
         assert_eq!(cursor, None, "the program hid its cursor");
+    }
+
+    #[test]
+    fn the_selection_is_drawn_reversed() {
+        let line = Line::from(vec![Span::raw("ab"), Span::styled("cd", Style::default().add_modifier(Modifier::BOLD))]);
+
+        let drawn = highlighted(&line, 1, 3);
+
+        let parts: Vec<(String, bool)> = drawn.spans.iter().map(|span| (span.content.to_string(), span.style.add_modifier.contains(Modifier::REVERSED))).collect();
+        assert_eq!(parts, [("a".into(), false), ("b".into(), true), ("c".into(), true), ("d".into(), false)]);
     }
 }

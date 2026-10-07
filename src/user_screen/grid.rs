@@ -26,6 +26,15 @@ pub(super) fn tail_lines<T>(term: &Term<T>, count: usize) -> (Vec<Line<'static>>
 }
 
 
+/// The cursor line's text up to the cursor.
+pub(super) fn text_before_cursor<T>(term: &Term<T>) -> String {
+    let grid = term.grid();
+    let point = grid.cursor.point;
+    let row = row_line(&grid[point.line], grid.columns()).to_string();
+    row.chars().take(point.column.0).collect()
+}
+
+
 /// The screen itself, every row -- for a program on the alternate screen
 /// (an editor, a pager), which draws the whole of it.
 pub(super) fn screen_lines<T>(term: &Term<T>) -> Vec<Line<'static>> {

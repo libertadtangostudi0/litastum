@@ -10,28 +10,41 @@ use crate::text_field::TextField;
 /// in the output. A line sent with `Enter` is the program's and goes
 /// (a password prompt doesn't echo; it must not come back). Reported: the
 /// next command typed during a run was lost.
+///
+/// A program seen reading -- the typed text echoed right before its
+/// cursor (`observe`) -- gets the keys alone from then on: reported, a
+/// paste into a script's prompt showed twice, there and in our line.
 pub(super) struct TypeAhead {
     /// Where the typed text starts in the command line, in characters.
     start: usize,
     /// The output line the cursor was on when the current text began --
     /// the program's echo of it can't be above that.
     echo_from: Option<usize>,
+    /// The program's line up to its cursor when the current text began:
+    /// an echo has to change it.
+    before_typing: Option<String>,
+    /// The program reads what's typed: nothing is mirrored any more.
+    program_reads: bool,
 }
 
 impl TypeAhead {
     pub fn begin(line: &mut TextField) -> Self {
         line.move_to_end();
-        Self { start: line.text().chars().count(), echo_from: None }
+        Self { start: line.text().chars().count(), echo_from: None, before_typing: None, program_reads: false }
     }
 
     /// Mirrors `key`, already sent to the program, into `line`.
-    /// `output_line`: the program's cursor line now.
-    pub fn key(&mut self, line: &mut TextField, key: KeyEvent, output_line: usize) {
+    /// `output_line`: the program's cursor line now; `before_cursor`: that
+    /// line's text up to the cursor.
+    pub fn key(&mut self, line: &mut TextField, key: KeyEvent, output_line: usize, before_cursor: &str) {
+        if self.program_reads {
+            return;
+        }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
             KeyCode::Char(c) if !ctrl && !alt => {
-                self.echo_from.get_or_insert(output_line);
+                self.typing_starts(output_line, before_cursor);
                 line.insert_char(c);
             }
             KeyCode::Backspace if line.text().chars().count() > self.start => line.backspace(),
@@ -43,7 +56,10 @@ impl TypeAhead {
 
     /// Mirrors pasted text: lines ending in a break were sent; the rest
     /// is being typed.
-    pub fn paste(&mut self, line: &mut TextField, text: &str, output_line: usize) {
+    pub fn paste(&mut self, line: &mut TextField, text: &str, output_line: usize, before_cursor: &str) {
+        if self.program_reads {
+            return;
+        }
         let text = text.replace('\r', "");
         let typed = match text.rsplit_once('\n') {
             Some((_, rest)) => {
@@ -53,8 +69,29 @@ impl TypeAhead {
             None => text.as_str(),
         };
         for c in typed.chars() {
-            self.echo_from.get_or_insert(output_line);
+            self.typing_starts(output_line, before_cursor);
             line.insert_char(c);
+        }
+    }
+
+    /// New output: if the typed text now sits right before the program's
+    /// cursor, where it wasn't when typed, the program echoed it -- it
+    /// reads its input. The text leaves our line, and so will the rest.
+    pub fn observe(&mut self, line: &mut TextField, before_cursor: &str) {
+        let typed: String = line.text().chars().skip(self.start).collect();
+        if self.program_reads || typed.is_empty() || self.before_typing.as_deref() == Some(before_cursor) {
+            return;
+        }
+        if before_cursor.ends_with(&typed) {
+            self.drop_typed(line);
+            self.program_reads = true;
+        }
+    }
+
+    fn typing_starts(&mut self, output_line: usize, before_cursor: &str) {
+        if self.echo_from.is_none() {
+            self.echo_from = Some(output_line);
+            self.before_typing = Some(before_cursor.to_string());
         }
     }
 
@@ -76,6 +113,7 @@ impl TypeAhead {
         let kept: String = line.text().chars().take(self.start).collect();
         line.set_text(kept);
         self.echo_from = None;
+        self.before_typing = None;
     }
 }
 
@@ -87,7 +125,7 @@ mod tests {
 
     fn type_text(type_ahead: &mut TypeAhead, line: &mut TextField, text: &str, output_line: usize) {
         for c in text.chars() {
-            type_ahead.key(line, key(KeyCode::Char(c)), output_line);
+            type_ahead.key(line, key(KeyCode::Char(c)), output_line, "");
         }
     }
 
@@ -97,7 +135,7 @@ mod tests {
         let mut line = TextField::new();
         let mut type_ahead = TypeAhead::begin(&mut line);
         type_text(&mut type_ahead, &mut line, "svn sx", 3);
-        type_ahead.key(&mut line, key(KeyCode::Backspace), 3);
+        type_ahead.key(&mut line, key(KeyCode::Backspace), 3, "");
         type_text(&mut type_ahead, &mut line, "t", 3);
 
         type_ahead.finish(&mut line, &[Line::raw("a.txt"), Line::raw("b.txt"), Line::raw("c.txt"), Line::raw("2 File(s)")]);
@@ -134,7 +172,7 @@ mod tests {
         let mut line = TextField::new();
         let mut type_ahead = TypeAhead::begin(&mut line);
         type_text(&mut type_ahead, &mut line, "secret", 0);
-        type_ahead.key(&mut line, key(KeyCode::Enter), 0);
+        type_ahead.key(&mut line, key(KeyCode::Enter), 0, "");
         type_text(&mut type_ahead, &mut line, "next", 1);
 
         type_ahead.finish(&mut line, &[Line::raw("Password:"), Line::raw("ok")]);
@@ -146,13 +184,41 @@ mod tests {
     fn earlier_text_and_backspace_stay_out_of_the_way() {
         let mut line = TextField::with_text("cd ");
         let mut type_ahead = TypeAhead::begin(&mut line);
-        type_ahead.key(&mut line, key(KeyCode::Backspace), 0);
+        type_ahead.key(&mut line, key(KeyCode::Backspace), 0, "");
         assert_eq!(line.text(), "cd ", "Backspace doesn't reach what was there before");
 
-        type_ahead.paste(&mut line, "first\r\nsrc", 0);
+        type_ahead.paste(&mut line, "first\r\nsrc", 0, "");
         assert_eq!(line.text(), "cd src", "a pasted line ending in a break was sent");
 
-        type_ahead.key(&mut line, KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL), 0);
+        type_ahead.key(&mut line, KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL), 0, "");
         assert_eq!(line.text(), "cd ", "Ctrl+C drops the typed text");
+    }
+
+    /// Reported: a paste into a script's prompt showed twice, at the
+    /// prompt and in our command line.
+    #[test]
+    fn once_the_program_echoes_the_typing_it_gets_the_keys_alone() {
+        let mut line = TextField::new();
+        let mut type_ahead = TypeAhead::begin(&mut line);
+        type_ahead.key(&mut line, key(KeyCode::Char('a')), 0, "Name: ");
+        type_ahead.observe(&mut line, "Name: ");
+        assert_eq!(line.text(), "a", "not echoed yet");
+
+        type_ahead.observe(&mut line, "Name: a");
+        assert_eq!(line.text(), "", "echoed: the program reads");
+        type_ahead.paste(&mut line, "bcd", 0, "Name: a");
+        type_ahead.key(&mut line, key(KeyCode::Char('e')), 0, "Name: abcd");
+        assert_eq!(line.text(), "", "nothing mirrored any more");
+    }
+
+    #[test]
+    fn output_that_merely_ends_like_the_typing_isnt_an_echo() {
+        let mut line = TextField::new();
+        let mut type_ahead = TypeAhead::begin(&mut line);
+        type_ahead.key(&mut line, key(KeyCode::Char('o')), 0, "Compiling foo");
+
+        type_ahead.observe(&mut line, "Compiling foo");
+
+        assert_eq!(line.text(), "o", "the line already ended with it when typed");
     }
 }

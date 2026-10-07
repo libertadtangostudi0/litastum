@@ -155,6 +155,12 @@ impl LiveCommand {
         grid.history_size() + grid.cursor.point.line.0.max(0) as usize
     }
 
+    /// The cursor line's text up to the cursor -- where a program reading
+    /// its input echoes it.
+    pub fn text_before_cursor(&self) -> String {
+        grid::text_before_cursor(&self.term.lock())
+    }
+
     /// What to draw in `rows` rows.
     pub fn view(&self, rows: usize) -> LiveView {
         let term = self.term.lock();

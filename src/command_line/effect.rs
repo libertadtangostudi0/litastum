@@ -5,7 +5,7 @@ use ratatui::{prelude::CrosstermBackend, Terminal};
 
 use crate::app::App;
 
-use super::browsing::{run_shell_command_lines, toggle_panels_hidden};
+use super::browsing::run_shell_command_lines;
 
 
 /// Work a key handler needs done on the real terminal. Handlers return
@@ -18,10 +18,8 @@ pub enum Effect {
     /// Run these lines through the active shell
     /// profile (`run_shell_command_lines`, which also handles `cd` lines).
     RunShell(Vec<String>),
-    /// `cls`/`clear`: repaint from scratch.
+    /// `cls`/`clear`: empty the user screen and repaint from scratch.
     ClearScreen,
-    /// `Ctrl+O`: show the user screen until `Ctrl+O` again.
-    ToggleHiddenPanels,
 }
 
 
@@ -35,6 +33,5 @@ pub(crate) fn apply_effect(app: &mut App, terminal: &mut Terminal<CrosstermBacke
             app.active_panel().reload()?;
             Ok(())
         }
-        Effect::ToggleHiddenPanels => toggle_panels_hidden(app, terminal),
     }
 }

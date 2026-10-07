@@ -18,7 +18,7 @@ modifiers it needs and must not have, a condition (`Always`,
 `EmptyLine`, `TypedLine`, `SuggestionsShowing`) and an action. The
 first matching row wins; a key no row matches types into the command
 line. Order matters and the table is grouped by it:
-1. Modifier chords -- `Ctrl+O` (show/hide panels), `Ctrl+P` (shell
+1. Modifier chords -- `Ctrl+O` (hide the panels), `Ctrl+P` (shell
    picker), `Ctrl+U`, `Shift+F6`, `Shift+Enter` on an empty line,
    `Alt+F1/F2/F5/F7/F8`, `Ctrl+L`/`Ctrl+F2`. They sit above the plain keys they
    would otherwise fall through to (`Alt+F5` above `F5` = Copy).
@@ -30,8 +30,8 @@ line. Order matters and the table is grouped by it:
    (`path_edit/complete.rs`, every path field). `F4` on a file in that
    list (or typed out) selects it in the panel and opens the editor. The click needs mouse
    capture in the browser, which takes the terminal's own text selection
-   (`Shift`+drag still selects in Windows Terminal); a shell command and
-   `Ctrl+O` get the mouse back (`terminal_setup::release_mouse_capture`).
+   (`Shift`+drag still selects in Windows Terminal). With the panels
+   hidden the wheel scrolls the user screen instead.
 2. Selection and word moves in the command line (`Shift`/`Ctrl` +
    arrows); `Shift+Left/Right` select only while something is typed.
    `Ctrl+C`/`Ctrl+Insert` copy and `Ctrl+X`/`Shift+Delete` cut the
@@ -118,7 +118,8 @@ line. Order matters and the table is grouped by it:
   and stays there after the program ends unless it read it -- seen as
   its echo in the output; a line sent with `Enter` never comes back (a
   password prompt doesn't echo), nor do a full-screen program's keys
-  (`browsing/type_ahead.rs`). When it exits, its output joins the user screen and
+  (`browsing/type_ahead.rs`). Once the program echoes what's typed
+  right before its cursor, it reads its input and gets the keys alone. When it exits, its output joins the user screen and
   the panels come back -- `Ctrl+O` shows it again. Replaced suspending
   the TUI with inherited stdio, so our own UI (popups, suggestions) can
   be drawn over the output, as in Far.
@@ -194,26 +195,33 @@ what was actually asked for.
 ## Show/hide panels (`Ctrl+O`)
 
 Real Far Manager's own toggle: the user screen (above) with our own
-command line and suggestions under it (`ui::draw_console`,
-`browsing::toggle_panels_hidden`). Blocking and stateless -- no `App`
-field records "panels are hidden"; the loop doesn't return to the main
-loop's draw until `Ctrl+O` again.
+command line and suggestions under it (`ui::draw_console`). A state of
+the browser, `App::panels_hidden`, not a loop of its own: the main loop
+draws the user screen instead of the panels, and keys go to
+`browsing::hidden_console::console_key` -- so menus and popups open over
+it as over the panels. `F2` (user menu), `F9` (menu), `F10` (quit) and
+`Alt+F7` (Find file, from the active panel's directory) work there, as
+requested; going to a Find file result shows the panels again.
 
 It's a real command line, as in Far: `Enter` runs the line there (its
 output joins the screen live) and stays; `PageUp`/`PageDown` and the
 mouse wheel scroll back; `Esc` clears the line; `Tab` completes a path;
 arrows edit the line, the panels being hidden. The suggestions
 (history, panel names) pop up over the line as over the panels, with
-the same keys (`Up`/`Down`/`Tab`/`F8`/`Esc`). `console_key` holds the
-key handling and is unit-tested; the loop itself reads real events.
+the same keys (`Up`/`Down`/`Tab`/`F4`/`F8`/`Esc`).
+
+Text is selected there with the mouse (`user_screen/selection.rs`): a
+drag selects, scrolling on at the top and bottom rows, the wheel moves
+the selection's end with the text; `Ctrl+C`/`Ctrl+Insert` copy it, `Esc`
+drops it. Our own, since mouse capture takes the terminal's selection
+-- and the alternate screen has no scrollback to select through.
 History: docs/history/command-execution.md.
 
 ## Handlers return `Effect`, `event_loop` owns the terminal
 
 Key handlers never take the `Terminal`. Anything that needs the real
-console -- running shell lines, `cls`, the hidden console -- comes back
-as a `command_line::Effect` (`RunShell`, `ClearScreen`,
-`ToggleHiddenPanels`), and `event_loop::keys::dispatch_key_event`
+console -- running shell lines, `cls` -- comes back as a
+`command_line::Effect` (`RunShell`, `ClearScreen`), and `event_loop::keys::dispatch_key_event`
 performs it (`apply_effect`). `key_effect` is the whole key routing
 without a terminal, so the browser's dispatch order, history recall and
 F2 menu execution are all unit-tested. A new handler that needs the

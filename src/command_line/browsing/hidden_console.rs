@@ -1,102 +1,98 @@
-use std::io::Stdout;
-
 use color_eyre::eyre::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
-use ratatui::{prelude::CrosstermBackend, Terminal};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::App;
 use crate::command_line::effect::Effect;
+use crate::explorer::Command;
+use crate::notice::Notice;
 use crate::text_field::EditOutcome;
-use crate::ui;
 
 use super::bindings::BrowserAction;
-use super::live_command::draw_console;
-use super::shell_exec::{run_shell_command_lines, submit_command_line};
+use super::shell_exec::submit_command_line;
 
 /// Lines the mouse wheel scrolls the user screen per tick.
 const WHEEL_LINES: isize = 3;
 
 
 /// Whether an already-normalized `key` is `Ctrl+O`.
-pub(super) fn is_ctrl_o(key: KeyEvent) -> bool {
+fn is_ctrl_o(key: KeyEvent) -> bool {
     key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
 
-/// `Ctrl+O` -- real Far Manager's own "show/hide panels" toggle: the user
-/// screen (what commands printed, `App::user_screen`) with our own
-/// command line and suggestions under it (`ui::draw_console`).
-/// Blocking: the main loop doesn't redraw until the panels come back.
-///
-/// It's a real command line, as in Far: `Enter` runs the line here, its
-/// output joining the screen live, and stays; `PageUp`/`PageDown` and the
-/// mouse wheel scroll back; only `Ctrl+O` returns. History:
+/// A key while the panels are hidden (`Ctrl+O`, `App::panels_hidden`):
+/// the user screen with our own command line, a real one as in Far.
+/// `Ctrl+O` brings the panels back. The keys that mean something without
+/// them work as over the panels: `F2` the user menu, `F9` the menu, `F10`
+/// quit, `Alt+F7` Find file (from the active panel's directory). While
+/// suggestions show, `Up`/`Down`/`Tab`/`F4`/`F8`/`Esc` work on them;
+/// `Enter` runs the line, its output joining the screen live, and stays;
+/// `PageUp`/`PageDown` scroll; `Esc` clears the line; `Tab` completes a
+/// path; the rest edits the line -- arrows included. History:
 /// docs/history/command-execution.md.
-pub(in crate::command_line) fn toggle_panels_hidden(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    loop {
-        draw_console(terminal, app, None)?;
-        let rows = usize::from(ui::console_rows(terminal.size()?.height));
-        match event::read()? {
-            Event::Key(key) if key.kind != KeyEventKind::Release => {
-                let key = crate::keyboard_layout::normalize_ctrl_shortcut(key);
-                if is_ctrl_o(key) {
-                    break;
-                }
-                if let Some(lines) = console_key(app, key, rows)? {
-                    run_shell_command_lines(app, terminal, &lines)?;
-                }
+pub(super) fn console_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
+    if is_ctrl_o(key) {
+        app.panels_hidden = false;
+        app.user_screen.clear_selection();
+        app.active_panel().reload()?;
+        return Ok(Effect::None);
+    }
+    // Text selected with the mouse: `Ctrl+C`/`Ctrl+Insert` copy it, `Esc`
+    // drops it -- before they'd act on the command line.
+    if let Some(text) = app.user_screen.selected_text() {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Char('c' | 'C') | KeyCode::Insert if ctrl => {
+                crate::text_field::clipboard::set(text);
+                app.user_screen.clear_selection();
+                app.notice = Some(Notice::info("Copied"));
+                return Ok(Effect::None);
             }
-            Event::Mouse(mouse) => match mouse.kind {
-                MouseEventKind::ScrollUp => app.user_screen.scroll_by(WHEEL_LINES, rows),
-                MouseEventKind::ScrollDown => app.user_screen.scroll_by(-WHEEL_LINES, rows),
-                _ => {}
-            },
-            Event::Paste(text) => {
-                for c in text.chars().filter(|&c| c != '\n' && c != '\r') {
-                    app.command_line.insert_char(c);
-                }
-                super::line_edited(app);
+            KeyCode::Esc => {
+                app.user_screen.clear_selection();
+                return Ok(Effect::None);
             }
             _ => {}
         }
     }
-    app.active_panel().reload()?;
-    Ok(())
-}
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let plain = !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+    let menu_action = match key.code {
+        KeyCode::F(2) if plain => Some(BrowserAction::Navigate(Command::OpenUserMenu)),
+        KeyCode::F(9) if plain => Some(BrowserAction::Navigate(Command::OpenMenu)),
+        KeyCode::F(10) if plain => Some(BrowserAction::Navigate(Command::Quit)),
+        KeyCode::F(7) if alt => Some(BrowserAction::OpenFindFile),
+        _ => None,
+    };
+    if let Some(action) = menu_action {
+        return super::perform(app, action);
+    }
 
-
-/// A key on the user screen, `Ctrl+O` aside. While suggestions show,
-/// `Up`/`Down`/`Tab`/`F8`/`Esc` work on them as over the panels; `Enter`
-/// submits the line (returning what to run); `PageUp`/`PageDown` scroll;
-/// `Esc` clears the line; `Tab` completes a path; the rest edits the line
-/// -- arrows included, the panels being hidden.
-fn console_key(app: &mut App, key: KeyEvent, rows: usize) -> Result<Option<Vec<String>>> {
     if super::suggestions_showing(app) {
         let action = match key.code {
             KeyCode::Up => Some(BrowserAction::SuggestionUp),
             KeyCode::Down => Some(BrowserAction::SuggestionDown),
             KeyCode::Tab => Some(BrowserAction::AcceptSuggestion),
+            KeyCode::F(4) => Some(BrowserAction::EditSuggestion),
             KeyCode::F(8) => Some(BrowserAction::DeleteSuggestion),
             KeyCode::Esc => {
                 app.command_line_suggestion_dismissed = true;
-                return Ok(None);
+                return Ok(Effect::None);
             }
             _ => None,
         };
         if let Some(action) = action {
-            super::perform(app, action)?;
-            return Ok(None);
+            return super::perform(app, action);
         }
     }
+
+    let rows = app.user_screen.visible_rows();
     match key.code {
         KeyCode::Enter => {
             app.command_line_completion = None;
-            match submit_command_line(app)? {
-                Effect::RunShell(lines) => return Ok(Some(lines)),
-                Effect::ClearScreen => app.user_screen.clear(),
-                Effect::None | Effect::ToggleHiddenPanels => {}
-            }
+            let effect = submit_command_line(app)?;
             super::line_edited(app);
+            return Ok(effect);
         }
         KeyCode::PageUp => app.user_screen.scroll_by(rows as isize, rows),
         KeyCode::PageDown => app.user_screen.scroll_by(-(rows as isize), rows),
@@ -104,14 +100,29 @@ fn console_key(app: &mut App, key: KeyEvent, rows: usize) -> Result<Option<Vec<S
             app.command_line.clear();
             super::line_edited(app);
         }
-        KeyCode::Tab if !app.command_line.is_empty() => super::perform(app, BrowserAction::Complete).map(drop)?,
+        KeyCode::Tab if !app.command_line.is_empty() => return super::perform(app, BrowserAction::Complete),
         _ => {
             if app.command_line.apply_key(key) == EditOutcome::TextChanged {
                 super::line_edited(app);
             }
         }
     }
-    Ok(None)
+    Ok(Effect::None)
+}
+
+
+/// The mouse while the panels are hidden: a drag selects text (scrolling
+/// on at the top and bottom rows), the wheel scrolls back.
+pub(super) fn mouse(app: &mut App, mouse: MouseEvent) {
+    let screen = &mut app.user_screen;
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => screen.select_start(mouse.row, mouse.column),
+        MouseEventKind::Drag(MouseButton::Left) => screen.select_to(mouse.row, mouse.column),
+        MouseEventKind::Up(MouseButton::Left) => screen.select_finish(),
+        MouseEventKind::ScrollUp => screen.scroll_selecting(WHEEL_LINES, mouse.row, mouse.column),
+        MouseEventKind::ScrollDown => screen.scroll_selecting(-WHEEL_LINES, mouse.row, mouse.column),
+        _ => {}
+    }
 }
 
 
@@ -120,69 +131,113 @@ mod tests {
     use ratatui::text::Line;
 
     use super::*;
-    use crate::test_support::{key, test_app, unique_scratch_dir};
+    use crate::app::Overlay;
+    use crate::test_support::{ctrl_key, key, test_app, unique_scratch_dir};
 
-    fn typed(line: &str) -> App {
+    fn hidden(line: &str) -> App {
         let mut app = test_app(unique_scratch_dir("hidden-console"));
+        app.panels_hidden = true;
         app.command_line.set_text(line);
         app
     }
 
     #[test]
-    fn matches_ctrl_o_regardless_of_other_held_modifiers() {
-        assert!(is_ctrl_o(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)));
-        assert!(is_ctrl_o(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)));
-        assert!(!is_ctrl_o(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE)));
-        assert!(!is_ctrl_o(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)));
+    fn ctrl_o_brings_the_panels_back() {
+        let mut app = hidden("");
+        console_key(&mut app, ctrl_key('o')).unwrap();
+        assert!(!app.panels_hidden);
+    }
+
+    /// Requested: F2, F9, F10 and Alt+F7 work with the panels hidden.
+    #[test]
+    fn the_menus_find_file_and_quit_work_without_the_panels() {
+        let mut app = hidden("");
+        console_key(&mut app, key(KeyCode::F(9))).unwrap();
+        assert!(app.overlay.is_some(), "F9: the menu");
+
+        let mut app = hidden("");
+        console_key(&mut app, KeyEvent::new(KeyCode::F(7), KeyModifiers::ALT)).unwrap();
+        assert!(matches!(app.overlay, Some(Overlay::FindFile(_))), "Alt+F7: Find file");
+
+        let mut app = hidden("");
+        let menu = "[[item]]
+title = \"status\"
+hotkey = \"s\"
+commands = [\"svn st\"]
+";
+        std::fs::write(app.panels[app.active].path.join("LitastumMenu.toml"), menu).unwrap();
+        console_key(&mut app, key(KeyCode::F(2))).unwrap();
+        assert!(matches!(app.overlay, Some(Overlay::UserMenu(_))), "F2: the user menu");
+
+        let mut app = hidden("");
+        console_key(&mut app, key(KeyCode::F(10))).unwrap();
+        assert!(app.should_quit);
+        assert!(app.panels_hidden, "the panels stay hidden meanwhile");
     }
 
     #[test]
     fn enter_hands_the_typed_line_over_to_run() {
-        let mut app = typed("svn st");
+        let mut app = hidden("svn st");
 
-        assert_eq!(console_key(&mut app, key(KeyCode::Enter), 10).unwrap(), Some(vec!["svn st".to_string()]));
+        assert_eq!(console_key(&mut app, key(KeyCode::Enter)).unwrap(), Effect::RunShell(vec!["svn st".to_string()]));
         assert!(app.command_line.is_empty());
         assert_eq!(app.command_history, ["svn st"]);
     }
 
     #[test]
-    fn cls_empties_the_user_screen_without_running_anything() {
-        let mut app = typed("cls");
-        app.user_screen.extend(vec![Line::raw("old output")]);
-
-        assert_eq!(console_key(&mut app, key(KeyCode::Enter), 10).unwrap(), None);
-        assert!(app.user_screen.lines().is_empty());
+    fn cls_asks_to_clear_the_screen() {
+        let mut app = hidden("cls");
+        assert_eq!(console_key(&mut app, key(KeyCode::Enter)).unwrap(), Effect::ClearScreen);
     }
 
-    /// Requested: the suggestions work here as over the panels.
+    /// The suggestions work here as over the panels.
     #[test]
     fn suggestions_take_up_down_and_tab_and_esc_closes_them_first() {
-        let mut app = typed("svn");
+        let mut app = hidden("svn");
         app.command_history = vec!["svn up".into(), "svn st".into()];
 
-        console_key(&mut app, key(KeyCode::Down), 10).unwrap();
-        console_key(&mut app, key(KeyCode::Tab), 10).unwrap();
+        console_key(&mut app, key(KeyCode::Down)).unwrap();
+        console_key(&mut app, key(KeyCode::Tab)).unwrap();
         assert_eq!(app.command_line.text(), "svn up", "newest first: svn st, then svn up");
 
-        let mut app = typed("svn");
+        let mut app = hidden("svn");
         app.command_history = vec!["svn up".into()];
-        console_key(&mut app, key(KeyCode::Esc), 10).unwrap();
+        console_key(&mut app, key(KeyCode::Esc)).unwrap();
         assert_eq!(app.command_line.text(), "svn", "the first Esc closes the list");
-        console_key(&mut app, key(KeyCode::Esc), 10).unwrap();
+        console_key(&mut app, key(KeyCode::Esc)).unwrap();
         assert!(app.command_line.is_empty(), "the next clears the line");
     }
 
     #[test]
     fn arrows_edit_the_line_and_page_keys_scroll() {
-        let mut app = typed("ac");
-        console_key(&mut app, key(KeyCode::Left), 10).unwrap();
-        console_key(&mut app, key(KeyCode::Char('b')), 10).unwrap();
+        let mut app = hidden("ac");
+        console_key(&mut app, key(KeyCode::Left)).unwrap();
+        console_key(&mut app, key(KeyCode::Char('b'))).unwrap();
         assert_eq!(app.command_line.text(), "abc");
 
         app.user_screen.extend((0..30).map(|n| Line::raw(n.to_string())).collect());
-        console_key(&mut app, key(KeyCode::PageUp), 10).unwrap();
+        app.user_screen.set_visible_rows(10);
+        console_key(&mut app, key(KeyCode::PageUp)).unwrap();
         assert_eq!(app.user_screen.scroll(), 10);
-        console_key(&mut app, key(KeyCode::PageDown), 10).unwrap();
+        console_key(&mut app, key(KeyCode::PageDown)).unwrap();
         assert_eq!(app.user_screen.scroll(), 0);
+    }
+
+    /// Reported: text couldn't be selected on the user screen.
+    #[test]
+    fn a_mouse_drag_selects_and_ctrl_c_copies() {
+        let mut app = hidden("typed");
+        app.user_screen.extend(vec![Line::raw("first line"), Line::raw("second")]);
+        app.user_screen.set_visible_rows(5);
+        let at = |kind, column, row| MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE };
+
+        mouse(&mut app, at(MouseEventKind::Down(MouseButton::Left), 6, 0));
+        mouse(&mut app, at(MouseEventKind::Drag(MouseButton::Left), 2, 1));
+        mouse(&mut app, at(MouseEventKind::Up(MouseButton::Left), 2, 1));
+        console_key(&mut app, ctrl_key('c')).unwrap();
+
+        assert_eq!(crate::text_field::clipboard::get().as_deref(), Some("line\nsec"));
+        assert_eq!(app.user_screen.selection(), None, "copied: the selection goes");
+        assert_eq!(app.command_line.text(), "typed", "the command line untouched");
     }
 }

@@ -4,7 +4,8 @@
 //!
 //! - `session`: a command running in a pseudoconsole, parsed into a grid;
 //! - `grid`: grid rows as `ratatui` lines;
-//! - `keys`: key presses as the bytes a terminal sends.
+//! - `keys`: key presses as the bytes a terminal sends;
+//! - `selection`: text selected with the mouse.
 //!
 //! Commands that ran are kept here as lines (`UserScreen`), each one set
 //! apart from the one before by blank lines.
@@ -19,6 +20,7 @@ use crate::theming::Theme;
 
 mod grid;
 mod keys;
+mod selection;
 mod session;
 
 pub use keys::encode_key;
@@ -38,6 +40,9 @@ pub struct UserScreen {
     lines: VecDeque<Line<'static>>,
     /// How many lines the `Ctrl+O` view is scrolled up from the bottom.
     scroll: usize,
+    /// Rows the view had when last drawn -- a page for `PageUp`.
+    visible_rows: usize,
+    selection: Option<selection::Selection>,
 }
 
 impl UserScreen {
@@ -56,6 +61,7 @@ impl UserScreen {
         let prompt = Style::default().fg(theme.command_line_prefix).add_modifier(Modifier::BOLD);
         self.push(Line::from(vec![Span::styled(format!("{}> ", cwd.display()), prompt), Span::styled(command.to_string(), Style::default().fg(theme.text))]));
         self.scroll = 0;
+        self.selection = None;
     }
 
     /// A message of litastum's own (a failed launch, a missing `cd` target).
@@ -69,16 +75,27 @@ impl UserScreen {
             self.push(line);
         }
         self.scroll = 0;
+        self.selection = None;
     }
 
     /// `cls`/`clear`.
     pub fn clear(&mut self) {
         self.lines.clear();
         self.scroll = 0;
+        self.selection = None;
     }
 
     pub fn scroll(&self) -> usize {
         self.scroll
+    }
+
+    pub fn visible_rows(&self) -> usize {
+        self.visible_rows.max(1)
+    }
+
+    /// Written by the renderer each frame.
+    pub fn set_visible_rows(&mut self, rows: usize) {
+        self.visible_rows = rows;
     }
 
     /// Scrolls the `Ctrl+O` view by `delta` lines (up is positive), within

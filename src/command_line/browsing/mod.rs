@@ -17,10 +17,8 @@ mod panel_path;
 mod shell_exec;
 mod type_ahead;
 
-pub(super) use hidden_console::toggle_panels_hidden;
 pub(super) use shell_exec::run_shell_command_lines;
 pub(crate) use shell_exec::submit_command_line;
-pub use panel_path::mouse as handle_browsing_mouse;
 
 use bindings::{BrowserAction, LineState};
 
@@ -34,6 +32,9 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if app.panel_path_edit.is_some() {
         panel_path::key(app, key);
         return Ok(Effect::None);
+    }
+    if app.panels_hidden {
+        return hidden_console::console_key(app, key);
     }
 
     let line = LineState {
@@ -62,6 +63,17 @@ fn suggestions_showing(app: &App) -> bool {
 }
 
 
+/// A mouse event in the browser: the user screen's while the panels are
+/// hidden (the wheel scrolls), else the panels' (a click on a title).
+pub fn handle_browsing_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
+    if app.panels_hidden {
+        hidden_console::mouse(app, mouse);
+    } else {
+        panel_path::mouse(app, mouse);
+    }
+}
+
+
 /// Any edit ends a completion cycle and suggestion browsing, and lets
 /// the suggestions show again.
 fn line_edited(app: &mut App) {
@@ -81,7 +93,7 @@ fn perform(app: &mut App, action: BrowserAction) -> Result<Effect> {
             app.command_line.clear_selection();
             execute(command, app)?;
         }
-        BrowserAction::ToggleHiddenPanels => return Ok(Effect::ToggleHiddenPanels),
+        BrowserAction::ToggleHiddenPanels => app.panels_hidden = true,
         BrowserAction::OpenShellMenu => app.overlay = Some(Overlay::ShellMenu(super::open_shell_menu(app))),
         BrowserAction::OpenFindFile => app.overlay = Some(Overlay::FindFile(FindFileState::new())),
         BrowserAction::OpenDriveMenu(panel) => app.overlay = Some(Overlay::ChangeDrive(DriveMenu::open(panel))),
@@ -332,9 +344,12 @@ mod handle_browsing_key_tests {
     }
 
     #[test]
-    fn ctrl_o_asks_for_the_hidden_console() {
+    fn ctrl_o_hides_the_panels_and_brings_them_back() {
         let mut app = typed("");
-        assert_eq!(handle_browsing_key(&mut app, ctrl_key('o')).unwrap(), Effect::ToggleHiddenPanels);
+        handle_browsing_key(&mut app, ctrl_key('o')).unwrap();
+        assert!(app.panels_hidden);
+        handle_browsing_key(&mut app, ctrl_key('o')).unwrap();
+        assert!(!app.panels_hidden);
     }
 
     #[test]

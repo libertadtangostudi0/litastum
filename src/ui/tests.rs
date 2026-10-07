@@ -1,20 +1,9 @@
-use ratatui::{backend::TestBackend, layout::Rect, style::Color, widgets::List, Terminal};
+use ratatui::{backend::TestBackend, style::Color, widgets::List, Terminal};
 
 use super::*;
 use crate::test_support::buffer_text;
 use crate::explorer::Entry;
 use crate::theming::Theme;
-
-/// Reads back the visible text of row `y`, column start inclusive,
-/// by concatenating each cell's symbol — the same shape a real
-/// terminal would show, so an `x` found in this string lines up
-/// with an actual on-screen column.
-fn rendered_row(terminal: &Terminal<TestBackend>, y: u16) -> String {
-    let buffer = terminal.backend().buffer();
-    (0..buffer.area.width)
-        .map(|x| buffer[(x, y)].symbol())
-        .collect()
-}
 
 /// While the editor is open, `draw` reports the panels' real layout, not a
 /// `(1, 1)` placeholder -- it's applied every frame, so the placeholder

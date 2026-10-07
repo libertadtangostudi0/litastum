@@ -269,6 +269,11 @@ pub struct App {
     /// What commands printed, shown by `Ctrl+O` and while one runs
     /// (`user_screen`).
     pub user_screen: crate::user_screen::UserScreen,
+    /// `Ctrl+O`: the browser shows the user screen instead of the panels
+    /// (`ui::draw_console`), and its keys go to the command line there
+    /// (`browsing::hidden_console`). Menus and popups open over it as over
+    /// the panels.
+    pub panels_hidden: bool,
 }
 
 
@@ -307,6 +312,7 @@ impl App {
             markdown_edit_preview: None,
             notice: None,
             user_screen: Default::default(),
+            panels_hidden: false,
         })
     }
 
