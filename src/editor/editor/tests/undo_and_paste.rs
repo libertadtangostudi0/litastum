@@ -60,12 +60,6 @@ fn consecutive_fast_pastes_undo_one_at_a_time_most_recent_first() {
 
     editor.paste_text("first ");
     let after_first_paste = editor.state.lines.clone();
-    // paste_text lands the cursor *on* the last pasted character (the
-    // trailing space here), matching PasteBefore's own vim-`P`
-    // convention -- nudge forward to the append position first, same as
-    // a real subsequent `Ctrl+V` would land after a user's own cursor
-    // move, so this test's own two pastes don't collide mid-word.
-    editor.set_cursor(Index2::new(0, editor.state.lines.len_col(0).unwrap()));
     editor.paste_text("second");
     assert_eq!(editor.state.lines, Lines::from("first second"), "sanity: both pastes landed");
 
@@ -331,4 +325,25 @@ fn paste_text_with_empty_text_records_no_undo_snapshot() {
 
     assert!(!editor.is_dirty());
     assert!(editor.undo_stack.is_empty());
+}
+
+
+
+/// Reported: after a paste replaced a selected block, the caret sat on the
+/// pasted text's last character, not after it -- so the next key went in
+/// ahead of that character.
+#[test]
+fn the_caret_ends_after_the_pasted_text_and_typing_continues_there() {
+    let (mut editor, _path) = open_test_editor("old block\nkeep\n");
+    editor.input(KeyEvent::new(KeyCode::End, KeyModifiers::SHIFT));
+
+    editor.paste_text("new\nlines");
+    assert_eq!(editor.state.cursor, Index2::new(1, 5), "after the last pasted character");
+    editor.input(key(KeyCode::Char('!')));
+    assert_eq!(editor.text(), "new\nlines!\nkeep\n");
+
+    let (mut editor, _path) = open_test_editor("");
+    editor.paste_text("abc");
+    editor.input(key(KeyCode::Char('d')));
+    assert_eq!(editor.text(), "abcd", "it gave abdc");
 }

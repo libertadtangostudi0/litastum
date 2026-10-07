@@ -54,7 +54,12 @@ impl Editor {
             self.state.selection = None;
             self.state.mode = EditorMode::Insert;
         }
-        self.state.cursor = splice_paste(&mut self.state.lines, self.state.cursor, text);
+        let after = splice_paste(&mut self.state.lines, self.state.cursor, text);
+        // Typing (`Insert`) puts the caret after the pasted text, ready for
+        // more -- reported: it sat before the last character, so the next
+        // key went in ahead of it ("abc" + "d" gave "abdc"). Vim's `Normal`
+        // has no position past a line's end: on the last character.
+        self.state.cursor = if self.state.mode == EditorMode::Insert { after } else { Index2::new(after.row, after.col.saturating_sub(1)) };
 
         if single_row {
             self.row_changed(row);
@@ -67,9 +72,7 @@ impl Editor {
 
 /// Splices `text` into `lines` at `cursor` in O(pasted + line length).
 /// Empty `text` is a no-op (defensive; callers check first). Returns the
-/// new cursor: on the last pasted character for single-line text (like
-/// `edtui`'s `PasteBefore`), at the end of the pasted content for
-/// multi-line text.
+/// position right after the pasted text.
 fn splice_paste(lines: &mut Lines, cursor: Index2, text: &str) -> Index2 {
     // `\r\n`/bare `\r` line endings collapse to `\n` here, matching
     // `edtui`'s own single-line-mode paste handling (`actions/cpaste.rs`)
@@ -110,7 +113,7 @@ fn splice_single_line(lines: &mut Lines, row: usize, col: usize, segment: &str) 
     };
     let pasted_len = chars.len();
     row_vec.splice(col..col, chars);
-    Index2::new(row, col + pasted_len.saturating_sub(1))
+    Index2::new(row, col + pasted_len)
 }
 
 /// Multi-line paste: the cursor's row becomes "head + first segment", a
@@ -135,7 +138,7 @@ fn splice_multi_line(lines: &mut Lines, row: usize, col: usize, segments: &[&str
     last_row.extend(tail);
     lines.insert(RowIndex::new(insert_at), last_row);
 
-    Index2::new(insert_at, last_len.saturating_sub(1))
+    Index2::new(insert_at, last_len)
 }
 
 
@@ -168,9 +171,7 @@ mod tests {
         let result = splice_paste(&mut lines, cursor, "llo wor");
 
         assert_eq!(text_of(&lines), "hello world");
-        // Lands on the last pasted character ('r'), matching PasteBefore's
-        // own vim-`P` convention.
-        assert_eq!(result, Index2::new(0, 8));
+        assert_eq!(result, Index2::new(0, 9), "right after the pasted 'r'");
     }
 
     #[test]
@@ -181,7 +182,7 @@ mod tests {
         let result = splice_paste(&mut lines, cursor, "!");
 
         assert_eq!(text_of(&lines), "hello!");
-        assert_eq!(result, Index2::new(0, 5));
+        assert_eq!(result, Index2::new(0, 6));
     }
 
     #[test]
@@ -192,7 +193,7 @@ mod tests {
         let result = splice_paste(&mut lines, cursor, "!");
 
         assert_eq!(text_of(&lines), "hi!");
-        assert_eq!(result, Index2::new(0, 2));
+        assert_eq!(result, Index2::new(0, 3));
     }
 
     #[test]
@@ -215,7 +216,7 @@ mod tests {
         let result = splice_paste(&mut lines, cursor, "llo\nbig wor");
 
         assert_eq!(text_of(&lines), "hello\nbig world");
-        assert_eq!(result, Index2::new(1, 6), "should land at the end of the pasted content on the new last row");
+        assert_eq!(result, Index2::new(1, 7), "right after the pasted content on the new last row");
     }
 
     #[test]
@@ -236,6 +237,6 @@ mod tests {
         let result = splice_paste(&mut lines, cursor, "hi\nthere");
 
         assert_eq!(text_of(&lines), "hi\nthere");
-        assert_eq!(result, Index2::new(1, 4));
+        assert_eq!(result, Index2::new(1, 5));
     }
 }
