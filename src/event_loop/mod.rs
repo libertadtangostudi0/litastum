@@ -143,9 +143,7 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
 fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
     match event::read()? {
         Event::Key(key) => handle_key_event(app, key, terminal),
-        // Only ever arrives while the built-in editor is open
-        // (`sync_mouse_capture`) -- every other mode never gets a mouse
-        // event to begin with.
+        // Only arrives in the modes `sync_mouse_capture` captures for.
         Event::Mouse(mouse) => {
             handle_mouse(app, mouse);
             let last_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown).then_some(mouse.kind);
@@ -191,15 +189,15 @@ fn drain_pending_mouse_events(app: &mut App, terminal: &mut Terminal<CrosstermBa
 }
 
 
-/// Mouse capture is on exactly while an editor is open (F4, Compare or
-/// the conflict resolver),
-/// synced once per loop iteration rather than at each place one opens or
-/// closes.
-/// Scoped narrowly: capture takes over the terminal's own text
-/// selection, which the panels and command line need. Only set after the
-/// terminal call succeeds -- `restore_terminal` relies on it.
+/// Mouse capture is on in the browser (a click on a panel's title edits
+/// its path) and while an editor is open (F4, Compare or the conflict
+/// resolver), synced once per loop iteration rather than at each place one
+/// opens or closes. Capture takes over the terminal's own text selection
+/// (Windows Terminal still selects with `Shift` held); a shell command and
+/// `Ctrl+O` get it back (`terminal_setup::release_mouse_capture`). Only
+/// set after the terminal call succeeds -- `restore_terminal` relies on it.
 fn sync_mouse_capture(app: &mut App) {
-    let wanted = matches!(app.mode, Mode::Editing(_) | Mode::CompareFiles(_) | Mode::ResolveConflict(_));
+    let wanted = matches!(app.mode, Mode::Browsing | Mode::Editing(_) | Mode::CompareFiles(_) | Mode::ResolveConflict(_));
     if wanted == app.mouse_capture_enabled {
         return;
     }
@@ -251,6 +249,10 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     }
     if let Mode::ResolveConflict(state) = &mut app.mode {
         state.mouse(mouse);
+        return;
+    }
+    if matches!(app.mode, Mode::Browsing) {
+        crate::command_line::handle_browsing_mouse(app, mouse);
         return;
     }
     if let Mode::Editing(editor) = &mut app.mode {

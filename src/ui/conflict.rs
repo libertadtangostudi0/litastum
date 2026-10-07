@@ -45,6 +45,7 @@ pub(super) fn draw_conflict(frame: &mut Frame, area: Rect, state: &mut ConflictS
 
     let focus = state.focus;
     let mut cursor = None;
+    let mut focused_title = None;
     for (pane, editor, pane_area) in [
         (Pane::Working, &mut state.working, working_area),
         (Pane::Result, &mut state.result, result_area),
@@ -52,15 +53,18 @@ pub(super) fn draw_conflict(frame: &mut Frame, area: Rect, state: &mut ConflictS
     ] {
         frame.render_widget(editor.view(theme, pane_area), pane_area);
         if pane == focus {
-            cursor = match &state.path_edit {
-                Some(edit) => draw_path_field(frame, editor.title_area(), &edit.field, theme),
-                None => editor.cursor_screen_position(),
-            };
+            cursor = editor.cursor_screen_position();
+            focused_title = Some(editor.title_area());
         }
     }
     let incoming_cursor = draw_compare_panes(frame, bottom, &mut state.incoming, theme, line_ending_display);
     if focus == Pane::Incoming {
         cursor = incoming_cursor;
+    }
+    // Last, so a `Tab` list reaching down isn't drawn over by the bottom
+    // Compare.
+    if let (Some(edit), Some(title)) = (&state.path_edit, focused_title) {
+        cursor = draw_path_field(frame, title, edit, theme);
     }
     cursor
 }

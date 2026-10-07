@@ -7,7 +7,7 @@ use crate::explorer::{execute, DriveMenu, FindFileState};
 
 use super::completion::complete;
 use super::effect::Effect;
-use super::history::{suggest_history, CommandHistoryMenu};
+use super::history::{forget_history, suggest_history, CommandHistoryMenu};
 
 mod bindings;
 mod hidden_console;
@@ -17,6 +17,7 @@ mod shell_exec;
 pub(super) use hidden_console::toggle_panels_hidden;
 pub(super) use shell_exec::run_shell_command_lines;
 pub(crate) use shell_exec::submit_command_line;
+pub use panel_path::mouse as handle_browsing_mouse;
 
 use bindings::{BrowserAction, LineState};
 
@@ -108,6 +109,14 @@ fn perform(app: &mut App, action: BrowserAction) -> Result<Effect> {
             app.command_line_suggestion_selected = 0;
             // See `App::command_line_suggestion_dismissed`.
             app.command_line_suggestion_dismissed = true;
+        }
+        BrowserAction::DeleteSuggestion => {
+            let entry = suggest_history(&app.command_history, app.command_line.text()).get(app.command_line_suggestion_selected).map(|entry| entry.to_string());
+            if let Some(entry) = entry {
+                forget_history(app, &entry);
+            }
+            let count = suggest_history(&app.command_history, app.command_line.text()).len();
+            app.command_line_suggestion_selected = app.command_line_suggestion_selected.min(count.saturating_sub(1));
         }
         BrowserAction::Complete => {
             let cwd = app.active_panel().path.clone();
@@ -373,6 +382,29 @@ mod handle_browsing_key_tests {
         handle_browsing_key(&mut app, key(KeyCode::Char('q'))).unwrap();
         assert_eq!(app.command_line.text(), "q");
         assert!(!app.should_quit, "only F10 quits; a bare q is the start of a command");
+    }
+
+    /// Reported: a mistyped command kept being suggested, with no way to
+    /// get rid of it.
+    #[test]
+    fn f8_forgets_the_highlighted_suggestion_and_deletes_no_file() {
+        let dir = unique_scratch_dir("browsing-keys-f8");
+        fs::write(dir.join("keep.txt"), "x").unwrap();
+        let mut app = test_app(dir.clone());
+        app.command_history = vec!["svn up".into(), "svn info".into(), "svn up".into(), "cargo build".into()];
+        app.command_line.set_text("svn");
+        handle_browsing_key(&mut app, key(KeyCode::Down)).unwrap(); // newest first: "svn up", then "svn info"
+
+        handle_browsing_key(&mut app, key(KeyCode::F(8))).unwrap();
+
+        assert_eq!(app.command_history, vec!["svn up".to_string(), "svn up".into(), "cargo build".into()]);
+        assert_eq!(app.command_line.text(), "svn", "the typed line stays");
+        assert_eq!(app.command_line_suggestion_selected, 0, "clamped to the one suggestion left");
+        assert!(app.overlay.is_none(), "no delete confirmation");
+        assert!(dir.join("keep.txt").exists());
+
+        handle_browsing_key(&mut app, key(KeyCode::F(8))).unwrap();
+        assert_eq!(app.command_history, vec!["cargo build".to_string()], "every copy of the command goes");
     }
 
     #[test]

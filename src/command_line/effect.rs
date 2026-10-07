@@ -28,12 +28,18 @@ pub enum Effect {
 pub(crate) fn apply_effect(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, effect: Effect) -> Result<()> {
     match effect {
         Effect::None => Ok(()),
-        Effect::RunShell(lines) => run_shell_command_lines(app, terminal, &lines),
+        Effect::RunShell(lines) => {
+            crate::terminal_setup::release_mouse_capture(app)?;
+            run_shell_command_lines(app, terminal, &lines)
+        }
         Effect::ClearScreen => {
             terminal.clear()?;
             app.active_panel().reload()?;
             Ok(())
         }
-        Effect::ToggleHiddenPanels => toggle_panels_hidden(app, terminal),
+        Effect::ToggleHiddenPanels => {
+            crate::terminal_setup::release_mouse_capture(app)?;
+            toggle_panels_hidden(app, terminal)
+        }
     }
 }

@@ -80,7 +80,7 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
         Mode::Editing(editor) if !has_linked_preview => {
             let mut cursor = draw_editor(frame, area, editor, &theme);
             if let Some(edit) = &app.editor_save_as {
-                cursor = path_edit::draw_path_field(frame, editor.title_area(), &edit.field, &theme);
+                cursor = path_edit::draw_path_field(frame, editor.title_area(), edit, &theme);
             }
             if editor.search_box_open() {
                 // Takes the terminal cursor only while the box has focus.
@@ -150,11 +150,18 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
     // `Mode::Editing`'s doc comment) instead of that panel's own file
     // listing -- also under the link-search overlay.
     let mut save_as_cursor = None;
+    // Where each panel lands, for a click on its title; nowhere while the
+    // editor or a preview takes its place.
+    let editor_split = has_linked_preview && matches!(app.mode, Mode::Editing(_));
+    let panel_drawn = [!editor_split, !editor_split && !matches!(app.mode, Mode::ImagePreview(_))];
+    for (panel, (drawn, area)) in app.panels.iter_mut().zip(panel_drawn.into_iter().zip(panels.iter())) {
+        panel.screen_area = if drawn { *area } else { Rect::default() };
+    }
     let left_columns = match &mut app.mode {
         Mode::Editing(editor) if has_linked_preview => {
             draw_editor(frame, panels[0], editor, &theme);
             if let Some(edit) = &app.editor_save_as {
-                save_as_cursor = path_edit::draw_path_field(frame, editor.title_area(), &edit.field, &theme);
+                save_as_cursor = path_edit::draw_path_field(frame, editor.title_area(), edit, &theme);
             }
             (1, 1)
         }
@@ -181,7 +188,7 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
 
     // History suggestions pop up above the command line on a match, as
     // in Far -- only on the bare browser.
-    if matches!(app.mode, Mode::Browsing) && app.overlay.is_none() && !app.command_line_suggestion_dismissed {
+    if matches!(app.mode, Mode::Browsing) && app.overlay.is_none() && app.panel_path_edit.is_none() && !app.command_line_suggestion_dismissed {
         let suggestions = crate::command_line::suggest_history(&app.command_history, app.command_line.text());
         if !suggestions.is_empty() {
             command_line::draw_history_suggestions(frame, root[1], &suggestions, app.command_line_suggestion_selected, &theme);
@@ -204,7 +211,7 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
     if let (Some(edit), Mode::Browsing, true) = (&app.panel_path_edit, &app.mode, command_line_owns_cursor) {
         let panel = panels[app.active];
         let title = Rect::new(panel.x + 1, panel.y, panel.width.saturating_sub(2), 1);
-        cursor = path_edit::draw_path_field(frame, title, &edit.field, &theme);
+        cursor = path_edit::draw_path_field(frame, title, edit, &theme);
     }
 
     // Mirrors plain `F4`'s own search box (top of this function) --

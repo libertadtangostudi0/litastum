@@ -21,6 +21,7 @@ fn panel_with(count: usize, columns: usize) -> Panel {
         scroll_offset: 0,
         visible_rows: 0,
         marked: HashSet::new(),
+        screen_area: ratatui::layout::Rect::default(),
     }
 }
 
@@ -392,6 +393,7 @@ mod marks_tests {
             scroll_offset: 0,
             visible_rows: 0,
             marked: HashSet::new(),
+            screen_area: ratatui::layout::Rect::default(),
         }
     }
 

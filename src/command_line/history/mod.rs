@@ -63,6 +63,13 @@ pub fn record_history(app: &mut App, input: &str) {
     }
 }
 
+/// `F8` on a typed-line suggestion: forgets `entry` -- every copy, since
+/// the suggestions show each command once -- in memory and on disk.
+pub(super) fn forget_history(app: &mut App, entry: &str) {
+    app.command_history.retain(|recorded| recorded != entry);
+    save_history(&app.command_history);
+}
+
 /// State for the F9 → Commands → History / `Alt+F8` popup — which row
 /// is highlighted. The history itself lives on `App::command_history`
 /// (recorded by `record_history` above), not here — this is just a

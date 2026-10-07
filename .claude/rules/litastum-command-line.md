@@ -20,18 +20,27 @@ first matching row wins; a key no row matches types into the command
 line. Order matters and the table is grouped by it:
 1. Modifier chords -- `Ctrl+O` (show/hide panels), `Ctrl+P` (shell
    picker), `Ctrl+U`, `Shift+F6`, `Shift+Enter` on an empty line,
-   `Alt+F1/F2/F5/F7/F8`, `Ctrl+L`. They sit above the plain keys they
+   `Alt+F1/F2/F5/F7/F8`, `Ctrl+L`/`Ctrl+F2`. They sit above the plain keys they
    would otherwise fall through to (`Alt+F5` above `F5` = Copy).
-   `Ctrl+L` turns the active panel's path title into a field, as in
-   Compare (`browsing/panel_path.rs`); while it's open it takes every
-   key, ahead of the table.
+   `Ctrl+L`/`Ctrl+F2` turn the active panel's path title into a field, as in
+   Compare (`browsing/panel_path.rs`); so does a click on it. While it's
+   open it takes every key, ahead of the table, and the panel shows the
+   directory the typed path is in (`Esc` takes it back); `Tab` completes the path,
+   with a list to pick from when several entries match
+   (`path_edit/complete.rs`, every path field). `F4` on a file in that
+   list (or typed out) selects it in the panel and opens the editor. The click needs mouse
+   capture in the browser, which takes the terminal's own text selection
+   (`Shift`+drag still selects in Windows Terminal); a shell command and
+   `Ctrl+O` get the mouse back (`terminal_setup::release_mouse_capture`).
 2. Selection and word moves in the command line (`Shift`/`Ctrl` +
    arrows); `Shift+Left/Right` select only while something is typed.
    `Ctrl+C`/`Ctrl+Insert` copy and `Ctrl+X`/`Shift+Delete` cut the
    selection, on a typed line only (above `Delete` = delete forward).
 3. Marking -- `Shift+arrows`, and `Shift+A` on an empty line only.
 4. The typed line -- `Enter` runs it; while history suggestions show,
-   `Up`/`Down`/`Tab` work on them (never `Enter`); `Tab` completes.
+   `Up`/`Down`/`Tab` work on them (never `Enter`), and `F8` forgets the
+   highlighted one -- above `F8` = Delete, so it never deletes files
+   then; `Tab` completes.
 5. Panel navigation and the F-key row, with any modifiers (these are
    below every chord on the same key) -- `Enter`/`Tab` here only on an
    empty line, since the rows above took the typed case.

@@ -44,7 +44,7 @@ pub(super) enum BrowserAction {
     OpenDriveMenu(usize),
     OpenHistory,
     CompareFiles,
-    /// `Ctrl+L`: the active panel's path title as a field.
+    /// `Ctrl+L`/`Ctrl+F2`: the active panel's path title as a field.
     EditPanelPath,
     SelectWordLeft,
     SelectWordRight,
@@ -58,6 +58,9 @@ pub(super) enum BrowserAction {
     SuggestionUp,
     SuggestionDown,
     AcceptSuggestion,
+    /// `F8` with the suggestions showing: forget the highlighted one
+    /// (above `F8` = Delete files).
+    DeleteSuggestion,
     Complete,
     ClearLine,
     Backspace,
@@ -116,6 +119,7 @@ pub(super) static BINDINGS: &[Binding] = &[
     with(KeyCode::F(5), ALT, Always, A::CompareFiles),
     with(KeyCode::Char('l'), CTRL, Always, A::EditPanelPath),
     with(KeyCode::Char('L'), CTRL, Always, A::EditPanelPath),
+    with(KeyCode::F(2), CTRL, Always, A::EditPanelPath),
     // Selection and word moves inside the command line. Bare arrows stay
     // panel navigation; Shift+Left/Right on an empty line mark instead.
     with(KeyCode::Left, CTRL_SHIFT, Always, A::SelectWordLeft),
@@ -143,6 +147,7 @@ pub(super) static BINDINGS: &[Binding] = &[
     any(KeyCode::Up, SuggestionsShowing, A::SuggestionUp),
     any(KeyCode::Down, SuggestionsShowing, A::SuggestionDown),
     any(KeyCode::Tab, SuggestionsShowing, A::AcceptSuggestion),
+    any(KeyCode::F(8), SuggestionsShowing, A::DeleteSuggestion),
     any(KeyCode::Tab, TypedLine, A::Complete),
     // Panel navigation and the F-key row (Far's bare F-keys; F10 is the
     // only way to quit, since letters type into the command line).
@@ -242,6 +247,20 @@ mod tests {
         assert_eq!(lookup(chord(KeyCode::Up, NONE), SUGGESTING), Some(A::SuggestionUp));
         assert_eq!(lookup(chord(KeyCode::Enter, NONE), SUGGESTING), Some(A::Submit));
         assert_eq!(lookup(chord(KeyCode::Up, NONE), TYPED), Some(A::Navigate(Command::MoveUp)));
+    }
+
+    #[test]
+    fn f8_forgets_a_suggestion_rather_than_deleting_files() {
+        assert_eq!(lookup(chord(KeyCode::F(8), NONE), SUGGESTING), Some(A::DeleteSuggestion));
+        assert_eq!(lookup(chord(KeyCode::F(8), NONE), TYPED), Some(A::Navigate(Command::DeleteSelected)));
+        assert_eq!(lookup(chord(KeyCode::F(8), ALT), SUGGESTING), Some(A::OpenHistory), "Alt+F8 stays the history popup");
+    }
+
+    #[test]
+    fn ctrl_f2_edits_the_panel_path_and_f2_stays_the_user_menu() {
+        assert_eq!(lookup(chord(KeyCode::F(2), CTRL), EMPTY), Some(A::EditPanelPath));
+        assert_eq!(lookup(chord(KeyCode::F(2), CTRL), TYPED), Some(A::EditPanelPath));
+        assert_eq!(lookup(chord(KeyCode::F(2), NONE), EMPTY), Some(A::Navigate(Command::OpenUserMenu)));
     }
 
     #[test]

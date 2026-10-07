@@ -77,7 +77,7 @@ fn draw_pane(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme, 
         draw_line_ending_overlay(frame, area, line_endings, viewport_top_row, theme);
     }
     if let Some(edit) = path_edit {
-        cursor = super::path_edit::draw_path_field(frame, editor.title_area(), &edit.field, theme);
+        cursor = super::path_edit::draw_path_field(frame, editor.title_area(), edit, theme);
     }
     cursor
 }

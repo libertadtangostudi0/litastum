@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::Path;
 
 /// A `Tab`-cycling session kept on `App` across presses, `cmd.exe`-style:
@@ -40,19 +39,7 @@ pub fn complete(line: &mut String, cwd: &Path, cycle: &mut Option<CompletionCycl
     let (dir_part, prefix) = word.split_at(dir_end);
     let search_dir = cwd.join(dir_part);
 
-    let Ok(entries) = fs::read_dir(&search_dir) else {
-        return;
-    };
-
-    let mut matches: Vec<(String, bool)> = entries
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            name.to_lowercase()
-                .starts_with(&prefix.to_lowercase())
-                .then(|| (name, entry.file_type().is_ok_and(|t| t.is_dir())))
-        })
-        .collect();
+    let mut matches = crate::path_edit::matching_entries(&search_dir, prefix);
     if matches.is_empty() {
         return;
     }
@@ -79,6 +66,8 @@ fn apply(line: &mut String, state: &CompletionCycle) {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::test_support::unique_scratch_dir;
 

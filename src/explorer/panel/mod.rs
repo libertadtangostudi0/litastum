@@ -34,6 +34,10 @@ pub struct Panel {
     /// Keyed by name so marks survive an in-place `reload()`; cleared on
     /// a real directory change.
     marked: HashSet<String>,
+    /// Where the panel was last drawn, written by the renderer each frame
+    /// (empty while something else is drawn in its place): a click on its
+    /// title edits the path (`command_line::handle_browsing_mouse`).
+    pub screen_area: ratatui::layout::Rect,
 }
 
 
@@ -48,6 +52,7 @@ impl Panel {
             scroll_offset: 0,
             visible_rows: 0,
             marked: HashSet::new(),
+            screen_area: ratatui::layout::Rect::default(),
         };
         panel.reload()?;
         Ok(panel)

@@ -4,7 +4,7 @@ mod effect;
 mod history;
 mod shell;
 
-pub use browsing::handle_browsing_key;
+pub use browsing::{handle_browsing_key, handle_browsing_mouse};
 pub(crate) use effect::apply_effect;
 pub use effect::Effect;
 pub use completion::CompletionCycle;
