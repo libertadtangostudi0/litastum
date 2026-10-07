@@ -14,7 +14,7 @@ pub(super) fn tail_lines<T>(term: &Term<T>, count: usize) -> (Vec<Line<'static>>
     let history = grid.history_size();
     let cursor = grid.cursor.point;
     let cursor_row = cursor.line.0.max(0) as usize;
-    let last_text_row = (0..grid.screen_lines()).rev().find(|&row| !row_is_blank(&grid[GridLine(row as i32)], grid.columns()));
+    let last_text_row = (0..grid.screen_lines()).rev().find(|&row| drawn_columns(&grid[GridLine(row as i32)], grid.columns()) > 0);
     let used_rows = last_text_row.map_or(0, |row| row + 1).max(cursor_row + 1);
 
     let total = history + used_rows;
@@ -55,38 +55,56 @@ pub(super) fn all_lines<T>(term: &Term<T>) -> Vec<Line<'static>> {
 }
 
 
-fn row_is_blank(row: &alacritty_terminal::grid::Row<Cell>, columns: usize) -> bool {
-    (0..columns).all(|column| {
-        let cell = &row[Column(column)];
-        cell.c == ' ' && cell.bg == AnsiColor::Named(NamedColor::Background)
-    })
+/// The flags that change how a cell looks.
+const STYLE_FLAGS: Flags = Flags::BOLD
+    .union(Flags::ITALIC)
+    .union(Flags::ALL_UNDERLINES)
+    .union(Flags::DIM)
+    .union(Flags::INVERSE)
+    .union(Flags::HIDDEN)
+    .union(Flags::STRIKEOUT);
+
+
+/// How many of `row`'s columns are worth drawing: up to its last cell
+/// with text, a background of its own, or a look that shows on a blank
+/// (inverse, underline). 0 for a blank row.
+fn drawn_columns(row: &alacritty_terminal::grid::Row<Cell>, columns: usize) -> usize {
+    (0..columns)
+        .rposition(|column| {
+            let cell = &row[Column(column)];
+            cell.c != ' ' || cell.bg != AnsiColor::Named(NamedColor::Background) || cell.flags.intersects(Flags::INVERSE | Flags::ALL_UNDERLINES)
+        })
+        .map_or(0, |column| column + 1)
 }
 
 
-/// One grid row as spans of one style each, trailing blanks dropped.
+/// One grid row as spans of one style each, trailing blanks dropped. The
+/// style is worked out once per run of cells with the same attributes --
+/// per cell, turning a 10000-line output into lines took ~0.8 s in a
+/// debug build.
 fn row_line(row: &alacritty_terminal::grid::Row<Cell>, columns: usize) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut text = String::new();
     let mut style = Style::default();
-    let mut blank_tail = 0;
-    for column in 0..columns {
+    let mut attributes = None;
+    for column in 0..drawn_columns(row, columns) {
         let cell = &row[Column(column)];
         if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
             continue;
         }
-        let cell_style = cell_style(cell);
-        if cell_style != style && !text.is_empty() {
-            spans.push(Span::styled(std::mem::take(&mut text), style));
-            blank_tail = 0;
+        let cell_attributes = (cell.fg, cell.bg, cell.flags & STYLE_FLAGS);
+        if attributes != Some(cell_attributes) {
+            if !text.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut text), style));
+            }
+            style = cell_style(cell);
+            attributes = Some(cell_attributes);
         }
-        style = cell_style;
         text.push(cell.c);
         if let Some(extra) = cell.zerowidth() {
             text.extend(extra);
         }
-        blank_tail = if cell.c == ' ' && style.bg.is_none() { blank_tail + 1 } else { 0 };
     }
-    text.truncate(text.len() - blank_tail.min(text.len()));
     if !text.is_empty() {
         spans.push(Span::styled(text, style));
     }
@@ -189,6 +207,18 @@ pub(super) mod tests {
     fn a_finished_command_drops_trailing_blank_rows() {
         let term = term_with(10, 5, b"done\r\n\r\n");
         assert_eq!(texts(&all_lines(&term)), ["done"]);
+    }
+
+    /// A blank that shows -- inverse, as a status bar or a progress bar
+    /// draws one -- isn't dropped as trailing blank space.
+    #[test]
+    fn blanks_that_show_are_kept_and_plain_ones_dropped() {
+        let term = term_with(20, 2, b"ok[7m  [0m   ");
+
+        let (lines, _) = tail_lines(&term, 1);
+
+        assert_eq!(lines[0].to_string(), "ok  ");
+        assert!(lines[0].spans[1].style.add_modifier.contains(Modifier::REVERSED));
     }
 
     #[test]

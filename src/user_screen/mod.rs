@@ -34,6 +34,13 @@ const MAX_LINES: usize = 20_000;
 const SEPARATOR_LINES: usize = 3;
 
 
+/// A line's text, its spans' contents joined -- `Line::to_string` goes
+/// through `Display`, several times slower over a big selection.
+pub(crate) fn plain_text(line: &Line) -> String {
+    line.spans.iter().map(|span| span.content.as_ref()).collect()
+}
+
+
 /// What commands printed, oldest line first.
 #[derive(Debug, Default)]
 pub struct UserScreen {

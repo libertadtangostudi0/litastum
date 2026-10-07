@@ -40,11 +40,13 @@ pub(super) fn console_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         return Ok(Effect::None);
     }
     // Text selected with the mouse: `Ctrl+C`/`Ctrl+Insert` copy it, `Esc`
-    // drops it -- before they'd act on the command line.
-    if let Some(text) = app.user_screen.selected_text() {
+    // drops it -- before they'd act on the command line. The text is only
+    // built to copy: per key, a big selection cost ~0.5 s a key.
+    if app.user_screen.selection().is_some() {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char('c' | 'C') | KeyCode::Insert if ctrl => {
+                let text = app.user_screen.selected_text().unwrap_or_default();
                 crate::text_field::clipboard::set(text);
                 app.user_screen.clear_selection();
                 app.notice = Some(Notice::info("Copied"));

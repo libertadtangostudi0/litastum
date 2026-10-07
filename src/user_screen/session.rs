@@ -92,6 +92,16 @@ pub struct LiveCommand {
     sender: Sender<Message>,
     finished: Arc<AtomicBool>,
     changed: Arc<AtomicBool>,
+    /// Set when this is dropped before the program ended (an error in the
+    /// run loop): the I/O thread stops and closes the pseudoconsole, which
+    /// ends the program -- neither outlives it unseen.
+    abandoned: Arc<AtomicBool>,
+}
+
+impl Drop for LiveCommand {
+    fn drop(&mut self) {
+        self.abandoned.store(true, Ordering::Release);
+    }
 }
 
 impl LiveCommand {
@@ -111,14 +121,22 @@ impl LiveCommand {
         let term = Arc::new(FairMutex::new(Term::new(config, &size, Listener(sender.clone()))));
         let finished = Arc::new(AtomicBool::new(false));
         let changed = Arc::new(AtomicBool::new(true));
-        let io = Io { term: term.clone(), finished: finished.clone(), changed: changed.clone(), parser: Processor::new() };
+        let abandoned = Arc::new(AtomicBool::new(false));
+        let io = Io { term: term.clone(), finished: finished.clone(), changed: changed.clone(), abandoned: abandoned.clone(), parser: Processor::new() };
         std::thread::Builder::new().name("command-io".into()).spawn(move || io.run(pty, receiver))?;
-        Ok(Self { term, sender, finished, changed })
+        Ok(Self { term, sender, finished, changed, abandoned })
     }
 
     /// Input for the program, as a terminal would send it.
     pub fn write(&self, bytes: Vec<u8>) {
         let _ = self.sender.send(Message::Input(bytes));
+    }
+
+    /// Pasted text for the program: in bracketed-paste markers when it
+    /// asked for them, so it can tell a paste from typing.
+    pub fn paste(&self, text: &str) {
+        let bytes = if self.term.lock().mode().contains(TermMode::BRACKETED_PASTE) { format!("\x1b[200~{text}\x1b[201~") } else { text.to_string() };
+        self.write(bytes.into_bytes());
     }
 
     pub fn resize(&self, columns: u16, lines: u16) {
@@ -186,6 +204,7 @@ struct Io {
     term: Arc<FairMutex<Term<Listener>>>,
     finished: Arc<AtomicBool>,
     changed: Arc<AtomicBool>,
+    abandoned: Arc<AtomicBool>,
     parser: Processor,
 }
 
@@ -196,6 +215,10 @@ impl Io {
         let mut exited: Option<Instant> = None;
         let mut last_output = Instant::now();
         loop {
+            // Dropping `pty` on the way out closes the pseudoconsole.
+            if self.abandoned.load(Ordering::Acquire) {
+                break;
+            }
             match receiver.recv_timeout(wait) {
                 Ok(message) => {
                     handle(&mut pty, message);
@@ -279,6 +302,24 @@ mod tests {
 
     /// The whole route on a real pseudoconsole: a command's output arrives,
     /// parsed, and the command finishes.
+    /// A command dropped while its program still runs (an error in the run
+    /// loop) takes the program and its thread down with it.
+    #[cfg(windows)]
+    #[test]
+    fn dropping_a_running_command_ends_it() {
+        let command = LiveCommand::spawn("cmd", vec!["/C".into(), "ping -n 30 127.0.0.1".into()], &std::env::temp_dir(), 80, 24).unwrap();
+        let finished = command.finished.clone();
+        std::thread::sleep(Duration::from_millis(300));
+
+        drop(command);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !finished.load(Ordering::Acquire) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(finished.load(Ordering::Acquire), "the I/O thread stopped long before ping's 30 s");
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_command_runs_in_a_pseudoconsole_and_its_output_comes_back() {

@@ -74,7 +74,7 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Terminal<CrosstermBackend<S
                     type_ahead.paste(&mut app.command_line, &text, command.output_line(), &command.text_before_cursor());
                     redraw = true;
                 }
-                command.write(text.into_bytes());
+                command.paste(&text);
             }
             Event::Resize(width, height) => {
                 rows = ui::console_rows(height);

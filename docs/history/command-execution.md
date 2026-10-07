@@ -139,4 +139,14 @@ fix, Far's own design: the user screen is ours.
   console). Requested next: `F2`, `F9`, `F10`, `Alt+F7` there too --
   overlays only the main loop draws. It became a browser state
   (`App::panels_hidden`), drawn by the main loop, popups and all.
+- An audit, measured in a debug build: any key with a big selection on
+  the user screen took ~0.5 s (the selected text was built per key, for
+  `Ctrl+C`'s sake); a command's frame took ~4.9 ms and turning a
+  10000-line output into lines ~0.8 s (a style worked out per cell, and
+  `Line::to_string` through `Display`). Now the text is built on
+  `Ctrl+C` only, rows stop at their last drawn cell and work out a style
+  per run of attributes: ~1.0 ms a frame, ~0.18 s for the 10000 lines.
+  A `LiveCommand` dropped before its program ended (an error in the run
+  loop) used to leave the program and its thread running unseen; now it
+  closes the pseudoconsole.
 

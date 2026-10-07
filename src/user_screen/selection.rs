@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use super::UserScreen;
+use super::{plain_text, UserScreen};
 
 /// A place on the user screen: a kept line and a character column.
 pub type Point = (usize, usize);
@@ -69,7 +69,7 @@ impl UserScreen {
     /// The word around `point`, first to last character; `None` on a
     /// blank or past the text.
     fn word_span(&self, (line, column): Point) -> Option<(Point, Point)> {
-        let chars: Vec<char> = self.lines.get(line)?.to_string().chars().collect();
+        let chars: Vec<char> = plain_text(self.lines.get(line)?).chars().collect();
         if chars.get(column).is_none_or(|&c| ends_word(c)) {
             return None;
         }
@@ -79,7 +79,7 @@ impl UserScreen {
     }
 
     fn select_line(&mut self, line: usize) {
-        let length = self.lines[line].to_string().trim_end().chars().count();
+        let length = plain_text(&self.lines[line]).trim_end().chars().count();
         if length > 0 {
             self.selection = Some(Selection { anchor: (line, 0), end: (line, length - 1), dragging: false });
         }
@@ -164,7 +164,7 @@ impl UserScreen {
         let ((first_line, first_column), (last_line, last_column)) = self.selection()?;
         let lines: Vec<String> = (first_line..=last_line.min(self.lines.len().saturating_sub(1)))
             .map(|index| {
-                let text = self.lines[index].to_string();
+                let text = plain_text(&self.lines[index]);
                 let from = if index == first_line { first_column } else { 0 };
                 let to = if index == last_line { last_column + 1 } else { usize::MAX };
                 text.chars().skip(from).take(to.saturating_sub(from)).collect::<String>().trim_end().to_string()
