@@ -28,6 +28,9 @@ pub enum EditorCommand {
     /// entry could express it; `Standard` only. History:
     /// docs/history/word-select.md.
     WordSelect { forward: bool },
+    /// `Ctrl+Down`/`Ctrl+Up` -- to the next/previous block of code
+    /// (`Editor::move_by_block`); `Standard` only.
+    BlockMove { forward: bool },
     /// `Ctrl+A` -- `Editor::select_all` (no single `edtui` action for it).
     SelectAll,
     /// `Ctrl+F` -- opens the built-in search box (`Editor::start_search`),
@@ -70,6 +73,8 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
         KeyCode::F(7) if key.modifiers.contains(KeyModifiers::ALT) => EditorCommand::FindPrevious,
         KeyCode::F(7) => EditorCommand::Find,
         KeyCode::Char('a' | 'A') if ctrl => EditorCommand::SelectAll,
+        KeyCode::Down if ctrl && !shift => EditorCommand::BlockMove { forward: true },
+        KeyCode::Up if ctrl && !shift => EditorCommand::BlockMove { forward: false },
         KeyCode::Left if ctrl && shift => EditorCommand::WordSelect { forward: false },
         KeyCode::Right if ctrl && shift => EditorCommand::WordSelect { forward: true },
         KeyCode::F(9) => EditorCommand::OpenMenu,
@@ -92,7 +97,7 @@ pub fn text_key(editor: &mut Editor, key: KeyEvent) {
         // Standard-only logic; under Vim the raw key goes to `edtui`,
         // where it's unbound. History: docs/history/editor-keymap.md.
         EditorCommand::WordSelect { forward } if editor.keymap_mode() == EditorKeymapMode::Standard => editor.extend_word_selection(forward),
-        EditorCommand::WordSelect { .. } | EditorCommand::Forward => editor.input(key),
+        EditorCommand::WordSelect { .. } | EditorCommand::BlockMove { .. } | EditorCommand::Forward => editor.input(key),
         _ => {}
     }
 }
@@ -203,7 +208,8 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         EditorCommand::Find => active_editor.start_search(),
         EditorCommand::FindNext => active_editor.search_next(),
         EditorCommand::FindPrevious => active_editor.search_previous(),
-        EditorCommand::SelectAll | EditorCommand::WordSelect { .. } | EditorCommand::Forward => text_key(active_editor, key),
+        EditorCommand::BlockMove { forward } if active_editor.keymap_mode() == EditorKeymapMode::Standard => active_editor.move_by_block(forward),
+        EditorCommand::SelectAll | EditorCommand::WordSelect { .. } | EditorCommand::BlockMove { .. } | EditorCommand::Forward => text_key(active_editor, key),
         EditorCommand::Ignore => {}
     }
 

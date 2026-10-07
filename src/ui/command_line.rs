@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::command_line::{matching_history, CommandHistoryMenu};
+use crate::command_line::{matching_history, CommandHistoryMenu, Suggestion};
 use crate::text_field::TextField;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
@@ -98,10 +98,11 @@ pub fn draw_command_history(frame: &mut Frame, area: Rect, menu: &CommandHistory
     frame.render_widget(hint, rows[hint_row_index]);
 }
 
-/// The history suggestions that pop up above the command line on a match,
-/// as in Far (not a centered popup). While shown, `Up`/`Down` move and
-/// `Tab` accepts (`browsing.rs`).
-pub fn draw_history_suggestions(frame: &mut Frame, command_line_area: Rect, suggestions: &[&str], selected: usize, theme: &Theme) {
+/// The suggestions that pop up above the command line on a match, as in
+/// Far (not a centered popup): history entries, then the active panel's
+/// names (in `accent`). While shown, `Up`/`Down` move and `Tab` accepts
+/// (`browsing.rs`); the list scrolls to keep the selection in view.
+pub fn draw_suggestions(frame: &mut Frame, command_line_area: Rect, suggestions: &[Suggestion], selected: usize, theme: &Theme) {
     let height = (suggestions.len() as u16 + 2).min(10);
     let popup = Rect {
         x: command_line_area.x,
@@ -117,23 +118,30 @@ pub fn draw_history_suggestions(frame: &mut Frame, command_line_area: Rect, sugg
 
     frame.render_widget(Clear, popup);
 
+    let has_names = suggestions.iter().any(|suggestion| matches!(suggestion, Suggestion::File { .. }));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent))
-        .title(" History ");
+        .title(if has_names { " Suggestions " } else { " History " });
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
+    let rows = usize::from(inner.height);
+    let first = (selected + 1).saturating_sub(rows);
     let items: Vec<ListItem> = suggestions
         .iter()
         .enumerate()
-        .map(|(index, entry)| {
+        .skip(first)
+        .take(rows)
+        .map(|(index, suggestion)| {
             let style = if index == selected {
                 popup::selected_row_style(theme)
+            } else if matches!(suggestion, Suggestion::File { .. }) {
+                Style::default().fg(theme.accent)
             } else {
                 Style::default().fg(theme.text)
             };
-            ListItem::new(Line::from(Span::styled(entry.to_string(), style)))
+            ListItem::new(Line::from(Span::styled(suggestion.label(), style)))
         })
         .collect();
     frame.render_widget(List::new(items), inner);

@@ -61,6 +61,10 @@ pub(super) enum BrowserAction {
     /// `F8` with the suggestions showing: forget the highlighted one
     /// (above `F8` = Delete files).
     DeleteSuggestion,
+    /// `F4` with the suggestions showing: a highlighted panel file is
+    /// selected in the panel and opened in the editor; otherwise plain
+    /// `F4`.
+    EditSuggestion,
     Complete,
     ClearLine,
     Backspace,
@@ -148,6 +152,7 @@ pub(super) static BINDINGS: &[Binding] = &[
     any(KeyCode::Down, SuggestionsShowing, A::SuggestionDown),
     any(KeyCode::Tab, SuggestionsShowing, A::AcceptSuggestion),
     any(KeyCode::F(8), SuggestionsShowing, A::DeleteSuggestion),
+    without(KeyCode::F(4), NONE, CTRL.union(ALT).union(SHIFT), SuggestionsShowing, A::EditSuggestion),
     any(KeyCode::Tab, TypedLine, A::Complete),
     // Panel navigation and the F-key row (Far's bare F-keys; F10 is the
     // only way to quit, since letters type into the command line).
@@ -261,6 +266,12 @@ mod tests {
         assert_eq!(lookup(chord(KeyCode::F(2), CTRL), EMPTY), Some(A::EditPanelPath));
         assert_eq!(lookup(chord(KeyCode::F(2), CTRL), TYPED), Some(A::EditPanelPath));
         assert_eq!(lookup(chord(KeyCode::F(2), NONE), EMPTY), Some(A::Navigate(Command::OpenUserMenu)));
+    }
+
+    #[test]
+    fn f4_works_on_a_suggestion_only_while_they_show() {
+        assert_eq!(lookup(chord(KeyCode::F(4), NONE), SUGGESTING), Some(A::EditSuggestion));
+        assert_eq!(lookup(chord(KeyCode::F(4), NONE), TYPED), Some(A::Navigate(Command::EditSelected)));
     }
 
     #[test]

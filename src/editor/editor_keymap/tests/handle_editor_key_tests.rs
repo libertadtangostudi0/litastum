@@ -13,6 +13,25 @@ fn handle_editor_key_ctrl_s_saves_and_clears_dirty() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "!hi\n");
 }
 
+/// Requested: Ctrl+Down/Ctrl+Up move the caret between blocks of code.
+#[test]
+fn ctrl_down_and_up_move_between_blocks() {
+    let (mut app, _path) = open_editor_app("a
+b
+
+c
+");
+
+    handle_editor_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL)).unwrap();
+    let Mode::Editing(editor) = &app.mode else { panic!("expected Mode::Editing") };
+    assert_eq!(editor.cursor_row(), 3);
+
+    handle_editor_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL)).unwrap();
+    let Mode::Editing(editor) = &app.mode else { panic!("expected Mode::Editing") };
+    assert_eq!(editor.cursor_row(), 0);
+    assert!(!editor.is_dirty());
+}
+
 /// F2 saves, as in Far's editor.
 #[test]
 fn f2_saves_like_ctrl_s() {

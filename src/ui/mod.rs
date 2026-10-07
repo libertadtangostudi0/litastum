@@ -186,12 +186,12 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
     let prefix_len = command_line::draw_command_line(frame, root[1], &cwd, &app.command_line, &theme);
     draw_function_keys(frame, root[2], &theme, app.alt_held);
 
-    // History suggestions pop up above the command line on a match, as
-    // in Far -- only on the bare browser.
+    // Suggestions (history, panel names) pop up above the command line on
+    // a match, as in Far -- only on the bare browser.
     if matches!(app.mode, Mode::Browsing) && app.overlay.is_none() && app.panel_path_edit.is_none() && !app.command_line_suggestion_dismissed {
-        let suggestions = crate::command_line::suggest_history(&app.command_history, app.command_line.text());
+        let suggestions = crate::command_line::suggestions(app);
         if !suggestions.is_empty() {
-            command_line::draw_history_suggestions(frame, root[1], &suggestions, app.command_line_suggestion_selected, &theme);
+            command_line::draw_suggestions(frame, root[1], &suggestions, app.command_line_suggestion_selected, &theme);
         }
     }
 
@@ -244,7 +244,7 @@ fn draw_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) -> Opti
     let overlay = app.overlay.as_ref()?;
     let style = app.settings.popup_style;
     match overlay {
-        Overlay::ConfirmDiscard => draw_confirm_discard_popup(frame, area, theme),
+        Overlay::ConfirmDiscard => draw_confirm_discard_popup(frame, area, theme, style),
         Overlay::EditorMenu(menu) => editor_menu::draw_editor_menu(frame, area, menu, theme, style),
         Overlay::EditorKeymapMenu(menu) => {
             let current = match &app.mode {

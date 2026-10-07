@@ -3,11 +3,12 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
-use crate::explorer::{execute, DriveMenu, FindFileState};
+use crate::explorer::{execute, Command, DriveMenu, FindFileState};
 
 use super::completion::complete;
 use super::effect::Effect;
-use super::history::{forget_history, suggest_history, CommandHistoryMenu};
+use super::history::{forget_history, CommandHistoryMenu};
+use super::suggestions::{suggestions, Suggestion};
 
 mod bindings;
 mod hidden_console;
@@ -52,10 +53,10 @@ pub fn handle_browsing_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
 }
 
 
-/// Whether the history suggestions overlay is up (`ui::draw` shows it
-/// under the same condition).
+/// Whether the suggestions overlay is up (`ui::draw` shows it under the
+/// same condition).
 fn suggestions_showing(app: &App) -> bool {
-    !app.command_line.is_empty() && !app.command_line_suggestion_dismissed && !suggest_history(&app.command_history, app.command_line.text()).is_empty()
+    !app.command_line.is_empty() && !app.command_line_suggestion_dismissed && !suggestions(app).is_empty()
 }
 
 
@@ -97,13 +98,13 @@ fn perform(app: &mut App, action: BrowserAction) -> Result<Effect> {
         }
         BrowserAction::SuggestionUp => app.command_line_suggestion_selected = app.command_line_suggestion_selected.saturating_sub(1),
         BrowserAction::SuggestionDown => {
-            let count = suggest_history(&app.command_history, app.command_line.text()).len();
+            let count = suggestions(app).len();
             crate::list_cursor::move_down(&mut app.command_line_suggestion_selected, count);
         }
         BrowserAction::AcceptSuggestion => {
-            let entry = suggest_history(&app.command_history, app.command_line.text()).get(app.command_line_suggestion_selected).map(|entry| entry.to_string());
-            if let Some(entry) = entry {
-                app.command_line.set_text(entry);
+            let line = suggestions(app).get(app.command_line_suggestion_selected).map(|suggestion| suggestion.accepted(app.command_line.text()));
+            if let Some(line) = line {
+                app.command_line.set_text(line);
                 app.command_line_completion = None;
             }
             app.command_line_suggestion_selected = 0;
@@ -111,12 +112,25 @@ fn perform(app: &mut App, action: BrowserAction) -> Result<Effect> {
             app.command_line_suggestion_dismissed = true;
         }
         BrowserAction::DeleteSuggestion => {
-            let entry = suggest_history(&app.command_history, app.command_line.text()).get(app.command_line_suggestion_selected).map(|entry| entry.to_string());
-            if let Some(entry) = entry {
+            // Only a history entry: a panel name is a file, never deleted here.
+            if let Some(Suggestion::History(entry)) = suggestions(app).get(app.command_line_suggestion_selected).cloned() {
                 forget_history(app, &entry);
             }
-            let count = suggest_history(&app.command_history, app.command_line.text()).len();
+            let count = suggestions(app).len();
             app.command_line_suggestion_selected = app.command_line_suggestion_selected.min(count.saturating_sub(1));
+        }
+        BrowserAction::EditSuggestion => {
+            if let Some(Suggestion::File { name, is_dir: false }) = suggestions(app).get(app.command_line_suggestion_selected).cloned() {
+                // As F4 in the panel path field's list: the panel's cursor
+                // moves onto the file, then the editor opens it.
+                let panel = app.active_panel();
+                if let Some(index) = panel.entries.iter().position(|entry| entry.name == name) {
+                    panel.selected = index;
+                }
+                app.command_line_suggestion_selected = 0;
+                app.command_line_suggestion_dismissed = true;
+            }
+            execute(Command::EditSelected, app)?;
         }
         BrowserAction::Complete => {
             let cwd = app.active_panel().path.clone();
@@ -405,6 +419,58 @@ mod handle_browsing_key_tests {
 
         handle_browsing_key(&mut app, key(KeyCode::F(8))).unwrap();
         assert_eq!(app.command_history, vec!["cargo build".to_string()], "every copy of the command goes");
+    }
+
+    /// Reported: a file name couldn't be completed from the suggestions.
+    #[test]
+    fn tab_accepts_a_panel_name_into_the_typed_word_and_f8_leaves_files_alone() {
+        let dir = unique_scratch_dir("browsing-keys-names");
+        fs::write(dir.join("cmt_msg.txt"), "x").unwrap();
+        let mut app = test_app(dir.clone());
+        app.command_line.set_text("svn commit -F cm");
+
+        handle_browsing_key(&mut app, key(KeyCode::F(8))).unwrap();
+        assert!(dir.join("cmt_msg.txt").exists(), "F8 on a file suggestion deletes nothing");
+        assert!(app.overlay.is_none());
+
+        handle_browsing_key(&mut app, key(KeyCode::Tab)).unwrap();
+        assert_eq!(app.command_line.text(), "svn commit -F cmt_msg.txt ");
+    }
+
+    /// Requested: F4 on a panel name in the suggestions moves the panel's
+    /// cursor onto that file and opens it, as in the path field's list.
+    #[test]
+    fn f4_on_a_file_suggestion_selects_it_in_the_panel_and_opens_the_editor() {
+        let dir = unique_scratch_dir("browsing-keys-f4");
+        fs::write(dir.join("a.txt"), "a").unwrap();
+        fs::write(dir.join("cmt_msg.txt"), "message\n").unwrap();
+        let mut app = test_app(dir.clone());
+        app.command_line.set_text("svn commit -F cm");
+
+        handle_browsing_key(&mut app, key(KeyCode::F(4))).unwrap();
+
+        assert_eq!(app.panels[app.active].current().map(|entry| entry.name.as_str()), Some("cmt_msg.txt"));
+        let crate::app::Mode::Editing(editor) = &app.mode else { panic!("expected the editor") };
+        assert_eq!(editor.path(), dir.join("cmt_msg.txt"));
+        assert_eq!(app.command_line.text(), "svn commit -F cm", "the typed line stays");
+    }
+
+    /// Reported: with `cmt_msg.txt` also in the history, its row was a
+    /// history entry and F4 didn't open the file.
+    #[test]
+    fn f4_opens_a_file_whose_name_is_also_in_the_history() {
+        let dir = unique_scratch_dir("browsing-keys-f4");
+        fs::write(dir.join("cmt_msg.txt"), "message
+").unwrap();
+        let mut app = test_app(dir.clone());
+        app.command_history = vec!["cmt_msg.txt".into(), "svn commit -F cmt_msg.txt RFI14.1".into()];
+        app.command_line.set_text("cmt");
+        handle_browsing_key(&mut app, key(KeyCode::Down)).unwrap(); // newest history first, then the name
+
+        handle_browsing_key(&mut app, key(KeyCode::F(4))).unwrap();
+
+        let crate::app::Mode::Editing(editor) = &app.mode else { panic!("expected the editor") };
+        assert_eq!(editor.path(), dir.join("cmt_msg.txt"));
     }
 
     #[test]

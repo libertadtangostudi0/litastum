@@ -198,7 +198,7 @@ pub struct App {
     /// See `command_line::CompletionCycle`.
     pub command_line_completion: Option<command_line::CompletionCycle>,
     /// Highlighted row in the history-suggestion overlay
-    /// (`command_line::suggest_history`); reset on every edit. Lives on
+    /// (`command_line::suggestions`); reset on every edit. Lives on
     /// `App` because the overlay isn't a `Mode`.
     pub command_line_suggestion_selected: usize,
     /// Set by `Tab`-accepting a suggestion, cleared by the next edit --

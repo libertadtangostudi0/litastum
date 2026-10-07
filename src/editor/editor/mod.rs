@@ -12,6 +12,7 @@ use super::bindings::standard_key_handler;
 use super::clipboard::OsClipboardBridge;
 use super::keymap_mode::EditorKeymapMode;
 
+mod block_move;
 mod changes;
 mod fast_paste;
 mod input;

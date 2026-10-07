@@ -3,10 +3,12 @@ mod completion;
 mod effect;
 mod history;
 mod shell;
+mod suggestions;
 
 pub use browsing::{handle_browsing_key, handle_browsing_mouse};
 pub(crate) use effect::apply_effect;
 pub use effect::Effect;
 pub use completion::CompletionCycle;
-pub use history::{handle_history_key, load_history, matching_history, suggest_history, CommandHistoryMenu};
+pub use history::{handle_history_key, load_history, matching_history, CommandHistoryMenu};
+pub use suggestions::{suggestions, Suggestion};
 pub use shell::{builtin_profiles, handle_shell_menu_key, open_shell_menu, ShellProfile};

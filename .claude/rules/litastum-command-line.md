@@ -37,10 +37,14 @@ line. Order matters and the table is grouped by it:
    `Ctrl+C`/`Ctrl+Insert` copy and `Ctrl+X`/`Shift+Delete` cut the
    selection, on a typed line only (above `Delete` = delete forward).
 3. Marking -- `Shift+arrows`, and `Shift+A` on an empty line only.
-4. The typed line -- `Enter` runs it; while history suggestions show,
-   `Up`/`Down`/`Tab` work on them (never `Enter`), and `F8` forgets the
-   highlighted one -- above `F8` = Delete, so it never deletes files
-   then; `Tab` completes.
+4. The typed line -- `Enter` runs it; while suggestions show (history
+   entries, then the active panel's names starting with the typed word,
+   `command_line/suggestions.rs`), `Up`/`Down`/`Tab` work on them (never
+   `Enter`) -- a history entry replaces the line, a name just the word --
+   and `F8` forgets a highlighted history entry (above `F8` = Delete, so
+   it never deletes files then; on a name it does nothing). `F4` on a
+   file name selects it in the panel and opens the editor (otherwise it
+   is plain `F4`); `Tab` completes.
 5. Panel navigation and the F-key row, with any modifiers (these are
    below every chord on the same key) -- `Enter`/`Tab` here only on an
    empty line, since the rows above took the typed case.
