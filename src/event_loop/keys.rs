@@ -104,7 +104,9 @@ fn drain_pending_editor_typing(app: &mut App, terminal: &mut Terminal<CrosstermB
                 let last_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown).then_some(mouse.kind);
                 return drain_pending_mouse_events(app, terminal, last_scroll);
             }
-            _ => {}
+            other => {
+                app.note_focus(&other);
+            }
         }
     }
     flush_editor_typing_batch(app, &mut batch);
@@ -148,7 +150,9 @@ fn drain_pending_navigation_keys(app: &mut App, terminal: &mut Terminal<Crosster
                 let last_scroll = matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown).then_some(mouse.kind);
                 return drain_pending_mouse_events(app, terminal, last_scroll);
             }
-            _ => {}
+            other => {
+                app.note_focus(&other);
+            }
         }
     }
     Ok(())

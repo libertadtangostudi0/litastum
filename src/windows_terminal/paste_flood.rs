@@ -53,13 +53,22 @@ const RECENTLY_TYPED_CAP: usize = 64;
 
 impl PasteFlood {
     /// Whether a real physical `Ctrl+V` press started since the last
-    /// call -- `true` once per press, never repeatedly while held.
+    /// call -- `true` once per press, never repeatedly while held -- with
+    /// our terminal `focused`. The key state is the whole system's:
+    /// reported, `Ctrl+V` in another program sometimes pasted here too.
     #[cfg(windows)]
-    pub fn ctrl_v_just_pressed(&mut self) -> bool {
-        let held = super::paste_hotkey::ctrl_v_physically_down();
+    pub fn ctrl_v_just_pressed(&mut self, focused: bool) -> bool {
+        self.press_started(super::paste_hotkey::ctrl_v_physically_down(), focused)
+    }
+
+    /// `ctrl_v_just_pressed` for a given key state. The press is followed
+    /// even unfocused, so coming back with the keys still down isn't a
+    /// new press.
+    #[cfg(any(windows, test))]
+    fn press_started(&mut self, held: bool, focused: bool) -> bool {
         let just_pressed = held && !self.ctrl_v_held;
         self.ctrl_v_held = held;
-        just_pressed
+        just_pressed && focused
     }
 
     /// The part of `text` (line-break `\r`s dropped, the way the flood
@@ -299,5 +308,16 @@ mod tests {
             flood.record_typed_key(KeyCode::Char('s'), KeyModifiers::CONTROL);
             assert!(flood.recently_typed.is_empty(), "a shortcut is not typed text");
         }
+    }
+
+    /// Reported: `Ctrl+V` in another program sometimes pasted into
+    /// litastum -- the polled key state is the whole system's.
+    #[test]
+    fn a_press_counts_only_with_the_terminal_focused() {
+        let mut flood = PasteFlood::default();
+        assert!(!flood.press_started(true, false), "pressed in another window");
+        assert!(!flood.press_started(true, true), "came back still holding it: not a new press");
+        assert!(!flood.press_started(false, true));
+        assert!(flood.press_started(true, true), "a real press here");
     }
 }

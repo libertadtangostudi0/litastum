@@ -53,7 +53,11 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Terminal<CrosstermBackend<S
         if !event::poll(FRAME)? {
             continue;
         }
-        match event::read()? {
+        let event = event::read()?;
+        if app.note_focus(&event) {
+            continue;
+        }
+        match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => {
                 let key = crate::keyboard_layout::normalize_ctrl_shortcut(key);
                 if let Some(bytes) = encode_key(key, command.app_cursor()) {

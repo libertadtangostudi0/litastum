@@ -3,7 +3,7 @@ use std::io::{self, Stdout};
 use color_eyre::eyre::Result;
 use crossterm::{
     cursor::SetCursorStyle,
-    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste},
+    event::{DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste, EnableFocusChange},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle},
 };
@@ -35,7 +35,11 @@ pub(crate) fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     //
     // `SetTitle`: the window or tab reads "litastum" rather than the path
     // of the exe (docs/history/launching.md).
-    execute!(stdout, EnterAlternateScreen, SetCursorStyle::BlinkingBar, EnableBracketedPaste, SetTitle("litastum"))?;
+    //
+    // `EnableFocusChange`: the terminal says when it gains and loses the
+    // focus (`App::terminal_focused`), so the polled `Ctrl+V` ignores a
+    // press in another program.
+    execute!(stdout, EnterAlternateScreen, SetCursorStyle::BlinkingBar, EnableBracketedPaste, EnableFocusChange, SetTitle("litastum"))?;
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
 }
 
@@ -54,6 +58,7 @@ pub(crate) fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>
     execute!(
         terminal.backend_mut(),
         DisableBracketedPaste,
+        DisableFocusChange,
         LeaveAlternateScreen,
         SetCursorStyle::DefaultUserShape,
         crossterm::style::Print(crate::terminal_palette::RESET_PALETTE)

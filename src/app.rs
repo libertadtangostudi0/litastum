@@ -274,10 +274,25 @@ pub struct App {
     /// (`browsing::hidden_console`). Menus and popups open over it as over
     /// the panels.
     pub panels_hidden: bool,
+    /// Whether the terminal says it has the keyboard focus (focus events,
+    /// `terminal_setup`); `true` until told otherwise, for a terminal that
+    /// never says. The polled `Ctrl+V` only counts while it's `true`.
+    pub terminal_focused: bool,
 }
 
 
 impl App {
+    /// Notes a focus event; `false` for any other event. Every place that
+    /// reads terminal events calls it, so the flag never goes stale.
+    pub fn note_focus(&mut self, event: &crossterm::event::Event) -> bool {
+        match event {
+            crossterm::event::Event::FocusGained => self.terminal_focused = true,
+            crossterm::event::Event::FocusLost => self.terminal_focused = false,
+            _ => return false,
+        }
+        true
+    }
+
     /// Builds the app with both panels rooted at `start_dir`.
     pub fn new(start_dir: PathBuf, theme: Theme, syntax_theme: Option<SynTheme>) -> io::Result<Self> {
         let left = Panel::new(start_dir.clone())?;
@@ -313,6 +328,7 @@ impl App {
             notice: None,
             user_screen: Default::default(),
             panels_hidden: false,
+            terminal_focused: true,
         })
     }
 

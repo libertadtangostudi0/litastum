@@ -121,8 +121,12 @@ pub(super) fn console_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
 
 /// The mouse while the panels are hidden: a click on the prompt's path
 /// edits it, as on a panel's title (a click elsewhere puts it back); a
-/// drag selects text (scrolling on at the top and bottom rows), the wheel
-/// scrolls back.
+/// drag selects text (scrolling on at the top and bottom rows), and so
+/// does a click, then a `Shift`- or `Ctrl`-click at the other end, or a
+/// double click (the word; again on it, the line) --
+/// `Ctrl` because Windows Terminal keeps `Shift`-clicks for its own
+/// selection, which can't scroll the alternate screen; the wheel scrolls
+/// back.
 pub(super) fn mouse(app: &mut App, mouse: MouseEvent) {
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
         // The command line is the row under the screen's lines.
@@ -137,7 +141,7 @@ pub(super) fn mouse(app: &mut App, mouse: MouseEvent) {
     }
     let screen = &mut app.user_screen;
     match mouse.kind {
-        MouseEventKind::Down(MouseButton::Left) => screen.select_start(mouse.row, mouse.column),
+        MouseEventKind::Down(MouseButton::Left) => screen.click(mouse.row, mouse.column, mouse.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL), std::time::Instant::now()),
         MouseEventKind::Drag(MouseButton::Left) => screen.select_to(mouse.row, mouse.column),
         MouseEventKind::Up(MouseButton::Left) => screen.select_finish(),
         MouseEventKind::ScrollUp => screen.scroll_selecting(WHEEL_LINES, mouse.row, mouse.column),

@@ -26,7 +26,10 @@ and word-occurrence highlighting only scans rows that can be on screen
   the clipboard as simulated keystrokes at ~7-8ms each. So the physical
   key is polled with `GetAsyncKeyState` on every loop iteration
   (`windows_terminal/paste_hotkey.rs`), the clipboard is read and pasted
-  at once, and the flood that follows is swallowed
+  at once, and the flood that follows is swallowed. The key state is the
+  whole system's, so a press counts only while the terminal reports the
+  focus (focus events, `App::terminal_focused`) -- `Ctrl+V` in another
+  program used to paste here too
   (`windows_terminal::PasteFlood` -- matched character by character,
   with a deadline as a safety valve; see its own docs).
 - **Where a paste lands**: `event_loop::paste::paste_target`, an

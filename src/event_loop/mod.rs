@@ -139,7 +139,11 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
 /// Returns whether the caller should redraw -- `false` for a key nothing
 /// was dispatched for.
 fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
-    match event::read()? {
+    let event = event::read()?;
+    if app.note_focus(&event) {
+        return Ok(false);
+    }
+    match event {
         Event::Key(key) => handle_key_event(app, key, terminal),
         // Only arrives in the modes `sync_mouse_capture` captures for.
         Event::Mouse(mouse) => {
@@ -180,7 +184,9 @@ fn drain_pending_mouse_events(app: &mut App, terminal: &mut Terminal<CrosstermBa
                 handle_key_event(app, key, terminal)?;
                 return Ok(());
             }
-            _ => {}
+            other => {
+                app.note_focus(&other);
+            }
         }
     }
     Ok(())
@@ -191,9 +197,9 @@ fn drain_pending_mouse_events(app: &mut App, terminal: &mut Terminal<CrosstermBa
 /// its path) and while an editor is open (F4, Compare or the conflict
 /// resolver), synced once per loop iteration rather than at each place one
 /// opens or closes. Capture takes over the terminal's own text selection
-/// (Windows Terminal still selects with `Shift` held); a shell command and
-/// `Ctrl+O` get it back (`terminal_setup::release_mouse_capture`). Only
-/// set after the terminal call succeeds -- `restore_terminal` relies on it.
+/// (Windows Terminal still selects with `Shift` held); the user screen has
+/// its own (`user_screen/selection.rs`). Only set after the terminal call
+/// succeeds -- `restore_terminal` relies on it.
 fn sync_mouse_capture(app: &mut App) {
     let wanted = matches!(app.mode, Mode::Browsing | Mode::Editing(_) | Mode::CompareFiles(_) | Mode::ResolveConflict(_));
     if wanted == app.mouse_capture_enabled {

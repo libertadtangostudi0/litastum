@@ -43,6 +43,8 @@ pub struct UserScreen {
     /// Rows the view had when last drawn -- a page for `PageUp`.
     visible_rows: usize,
     selection: Option<selection::Selection>,
+    /// The last click, for telling a double or triple one.
+    last_click: Option<selection::Click>,
 }
 
 impl UserScreen {

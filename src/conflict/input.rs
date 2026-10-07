@@ -46,6 +46,8 @@ fn resolve(key: KeyEvent) -> ConflictCommand {
     match key.code {
         KeyCode::Esc => ConflictCommand::Close,
         KeyCode::Char('s' | 'S') if ctrl => ConflictCommand::Save,
+        // Ctrl+F2 edits the path, as on a panel's title; above plain F2 (save).
+        KeyCode::F(2) if ctrl => ConflictCommand::EditPath,
         KeyCode::F(2) if key.modifiers.contains(KeyModifiers::SHIFT) => ConflictCommand::SaveAs,
         KeyCode::F(2) => ConflictCommand::Save,
         KeyCode::Tab => ConflictCommand::NextPane,
@@ -203,6 +205,19 @@ mod tests {
         handle_conflict_key(&mut app, key(KeyCode::Esc)).unwrap();
         assert!(matches!(app.mode, Mode::ResolveConflict(_)), "Esc only cancelled the selection");
         assert!(!state(&app).result.has_selection());
+    }
+
+    /// Requested: Ctrl+F2 edits the path in every pane, as on the panels.
+    #[test]
+    fn ctrl_f2_edits_the_focused_panes_path_in_every_pane() {
+        let mut app = app_with_conflict();
+        // working, result, theirs, the bottom Compare
+        for _ in 0..4 {
+            handle_conflict_key(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::CONTROL)).unwrap();
+            assert!(state(&app).is_editing_path(), "pane {:?}", state(&app).focus);
+            handle_conflict_key(&mut app, key(KeyCode::Esc)).unwrap();
+            handle_conflict_key(&mut app, key(KeyCode::Tab)).unwrap();
+        }
     }
 
     #[test]

@@ -215,7 +215,11 @@ the same keys (`Up`/`Down`/`Tab`/`F4`/`F8`/`Esc`).
 
 Text is selected there with the mouse (`user_screen/selection.rs`): a
 drag selects, scrolling on at the top and bottom rows, the wheel moves
-the selection's end with the text; `Ctrl+C`/`Ctrl+Insert` copy it, `Esc`
+the selection's end with the text; or a click, scrolling, and a
+`Shift`/`Ctrl`-click at the other end (`Ctrl` because Windows Terminal
+keeps `Shift`-clicks for its own selection); a double click selects
+the word (a path or URL stays whole), another double click on the
+selected word the line; `Ctrl+C`/`Ctrl+Insert` copy it, `Esc`
 drops it. Our own, since mouse capture takes the terminal's selection
 -- and the alternate screen has no scrollback to select through.
 History: docs/history/command-execution.md.

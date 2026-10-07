@@ -15,7 +15,8 @@ use super::keys::key_effect;
 /// History: docs/history/editor-performance.md.
 #[cfg(windows)]
 pub(super) fn try_intercept_paste_hotkey(app: &mut App) -> Result<bool> {
-    if !app.paste_flood.ctrl_v_just_pressed() {
+    let focused = app.terminal_focused;
+    if !app.paste_flood.ctrl_v_just_pressed(focused) {
         return Ok(false);
     }
 

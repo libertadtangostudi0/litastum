@@ -34,6 +34,8 @@ fn resolve(key: KeyEvent) -> CompareCommand {
     match key.code {
         KeyCode::Esc => CompareCommand::Close,
         KeyCode::Char('s' | 'S') if ctrl => CompareCommand::Save,
+        // Ctrl+F2 edits the path, as on a panel's title; above plain F2 (save).
+        KeyCode::F(2) if ctrl => CompareCommand::EditPath,
         KeyCode::F(2) if key.modifiers.contains(KeyModifiers::SHIFT) => CompareCommand::SaveAs,
         KeyCode::F(2) => CompareCommand::Save,
         KeyCode::Tab => CompareCommand::ToggleFocus,
@@ -330,6 +332,21 @@ mod tests {
         handle_compare_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap();
         handle_compare_key(&mut app, key(KeyCode::Backspace)).unwrap();
         assert_eq!(left_text(&app), "\n");
+    }
+
+    /// Requested: Ctrl+F2 edits the path here too, as on the panels.
+    #[test]
+    fn ctrl_f2_edits_the_focused_panes_path_and_saves_nothing() {
+        let mut app = app_with_compare("a
+", "b
+");
+        handle_compare_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+
+        handle_compare_key(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::CONTROL)).unwrap();
+
+        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
+        assert!(state.path_edit.is_some());
+        assert!(state.left.is_dirty(), "not saved");
     }
 
     #[test]
