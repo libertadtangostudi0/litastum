@@ -18,7 +18,6 @@ mod editor_keymap_menu;
 mod editor_menu;
 mod editor_pane;
 mod find_file;
-mod function_keys;
 mod image_preview;
 mod info;
 mod markdown_preview;
@@ -36,20 +35,17 @@ mod user_menu;
 mod user_screen;
 
 use editor_pane::{draw_confirm_discard_popup, draw_editor};
-use function_keys::draw_function_keys;
 use info::draw_info_popup;
 use panel::draw_panel;
 pub use user_screen::{console_rows, draw_console};
 
 // Only reachable from `ui::tests` (`use super::*;`) -- `draw()` itself
-// calls `draw_function_keys`/`draw_panel` directly, never these by
-// name, so a non-test build never touches them through this `use`.
-#[cfg(test)]
-use function_keys::{function_key_columns, ALT_LABELS, DEFAULT_LABELS};
+// calls `draw_panel` directly, never this by name, so a non-test build
+// never touches it through this `use`.
 #[cfg(test)]
 use panel::build_list_item;
 
-/// Draws the whole app: two panels, the command line and the F-key bar.
+/// Draws the whole app: two panels and the command line under them.
 /// Returns the `(columns, visible_rows)` each panel was drawn with --
 /// `Panel` owns navigation but only `ui` knows the terminal size -- and
 /// where the terminal cursor goes (`None` = hidden). The cursor is
@@ -113,7 +109,6 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(3),
-            Constraint::Length(1),
             Constraint::Length(1),
         ])
         .split(frame.area());
@@ -184,7 +179,7 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
     } else {
         draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme)
     };
-    let command_cursor = draw_command_rows(frame, root[1], root[2], app, &theme);
+    let command_cursor = draw_command_rows(frame, root[1], app, &theme, true);
 
     // The cursor sits in the command line unless a popup covers it --
     // except the history popup, which filters that same line.
@@ -220,15 +215,15 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
 }
 
 
-/// The command line and the F-key bar -- under the panels and under the
-/// user screen alike -- with the suggestions (history, panel names)
-/// popping up over the line on a match, as in Far, on the bare browser
-/// only. Returns where the command line's cursor is.
-fn draw_command_rows(frame: &mut Frame, line_row: Rect, keys_row: Rect, app: &App, theme: &Theme) -> Position {
+/// The command line -- under the panels and under the user screen alike
+/// -- with the suggestions (history, panel names) popping up over it on a
+/// match, as in Far, on the bare browser only and while `suggest` (not
+/// while a command runs: its keys are the program's). No F-key bar under
+/// it (dropped as noise, requested). Returns where its cursor is.
+fn draw_command_rows(frame: &mut Frame, line_row: Rect, app: &App, theme: &Theme, suggest: bool) -> Position {
     let cwd = app.panels[app.active].path.clone();
     let prefix_len = command_line::draw_command_line(frame, line_row, &cwd, &app.command_line, theme);
-    draw_function_keys(frame, keys_row, theme, app.alt_held);
-    if matches!(app.mode, Mode::Browsing) && app.overlay.is_none() && app.panel_path_edit.is_none() && !app.command_line_suggestion_dismissed {
+    if suggest && matches!(app.mode, Mode::Browsing) && app.overlay.is_none() && app.panel_path_edit.is_none() && !app.command_line_suggestion_dismissed {
         let suggestions = crate::command_line::suggestions(app);
         if !suggestions.is_empty() {
             command_line::draw_suggestions(frame, line_row, &suggestions, app.command_line_suggestion_selected, theme);

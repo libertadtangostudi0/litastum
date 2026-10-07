@@ -9,8 +9,8 @@ use ratatui::{
 use crate::notice::{Notice, NoticeKind};
 use crate::theming::{PopupStyle, Theme};
 
-/// Rows kept clear at the bottom: the command line and the F-key bar.
-const BOTTOM_ROWS: u16 = 2;
+/// Rows kept clear at the bottom: the command line.
+const BOTTOM_ROWS: u16 = 1;
 
 const MIN_WIDTH: u16 = 24;
 
@@ -139,10 +139,10 @@ mod tests {
     }
 
     #[test]
-    fn the_toast_sits_bottom_right_above_the_last_two_rows() {
+    fn the_toast_sits_bottom_right_above_the_command_line() {
         let rect = toast_rect(Rect::new(0, 0, 80, 24), "Saved").unwrap();
         assert_eq!(rect.right(), 79, "one column off the right edge");
-        assert_eq!(rect.bottom(), 22, "the command line and F-key rows stay visible");
+        assert_eq!(rect.bottom(), 23, "the command line stays visible");
     }
 
     #[test]

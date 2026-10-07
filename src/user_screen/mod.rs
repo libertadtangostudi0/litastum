@@ -1,6 +1,6 @@
 //! The user screen, as in Far: what commands printed, kept by litastum
 //! itself rather than left on the real terminal, so `Ctrl+O` shows it
-//! with our own command line, key bar and popups over it.
+//! with our own command line and popups over it.
 //!
 //! - `session`: a command running in a pseudoconsole, parsed into a grid;
 //! - `grid`: grid rows as `ratatui` lines;

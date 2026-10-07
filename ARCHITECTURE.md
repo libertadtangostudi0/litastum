@@ -27,9 +27,6 @@ event_loop/           — run(), wait_for_event (background-task polling,
 windows_terminal/     — how Windows Terminal and the Windows console
                         deliver input differently from what crossterm
                         assumes, in one place:
-  windows_terminal/alt_key.rs      — Windows-only: GetAsyncKeyState for
-                                     real Alt hold/release
-                                     (ui::draw_function_keys)
   windows_terminal/paste_hotkey.rs — Windows-only: GetAsyncKeyState for a
                                      real physical Ctrl+V
   windows_terminal/paste_flood.rs  — PasteFlood: the Ctrl+V edge, the
@@ -252,8 +249,7 @@ ui/mod.rs               — pure(ish) rendering: App -> ratatui widgets;
                            passed ~500 lines: panel.rs (draw_panel/
                            draw_entry_grid/build_list_item), editor_pane.rs
                            (draw_editor, the ConfirmDiscard popup over
-                           it), info.rs (Overlay::Info), function_keys.rs
-                           (the F-key hint row); draw_command_line moved
+                           it), info.rs (Overlay::Info); draw_command_line moved
                            into the already-existing command_line.rs
                            alongside draw_command_history/
                            draw_history_suggestions rather than getting

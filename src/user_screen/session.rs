@@ -142,6 +142,19 @@ impl LiveCommand {
         self.term.lock().mode().contains(TermMode::APP_CURSOR)
     }
 
+    /// Whether a full-screen program (an editor, a pager) has the screen.
+    pub fn full_screen(&self) -> bool {
+        self.term.lock().mode().contains(TermMode::ALT_SCREEN)
+    }
+
+    /// The cursor's line counted from the top of the scrollback -- the
+    /// same numbering as `output`'s lines.
+    pub fn output_line(&self) -> usize {
+        let term = self.term.lock();
+        let grid = term.grid();
+        grid.history_size() + grid.cursor.point.line.0.max(0) as usize
+    }
+
     /// What to draw in `rows` rows.
     pub fn view(&self, rows: usize) -> LiveView {
         let term = self.term.lock();

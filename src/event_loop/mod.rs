@@ -81,11 +81,14 @@ fn poll_background_tasks(app: &mut App) -> bool {
     image || search
 }
 
+/// How often `wait_for_event` looks at the physical `Ctrl+V` while idle
+/// on Windows (`try_intercept_paste_hotkey`).
+#[cfg(windows)]
+const IDLE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// Blocks until a terminal event arrives (`handle_event`), a background
-/// task finishes, or -- on Windows -- the physical `Alt` state changes:
-/// a bare modifier produces no event there, so the F-key bar polls it
-/// (`windows_terminal::alt_key`). Elsewhere `alt_held` comes from key
-/// event modifiers (`handle_event`).
+/// task finishes, or -- on Windows -- `Ctrl+V` is pressed (Windows
+/// Terminal never sends it, so it's polled).
 #[cfg(windows)]
 fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     loop {
@@ -94,7 +97,7 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
         if try_intercept_paste_hotkey(app)? {
             return Ok(());
         }
-        let poll_interval = if background_task_pending(app) { BACKGROUND_TASK_POLL_INTERVAL } else { crate::windows_terminal::alt_key::POLL_INTERVAL };
+        let poll_interval = if background_task_pending(app) { BACKGROUND_TASK_POLL_INTERVAL } else { IDLE_POLL_INTERVAL };
         if event::poll(poll_interval)? {
             // A key event `handle_event` never actually dispatched
             // anything for (see `handle_key_event`'s own doc comment)
@@ -106,11 +109,6 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
             continue;
         }
         if poll_background_tasks(app) {
-            return Ok(());
-        }
-        let alt_down = crate::windows_terminal::alt_key::is_physically_down();
-        if alt_down != app.alt_held {
-            app.alt_held = alt_down;
             return Ok(());
         }
     }

@@ -25,7 +25,7 @@ pub(super) fn is_ctrl_o(key: KeyEvent) -> bool {
 
 /// `Ctrl+O` -- real Far Manager's own "show/hide panels" toggle: the user
 /// screen (what commands printed, `App::user_screen`) with our own
-/// command line, suggestions and key bar under it (`ui::draw_console`).
+/// command line and suggestions under it (`ui::draw_console`).
 /// Blocking: the main loop doesn't redraw until the panels come back.
 ///
 /// It's a real command line, as in Far: `Enter` runs the line here, its

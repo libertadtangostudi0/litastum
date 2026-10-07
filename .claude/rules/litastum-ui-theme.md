@@ -14,7 +14,8 @@ module-level plan.
 - Status colors: success `#3fb950`, danger `#f85149`, attention/marked
   `#d29922`
 
-Only F8 (Delete) uses `danger`; every other F-key label uses `accent`.
+No F-key hint bar: it was dropped as noise (requested) -- the keys
+themselves work as before.
 
 ## Layout direction
 

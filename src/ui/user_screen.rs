@@ -9,21 +9,22 @@ use crate::app::App;
 use crate::user_screen::LiveView;
 
 /// Rows the user screen gets on a terminal `height` rows tall: all but the
-/// command line and the key bar under it.
+/// command line under it.
 pub fn console_rows(height: u16) -> u16 {
-    height.saturating_sub(2).max(1)
+    height.saturating_sub(1).max(1)
 }
 
 
 /// The user screen, as Far's: what commands printed (`App::user_screen`),
-/// a running command's output live under it, and our own command line and
-/// key bar below -- `Ctrl+O`, and while a command runs. The cursor is the
-/// running program's, else the command line's.
+/// a running command's output live under it, and our own command line
+/// below -- `Ctrl+O`, and while a command runs (what's typed meanwhile
+/// shows in it, without suggestions). The cursor is the running
+/// program's, else the command line's.
 pub fn draw_console(frame: &mut Frame, app: &App, live: Option<&LiveView>) -> Option<Position> {
     let theme = app.theme;
-    let [screen, line_row, keys_row] = Layout::vertical([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)]).areas(frame.area());
+    let [screen, line_row] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
     let screen_cursor = draw_screen_lines(frame, screen, app, live);
-    let command_cursor = super::draw_command_rows(frame, line_row, keys_row, app, &theme);
+    let command_cursor = super::draw_command_rows(frame, line_row, app, &theme, live.is_none());
     match live {
         Some(_) => screen_cursor,
         None => Some(command_cursor),
@@ -83,7 +84,7 @@ mod tests {
         app.user_screen.extend(vec![Line::raw("a.txt")]);
         let live = LiveView { lines: vec![Line::raw("running")], cursor: Some((0, 7)), full_screen: false };
 
-        let (rows, cursor) = rendered(&app, Some(&live), 6);
+        let (rows, cursor) = rendered(&app, Some(&live), 5);
 
         assert_eq!(rows[..3], ["C:> dir", "a.txt", "running"]);
         assert_eq!(cursor, Some(Position::new(7, 2)), "the program's cursor, not the command line's");
@@ -95,12 +96,12 @@ mod tests {
         let mut app = test_app(unique_scratch_dir("console-view"));
         app.user_screen.extend((1..=10).map(|n| Line::raw(n.to_string())).collect());
 
-        let (rows, cursor) = rendered(&app, None, 5);
+        let (rows, cursor) = rendered(&app, None, 4);
         assert_eq!(rows[..3], ["8", "9", "10"]);
-        assert_eq!(cursor.map(|position| position.y), Some(3), "the command line's cursor");
+        assert_eq!(cursor.map(|position| position.y), Some(3), "the command line's cursor, on the last row");
 
         app.user_screen.scroll_by(2, 3);
-        assert_eq!(rendered(&app, None, 5).0[..3], ["6", "7", "8"]);
+        assert_eq!(rendered(&app, None, 4).0[..3], ["6", "7", "8"]);
     }
 
     #[test]

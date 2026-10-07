@@ -181,14 +181,6 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
     // below may set a new one.
     app.notice = None;
 
-    // Drives the alternate F-key row (`ui::draw_function_keys`). On
-    // Windows this is mostly redundant with `wait_for_event`'s own
-    // `GetAsyncKeyState` poll (which already catches real hold/release
-    // even between keystrokes) but harmless to also set here; on other
-    // platforms this keystroke-modifier reading is the only signal
-    // there is -- see `App::alt_held`'s doc.
-    app.alt_held = key.modifiers.contains(KeyModifiers::ALT);
-
     // An open overlay gets every key; the screen underneath gets none.
     // Every handler returns the `Effect` it wants applied (usually
     // `Effect::None`).

@@ -174,7 +174,7 @@ pub struct App {
     /// A popup over `mode`, if one is open -- see `Overlay`.
     pub overlay: Option<Overlay>,
     pub should_quit: bool,
-    /// The live interface theme — panels, borders, F-key bar, etc.
+    /// The live interface theme — panels, borders, the command line, etc.
     /// Loaded once at startup (`config::load_active_theme`) and
     /// swappable at runtime through the F9 menu.
     pub theme: Theme,
@@ -229,11 +229,6 @@ pub struct App {
     pub find_file_name_history: Vec<String>,
     /// Find file "Text to find" queries -- see `find_file_name_history`.
     pub find_file_content_history: Vec<String>,
-    /// Whether `Alt` is held -- selects the F-key bar's row, Far-style.
-    /// On Windows a bare modifier produces no event, so it's polled
-    /// (`windows_terminal::alt_key`); elsewhere it's read from the last
-    /// key event's modifiers and only clears on the next key.
-    pub alt_held: bool,
     /// Windows Terminal paste state (`windows_terminal::PasteFlood`).
     pub paste_flood: crate::windows_terminal::PasteFlood,
     /// `Some` when the editor was opened from Find file results: closing
@@ -303,7 +298,6 @@ impl App {
             search_history: Vec::new(),
             find_file_name_history: Vec::new(),
             find_file_content_history: Vec::new(),
-            alt_held: false,
             paste_flood: crate::windows_terminal::PasteFlood::default(),
             editor_return_to: None,
             user_menu_command_edit: None,

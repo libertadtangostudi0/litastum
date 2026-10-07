@@ -15,6 +15,7 @@ mod hidden_console;
 mod live_command;
 mod panel_path;
 mod shell_exec;
+mod type_ahead;
 
 pub(super) use hidden_console::toggle_panels_hidden;
 pub(super) use shell_exec::run_shell_command_lines;

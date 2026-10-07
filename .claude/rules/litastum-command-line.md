@@ -112,9 +112,13 @@ line. Order matters and the table is grouped by it:
   ConPTY on Windows, a pty elsewhere, parsed into a grid by
   `alacritty_terminal` (`user_screen/session.rs`) -- the engine the
   window (`gui/`) uses. While it runs, the user screen shows the output
-  live under our own command line and key bar, and every key goes to the
+  live under our own command line, and every key goes to the
   program (`user_screen::encode_key`, `Ctrl+C` included), so interactive
-  programs work. When it exits, its output joins the user screen and
+  programs work. What's typed meanwhile also shows in our command line
+  and stays there after the program ends unless it read it -- seen as
+  its echo in the output; a line sent with `Enter` never comes back (a
+  password prompt doesn't echo), nor do a full-screen program's keys
+  (`browsing/type_ahead.rs`). When it exits, its output joins the user screen and
   the panels come back -- `Ctrl+O` shows it again. Replaced suspending
   the TUI with inherited stdio, so our own UI (popups, suggestions) can
   be drawn over the output, as in Far.
@@ -190,7 +194,7 @@ what was actually asked for.
 ## Show/hide panels (`Ctrl+O`)
 
 Real Far Manager's own toggle: the user screen (above) with our own
-command line, suggestions and key bar under it (`ui::draw_console`,
+command line and suggestions under it (`ui::draw_console`,
 `browsing::toggle_panels_hidden`). Blocking and stateless -- no `App`
 field records "panels are hidden"; the loop doesn't return to the main
 loop's draw until `Ctrl+O` again.
