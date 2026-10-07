@@ -10,7 +10,8 @@ use crate::conflict::{ConflictRegion, ConflictState, Pane, RowRole};
 use crate::editor::Editor;
 use crate::theming::{blend_over_bg, Theme};
 
-use super::compare::{draw_compare_panes, draw_path_field, row_highlights, ChangeColors};
+use super::compare::{draw_compare_panes, row_highlights, ChangeColors};
+use super::path_edit::draw_path_field;
 
 /// The conflict resolver, after Araxis Merge: `.working` | the file being
 /// resolved (twice as wide) | `.merge-right` on top, about three fifths

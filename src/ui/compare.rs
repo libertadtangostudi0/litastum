@@ -7,9 +7,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::compare::{inline_changes, map_real_row, DiffLines, CompareState, DiffLineKind, LineEnding, LineEndingDisplay, PathEdit, Side};
+use crate::compare::{inline_changes, map_real_row, DiffLines, CompareState, DiffLineKind, LineEnding, LineEndingDisplay, Side};
 use crate::editor::Editor;
-use crate::text_field::TextField;
+use crate::path_edit::PathEdit;
 use crate::theming::Theme;
 
 /// `Alt+F5`: two ordinary, editable `Editor` panes side by side, with
@@ -19,28 +19,11 @@ use crate::theming::Theme;
 /// itself -- the other is aligned every frame via `map_real_row` and
 /// `Editor::set_viewport_top_row`. History: docs/history/compare.md.
 pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) -> Option<Position> {
-    let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Min(3), Constraint::Length(1)]).split(area);
-    let cursor = draw_compare_panes(frame, rows[0], state, theme, line_ending_display);
-
-    let hint = Line::from(vec![
-        Span::styled("Tab ", Style::default().fg(theme.accent)),
-        Span::styled("Switch pane   ", Style::default().fg(theme.text_dim)),
-        Span::styled("F7/F8 ", Style::default().fg(theme.accent)),
-        Span::styled("Prev/next diff   ", Style::default().fg(theme.text_dim)),
-        Span::styled("Ctrl+L ", Style::default().fg(theme.accent)),
-        Span::styled("Path   ", Style::default().fg(theme.text_dim)),
-        Span::styled("Ctrl+S ", Style::default().fg(theme.accent)),
-        Span::styled("Save   ", Style::default().fg(theme.text_dim)),
-        Span::styled("F9 ", Style::default().fg(theme.accent)),
-        Span::styled("Menu   ", Style::default().fg(theme.text_dim)),
-        Span::styled("Esc ", Style::default().fg(theme.accent)),
-        Span::styled("Close", Style::default().fg(theme.text_dim)),
-    ]);
-    frame.render_widget(hint, rows[1]);
-    cursor
+    // No hint row: requested, the screen is the panes'.
+    draw_compare_panes(frame, area, state, theme, line_ending_display)
 }
 
-/// The two diffed panes without the hint row -- also the conflict
+/// The two diffed panes -- also the conflict
 /// resolver's bottom half. Returns the focused pane's cursor.
 pub(super) fn draw_compare_panes(frame: &mut Frame, area: Rect, state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) -> Option<Position> {
     let panes = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
@@ -94,29 +77,9 @@ fn draw_pane(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme, 
         draw_line_ending_overlay(frame, area, line_endings, viewport_top_row, theme);
     }
     if let Some(edit) = path_edit {
-        cursor = draw_path_field(frame, editor.title_area(), &edit.field, theme);
+        cursor = super::path_edit::draw_path_field(frame, editor.title_area(), &edit.field, theme);
     }
     cursor
-}
-
-/// The path field over a pane's top border (`PathEdit`): plain text, its
-/// selection styled like the panels' selected row (`selection_text`, so
-/// it stays readable on a bright selection color). Scrolls sideways to keep
-/// the caret in view -- it starts at the end, by the file name. Returns
-/// the caret's cell.
-pub(super) fn draw_path_field(frame: &mut Frame, area: Rect, field: &TextField, theme: &Theme) -> Option<Position> {
-    if area.width == 0 || area.height == 0 {
-        return None;
-    }
-    let scroll = (field.cursor() + 1).saturating_sub(usize::from(area.width));
-    let style = Style::default().fg(theme.text).bg(theme.bg);
-    let line = Line::from(super::text_field::styled_field_spans(field, style, super::popup::selected_row_style(theme)));
-    // A `Paragraph` leaves the cells past its text alone, so the title
-    // under them showed through -- the caret cell at the end repeated the
-    // file name's last character.
-    frame.render_widget(ratatui::widgets::Clear, area);
-    frame.render_widget(Paragraph::new(line).style(style).scroll((0, scroll as u16)), area);
-    Some(Position::new(area.x + (field.cursor() - scroll) as u16, area.y))
 }
 
 /// The two backgrounds of one side's changes: `change` for what differs,
@@ -247,7 +210,7 @@ mod tests {
     }
 
     fn render(state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) -> ratatui::buffer::Buffer {
-        let backend = TestBackend::new(60, 12);
+        let backend = TestBackend::new(60, 11);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| { draw_compare(frame, frame.area(), state, theme, line_ending_display); }).unwrap();
         terminal.backend().buffer().clone()
@@ -294,7 +257,7 @@ mod tests {
     }
 
     /// `F8` to a hunk below the screen centers it, like a `Ctrl+F` match.
-    /// The 12-row area leaves an 11-row pane above the hint row: 9 content
+    /// An 11-row pane: 9 content
     /// rows, so row 40 lands 4 rows down. History: docs/history/compare.md.
     #[test]
     fn a_hunk_jump_off_screen_is_centered() {
@@ -403,7 +366,7 @@ mod tests {
         assert_eq!(state.focus, crate::compare::Side::Right);
         assert!(state.path_edit.is_some());
 
-        let backend = TestBackend::new(60, 12);
+        let backend = TestBackend::new(60, 11);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut cursor = None;
         terminal.draw(|frame| cursor = draw_compare(frame, frame.area(), &mut state, &theme, LineEndingDisplay::Hidden)).unwrap();

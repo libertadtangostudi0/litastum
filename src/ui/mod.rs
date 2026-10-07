@@ -25,6 +25,7 @@ mod markdown_preview;
 mod menu;
 mod notice;
 mod panel;
+mod path_edit;
 mod popup;
 mod preview;
 mod popup_style_menu;
@@ -78,6 +79,9 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
     match &mut app.mode {
         Mode::Editing(editor) if !has_linked_preview => {
             let mut cursor = draw_editor(frame, area, editor, &theme);
+            if let Some(edit) = &app.editor_save_as {
+                cursor = path_edit::draw_path_field(frame, editor.title_area(), &edit.field, &theme);
+            }
             if editor.search_box_open() {
                 // Takes the terminal cursor only while the box has focus.
                 let box_cursor = editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme);
@@ -128,7 +132,7 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
             _ => None,
         };
         if let Some((cursor_row, viewport_top)) = cursor_info {
-            let editor_visible_height = panels[0].height.saturating_sub(3); // border (2) + hint row (1)
+            let editor_visible_height = panels[0].height.saturating_sub(2); // border
             let preview_visible_height = panels[1].height.saturating_sub(2); // border (2)
             let relative_position = if editor_visible_height > 0 {
                 (cursor_row.saturating_sub(viewport_top) as f64 / editor_visible_height as f64).clamp(0.0, 1.0)
@@ -145,9 +149,13 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
     // the *left* slot (`App::markdown_edit_preview`'s own doc comment,
     // `Mode::Editing`'s doc comment) instead of that panel's own file
     // listing -- also under the link-search overlay.
+    let mut save_as_cursor = None;
     let left_columns = match &mut app.mode {
         Mode::Editing(editor) if has_linked_preview => {
             draw_editor(frame, panels[0], editor, &theme);
+            if let Some(edit) = &app.editor_save_as {
+                save_as_cursor = path_edit::draw_path_field(frame, editor.title_area(), &edit.field, &theme);
+            }
             (1, 1)
         }
         _ => draw_panel(frame, panels[0], &app.panels[0], app.active == 0, &theme),
@@ -191,6 +199,13 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
     } else {
         None
     };
+    // The panel's path field (`Ctrl+L`) over its top border takes the
+    // cursor from the command line while it's open.
+    if let (Some(edit), Mode::Browsing, true) = (&app.panel_path_edit, &app.mode, command_line_owns_cursor) {
+        let panel = panels[app.active];
+        let title = Rect::new(panel.x + 1, panel.y, panel.width.saturating_sub(2), 1);
+        cursor = path_edit::draw_path_field(frame, title, &edit.field, &theme);
+    }
 
     // Mirrors plain `F4`'s own search box (top of this function) --
     // reached here because a linked preview sent `Editing` through the
@@ -202,6 +217,9 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
                 cursor = Some(box_cursor);
             }
         }
+    }
+    if save_as_cursor.is_some() {
+        cursor = save_as_cursor;
     }
     if let Some(overlay_cursor) = draw_overlay(frame, area, app, &theme) {
         cursor = Some(overlay_cursor);

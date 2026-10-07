@@ -65,7 +65,7 @@ impl Editor {
             .block(
                 Block::bordered()
                     .border_style(Style::default().fg(theme.accent))
-                    .title(fitted_title(&self.path, area.width)),
+                    .title(self.title(area.width)),
             )
             .selection_style(selection_style)
             .hide_status_line()
@@ -234,6 +234,18 @@ fn syntax_name_candidates(path: &Path) -> Vec<&str> {
 }
 
 
+impl Editor {
+    /// The top border's title: the path, then `[modified]` while there
+    /// are unsaved changes (it used to sit in a hint row under the editor,
+    /// now gone). The marker always fits; the path gives way.
+    fn title(&self, area_width: u16) -> String {
+        let marker = if self.is_dirty() { " [modified]" } else { "" };
+        let path = fitted_title(&self.path, area_width.saturating_sub(marker.len() as u16));
+        format!("{path}{marker}")
+    }
+}
+
+
 /// The path for the top border, `area_width` wide: a path too long to fit
 /// keeps its end -- the file name -- behind a leading `…`.
 pub(crate) fn fitted_title(path: &Path, area_width: u16) -> String {
@@ -263,5 +275,32 @@ mod fitted_title_tests {
         let title = fitted_title(Path::new("W:/WorkCopies/lib/IcEdSelectionSetImpl.h"), 25);
         assert_eq!(title, "…IcEdSelectionSetImpl.h");
         assert_eq!(title.chars().count(), 23, "the width minus the two corners");
+    }
+}
+
+
+#[cfg(test)]
+mod title_tests {
+    use crossterm::event::KeyCode;
+
+    use crate::editor::EditorKeymapMode;
+    use crate::test_support::{key, unique_scratch_dir};
+
+    use super::super::Editor;
+
+    /// `[modified]` moved from the removed hint row into the title, and
+    /// stays whole when the path has to be shortened.
+    #[test]
+    fn the_title_says_modified_after_an_edit() {
+        let path = unique_scratch_dir("editor-title").join("file.txt");
+        std::fs::write(&path, "a\n").unwrap();
+        let mut editor = Editor::open(path, None, EditorKeymapMode::Standard).unwrap();
+        assert!(!editor.title(200).contains("[modified]"));
+
+        editor.input(key(KeyCode::Char('x')));
+
+        assert!(editor.title(200).ends_with("file.txt [modified]"));
+        let narrow = editor.title(22);
+        assert!(narrow.ends_with(" [modified]") && narrow.chars().count() <= 20, "{narrow}");
     }
 }

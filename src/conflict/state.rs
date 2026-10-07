@@ -5,7 +5,8 @@ use crossterm::event::{KeyEvent, MouseEvent, MouseEventKind};
 use edtui::syntect::highlighting::Theme as SynTheme;
 use edtui::Index2;
 
-use crate::compare::{hunk_start_rows, CompareState, DiffCache, PathEdit, PathEditKey, Side};
+use crate::compare::{hunk_start_rows, CompareState, DiffCache, Side};
+use crate::path_edit::{open_failed, PathEdit, PathEditKey, PathPurpose};
 use crate::editor::{Editor, EditorKeymapMode};
 
 use super::files::ConflictFiles;
@@ -292,6 +293,14 @@ impl ConflictState {
         }
     }
 
+    /// `Shift+F2`: save the focused pane as, through the same field.
+    pub fn start_save_as(&mut self) {
+        match self.focused_top_editor() {
+            Some(editor) => self.path_edit = Some(PathEdit::save_as(editor.path())),
+            None => self.incoming.start_save_as(),
+        }
+    }
+
     pub fn is_editing_path(&self) -> bool {
         match self.focus {
             Pane::Incoming => self.incoming.path_edit.is_some(),
@@ -313,7 +322,17 @@ impl ConflictState {
             PathEditKey::Editing => {}
             PathEditKey::Cancel => self.path_edit = None,
             PathEditKey::Submit(path) => {
-                self.replace_focused_top(path)?;
+                match edit.purpose {
+                    PathPurpose::Open => self.replace_focused_top(path).map_err(open_failed)?,
+                    PathPurpose::SaveAs => {
+                        let editor = match self.focus {
+                            Pane::Working => &mut self.working,
+                            Pane::Theirs => &mut self.theirs,
+                            _ => &mut self.result,
+                        };
+                        edit.save_editor_as(editor, path)?;
+                    }
+                }
                 self.path_edit = None;
             }
         }

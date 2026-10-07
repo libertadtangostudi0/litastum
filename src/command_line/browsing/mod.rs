@@ -11,6 +11,7 @@ use super::history::{suggest_history, CommandHistoryMenu};
 
 mod bindings;
 mod hidden_console;
+mod panel_path;
 mod shell_exec;
 
 pub(super) use hidden_console::toggle_panels_hidden;
@@ -26,6 +27,10 @@ use bindings::{BrowserAction, LineState};
 /// `.claude/rules/litastum-command-line.md`.
 pub fn handle_browsing_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     debug!(?key, "browsing key");
+    if app.panel_path_edit.is_some() {
+        panel_path::key(app, key);
+        return Ok(Effect::None);
+    }
 
     let line = LineState {
         empty: app.command_line.is_empty(),
@@ -78,6 +83,7 @@ fn perform(app: &mut App, action: BrowserAction) -> Result<Effect> {
         BrowserAction::OpenDriveMenu(panel) => app.overlay = Some(Overlay::ChangeDrive(DriveMenu::open(panel))),
         BrowserAction::OpenHistory => app.overlay = Some(Overlay::CommandHistory(CommandHistoryMenu::open())),
         BrowserAction::CompareFiles => open_compare(app),
+        BrowserAction::EditPanelPath => panel_path::start(app),
         BrowserAction::SelectWordLeft => app.command_line.extend_selection_word_left(),
         BrowserAction::SelectWordRight => app.command_line.extend_selection_word_right(),
         BrowserAction::SelectLeft => app.command_line.extend_selection_left(),

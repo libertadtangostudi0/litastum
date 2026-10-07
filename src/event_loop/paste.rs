@@ -77,6 +77,7 @@ fn paste_target(app: &App) -> Option<PasteTarget> {
         // session has no text field of its own.
         Mode::Editing(_) if app.markdown_edit_preview.is_some() && app.active == 1 => None,
         Mode::Editing(editor) if editor.is_searching() => Some(PasteTarget::TextField),
+        Mode::Editing(_) if app.editor_save_as.is_some() => Some(PasteTarget::TextField),
         Mode::Editing(_) => Some(PasteTarget::EditorBuffer),
         Mode::Browsing => Some(PasteTarget::TextField),
         Mode::CompareFiles(state) if state.path_edit.is_some() => Some(PasteTarget::TextField),

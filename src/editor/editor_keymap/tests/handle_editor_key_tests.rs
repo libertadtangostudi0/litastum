@@ -13,6 +13,58 @@ fn handle_editor_key_ctrl_s_saves_and_clears_dirty() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "!hi\n");
 }
 
+/// F2 saves, as in Far's editor.
+#[test]
+fn f2_saves_like_ctrl_s() {
+    let (mut app, path) = open_editor_app("hi
+");
+    handle_editor_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+
+    handle_editor_key(&mut app, key(KeyCode::F(2))).unwrap();
+
+    let Mode::Editing(editor) = &app.mode else { panic!("expected Mode::Editing") };
+    assert!(!editor.is_dirty());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "!hi
+");
+}
+
+/// Shift+F2 turns the title into a path field; Enter saves there and the
+/// editor carries on with the new file. Esc first leaves the field only.
+#[test]
+fn shift_f2_saves_as_a_typed_path() {
+    let (mut app, path) = open_editor_app("hi
+");
+    handle_editor_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+
+    handle_editor_key(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::SHIFT)).unwrap();
+    let target = path.with_file_name("copy.txt");
+    app.editor_save_as.as_mut().expect("the field is open").field.set_text(target.to_string_lossy().into_owned());
+    handle_editor_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+    assert!(app.editor_save_as.is_none());
+    assert_eq!(fs::read_to_string(&target).unwrap(), "!hi
+");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "hi
+", "the original is untouched");
+    let Mode::Editing(editor) = &app.mode else { panic!("expected Mode::Editing") };
+    assert_eq!(editor.path(), target);
+    assert!(!editor.is_dirty());
+}
+
+#[test]
+fn esc_in_the_save_as_field_keeps_the_editor_open() {
+    let (mut app, _path) = open_editor_app("hi
+");
+    handle_editor_key(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::SHIFT)).unwrap();
+    handle_editor_key(&mut app, key(KeyCode::Char('x'))).unwrap();
+
+    handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+
+    assert!(app.editor_save_as.is_none());
+    let Mode::Editing(editor) = &app.mode else { panic!("Esc closed the editor") };
+    assert!(!editor.is_dirty(), "the x went into the field");
+}
+
 /// A save that fails (here: a read-only file) shows an error toast and
 /// keeps the editor open; it used to return `Err` and end the app.
 #[test]

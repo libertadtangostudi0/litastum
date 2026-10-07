@@ -9,7 +9,8 @@ use ratatui::{
 use crate::explorer::{Entry, HighlightRole, Panel};
 use crate::theming::Theme;
 
-/// Renders one panel (border, path title, footer) and its column-major
+/// Renders one panel (border, path title -- its end kept when it doesn't
+/// fit, footer) and its column-major
 /// file grid. Returns the `(columns, visible_rows)` actually used, so
 /// the caller can feed both back into `Panel::set_columns`/
 /// `set_visible_rows` — `visible_rows` is just `inner.height`, the same
@@ -25,7 +26,7 @@ pub(super) fn draw_panel(frame: &mut Frame, area: Rect, panel: &Panel, is_active
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style)
-        .title(panel.path.to_string_lossy().into_owned());
+        .title(crate::editor::fitted_title(&panel.path, area.width));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);

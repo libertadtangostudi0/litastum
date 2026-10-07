@@ -4,6 +4,7 @@ use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
+use crate::path_edit::{PathEdit, PathEditKey};
 use crate::explorer;
 use crate::notice::Notice;
 use crate::yes_no::{self, Answer};
@@ -20,6 +21,8 @@ use super::Editor;
 pub enum EditorCommand {
     Close,
     Save,
+    /// `Shift+F2` -- the title becomes a path field to save as (Far).
+    SaveAs,
     /// `Ctrl+Shift+Left`/`Right` -- word-wise selection
     /// (`Editor::extend_word_selection`), hand-rolled because no table
     /// entry could express it; `Standard` only. History:
@@ -56,6 +59,9 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
     match key.code {
         KeyCode::Esc => EditorCommand::Close,
         KeyCode::Char('s' | 'S') if ctrl => EditorCommand::Save,
+        // Far's editor saves on F2 too.
+        KeyCode::F(2) if shift => EditorCommand::SaveAs,
+        KeyCode::F(2) => EditorCommand::Save,
         KeyCode::Char('f' | 'F') if ctrl => EditorCommand::Find,
         // Far's editor search keys: `F7` opens the search (as `Ctrl+F`),
         // `Shift+F7`/`Alt+F7` step to the next/previous match (as `F3`/
@@ -137,6 +143,11 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         return handle_search_key(app, key);
     }
 
+    if app.editor_save_as.is_some() {
+        save_as_key(app, key);
+        return Ok(Effect::None);
+    }
+
     let command = resolve(key);
     debug!(?key, ?command, "editor key");
 
@@ -188,6 +199,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
             }
             Err(err) => app.notice = Some(Notice::error(format!("Save failed: {err}"))),
         },
+        EditorCommand::SaveAs => app.editor_save_as = Some(PathEdit::save_as(active_editor.path())),
         EditorCommand::Find => active_editor.start_search(),
         EditorCommand::FindNext => active_editor.search_next(),
         EditorCommand::FindPrevious => active_editor.search_previous(),
@@ -196,6 +208,30 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     }
 
     Ok(Effect::None)
+}
+
+
+/// A key in the `Shift+F2` field: `Enter` saves there
+/// (`PathEdit::save_editor_as`), `Esc` puts the title back. A failure
+/// keeps the field open, with a notice.
+fn save_as_key(app: &mut App, key: KeyEvent) {
+    let (Some(edit), Mode::Editing(editor)) = (app.editor_save_as.as_mut(), &mut app.mode) else {
+        app.editor_save_as = None;
+        return;
+    };
+    match edit.key(key) {
+        PathEditKey::Editing => {}
+        PathEditKey::Cancel => app.editor_save_as = None,
+        PathEditKey::Submit(path) => match edit.save_editor_as(editor, path) {
+            Ok(()) => {
+                app.editor_save_as = None;
+                if let Some(preview) = &mut app.markdown_edit_preview {
+                    preview.reload();
+                }
+            }
+            Err(err) => app.notice = Some(Notice::error(err.to_string())),
+        },
+    }
 }
 
 

@@ -12,6 +12,7 @@ mod keyboard_layout;
 mod list_cursor;
 mod logging;
 mod notice;
+mod path_edit;
 mod terminal_palette;
 mod terminal_setup;
 #[cfg(test)]

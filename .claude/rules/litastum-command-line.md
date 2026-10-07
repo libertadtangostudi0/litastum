@@ -20,8 +20,11 @@ first matching row wins; a key no row matches types into the command
 line. Order matters and the table is grouped by it:
 1. Modifier chords -- `Ctrl+O` (show/hide panels), `Ctrl+P` (shell
    picker), `Ctrl+U`, `Shift+F6`, `Shift+Enter` on an empty line,
-   `Alt+F1/F2/F5/F7/F8`. They sit above the plain keys they would
-   otherwise fall through to (`Alt+F5` above `F5` = Copy).
+   `Alt+F1/F2/F5/F7/F8`, `Ctrl+L`. They sit above the plain keys they
+   would otherwise fall through to (`Alt+F5` above `F5` = Copy).
+   `Ctrl+L` turns the active panel's path title into a field, as in
+   Compare (`browsing/panel_path.rs`); while it's open it takes every
+   key, ahead of the table.
 2. Selection and word moves in the command line (`Shift`/`Ctrl` +
    arrows); `Shift+Left/Right` select only while something is typed.
    `Ctrl+C`/`Ctrl+Insert` copy and `Ctrl+X`/`Shift+Delete` cut the

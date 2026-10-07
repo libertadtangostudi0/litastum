@@ -20,6 +20,8 @@ mod search;
 mod selection_delete;
 mod undo;
 mod view;
+
+pub(crate) use view::fitted_title;
 mod word_select_touch;
 
 use search::SearchBox;
@@ -358,6 +360,14 @@ impl Editor {
                 Err(err)
             }
         }
+    }
+
+
+    /// `Shift+F2`: writes the buffer to `path`, which becomes this
+    /// editor's file (and grammar). The old path stays on failure.
+    pub fn save_as(&mut self, path: PathBuf) -> io::Result<()> {
+        let previous = std::mem::replace(&mut self.path, path);
+        self.save().inspect_err(|_| self.path = previous)
     }
 
 

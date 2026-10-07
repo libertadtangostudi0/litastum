@@ -205,6 +205,13 @@ pub struct App {
     /// the accepted line always matches its own entry, so the list would
     /// otherwise pop straight back up.
     pub command_line_suggestion_dismissed: bool,
+    /// The active panel's path title turned into a field (`Ctrl+L`), as
+    /// in Compare; it takes every key until `Enter` or `Esc`
+    /// (`command_line::browsing::panel_path`).
+    pub panel_path_edit: Option<crate::path_edit::PathEdit>,
+    /// F4's `Shift+F2` field over the editor's title; it takes every key
+    /// until `Enter` saves or `Esc` (`editor_keymap::save_as_key`).
+    pub editor_save_as: Option<crate::path_edit::PathEdit>,
     /// Shells the command line can run typed input through — see
     /// `shell.rs`. Never empty; `active_shell` indexes into it.
     pub shell_profiles: Vec<ShellProfile>,
@@ -284,6 +291,8 @@ impl App {
             command_line_completion: None,
             command_line_suggestion_selected: 0,
             command_line_suggestion_dismissed: false,
+            panel_path_edit: None,
+            editor_save_as: None,
             shell_profiles: builtin_profiles(),
             active_shell: 0,
             command_history: Vec::new(),

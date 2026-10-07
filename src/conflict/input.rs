@@ -30,6 +30,7 @@ pub fn open_resolver(app: &mut App, files: ConflictFiles) {
 enum ConflictCommand {
     Close,
     Save,
+    SaveAs,
     NextPane,
     PreviousPane,
     EditPath,
@@ -45,6 +46,8 @@ fn resolve(key: KeyEvent) -> ConflictCommand {
     match key.code {
         KeyCode::Esc => ConflictCommand::Close,
         KeyCode::Char('s' | 'S') if ctrl => ConflictCommand::Save,
+        KeyCode::F(2) if key.modifiers.contains(KeyModifiers::SHIFT) => ConflictCommand::SaveAs,
+        KeyCode::F(2) => ConflictCommand::Save,
         KeyCode::Tab => ConflictCommand::NextPane,
         KeyCode::BackTab => ConflictCommand::PreviousPane,
         KeyCode::Char('l' | 'L') if ctrl => ConflictCommand::EditPath,
@@ -66,7 +69,7 @@ pub fn handle_conflict_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
 
     if state.is_editing_path() {
         if let Err(err) = state.path_edit_key(key) {
-            app.notice = Some(Notice::error(format!("Can't open: {err}")));
+            app.notice = Some(Notice::error(err.to_string()));
         }
         return Ok(Effect::None);
     }
@@ -87,6 +90,7 @@ pub fn handle_conflict_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         ConflictCommand::NextPane => state.focus_next(),
         ConflictCommand::PreviousPane => state.focus_previous(),
         ConflictCommand::EditPath => state.start_path_edit(),
+        ConflictCommand::SaveAs => state.start_save_as(),
         ConflictCommand::Next => state.jump_to_next(),
         ConflictCommand::Previous => state.jump_to_previous(),
         ConflictCommand::Forward => text_key(state.focused_mut(), key),
@@ -199,6 +203,16 @@ mod tests {
         handle_conflict_key(&mut app, key(KeyCode::Esc)).unwrap();
         assert!(matches!(app.mode, Mode::ResolveConflict(_)), "Esc only cancelled the selection");
         assert!(!state(&app).result.has_selection());
+    }
+
+    #[test]
+    fn f2_saves_the_focused_pane() {
+        let mut app = app_with_conflict();
+        handle_conflict_key(&mut app, key(KeyCode::Char('z'))).unwrap();
+
+        handle_conflict_key(&mut app, key(KeyCode::F(2))).unwrap();
+
+        assert!(!state(&app).is_dirty());
     }
 
     #[test]

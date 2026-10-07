@@ -18,6 +18,7 @@ use super::menu::open_compare_menu;
 enum CompareCommand {
     Close,
     Save,
+    SaveAs,
     ToggleFocus,
     EditPath,
     NextHunk,
@@ -33,6 +34,8 @@ fn resolve(key: KeyEvent) -> CompareCommand {
     match key.code {
         KeyCode::Esc => CompareCommand::Close,
         KeyCode::Char('s' | 'S') if ctrl => CompareCommand::Save,
+        KeyCode::F(2) if key.modifiers.contains(KeyModifiers::SHIFT) => CompareCommand::SaveAs,
+        KeyCode::F(2) => CompareCommand::Save,
         KeyCode::Tab => CompareCommand::ToggleFocus,
         KeyCode::Char('l' | 'L') if ctrl => CompareCommand::EditPath,
         KeyCode::Down if ctrl => CompareCommand::NextHunk,
@@ -57,7 +60,7 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
 
     if state.path_edit.is_some() {
         if let Err(err) = state.path_edit_key(key) {
-            app.notice = Some(Notice::error(format!("Can't open: {err}")));
+            app.notice = Some(Notice::error(err.to_string()));
         }
         return Ok(Effect::None);
     }
@@ -76,6 +79,7 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         }
         CompareCommand::ToggleFocus => state.toggle_focus(),
         CompareCommand::EditPath => state.start_path_edit(),
+        CompareCommand::SaveAs => state.start_save_as(),
         CompareCommand::NextHunk => state.jump_to_next_hunk(),
         CompareCommand::PreviousHunk => state.jump_to_previous_hunk(),
         CompareCommand::OpenMenu => app.overlay = Some(Overlay::CompareMenu(open_compare_menu())),
@@ -326,6 +330,39 @@ mod tests {
         handle_compare_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap();
         handle_compare_key(&mut app, key(KeyCode::Backspace)).unwrap();
         assert_eq!(left_text(&app), "\n");
+    }
+
+    #[test]
+    fn f2_saves_the_focused_pane() {
+        let mut app = app_with_compare("a
+", "b
+");
+        handle_compare_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+
+        handle_compare_key(&mut app, key(KeyCode::F(2))).unwrap();
+
+        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
+        assert!(!state.left.is_dirty());
+    }
+
+    #[test]
+    fn shift_f2_saves_the_focused_pane_as_a_typed_path() {
+        let mut app = app_with_compare("a
+", "b
+");
+        handle_compare_key(&mut app, key(KeyCode::Char('!'))).unwrap();
+
+        handle_compare_key(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::SHIFT)).unwrap();
+        let Mode::CompareFiles(state) = &mut app.mode else { panic!("expected Mode::CompareFiles") };
+        let target = state.left.path().with_file_name("left-copy.txt");
+        state.path_edit.as_mut().expect("the field is open").field.set_text(target.to_string_lossy().into_owned());
+        handle_compare_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
+        assert!(state.path_edit.is_none());
+        assert_eq!(state.left.path(), target);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "!a
+");
     }
 
     #[test]

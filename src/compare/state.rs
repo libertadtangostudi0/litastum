@@ -10,7 +10,7 @@ use crate::editor::{Editor, EditorKeymapMode};
 use super::diff::{diff_row_of, next_hunk_start, previous_hunk_start, DiffLineKind};
 use super::diff_cache::DiffCache;
 use super::line_ending::{self, LineEnding};
-use super::path_edit::{PathEdit, PathEditKey};
+use crate::path_edit::{open_failed, PathEdit, PathEditKey, PathPurpose};
 
 /// Which pane currently owns the real terminal cursor and receives
 /// typed input -- `Tab` toggles this, matching the rest of this app's
@@ -167,8 +167,14 @@ impl CompareState {
         self.path_edit = Some(PathEdit::new(self.focused().path()));
     }
 
+    /// `Shift+F2`: the focused pane's title as a field to save it as.
+    pub fn start_save_as(&mut self) {
+        self.path_edit = Some(PathEdit::save_as(self.focused().path()));
+    }
+
     /// A key while the path field is open. `Err` if the typed path can't
-    /// be loaded -- the field stays open to fix it.
+    /// be loaded or saved to -- the field stays open to fix it; the error
+    /// reads as a whole notice.
     pub fn path_edit_key(&mut self, key: crossterm::event::KeyEvent) -> io::Result<()> {
         let Some(edit) = self.path_edit.as_mut() else {
             return Ok(());
@@ -177,7 +183,16 @@ impl CompareState {
             PathEditKey::Editing => {}
             PathEditKey::Cancel => self.path_edit = None,
             PathEditKey::Submit(path) => {
-                self.replace_focused(path)?;
+                match edit.purpose {
+                    PathPurpose::Open => self.replace_focused(path).map_err(open_failed)?,
+                    PathPurpose::SaveAs => {
+                        let editor = match self.focus {
+                            Side::Left => &mut self.left,
+                            Side::Right => &mut self.right,
+                        };
+                        edit.save_editor_as(editor, path)?;
+                    }
+                }
                 self.path_edit = None;
             }
         }

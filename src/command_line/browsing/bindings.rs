@@ -44,6 +44,8 @@ pub(super) enum BrowserAction {
     OpenDriveMenu(usize),
     OpenHistory,
     CompareFiles,
+    /// `Ctrl+L`: the active panel's path title as a field.
+    EditPanelPath,
     SelectWordLeft,
     SelectWordRight,
     SelectLeft,
@@ -112,6 +114,8 @@ pub(super) static BINDINGS: &[Binding] = &[
     with(KeyCode::F(2), ALT, Always, A::OpenDriveMenu(1)),
     with(KeyCode::F(8), ALT, Always, A::OpenHistory),
     with(KeyCode::F(5), ALT, Always, A::CompareFiles),
+    with(KeyCode::Char('l'), CTRL, Always, A::EditPanelPath),
+    with(KeyCode::Char('L'), CTRL, Always, A::EditPanelPath),
     // Selection and word moves inside the command line. Bare arrows stay
     // panel navigation; Shift+Left/Right on an empty line mark instead.
     with(KeyCode::Left, CTRL_SHIFT, Always, A::SelectWordLeft),

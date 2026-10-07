@@ -9,8 +9,7 @@ use ratatui::{
 use crate::notice::{Notice, NoticeKind};
 use crate::theming::{PopupStyle, Theme};
 
-/// Rows kept clear at the bottom: the command line and the F-key bar
-/// (or the editor's hint row).
+/// Rows kept clear at the bottom: the command line and the F-key bar.
 const BOTTOM_ROWS: u16 = 2;
 
 const MIN_WIDTH: u16 = 24;

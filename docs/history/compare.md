@@ -63,7 +63,7 @@ real, saveable buffer would corrupt the file on save.
   pane's top border showed only its start, cutting off the file name, and
   couldn't be changed. The title now keeps the path's end behind a `…`
   (`view.rs::fitted_title`, every editor), and a click on it or `Ctrl+L`
-  turns it into a field (`compare/path_edit.rs`) -- `Enter` loads the
+  turns it into a field (`compare/path_edit.rs`, since moved to `src/path_edit.rs` and shared with F4's save-as and the panels) -- `Enter` loads the
   typed path into that pane, as in Araxis; the diff follows on the next
   frame. A pane with unsaved changes isn't replaced. The conflict
   resolver's panes work the same way. The field first drew `theme.text` on the
@@ -100,3 +100,7 @@ real, saveable buffer would corrupt the file on save.
   strong. The conflict resolver's side panes do the same against the
   result. The character highlights come before the line's: with no
   syntax colors, `edtui` lets the first of two overlapping ones win.
+- **No hint rows** (requested: the screen should be the editor's): F4
+  and Compare drop their key-hint rows, as the conflict resolver already
+  had. F4's `[modified]` lived in that row; it's in the border title now,
+  after the path, for every editor pane (`Editor::title`).

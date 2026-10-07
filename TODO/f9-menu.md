@@ -41,3 +41,21 @@ items apiece so far). Gaps if this grows toward that:
       name
 - [ ] Long theme lists aren't scrolled, just clamped to the terminal
       height — fine for a handful of files, not for many
+
+## Requested: F9 -> Hotkeys (editor, Compare, resolver)
+
+The key-hint rows under F4 and Compare were dropped (the screen is the
+editor's). What they showed should move into the menu instead, and
+become configurable:
+
+- [ ] F9 in the editor / Compare / resolver -> `Hotkeys` (or a similar
+      name): a list of every binding with what it does -- F4: `Ctrl+S`,
+      `Ctrl+F`, `Ctrl+C/X/V`, `Esc`; Compare: `F7/F8`, `Ctrl+L`,
+      `Ctrl+S`, `F9`, `Esc`; the resolver's `Tab`/`Shift+Tab`, ...
+- [ ] Rebinding from that list: pick a row, press the new key; saved to
+      `config.json` (`Settings`), conflicts with another binding shown
+      before they're accepted.
+- [ ] Open question: the bindings are matched in code today
+      (`compare/input.rs::resolve`, `conflict/input.rs::resolve`,
+      `bindings::standard_key_handler`, the browser's `BINDINGS` table)
+      -- rebinding needs them as data first, one table per screen.

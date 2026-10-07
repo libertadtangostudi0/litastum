@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Position, Rect},
+    layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
@@ -11,33 +11,13 @@ use crate::theming::Theme;
 
 use super::centered_rect;
 
-/// The editor full-screen (`Editor::view` draws the border and title),
-/// with a hint row for its own bindings. Returns the cursor position
-/// rather than setting it (see `ui::draw`).
+/// The editor over the whole area (`Editor::view` draws the border and
+/// the title, `[modified]` included). No hint row: requested, the screen
+/// is the editor's. Returns the cursor position rather than setting it
+/// (see `ui::draw`).
 pub(super) fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme) -> Option<Position> {
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(1)])
-        .split(area);
-
-    let dirty_marker = if editor.is_dirty() { " [modified]" } else { "" };
-
-    frame.render_widget(editor.view(theme, rows[0]), rows[0]);
-    let cursor = editor.cursor_screen_position();
-
-    let hint = Line::from(vec![
-        Span::styled("Ctrl+S ", Style::default().fg(theme.accent)),
-        Span::styled("Save   ", Style::default().fg(theme.text_dim)),
-        Span::styled("Ctrl+F ", Style::default().fg(theme.accent)),
-        Span::styled("Find   ", Style::default().fg(theme.text_dim)),
-        Span::styled("Ctrl+C/X/V ", Style::default().fg(theme.accent)),
-        Span::styled("Copy/Cut/Paste   ", Style::default().fg(theme.text_dim)),
-        Span::styled("Esc ", Style::default().fg(theme.accent)),
-        Span::styled("Close", Style::default().fg(theme.text_dim)),
-        Span::styled(dirty_marker, Style::default().fg(theme.danger)),
-    ]);
-    frame.render_widget(hint, rows[1]);
-    cursor
+    frame.render_widget(editor.view(theme, area), area);
+    editor.cursor_screen_position()
 }
 
 

@@ -114,12 +114,18 @@ fn f10_is_ignored_not_forwarded() {
 #[test]
 fn every_function_key_is_ignored_not_forwarded() {
     for n in 1..=12 {
-        if n == 9 || n == 3 || n == 7 {
-            continue; // F9 opens the editor's own settings menu, F3 is next search match, F7 opens search -- see their own tests.
+        if n == 9 || n == 3 || n == 7 || n == 2 {
+            continue; // F9 opens the editor's own settings menu, F3 is next search match, F7 opens search, F2 saves -- see their own tests.
         }
         let key = KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE);
         assert_eq!(resolve(key), EditorCommand::Ignore, "F{n} should be ignored, not forwarded to edtui");
     }
+}
+
+#[test]
+fn f2_saves_and_shift_f2_saves_as() {
+    assert_eq!(resolve(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)), EditorCommand::Save);
+    assert_eq!(resolve(KeyEvent::new(KeyCode::F(2), KeyModifiers::SHIFT)), EditorCommand::SaveAs);
 }
 
 #[test]
