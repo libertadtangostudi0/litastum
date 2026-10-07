@@ -29,6 +29,9 @@ pulldown-cmark = { version = "0.13.4", default-features = false }
 ignore = "0.4"
 similar = "2"
 ctrlc = "3"
+# Commands run in a pseudoconsole and their output is kept as a grid
+# (user_screen); the same engine as the window's (gui/).
+alacritty_terminal = "0.26.0"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

@@ -1,12 +1,6 @@
 use std::io::Stdout;
 
 use color_eyre::eyre::Result;
-use crossterm::{
-    event::{self, Event, KeyEventKind},
-    execute,
-    style::{Color as CtColor, Print, ResetColor, SetForegroundColor},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
 use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::debug;
 
@@ -16,57 +10,14 @@ use crate::command_line::history::{record_history, save_history};
 
 mod app_paths;
 
-use super::hidden_console::is_ctrl_o;
-
-
-/// Prints one of litastum's own lines (the echoed `"{cwd}> "` prompt) to
-/// the suspended console in `theme.text`. Foreground only: the terminal's
-/// default background isn't necessarily `theme.bg`. The command's own
-/// output is inherited stdio and never recolored.
-pub(super) fn print_themed(theme: &crate::theming::Theme, args: std::fmt::Arguments) -> Result<()> {
-    execute!(std::io::stdout(), SetForegroundColor(to_crossterm_color(theme.text)), Print(args), ResetColor)?;
-    Ok(())
-}
-
-
-/// Discards every input event queued while a child process owned the
-/// console (keys pressed meanwhile queue at the OS level; a stray
-/// `Enter` would otherwise run as an empty command and reprint the
-/// prompt). Call right after `enable_raw_mode()`. Returns `true` if a
-/// `Ctrl+O` was among them -- that one carries intent and the hidden
-/// console honors it. History: docs/history/command-execution.md.
-pub(super) fn drain_stale_input() -> Result<bool> {
-    let mut saw_ctrl_o = false;
-    while event::poll(std::time::Duration::from_secs(0))? {
-        let Event::Key(key) = event::read()? else { continue };
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
-        // Same normalization `toggle_panels_hidden`'s own loop applies
-        // to a live-read event -- a queued Ctrl+O typed under a
-        // non-Latin layout would otherwise never match here either.
-        let key = crate::keyboard_layout::normalize_ctrl_shortcut(key);
-        if is_ctrl_o(key) {
-            saw_ctrl_o = true;
-        }
-    }
-    Ok(saw_ctrl_o)
-}
-
-
-fn to_crossterm_color(color: ratatui::style::Color) -> CtColor {
-    match color {
-        ratatui::style::Color::Rgb(r, g, b) => CtColor::Rgb { r, g, b },
-        _ => CtColor::Reset,
-    }
-}
+use super::live_command::run_live;
 
 
 /// Submits `app.command_line`: `cd` moves the active panel right here (a
 /// shell's own `cd` couldn't affect our process); `cls`/`clear` becomes
 /// `Effect::ClearScreen` (shelling out wiped even the echoed prompt);
-/// anything else becomes `Effect::RunShell` -- the TUI is suspended and
-/// the line runs with inherited stdio, so interactive programs work.
+/// anything else becomes `Effect::RunShell` -- run in a pseudoconsole
+/// with its output on the user screen (`run_shell_command_lines`).
 pub(crate) fn submit_command_line(app: &mut App) -> Result<Effect> {
     let input = app.command_line.text().trim().to_string();
     app.command_line.clear();
@@ -132,19 +83,19 @@ pub(super) fn resolve_app_paths_command(line: &str) -> String {
 }
 
 
-/// Appends `line` as the argument of the shell's `/C`/`-Command`/`-c`.
-/// On Windows via `raw_arg`, unescaped: `cmd`/PowerShell re-parse that
-/// argument as a whole command line, and `Command::arg`'s argv escaping
-/// mangled quoted arguments. History: docs/history/command-execution.md.
-pub(super) fn append_command_line(command: &mut std::process::Command, line: &str) {
+/// `line` as the argument after the shell's `/C`/`-Command`/`-c`. It goes
+/// onto the command line unescaped (`LiveCommand::spawn`): `cmd` and
+/// PowerShell re-parse that argument as a whole command line, and argv
+/// escaping mangled quoted arguments. History:
+/// docs/history/command-execution.md.
+pub(super) fn shell_argument(line: &str) -> String {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        command.raw_arg(&wrap_leading_quote_for_cmd(line));
+        wrap_leading_quote_for_cmd(line)
     }
     #[cfg(not(windows))]
     {
-        command.arg(line);
+        line.to_string()
     }
 }
 
@@ -162,56 +113,31 @@ fn wrap_leading_quote_for_cmd(line: &str) -> String {
     }
 }
 
-/// Suspends the TUI, runs `lines` in sequence through the active shell
-/// profile with inherited stdio, and returns straight to the panels (no
-/// "press any key" pause -- `Ctrl+O` shows the output again). Shared by
-/// the command line and multi-line F2 menu items. A failed spawn is
-/// printed and the rest still run.
+/// Runs `lines` in sequence through the active shell profile, each in a
+/// pseudoconsole with its output live on the user screen (`run_live`),
+/// set apart from the previous command's; then back to the panels --
+/// `Ctrl+O` shows the output again. Shared by the command line and
+/// multi-line F2 menu items.
 ///
 /// `cd` lines are handled here, as Far does: each line is its own shell
 /// process, so a shelled-out `cd` wouldn't carry over. The active panel
 /// moves and later lines run there; a `cd` to a missing directory stops
 /// the item. History: docs/history/command-execution.md.
 pub(in crate::command_line) fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, lines: &[String]) -> Result<()> {
-    if lines.is_empty() {
-        return Ok(());
-    }
-
-    let profile = app.shell_profiles[app.active_shell].clone();
-    let mut cwd = app.active_panel().path.clone();
-
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
     for line in lines {
-        debug!(shell = profile.name, %line, cwd = %cwd.display(), "running shell command");
-        print_themed(&app.theme, format_args!("{}> {line}\n", cwd.display()))?;
+        let cwd = app.active_panel().path.clone();
+        let theme = app.theme;
+        app.user_screen.begin_command(&cwd, line, &theme);
         if let Some(target) = parse_cd_target(line) {
+            debug!(target, "command line: cd");
             if !app.active_panel().change_dir(target)? {
-                print_themed(&app.theme, format_args!("cd: no such directory: {target} -- the remaining commands were not run\n"))?;
+                app.user_screen.push_message(&format!("cd: no such directory: {target} -- the remaining commands were not run"), &theme);
                 break;
             }
-            cwd = app.active_panel().path.clone();
             continue;
         }
-        let mut command = std::process::Command::new(&profile.program);
-        command.args(&profile.args_prefix);
-        append_command_line(&mut command, &resolve_app_paths_command(line));
-        let status = command.current_dir(&cwd).status();
-        match status {
-            Ok(status) if !status.success() => {
-                debug!(?status, "command exited non-zero");
-            }
-            Err(err) => print_themed(&app.theme, format_args!("failed to launch '{}': {err}\n", profile.program))?,
-            Ok(_) => {}
-        }
+        run_live(app, terminal, line)?;
     }
-    enable_raw_mode()?;
-    // A queued Ctrl+O is moot: this returns to the panels anyway.
-    let _ = drain_stale_input()?;
-    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-    terminal.clear()?;
-
     app.active_panel().reload()?;
     Ok(())
 }
@@ -291,18 +217,28 @@ mod tests {
         }
     }
 
-    /// Real regression coverage for the actual reported bug, not just a
-    /// compile-time check of which `CommandExt` method gets called --
-    /// spawns a genuine `cmd.exe` (always present on Windows) and confirms
-    /// a quoted argument in the command text survives `cmd`'s own
-    /// reparsing intact, the way it would if typed directly into a real
-    /// `cmd.exe` window.
+    /// Real regression coverage for the reported quoting bugs: spawns a
+    /// genuine `cmd.exe` in a pseudoconsole, as commands run now, and
+    /// confirms a quoted argument in the command text survives `cmd`'s own
+    /// reparsing intact, the way it would typed into a real `cmd.exe`.
     #[cfg(windows)]
-    mod append_command_line_tests {
+    mod shell_argument_tests {
         use std::fs;
+        use std::time::{Duration, Instant};
 
         use super::*;
         use crate::test_support::unique_scratch_dir;
+        use crate::user_screen::LiveCommand;
+
+        fn run_to_end(line: &str, cwd: &std::path::Path) -> String {
+            let command = LiveCommand::spawn("cmd", vec!["/C".into(), shell_argument(line)], cwd, 120, 24).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !command.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            command.output().iter().map(|line| line.to_string()).collect::<Vec<_>>().join("
+")
+        }
 
         /// Regression: `.arg(line)` delivered `"Project Alpha"` to `svn`
         /// with the quotes still in it. `%~1` strips one pair of quotes,
@@ -311,18 +247,14 @@ mod tests {
         /// leading-quote rule doesn't apply.
         #[test]
         fn a_quoted_argument_survives_cmds_own_reparsing_unmangled() {
-            let dir = unique_scratch_dir("append-command-line");
+            let dir = unique_scratch_dir("shell-argument");
             let script = dir.join("echo_arg.bat");
-            fs::write(&script, "@echo %~1\r\n").unwrap();
+            fs::write(&script, "@echo [%~1]
+").unwrap();
 
-            let mut command = std::process::Command::new("cmd");
-            command.arg("/C");
-            let line = format!("call \"{}\" \"Project Alpha\"", script.display());
-            append_command_line(&mut command, &line);
+            let output = run_to_end(&format!("call \"{}\" \"Project Alpha\"", script.display()), &dir);
 
-            let output = command.output().unwrap();
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            assert_eq!(stdout.trim(), "Project Alpha", "cmd should have tokenized the quoted argument itself, not received it pre-mangled");
+            assert!(output.contains("[Project Alpha]"), "cmd should have tokenized the quoted argument itself: {output:?}");
         }
 
         /// Regression: a quoted program path plus a quoted argument (four
@@ -330,18 +262,14 @@ mod tests {
         /// around the script path.
         #[test]
         fn a_quoted_program_path_followed_by_a_quoted_argument_survives_too() {
-            let dir = unique_scratch_dir("append-command-line leading quote");
+            let dir = unique_scratch_dir("shell-argument leading quote");
             let script = dir.join("echo_arg.bat");
-            fs::write(&script, "@echo %~1\r\n").unwrap();
+            fs::write(&script, "@echo [%~1]
+").unwrap();
 
-            let mut command = std::process::Command::new("cmd");
-            command.arg("/C");
-            let line = format!("\"{}\" \"Project Alpha\"", script.display());
-            append_command_line(&mut command, &line);
+            let output = run_to_end(&format!("\"{}\" \"Project Alpha\"", script.display()), &dir);
 
-            let output = command.output().unwrap();
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            assert_eq!(stdout.trim(), "Project Alpha", "the script's own path must not be corrupted by cmd's leading-quote strip");
+            assert!(output.contains("[Project Alpha]"), "the script's own path must not be corrupted by cmd's leading-quote strip: {output:?}");
         }
     }
 

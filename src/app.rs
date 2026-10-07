@@ -271,6 +271,9 @@ pub struct App {
     /// The toast in the bottom-right corner, if any -- see `Notice`.
     /// Cleared by the next key press (`event_loop::keys::key_effect`).
     pub notice: Option<Notice>,
+    /// What commands printed, shown by `Ctrl+O` and while one runs
+    /// (`user_screen`).
+    pub user_screen: crate::user_screen::UserScreen,
 }
 
 
@@ -309,6 +312,7 @@ impl App {
             terminal_palette: None,
             markdown_edit_preview: None,
             notice: None,
+            user_screen: Default::default(),
         })
     }
 

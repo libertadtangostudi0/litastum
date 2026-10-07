@@ -104,41 +104,26 @@ line. Order matters and the table is grouped by it:
   where `cd` is Far's own. A `cd` line now moves the active panel and
   every following line runs there; a `cd` to a missing directory stops
   the item instead of running the rest in the wrong place.
-- **`cls`/`clear` are special-cased too**, the same way `cd` is —
-  `submit_command_line` returns `Effect::ClearScreen` (a plain
-  `terminal.clear()`) and never suspends the TUI at all, instead of actually shelling out. Found by
-  running `cls` for real: a screen-clear command's entire job is
-  leaving nothing on screen, so shelling out to a real `cls` wiped even
-  the `"{cwd}> cls"` prompt line printed for every other command, and
-  the "Press any key to continue..." pause (which exists to protect
-  real command *output* from vanishing) ended up guarding nothing —
-  just a stray message on an otherwise blank screen, reported as a
-  broken-looking screen. `terminal.clear()` is what the command is
-  actually trying to accomplish anyway, far more directly than a
-  subprocess round-trip.
-- **A command actually runs by suspending the TUI and inheriting
-  stdio** (`Effect::RunShell` -> `run_shell_command_lines`) — not a captured/parsed
-  output pane. This is deliberate: it's what makes interactive things
-  (`python`, `git commit` invoking an editor, ...) work at all, and
-  gives real colors/prompts, matching Far Manager's own behavior. A
-  `Press any key to continue...` pause follows so fast-scrolling output
-  isn't gone the instant the panels redraw over it.
-- **litastum's two own printed lines** (the echoed `"{cwd}> {input}"`
-  prompt and the `Press any key...` pause) are colored via
-  `browsing.rs::print_themed` — `theme.text` on `theme.bg`, the closest
-  match to real Far's own `CommandLine.UserScreen` color group
-  (requested directly from a Far color-picker screenshot). **The
-  shelled-out command's own output is never colored by us** — real
-  inherited stdio means the terminal itself renders it, unlike Far's
-  own full-screen text-mode architecture, which draws even a child
-  process's output through its own buffer and can therefore recolor
-  it. Reproducing that would need a PTY-based capture-and-recolor
-  layer, well beyond this project's current inherit-stdio design.
-  Approximated with `theme.text` rather than adding a dedicated
-  `Theme` field for Far's exact `brightWhite` — close enough
-  (`#cccccc` vs. `#f2f2f2` in `far-lts-alien.json`) that a whole new
-  field for a two-line, rarely-focused-on piece of chrome wasn't
-  judged worth it.
+- **`cls`/`clear` are special-cased too**, the same way `cd` is:
+  `submit_command_line` returns `Effect::ClearScreen`, which empties the
+  user screen (below) and repaints -- no subprocess.
+- **A command runs in a pseudoconsole, its output kept by us**
+  (`Effect::RunShell` -> `run_shell_command_lines` -> `live_command::run_live`):
+  ConPTY on Windows, a pty elsewhere, parsed into a grid by
+  `alacritty_terminal` (`user_screen/session.rs`) -- the engine the
+  window (`gui/`) uses. While it runs, the user screen shows the output
+  live under our own command line and key bar, and every key goes to the
+  program (`user_screen::encode_key`, `Ctrl+C` included), so interactive
+  programs work. When it exits, its output joins the user screen and
+  the panels come back -- `Ctrl+O` shows it again. Replaced suspending
+  the TUI with inherited stdio, so our own UI (popups, suggestions) can
+  be drawn over the output, as in Far.
+- **The user screen** (`App::user_screen`, `user_screen::UserScreen`)
+  keeps what commands printed: each command as `"{cwd}> {line}"` in the
+  prompt's colors, then its output, set apart from the previous one by
+  three blank lines (requested). Capped at 20000 lines, oldest first.
+  Colors in the output: the 16 ANSI colors by index (the real terminal's
+  palette), the default colors as the terminal's own, RGB as is.
 
 ## Tab completion (`command_line::complete`)
 
@@ -193,7 +178,7 @@ aren't universal (Git Bash varies by install, WSL needs a distro,
 pwsh may not be installed), and properly detecting them (`PATH`
 scanning, common install dirs) is real, separate work, not done here.
 If a user picks a profile that isn't actually installed, spawning it
-just fails and the OS error shows in the pause message — honest
+just fails and the OS error shows on the user screen — honest
 feedback, no pre-flight probing needed either. See `TODO/command-line.md`.
 
 **Not persisted** to `config.json` — resets to the platform default
@@ -204,38 +189,20 @@ what was actually asked for.
 
 ## Show/hide panels (`Ctrl+O`)
 
-Real Far Manager's own toggle, requested directly to look at output
-already sitting on the real terminal (something run through `Enter`/a
-user-menu item, or anything printed before litastum even started)
-without re-running whatever produced it. `browsing::toggle_panels_hidden`
-is blocking and stateless — no `App` field anywhere records "panels
-are currently hidden"; it simply doesn't return control to the main
-loop's own `terminal.draw()` call until the panels should reappear,
-the same shape `run_shell_command_lines` already uses for its own
-"press any key to continue" pause.
+Real Far Manager's own toggle: the user screen (above) with our own
+command line, suggestions and key bar under it (`ui::draw_console`,
+`browsing::toggle_panels_hidden`). Blocking and stateless -- no `App`
+field records "panels are hidden"; the loop doesn't return to the main
+loop's draw until `Ctrl+O` again.
 
-Implementation: `LeaveAlternateScreen` (revealing the real terminal's
-primary buffer, whatever's actually on it), then a blocking loop
-reading raw `crossterm` events directly (bypassing the normal per-
-frame `handle_event`/`draw` cycle entirely) until `Ctrl+O` is pressed
-again — every other key and mouse event is silently ignored while
-hidden, matching real Far's own behavior for this toggle, not just
-this app's own scope cut. `EnterAlternateScreen` + `terminal.clear()`
-on the way back out, same as `run_shell_command_lines`'s own return
-path.
-
-**Deliberately doesn't touch raw mode**, unlike `run_shell_command_lines`
-(which disables it so a real subprocess gets normal line-buffered
-input): there's no subprocess here to hand the terminal to, and
-staying in raw mode means a stray keypress other than `Ctrl+O` is
-silently swallowed rather than echoed as literal text onto the very
-output the user is trying to look at cleanly. No "press any key"
-message either, unlike that same function's own pause — the entire
-point is showing exactly what's already there, not adding to it.
-
-No unit test coverage for the hidden console itself: its loop reads
-real `crossterm` events directly. Getting there (`Ctrl+O` ->
-`Effect::ToggleHiddenPanels`) is covered by `handle_browsing_key`'s tests.
+It's a real command line, as in Far: `Enter` runs the line there (its
+output joins the screen live) and stays; `PageUp`/`PageDown` and the
+mouse wheel scroll back; `Esc` clears the line; `Tab` completes a path;
+arrows edit the line, the panels being hidden. The suggestions
+(history, panel names) pop up over the line as over the panels, with
+the same keys (`Up`/`Down`/`Tab`/`F8`/`Esc`). `console_key` holds the
+key handling and is unit-tested; the loop itself reads real events.
+History: docs/history/command-execution.md.
 
 ## Handlers return `Effect`, `event_loop` owns the terminal
 

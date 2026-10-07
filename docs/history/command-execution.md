@@ -106,3 +106,33 @@ gets interrupted as it would in a real shell.
 - **`Enter` in the History popup runs the command**, reported as the
   expected behavior (like a shell's recall); copying it into the line
   to edit first moved to `Tab`.
+
+## Our own user screen (pseudoconsole)
+
+Requested: suggestions while the panels are hidden (`Ctrl+O`), drawn as
+over the panels. With commands writing straight to the real terminal
+(inherited stdio, the TUI suspended), nothing could be drawn over their
+output without destroying it -- it can't be read back. A list printed
+under the prompt was tried first (scrolling the output up, as
+PowerShell's list view does) and replaced the same day by the real
+fix, Far's own design: the user screen is ours.
+
+- Each command runs in a pseudoconsole (`alacritty_terminal::tty`,
+  ConPTY on Windows), its output parsed into a grid on a thread of its
+  own (`user_screen/session.rs`), drawn live by `ui::draw_console` with
+  our command line and key bar under it; keys are encoded for the
+  program (`user_screen/keys.rs`). One pseudoconsole per command: a
+  fresh grid each time, so ConPTY's absolute cursor moves never touch
+  the previous commands' output, which is kept as lines
+  (`UserScreen`).
+- Commands are set apart by three blank lines (requested).
+- After the program exits, ConPTY may still be drawing its last
+  output: the reader keeps going until it's been quiet for 60 ms (at
+  most 1 s).
+- The quoting rules (`raw_arg`, the extra wrap for a leading quote)
+  carry over: `alacritty_terminal` puts the shell's arguments on the
+  command line unescaped. Their regression tests now run a real `cmd`
+  in a pseudoconsole.
+- The `Ctrl+C` handler above stays: harmless, though a program in its
+  own pseudoconsole gets `Ctrl+C` there, not on our console.
+

@@ -20,6 +20,7 @@ mod test_support;
 mod text_field;
 mod theming;
 mod ui;
+mod user_screen;
 mod windows_terminal;
 mod yes_no;
 

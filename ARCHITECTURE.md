@@ -212,12 +212,13 @@ command_line.rs         — the always-live Far-style command line
                               table it looks keys up in). Split
                               by concern once the old flat mod.rs passed
                               ~500 lines: shell_exec.rs (submit_command_line,
-                              run_shell_command_lines -- "suspend the
-                              TUI, run N lines through the active shell",
-                              reached via Effect::RunShell --
-                              parse_cd_target), hidden_console.rs (Ctrl+O:
-                              toggle_panels_hidden and its own typed
-                              command loop)
+                              run_shell_command_lines -- "run N lines
+                              through the active shell", reached via
+                              Effect::RunShell -- parse_cd_target),
+                              live_command.rs (one line in a pseudoconsole,
+                              shown live on the user screen),
+                              hidden_console.rs (Ctrl+O: the user screen
+                              with our own command line)
   command_line/effect.rs —   Effect (RunShell/ClearScreen/
                               ToggleHiddenPanels): terminal work key
                               handlers return instead of taking the
@@ -226,6 +227,15 @@ command_line.rs         — the always-live Far-style command line
   command_line/history/ —  command history, Alt+F8 popup, ghost-text
                               autosuggestion
   command_line/shell.rs  —   Ctrl+P shell-profile picker
+  command_line/suggestions.rs — the list over the command line: history,
+                              then the active panel's names
+
+user_screen/            — the user screen, as Far's: what commands printed
+                           (UserScreen), session.rs (a command in a
+                           pseudoconsole, parsed by alacritty_terminal),
+                           grid.rs (grid rows as ratatui lines), keys.rs
+                           (keys as terminal bytes); drawn by
+                           ui/user_screen.rs
 
 text_field/             — TextField (text + cursor + selection) and the
                            standard single-line key layout; every text

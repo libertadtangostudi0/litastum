@@ -15,12 +15,12 @@ use super::browsing::{run_shell_command_lines, toggle_panels_hidden};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     None,
-    /// Suspend the TUI and run these lines through the active shell
+    /// Run these lines through the active shell
     /// profile (`run_shell_command_lines`, which also handles `cd` lines).
     RunShell(Vec<String>),
     /// `cls`/`clear`: repaint from scratch.
     ClearScreen,
-    /// `Ctrl+O`: show the real console until `Ctrl+O` again.
+    /// `Ctrl+O`: show the user screen until `Ctrl+O` again.
     ToggleHiddenPanels,
 }
 
@@ -28,18 +28,13 @@ pub enum Effect {
 pub(crate) fn apply_effect(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, effect: Effect) -> Result<()> {
     match effect {
         Effect::None => Ok(()),
-        Effect::RunShell(lines) => {
-            crate::terminal_setup::release_mouse_capture(app)?;
-            run_shell_command_lines(app, terminal, &lines)
-        }
+        Effect::RunShell(lines) => run_shell_command_lines(app, terminal, &lines),
         Effect::ClearScreen => {
+            app.user_screen.clear();
             terminal.clear()?;
             app.active_panel().reload()?;
             Ok(())
         }
-        Effect::ToggleHiddenPanels => {
-            crate::terminal_setup::release_mouse_capture(app)?;
-            toggle_panels_hidden(app, terminal)
-        }
+        Effect::ToggleHiddenPanels => toggle_panels_hidden(app, terminal),
     }
 }

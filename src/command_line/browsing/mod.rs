@@ -12,6 +12,7 @@ use super::suggestions::{suggestions, Suggestion};
 
 mod bindings;
 mod hidden_console;
+mod live_command;
 mod panel_path;
 mod shell_exec;
 

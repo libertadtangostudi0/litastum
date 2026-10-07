@@ -40,19 +40,6 @@ pub(crate) fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 }
 
 
-/// Hands the mouse back to the terminal before a shell command or the
-/// hidden console (`Ctrl+O`) gets it: a command would read the reports as
-/// input, and the console's own text selection should work.
-/// `event_loop::sync_mouse_capture` takes it again afterwards.
-pub(crate) fn release_mouse_capture(app: &mut crate::app::App) -> Result<()> {
-    if app.mouse_capture_enabled {
-        execute!(std::io::stdout(), DisableMouseCapture)?;
-        app.mouse_capture_enabled = false;
-    }
-    Ok(())
-}
-
-
 pub(crate) fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mouse_capture_enabled: bool) -> Result<()> {
     disable_raw_mode()?;
     // `DisableMouseCapture` is a safety net: capture is normally synced

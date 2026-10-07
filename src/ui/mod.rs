@@ -33,11 +33,13 @@ mod shell;
 mod text_field;
 mod theme_menu;
 mod user_menu;
+mod user_screen;
 
 use editor_pane::{draw_confirm_discard_popup, draw_editor};
 use function_keys::draw_function_keys;
 use info::draw_info_popup;
 use panel::draw_panel;
+pub use user_screen::{console_rows, draw_console};
 
 // Only reachable from `ui::tests` (`use super::*;`) -- `draw()` itself
 // calls `draw_function_keys`/`draw_panel` directly, never these by
@@ -182,30 +184,12 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
     } else {
         draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme)
     };
-    let cwd = app.panels[app.active].path.clone();
-    let prefix_len = command_line::draw_command_line(frame, root[1], &cwd, &app.command_line, &theme);
-    draw_function_keys(frame, root[2], &theme, app.alt_held);
-
-    // Suggestions (history, panel names) pop up above the command line on
-    // a match, as in Far -- only on the bare browser.
-    if matches!(app.mode, Mode::Browsing) && app.overlay.is_none() && app.panel_path_edit.is_none() && !app.command_line_suggestion_dismissed {
-        let suggestions = crate::command_line::suggestions(app);
-        if !suggestions.is_empty() {
-            command_line::draw_suggestions(frame, root[1], &suggestions, app.command_line_suggestion_selected, &theme);
-        }
-    }
+    let command_cursor = draw_command_rows(frame, root[1], root[2], app, &theme);
 
     // The cursor sits in the command line unless a popup covers it --
     // except the history popup, which filters that same line.
     let command_line_owns_cursor = matches!(app.overlay, None | Some(Overlay::CommandHistory(_)));
-    let mut cursor = if matches!(app.mode, Mode::Browsing) && command_line_owns_cursor {
-        Some(Position {
-            x: root[1].x + prefix_len + app.command_line.cursor() as u16,
-            y: root[1].y,
-        })
-    } else {
-        None
-    };
+    let mut cursor = (matches!(app.mode, Mode::Browsing) && command_line_owns_cursor).then_some(command_cursor);
     // The panel's path field (`Ctrl+L`) over its top border takes the
     // cursor from the command line while it's open.
     if let (Some(edit), Mode::Browsing, true) = (&app.panel_path_edit, &app.mode, command_line_owns_cursor) {
@@ -233,6 +217,24 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
     }
 
     ([left_columns, right_columns], cursor)
+}
+
+
+/// The command line and the F-key bar -- under the panels and under the
+/// user screen alike -- with the suggestions (history, panel names)
+/// popping up over the line on a match, as in Far, on the bare browser
+/// only. Returns where the command line's cursor is.
+fn draw_command_rows(frame: &mut Frame, line_row: Rect, keys_row: Rect, app: &App, theme: &Theme) -> Position {
+    let cwd = app.panels[app.active].path.clone();
+    let prefix_len = command_line::draw_command_line(frame, line_row, &cwd, &app.command_line, theme);
+    draw_function_keys(frame, keys_row, theme, app.alt_held);
+    if matches!(app.mode, Mode::Browsing) && app.overlay.is_none() && app.panel_path_edit.is_none() && !app.command_line_suggestion_dismissed {
+        let suggestions = crate::command_line::suggestions(app);
+        if !suggestions.is_empty() {
+            command_line::draw_suggestions(frame, line_row, &suggestions, app.command_line_suggestion_selected, theme);
+        }
+    }
+    Position { x: line_row.x + prefix_len + app.command_line.cursor() as u16, y: line_row.y }
 }
 
 
