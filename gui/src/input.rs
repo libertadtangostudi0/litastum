@@ -11,6 +11,34 @@ pub fn is_paste_chord(logical: &Key, physical: PhysicalKey, mods: ModifiersState
 }
 
 
+/// A tab command from the keyboard, Windows Terminal's keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabChord {
+    /// `Ctrl+Shift+T`.
+    New,
+    /// `Ctrl+Shift+W`.
+    Close,
+    /// `Ctrl+Tab`, and with `Shift` back.
+    Next,
+    Previous,
+}
+
+/// The window's tab keys, by physical key so any layout works; never
+/// sent to the program.
+pub fn tab_chord(physical: PhysicalKey, mods: ModifiersState) -> Option<TabChord> {
+    if !mods.control_key() || mods.alt_key() {
+        return None;
+    }
+    match physical {
+        PhysicalKey::Code(KeyCode::Tab) if mods.shift_key() => Some(TabChord::Previous),
+        PhysicalKey::Code(KeyCode::Tab) => Some(TabChord::Next),
+        PhysicalKey::Code(KeyCode::KeyT) if mods.shift_key() => Some(TabChord::New),
+        PhysicalKey::Code(KeyCode::KeyW) if mods.shift_key() => Some(TabChord::Close),
+        _ => None,
+    }
+}
+
+
 /// A font size change asked for with the keyboard or `Ctrl`+wheel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Zoom {
@@ -212,5 +240,19 @@ mod tests {
         assert!(is_paste_chord(&Key::Character("\u{043c}".into()), v, ModifiersState::CONTROL), "Ctrl+V on the Russian layout");
         assert!(!is_paste_chord(&Key::Character("v".into()), v, ModifiersState::CONTROL | ModifiersState::SHIFT));
         assert!(is_paste_chord(&Key::Named(NamedKey::Insert), PhysicalKey::Code(KeyCode::Insert), ModifiersState::SHIFT));
+    }
+
+    /// Requested: Ctrl+Tab switches tabs, as in Windows Terminal.
+    #[test]
+    fn the_tab_keys_are_windows_terminals() {
+        let ctrl = ModifiersState::CONTROL;
+        let ctrl_shift = ModifiersState::CONTROL | ModifiersState::SHIFT;
+        let code = |code| PhysicalKey::Code(code);
+        assert_eq!(tab_chord(code(KeyCode::Tab), ctrl), Some(TabChord::Next));
+        assert_eq!(tab_chord(code(KeyCode::Tab), ctrl_shift), Some(TabChord::Previous));
+        assert_eq!(tab_chord(code(KeyCode::KeyT), ctrl_shift), Some(TabChord::New));
+        assert_eq!(tab_chord(code(KeyCode::KeyW), ctrl_shift), Some(TabChord::Close));
+        assert_eq!(tab_chord(code(KeyCode::KeyT), ctrl), None, "plain Ctrl+T is the program's");
+        assert_eq!(tab_chord(code(KeyCode::Tab), ModifiersState::empty()), None);
     }
 }

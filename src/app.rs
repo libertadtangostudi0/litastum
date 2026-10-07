@@ -257,6 +257,8 @@ pub struct App {
     /// synced by `event_loop::sync_terminal_palette` when the theme
     /// changes; `None` before the first sync.
     pub terminal_palette: Option<String>,
+    /// The title last handed to the terminal (`event_loop::sync_title`).
+    pub terminal_title: Option<String>,
     /// `F3` on a `.md` file: the live preview shown beside the editor
     /// (`Mode::Editing` drawn split), refreshed on `Ctrl+S`. Lives here,
     /// not in `Mode::Editing`, so other editor call sites don't carry an
@@ -324,6 +326,7 @@ impl App {
             image_picker: Picker::halfblocks(),
             mouse_capture_enabled: false,
             terminal_palette: None,
+            terminal_title: None,
             markdown_edit_preview: None,
             notice: None,
             user_screen: Default::default(),

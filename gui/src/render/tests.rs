@@ -70,9 +70,10 @@ fn the_programs_background_color_fills_unpainted_cells_and_margins() {
 /// sitting on the right.
 #[test]
 fn the_leftover_width_is_split_between_both_sides() {
-    assert_eq!(grid_origin(1000, 90, 11), (5, 0), "1000 - 990 = 10 pixels, 5 a side");
-    assert_eq!(grid_origin(990, 90, 11), (0, 0));
-    assert_eq!(grid_origin(100, 90, 11), (0, 0), "a grid wider than the window starts at the edge");
+    assert_eq!(grid_origin(1000, 90, 11, 0), (5, 0), "1000 - 990 = 10 pixels, 5 a side");
+    assert_eq!(grid_origin(990, 90, 11, 0), (0, 0));
+    assert_eq!(grid_origin(100, 90, 11, 0), (0, 0), "a grid wider than the window starts at the edge");
+    assert_eq!(grid_origin(1000, 90, 11, 20), (5, 20), "under the tab bar");
 }
 
 /// The point of the renderer: a change on one line redraws that line and
@@ -197,4 +198,25 @@ fn a_glyph_stays_within_its_own_line() {
     let mask = GlyphMask { x: 0, y: -1, width: 1, height: 4, coverage: vec![255; 4] };
     canvas.draw_mask(0, 1, &mask, Rgb { r: 0, g: 0, b: 9 }, 1..3);
     assert_eq!(pixels, [0, 0, 9, 0, 9, 0, 0, 0], "rows 1 and 2 only");
+}
+
+/// The tab bar takes the top row; the grid under it starts a row down and
+/// isn't touched by it.
+#[test]
+fn the_tab_bar_is_drawn_over_the_top_row_above_the_grid() {
+    let mut term = term(4, 1);
+    print(&mut term, b"\x1b[31mA");
+    let mut font = CellFont::new(16.0);
+    let view = View { width: 4 * font.cell_width, height: 2 * font.cell_height, origin: (0, font.cell_height), cursor_visible: false };
+    let (bar_background, bar_text) = (Rgb { r: 1, g: 2, b: 3 }, Rgb { r: 250, g: 250, b: 250 });
+    let red = pack(colors::resolve(Color::Named(NamedColor::Red), term.colors()));
+
+    let mut renderer = Renderer::new();
+    renderer.draw(&mut term, &mut font, &mut Vec::new(), view);
+    renderer.draw_bar(&mut font, &[('x', bar_text, bar_background)], bar_background);
+    let pixels = renderer.pixels().to_vec();
+
+    assert!(cell_pixels(&pixels, view, &font, 0, 0).contains(&pack(bar_text)), "the bar's x");
+    assert!(cell_pixels(&pixels, view, &font, 3, 0).iter().all(|pixel| *pixel == pack(bar_background)), "the rest of the bar");
+    assert!(cell_pixels(&pixels, view, &font, 0, 1).contains(&red), "the grid's A, a row down");
 }

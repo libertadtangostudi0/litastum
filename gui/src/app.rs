@@ -1,10 +1,10 @@
 use std::num::NonZeroU32;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use alacritty_terminal::event::{Event, WindowSize};
+use alacritty_terminal::event::WindowSize;
 use alacritty_terminal::term::TermMode;
-use alacritty_terminal::vte::ansi::{Color as TermColor, NamedColor, Rgb};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
@@ -12,13 +12,15 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::window::{Fullscreen, Window, WindowId};
 
-use crate::colors;
 use crate::font::CellFont;
 use crate::input::{self, WheelAccumulator, Zoom};
 use crate::mouse::{self, MouseAction};
 use crate::render::{self, Renderer, View};
-use crate::session::{EventProxy, GridSize, Session, UserEvent};
+use crate::session::{GridSize, Session, UserEvent};
+use crate::tabs::Tabs;
 use crate::window_style;
+
+mod tab_bar;
 
 /// The starting font size in logical pixels (`Ctrl+0`); scaled by the
 /// monitor's DPI.
@@ -29,9 +31,9 @@ const BLINK_INTERVAL: Duration = Duration::from_millis(530);
 const START_GRID: GridSize = GridSize { columns: 140, lines: 40 };
 
 
-/// The window and the session in it. The window, surface, font and
-/// session exist once the event loop has resumed (winit creates windows
-/// only then) -- `Shown`.
+/// The window and its tabs. The window, surface, font and tabs exist once
+/// the event loop has resumed (winit creates windows only then) --
+/// `Shown`.
 pub struct App {
     proxy: EventLoopProxy<UserEvent>,
     shown: Option<Shown>,
@@ -41,24 +43,31 @@ pub struct App {
     /// The cell under the mouse pointer, and the button held down for
     /// drag reports.
     pointer_cell: (usize, usize),
+    /// The tab bar's column under the pointer, when it's over the bar.
+    pointer_on_bar: Option<usize>,
     held_button: Option<MouseButton>,
     wheel: WheelAccumulator,
     /// Whether a blinking cursor is in its shown half, and when it flips.
     cursor_shown: bool,
     next_blink: Instant,
     /// The background and text colors the window frame was last given.
-    frame_colors: Option<(Rgb, Rgb)>,
+    frame_colors: Option<(alacritty_terminal::vte::ansi::Rgb, alacritty_terminal::vte::ansi::Rgb)>,
     /// The font size in logical pixels, changed by zoom.
     font_size: f32,
+    /// The last tab closed: the event loop ends when it next can.
+    exit_requested: bool,
 }
 
 struct Shown {
     window: Rc<Window>,
     surface: softbuffer::Surface<Rc<Window>, Rc<Window>>,
     font: CellFont,
-    session: Session,
+    tabs: Tabs<Session>,
     renderer: Renderer,
     grid: GridSize,
+    /// The console litastum every tab runs, and where it starts.
+    program: PathBuf,
+    working_directory: PathBuf,
 }
 
 impl App {
@@ -69,18 +78,20 @@ impl App {
             failure: None,
             modifiers: ModifiersState::empty(),
             pointer_cell: (0, 0),
+            pointer_on_bar: None,
             held_button: None,
             wheel: WheelAccumulator::default(),
             cursor_shown: true,
             next_blink: Instant::now() + BLINK_INTERVAL,
             frame_colors: None,
             font_size: FONT_SIZE,
+            exit_requested: false,
         }
     }
 
     fn open(&self, event_loop: &ActiveEventLoop) -> Result<Shown, String> {
         let mut font = CellFont::new(FONT_SIZE);
-        let start = LogicalSize::new(START_GRID.columns as u32 * font.cell_width, START_GRID.lines as u32 * font.cell_height);
+        let start = LogicalSize::new(START_GRID.columns as u32 * font.cell_width, (START_GRID.lines as u32 + 1) * font.cell_height);
         let attributes = window_style::themed(Window::default_attributes().with_title("litastum").with_inner_size(start));
         let window = Rc::new(event_loop.create_window(attributes).map_err(|err| err.to_string())?);
         // Committed IME text (Win+. emoji, CJK input) arrives as `Ime`.
@@ -93,18 +104,22 @@ impl App {
 
         let program = crate::console_litastum().ok_or("litastum's console program wasn't found next to this one")?;
         let working_directory = std::env::current_dir().unwrap_or_default();
-        let session = Session::spawn(&program, &working_directory, grid, (font.cell_width, font.cell_height), EventProxy(self.proxy.clone()))
-            .map_err(|err| format!("couldn't start {}: {err}", program.display()))?;
-        Ok(Shown { window, surface, font, session, renderer: Renderer::new(), grid })
+        let mut shown = Shown { window, surface, font, tabs: Tabs::new(), renderer: Renderer::new(), grid, program, working_directory };
+        tab_bar::spawn_tab(&mut shown, &self.proxy).map_err(|err| format!("couldn't start {}: {err}", shown.program.display()))?;
+        Ok(shown)
+    }
+
+    fn session(&self) -> Option<&Session> {
+        Some(&self.shown.as_ref()?.tabs.active()?.session)
     }
 
     fn mode(&self) -> TermMode {
-        self.shown.as_ref().map_or(TermMode::empty(), |shown| *shown.session.term.lock().mode())
+        self.session().map_or(TermMode::empty(), |session| *session.term.lock().mode())
     }
 
     fn write(&self, bytes: impl Into<Vec<u8>>) {
-        if let Some(shown) = &self.shown {
-            shown.session.write(bytes.into());
+        if let Some(session) = self.session() {
+            session.write(bytes.into());
         }
     }
 
@@ -116,6 +131,7 @@ impl App {
 
     /// A new window size; `cell_changed` after a DPI change, when the
     /// grid can stay the same while every cell's pixel size doesn't.
+    /// Every tab gets it, so a tab switched to later is already right.
     fn resized(&mut self, size: PhysicalSize<u32>, cell_changed: bool) {
         let Some(shown) = &mut self.shown else {
             return;
@@ -123,7 +139,10 @@ impl App {
         let grid = grid_for(size, &shown.font);
         if grid != shown.grid || cell_changed {
             shown.grid = grid;
-            shown.session.resize(grid, (shown.font.cell_width, shown.font.cell_height));
+            let cell = (shown.font.cell_width, shown.font.cell_height);
+            for tab in shown.tabs.iter_mut() {
+                tab.session.resize(grid, cell);
+            }
         }
         shown.window.request_redraw();
     }
@@ -143,21 +162,28 @@ impl App {
         let Ok(mut buffer) = shown.surface.buffer_mut() else {
             return;
         };
-        {
-            let mut term = shown.session.term.lock();
+        let Some(tab) = shown.tabs.active() else {
+            return;
+        };
+        let bar = {
+            let mut term = tab.session.term.lock();
             let cursor_visible = cursor_shown || !term.cursor_style().blinking;
-            let origin = render::grid_origin(size.width, shown.grid.columns, shown.font.cell_width);
+            let origin = render::grid_origin(size.width, shown.grid.columns, shown.font.cell_width, shown.font.cell_height);
             let view = View { width: size.width, height: size.height, origin, cursor_visible };
-            let mut images = shown.session.images.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let pixels = shown.renderer.draw(&mut term, &mut shown.font, &mut images, view);
-            if buffer.len() == pixels.len() {
-                buffer.copy_from_slice(pixels);
-            }
+            let mut images = tab.session.images.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            shown.renderer.draw(&mut term, &mut shown.font, &mut images, view);
+            tab_bar::cells(&shown.tabs, shown.grid.columns, term.colors())
+        };
+        shown.renderer.draw_bar(&mut shown.font, &bar.cells, bar.background);
+        let pixels = shown.renderer.pixels();
+        if buffer.len() == pixels.len() {
+            buffer.copy_from_slice(pixels);
         }
         let _ = buffer.present();
     }
 
-    /// A key press or release. `Ctrl+V`/`Shift+Insert` paste the
+    /// A key press or release. The window's own keys come first: tabs,
+    /// full screen, zoom, paste. `Ctrl+V`/`Shift+Insert` paste the
     /// clipboard as typed text, as Windows Terminal does: the key itself
     /// never reaches litastum, which reads the clipboard on that key
     /// (`windows_terminal::paste_hotkey`) and swallows the typed copy.
@@ -167,6 +193,12 @@ impl App {
             // Typing keeps the cursor steady, as in other terminals.
             self.cursor_shown = true;
             self.next_blink = Instant::now() + BLINK_INTERVAL;
+        }
+        if let Some(chord) = input::tab_chord(event.physical_key, self.modifiers) {
+            if pressed {
+                self.tab_chord(chord);
+            }
+            return;
         }
         if input::is_fullscreen_key(event.physical_key, self.modifiers) {
             if pressed && !event.repeat {
@@ -224,12 +256,19 @@ impl App {
         }
     }
 
+    /// The pointer over the tab bar (the top row) is the window's; under
+    /// it, the cell it's over goes to the program.
     fn pointer_moved(&mut self, x: f64, y: f64) {
         let Some(shown) = &self.shown else {
             return;
         };
-        let (origin_x, origin_y) = render::grid_origin(shown.window.inner_size().width, shown.grid.columns, shown.font.cell_width);
+        let (origin_x, origin_y) = render::grid_origin(shown.window.inner_size().width, shown.grid.columns, shown.font.cell_width, shown.font.cell_height);
         let column = ((x - f64::from(origin_x)).max(0.0) as u32 / shown.font.cell_width) as usize;
+        if y < f64::from(origin_y) {
+            self.pointer_on_bar = Some(column);
+            return;
+        }
+        self.pointer_on_bar = None;
         let line = ((y - f64::from(origin_y)).max(0.0) as u32 / shown.font.cell_height) as usize;
         let cell = (column.min(shown.grid.columns - 1), line.min(shown.grid.lines - 1));
         if cell != self.pointer_cell {
@@ -261,25 +300,8 @@ impl App {
         }
     }
 
-    /// The window frame in the program's colors (`window_style`), when
-    /// they changed.
-    fn sync_frame_colors(&mut self) {
-        let Some(shown) = &self.shown else {
-            return;
-        };
-        let wanted = {
-            let term = shown.session.term.lock();
-            let colors = term.colors();
-            (colors::resolve(TermColor::Named(NamedColor::Background), colors), colors::resolve(TermColor::Named(NamedColor::Foreground), colors))
-        };
-        if self.frame_colors != Some(wanted) {
-            self.frame_colors = Some(wanted);
-            window_style::set_frame_colors(&shown.window, wanted.0, wanted.1);
-        }
-    }
-
     fn cursor_blinks(&self) -> bool {
-        self.shown.as_ref().is_some_and(|shown| shown.session.term.lock().cursor_style().blinking)
+        self.session().is_some_and(|session| session.term.lock().cursor_style().blinking)
     }
 
     /// `F11`: borderless full screen on the window's monitor, and back.
@@ -326,6 +348,7 @@ impl App {
             cell_height: shown.font.cell_height as u16,
         })
     }
+
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -334,7 +357,10 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
         match self.open(event_loop) {
-            Ok(shown) => self.shown = Some(shown),
+            Ok(shown) => {
+                self.shown = Some(shown);
+                self.after_tab_change();
+            }
             Err(failure) => {
                 // No console to print to: say it in a window title.
                 let attributes = window_style::themed(Window::default_attributes().with_title(format!("litastum: {failure}")));
@@ -351,6 +377,8 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::KeyboardInput { event, .. } => self.key(event),
             WindowEvent::Ime(Ime::Commit(text)) => self.write(text),
+            // Only the shown tab has the focus: a background litastum
+            // must not take a Ctrl+V (it polls the key system-wide).
             WindowEvent::Focused(focused) => {
                 if let Some(report) = input::focus_report(focused, self.mode()) {
                     self.write(report);
@@ -358,6 +386,12 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::CursorMoved { position, .. } => self.pointer_moved(position.x, position.y),
             WindowEvent::MouseInput { state, button, .. } => {
+                if let Some(column) = self.pointer_on_bar {
+                    if state == ElementState::Pressed {
+                        self.bar_click(column, button);
+                    }
+                    return;
+                }
                 let action = if state == ElementState::Pressed {
                     self.held_button = Some(button);
                     MouseAction::Press(button)
@@ -370,6 +404,9 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseWheel { delta, .. } => self.wheel(delta),
             WindowEvent::RedrawRequested => self.redraw(),
             _ => {}
+        }
+        if self.exit_requested {
+            event_loop.exit();
         }
     }
 
@@ -385,6 +422,10 @@ impl ApplicationHandler<UserEvent> for App {
     /// Sleeps until the next blink while the cursor blinks, else until
     /// an event.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.exit_requested {
+            event_loop.exit();
+            return;
+        }
         if self.cursor_blinks() {
             event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_blink));
         } else {
@@ -394,48 +435,20 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
-        let UserEvent::Term(event) = event;
-        match event {
-            Event::Wakeup | Event::MouseCursorDirty | Event::CursorBlinkingChange => {
-                self.sync_frame_colors();
-                self.request_redraw();
-            }
-            Event::Title(title) => {
-                if let Some(shown) = &self.shown {
-                    shown.window.set_title(&title);
-                }
-            }
-            Event::ResetTitle => {
-                if let Some(shown) = &self.shown {
-                    shown.window.set_title("litastum");
-                }
-            }
-            // Replies the terminal owes the program (cursor position and
-            // the like).
-            Event::PtyWrite(text) => self.write(text),
-            // `CSI 14 t`: the text area's size in pixels.
-            Event::TextAreaSizeRequest(format) => {
-                if let Some(size) = self.text_area_size() {
-                    self.write(format(size));
-                }
-            }
-            // `OSC 10/11/12 ; ?`: a color's current value.
-            Event::ColorRequest(index, format) => {
-                if let Some(shown) = &self.shown {
-                    let color = colors::resolve_index(index, shown.session.term.lock().colors());
-                    self.write(format(color));
-                }
-            }
-            Event::Exit | Event::ChildExit(_) => event_loop.exit(),
-            _ => {}
+        let UserEvent::Term(id, event) = event;
+        self.term_event(id, event);
+        if self.exit_requested {
+            event_loop.exit();
         }
     }
 }
 
 
-/// The window's size in whole cells, at least one of each.
+/// The window's size in whole cells under the tab bar (a cell's height),
+/// at least one of each.
 fn grid_for(size: PhysicalSize<u32>, font: &CellFont) -> GridSize {
-    GridSize { columns: (size.width / font.cell_width).max(1) as usize, lines: (size.height / font.cell_height).max(1) as usize }
+    let height = size.height.saturating_sub(font.cell_height);
+    GridSize { columns: (size.width / font.cell_width).max(1) as usize, lines: (height / font.cell_height).max(1) as usize }
 }
 
 
@@ -444,10 +457,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_grid_is_whole_cells_and_never_empty() {
+    fn the_grid_is_whole_cells_under_the_tab_bar_and_never_empty() {
         let font = CellFont::new(16.0);
-        let size = PhysicalSize::new(font.cell_width * 10 + font.cell_width / 2, font.cell_height * 3);
-        assert_eq!(grid_for(size, &font), GridSize { columns: 10, lines: 3 });
+        let size = PhysicalSize::new(font.cell_width * 10 + font.cell_width / 2, font.cell_height * 4);
+        assert_eq!(grid_for(size, &font), GridSize { columns: 10, lines: 3 }, "a row for the tab bar");
         assert_eq!(grid_for(PhysicalSize::new(1, 1), &font), GridSize { columns: 1, lines: 1 });
     }
 }

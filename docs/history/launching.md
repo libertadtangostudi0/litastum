@@ -218,3 +218,16 @@ locks the terminal once per read and hands text over without copying.
   its time in is optimized even in debug builds (`[profile.dev.package]`
   in the root `Cargo.toml`). A full 200x60 redraw in a debug build: 107
   ms before, 3 ms after.
+
+## Tabs
+
+Requested: several sessions at once. A list of background commands
+inside litastum (Far's `F12` screens) was proposed first and turned
+down: the window should have tabs, as Windows Terminal does (which has
+its own). Each tab is a whole litastum in its own pseudoconsole; the
+window keeps one renderer and redraws everything on a switch. Terminal
+events carry their tab's id (`UserEvent::Term(TabId, _)`), so a
+background tab's replies and title still reach it. A hung program ties
+up only its tab; closing the tab ends it -- the "can't stop a program
+that ignores Ctrl+C" gap, mostly closed this way.
+

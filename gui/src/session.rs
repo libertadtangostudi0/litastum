@@ -14,21 +14,25 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::images::{self, PlacedImage};
 use crate::intercept::Interceptor;
+use crate::tabs::TabId;
 
-/// What the terminal thread tells the window thread.
+/// What a tab's terminal thread tells the window thread.
 #[derive(Debug)]
 pub enum UserEvent {
-    Term(Event),
+    Term(TabId, Event),
 }
 
-/// Forwards terminal events into the window's event loop, which owns all
-/// drawing.
+/// Forwards a tab's terminal events into the window's event loop, which
+/// owns all drawing, marked with the tab they're from.
 #[derive(Clone)]
-pub struct EventProxy(pub EventLoopProxy<UserEvent>);
+pub struct EventProxy {
+    pub proxy: EventLoopProxy<UserEvent>,
+    pub tab: TabId,
+}
 
 impl EventListener for EventProxy {
     fn send_event(&self, event: Event) {
-        let _ = self.0.send_event(UserEvent::Term(event));
+        let _ = self.proxy.send_event(UserEvent::Term(self.tab, event));
     }
 }
 

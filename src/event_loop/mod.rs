@@ -52,6 +52,7 @@ pub(crate) fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut A
     while !app.should_quit {
         sync_mouse_capture(app);
         sync_terminal_palette(app);
+        sync_title(app);
         let layout = draw_and_apply_cursor(terminal, app)?;
         for (panel, (cols, rows)) in app.panels.iter_mut().zip(layout) {
             panel.set_columns(cols);
@@ -213,6 +214,35 @@ fn sync_mouse_capture(app: &mut App) {
 }
 
 
+/// The terminal's title (`OSC 2`): the active panel's directory, or the
+/// file being edited -- what a tab is labelled with, in litastum's own
+/// window and in Windows Terminal alike. Sent only when it changes.
+fn sync_title(app: &mut App) {
+    let wanted = window_title(app);
+    if app.terminal_title.as_deref() == Some(wanted.as_str()) {
+        return;
+    }
+    if let Err(err) = execute!(std::io::stdout(), crossterm::terminal::SetTitle(&wanted)) {
+        warn!(%err, "failed to set the terminal's title");
+        return;
+    }
+    app.terminal_title = Some(wanted);
+}
+
+
+/// The name a tab shows: the edited file's or the directory's, the whole
+/// path for a drive's root.
+fn window_title(app: &App) -> String {
+    let path = match &app.mode {
+        Mode::Editing(editor) => editor.path().to_path_buf(),
+        Mode::CompareFiles(_) => return "Compare".to_string(),
+        Mode::ResolveConflict(_) => return "Conflict".to_string(),
+        _ => app.panels[app.active].path.clone(),
+    };
+    path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned())
+}
+
+
 /// Hands the theme's colors to the terminal whenever they change -- on
 /// the first frame and after F9 -> Color schemes -- rather than at each
 /// place the theme is set. `restore_terminal` gives the terminal its own
@@ -269,4 +299,20 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         }
     }
     explorer::handle_markdown_preview_mouse(app, mouse);
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{test_app, unique_scratch_dir};
+
+    /// A tab is labelled with the active panel's directory.
+    #[test]
+    fn the_title_is_the_active_panels_directory() {
+        let dir = unique_scratch_dir("title");
+        let app = test_app(dir.clone());
+
+        assert_eq!(window_title(&app), dir.file_name().unwrap().to_string_lossy());
+    }
 }

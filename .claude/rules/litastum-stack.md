@@ -38,6 +38,16 @@ code paths to the app. The one exception is a hint the terminal can't
 carry through ConPTY: `LITASTUM_HOST_CELL_SIZE`, which picks iTerm2
 images at the window's cell size. History: `docs/history/launching.md`.
 
+The window has tabs, as Windows Terminal does (`gui/src/tabs.rs`,
+`gui/src/app/tab_bar.rs`): each tab is its own litastum in its own
+pseudoconsole, one shown at a time under a bar of them. `Ctrl+Tab`/
+`Ctrl+Shift+Tab` switch (requested), `Ctrl+Shift+T` opens one,
+`Ctrl+Shift+W` closes one; a click shows a tab, its `x` or a middle
+click closes it, `+` opens one. Only the shown tab gets the focus
+(focus reports), since every litastum polls `Ctrl+V` system-wide. A tab
+is labelled with what its litastum calls itself -- the active panel's
+directory or the edited file (`event_loop::sync_title`, `OSC 2`).
+
 The console app uses the same engine the other way round: commands
 typed in litastum run in a pseudoconsole of its own, parsed by
 `alacritty_terminal` into the user screen (`src/user_screen/`), so

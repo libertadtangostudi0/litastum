@@ -120,6 +120,28 @@ impl Renderer {
         self.background = Some(background);
         &self.back
     }
+
+    /// The tab bar over the top `font.cell_height` pixels, after `draw`:
+    /// each cell a character in its colors, from the grid's left edge, the
+    /// rest of the row in `background`. One row of finished tiles, so it's
+    /// simply redrawn every frame.
+    pub fn draw_bar(&mut self, font: &mut CellFont, cells: &[(char, Rgb, Rgb)], background: Rgb) {
+        let Some(view) = self.view else {
+            return;
+        };
+        let mut canvas = Canvas { pixels: &mut self.back, width: view.width, height: view.height };
+        canvas.fill(0, 0, view.width, font.cell_height, background);
+        let style = FontStyle { bold: false, italic: false };
+        for (column, &(c, foreground, cell_background)) in cells.iter().enumerate() {
+            let (tile, width) = self.tiles.tile(TileKey::new(c, style, foreground, cell_background), font);
+            canvas.copy(view.origin.0 + column as u32 * font.cell_width, 0, tile, width, font.cell_height);
+        }
+    }
+
+    /// The finished frame, one `0x00RRGGBB` per pixel.
+    pub fn pixels(&self) -> &[u32] {
+        &self.back
+    }
 }
 
 
@@ -202,12 +224,12 @@ fn drop_overwritten_images<T>(term: &Term<T>, images: &mut Vec<PlacedImage>, cel
 }
 
 
-/// Where the grid starts in a window of `width` pixels: the part of the
-/// width that doesn't fill a whole cell is split between the left and
-/// right edges rather than all left over on the right. The leftover
-/// height stays at the bottom, under the key bar.
-pub fn grid_origin(width: u32, columns: usize, cell_width: u32) -> (u32, u32) {
-    (width.saturating_sub(columns as u32 * cell_width) / 2, 0)
+/// Where the grid starts in a window of `width` pixels, under `top`
+/// pixels of tab bar: the part of the width that doesn't fill a whole
+/// cell is split between the left and right edges rather than all left
+/// over on the right. The leftover height stays at the bottom.
+pub fn grid_origin(width: u32, columns: usize, cell_width: u32, top: u32) -> (u32, u32) {
+    (width.saturating_sub(columns as u32 * cell_width) / 2, top)
 }
 
 
@@ -284,7 +306,7 @@ fn unpack(pixel: u32) -> Rgb {
 }
 
 /// `over` on top of `under` at `coverage` (0 = all `under`).
-fn mix(under: Rgb, over: Rgb, coverage: u8) -> Rgb {
+pub fn mix(under: Rgb, over: Rgb, coverage: u8) -> Rgb {
     let channel = |a: u8, b: u8| ((u16::from(a) * (255 - u16::from(coverage)) + u16::from(b) * u16::from(coverage)) / 255) as u8;
     Rgb { r: channel(under.r, over.r), g: channel(under.g, over.g), b: channel(under.b, over.b) }
 }
