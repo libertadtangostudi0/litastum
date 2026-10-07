@@ -47,7 +47,19 @@ impl TypeAhead {
                 self.typing_starts(output_line, before_cursor);
                 line.insert_char(c);
             }
-            KeyCode::Backspace if line.text().chars().count() > self.start => line.backspace(),
+            // Editing the line, as when nothing runs -- reported: what was
+            // typed couldn't be deleted. Earlier text too: it's the
+            // user's line.
+            KeyCode::Backspace | KeyCode::Delete => {
+                line.apply_key(key);
+                self.start = self.start.min(line.text().chars().count());
+            }
+            KeyCode::Esc => {
+                line.clear();
+                self.start = 0;
+                self.echo_from = None;
+                self.before_typing = None;
+            }
             KeyCode::Enter => self.drop_typed(line),
             KeyCode::Char('c' | 'C') if ctrl => self.drop_typed(line),
             _ => {}
@@ -181,11 +193,9 @@ mod tests {
     }
 
     #[test]
-    fn earlier_text_and_backspace_stay_out_of_the_way() {
+    fn earlier_text_stays_through_a_sent_line_and_ctrl_c() {
         let mut line = TextField::with_text("cd ");
         let mut type_ahead = TypeAhead::begin(&mut line);
-        type_ahead.key(&mut line, key(KeyCode::Backspace), 0, "");
-        assert_eq!(line.text(), "cd ", "Backspace doesn't reach what was there before");
 
         type_ahead.paste(&mut line, "first\r\nsrc", 0, "");
         assert_eq!(line.text(), "cd src", "a pasted line ending in a break was sent");
@@ -220,5 +230,26 @@ mod tests {
         type_ahead.observe(&mut line, "Compiling foo");
 
         assert_eq!(line.text(), "o", "the line already ended with it when typed");
+    }
+
+    /// Reported: what was typed during a run couldn't be deleted.
+    #[test]
+    fn the_line_can_be_edited_while_a_command_runs() {
+        let mut line = TextField::with_text("svn ");
+        let mut type_ahead = TypeAhead::begin(&mut line);
+        type_text(&mut type_ahead, &mut line, "stx", 0);
+
+        type_ahead.key(&mut line, key(KeyCode::Backspace), 0, "");
+        assert_eq!(line.text(), "svn st");
+        for _ in 0..3 {
+            type_ahead.key(&mut line, key(KeyCode::Backspace), 0, "");
+        }
+        assert_eq!(line.text(), "svn", "what was there before too");
+
+        type_ahead.key(&mut line, key(KeyCode::Esc), 0, "");
+        assert_eq!(line.text(), "", "Esc clears the line");
+        type_text(&mut type_ahead, &mut line, "dir", 0);
+        type_ahead.finish(&mut line, &[Line::raw("output")]);
+        assert_eq!(line.text(), "dir");
     }
 }
