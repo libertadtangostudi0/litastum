@@ -379,6 +379,17 @@ mod handle_browsing_key_tests {
         assert_eq!(app.panels[app.active].path, target);
     }
 
+    /// Over the panels the answer is a notice too, or it'd go unseen.
+    #[test]
+    fn a_cd_to_a_missing_directory_over_the_panels_shows_a_notice() {
+        let mut app = typed("cd no-such-dir");
+
+        handle_browsing_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert!(app.notice.as_ref().is_some_and(|notice| notice.text.contains("no such directory")));
+        assert_eq!(app.user_screen.lines().len(), 2, "and on the user screen, for Ctrl+O");
+    }
+
     #[test]
     fn tab_switches_panels_on_an_empty_line_but_completes_while_typing() {
         let mut app = typed("");

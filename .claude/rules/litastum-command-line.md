@@ -201,7 +201,10 @@ draws the user screen instead of the panels, and keys go to
 `browsing::hidden_console::console_key` -- so menus and popups open over
 it as over the panels. `F2` (user menu), `F9` (menu), `F10` (quit) and
 `Alt+F7` (Find file, from the active panel's directory) work there, as
-requested; going to a Find file result shows the panels again.
+requested; going to a Find file result shows the panels again. `Ctrl+F2`/`Ctrl+L`,
+or a click on the prompt's path, edit that path in place, as a panel's
+title (`panel_path`): the field covers the command line, its `Tab` list
+opens upwards (`ui/path_edit.rs` puts it where there's room).
 
 It's a real command line, as in Far: `Enter` runs the line there (its
 output joins the screen live) and stays; `PageUp`/`PageDown` and the

@@ -79,6 +79,11 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
         app.user_screen.set_visible_rows(usize::from(console_rows(area.height)));
         let command_line_owns_cursor = matches!(app.overlay, None | Some(Overlay::CommandHistory(_)));
         let mut cursor = draw_console(frame, app, None).filter(|_| command_line_owns_cursor);
+        // `Ctrl+F2`: the prompt's path as a field, over the command line.
+        if let (Some(edit), true) = (&app.panel_path_edit, command_line_owns_cursor) {
+            let line_row = Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1);
+            cursor = path_edit::draw_path_field(frame, line_row, edit, &theme);
+        }
         if let Some(overlay_cursor) = draw_overlay(frame, area, app, &theme) {
             cursor = Some(overlay_cursor);
         }

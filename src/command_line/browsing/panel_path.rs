@@ -109,7 +109,7 @@ fn edit_file(app: &mut App) {
 
 /// `Esc` or a click elsewhere: the title comes back, and the panel goes
 /// back to the directory it had before the field followed the typing.
-fn cancel(app: &mut App) {
+pub(super) fn cancel(app: &mut App) {
     let Some(edit) = app.panel_path_edit.take() else {
         return;
     };

@@ -37,13 +37,17 @@ pub(super) fn draw_path_field(frame: &mut Frame, area: Rect, edit: &PathEdit, th
 }
 
 
-/// The `Tab` list under the field, as wide as its longest name (within
-/// the field's width) and cut off at the bottom of the screen.
+/// The `Tab` list under the field -- or over it, when there's more room
+/// there (the command line, at the screen's bottom) -- as wide as its
+/// longest name (within the field's width).
 fn draw_completions(frame: &mut Frame, field: Rect, list: &Completions, theme: &Theme) {
     let screen = frame.area();
-    let top = field.y + 1;
-    let room = screen.bottom().saturating_sub(top);
-    let height = (list.items.len().max(1) as u16 + 2).min(MAX_LIST_ROWS + 2).min(room);
+    let wanted = (list.items.len().max(1) as u16 + 2).min(MAX_LIST_ROWS + 2);
+    let room_below = screen.bottom().saturating_sub(field.y + 1);
+    let room_above = field.y.saturating_sub(screen.y);
+    let below = room_below >= wanted || room_below >= room_above;
+    let height = wanted.min(if below { room_below } else { room_above });
+    let top = if below { field.y + 1 } else { field.y - height };
     let longest = list.items.iter().map(|(name, is_dir)| name.chars().count() + usize::from(*is_dir)).max().unwrap_or(0);
     let width = (longest as u16 + 2).max(20).min(field.width);
     if height < 3 || width < 3 {
@@ -118,5 +122,26 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let row: String = (0..40).map(|x| buffer[(x, 2)].symbol()).collect();
         assert!(row.contains("no matches"), "{row:?}");
+    }
+
+    /// The command line sits on the screen's last row: its list opens
+    /// upwards.
+    #[test]
+    fn with_no_room_below_the_list_opens_above() {
+        let dir = unique_scratch_dir("path-edit-draw");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::create_dir_all(dir.join("scripts")).unwrap();
+        let mut edit = PathEdit::new(&dir);
+        edit.field.set_text("s");
+        edit.key(key(KeyCode::Tab));
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
+        terminal.draw(|frame| {
+            draw_path_field(frame, Rect::new(0, 7, 40, 1), &edit, &Theme::dark());
+        }).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let rows: Vec<String> = (0..8).map(|y| (0..40).map(|x| buffer[(x, y)].symbol()).collect()).collect();
+        assert!(rows[4].contains("scripts") && rows[5].contains("src"), "{rows:#?}");
     }
 }

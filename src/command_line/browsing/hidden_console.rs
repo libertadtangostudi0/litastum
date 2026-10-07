@@ -24,7 +24,9 @@ fn is_ctrl_o(key: KeyEvent) -> bool {
 /// the user screen with our own command line, a real one as in Far.
 /// `Ctrl+O` brings the panels back. The keys that mean something without
 /// them work as over the panels: `F2` the user menu, `F9` the menu, `F10`
-/// quit, `Alt+F7` Find file (from the active panel's directory). While
+/// quit, `Alt+F7` Find file (from the active panel's directory), and
+/// `Ctrl+F2`/`Ctrl+L` edit the path in the prompt, as the panels' title
+/// (`panel_path`; the panel follows, unseen, and the prompt with it). While
 /// suggestions show, `Up`/`Down`/`Tab`/`F4`/`F8`/`Esc` work on them;
 /// `Enter` runs the line, its output joining the screen live, and stays;
 /// `PageUp`/`PageDown` scroll; `Esc` clears the line; `Tab` completes a
@@ -56,7 +58,13 @@ pub(super) fn console_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         }
     }
     let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let plain = !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+    // The path in the prompt as a field, as the panels' title is.
+    if ctrl && matches!(key.code, KeyCode::F(2) | KeyCode::Char('l' | 'L')) {
+        super::panel_path::start(app);
+        return Ok(Effect::None);
+    }
     let menu_action = match key.code {
         KeyCode::F(2) if plain => Some(BrowserAction::Navigate(Command::OpenUserMenu)),
         KeyCode::F(9) if plain => Some(BrowserAction::Navigate(Command::OpenMenu)),
@@ -111,9 +119,22 @@ pub(super) fn console_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
 }
 
 
-/// The mouse while the panels are hidden: a drag selects text (scrolling
-/// on at the top and bottom rows), the wheel scrolls back.
+/// The mouse while the panels are hidden: a click on the prompt's path
+/// edits it, as on a panel's title (a click elsewhere puts it back); a
+/// drag selects text (scrolling on at the top and bottom rows), the wheel
+/// scrolls back.
 pub(super) fn mouse(app: &mut App, mouse: MouseEvent) {
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+        // The command line is the row under the screen's lines.
+        let on_prompt = usize::from(mouse.row) == app.user_screen.visible_rows() && usize::from(mouse.column) < app.panels[app.active].path.display().to_string().chars().count();
+        if on_prompt {
+            super::panel_path::start(app);
+            return;
+        }
+        if app.panel_path_edit.is_some() {
+            super::panel_path::cancel(app);
+        }
+    }
     let screen = &mut app.user_screen;
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => screen.select_start(mouse.row, mouse.column),
@@ -239,5 +260,43 @@ commands = [\"svn st\"]
         assert_eq!(crate::text_field::clipboard::get().as_deref(), Some("line\nsec"));
         assert_eq!(app.user_screen.selection(), None, "copied: the selection goes");
         assert_eq!(app.command_line.text(), "typed", "the command line untouched");
+    }
+
+    /// Requested: Ctrl+F2 edits the path here too, as over the panels.
+    #[test]
+    fn ctrl_f2_and_a_click_on_the_prompt_edit_the_path() {
+        let mut app = hidden("");
+        let dir = app.panels[app.active].path.clone();
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+
+        console_key(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::CONTROL)).unwrap();
+        assert_eq!(app.panel_path_edit.as_ref().unwrap().field.text(), dir.to_string_lossy());
+        for c in [std::path::MAIN_SEPARATOR, 's', 'u', 'b'] {
+            super::super::handle_browsing_key(&mut app, key(KeyCode::Char(c))).unwrap();
+        }
+        super::super::handle_browsing_key(&mut app, key(KeyCode::Enter)).unwrap();
+        assert_eq!(app.panels[app.active].path, dir.join("sub"));
+        assert!(app.panels_hidden, "still the user screen");
+
+        app.user_screen.set_visible_rows(10);
+        let click = |row| MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 2, row, modifiers: KeyModifiers::NONE };
+        mouse(&mut app, click(10));
+        assert!(app.panel_path_edit.is_some(), "a click on the prompt's path");
+        mouse(&mut app, click(3));
+        assert!(app.panel_path_edit.is_none(), "a click elsewhere puts it back");
+    }
+
+    /// Reported: a cd to a missing directory said nothing.
+    #[test]
+    fn a_cd_to_a_missing_directory_says_so_on_the_screen() {
+        let mut app = hidden("cd no-such-dir");
+        let dir = app.panels[app.active].path.clone();
+
+        console_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        let screen: Vec<String> = app.user_screen.lines().iter().map(|line| line.to_string()).collect();
+        assert_eq!(screen, [format!("{}> cd no-such-dir", dir.display()), "cd: no such directory: no-such-dir".to_string()]);
+        assert_eq!(app.panels[app.active].path, dir);
+        assert!(app.notice.is_none(), "the screen shows it already");
     }
 }
