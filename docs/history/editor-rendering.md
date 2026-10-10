@@ -125,3 +125,35 @@ read back for the press, the release and a drag's end. `edtui` still
 handles the event first (the selection, its mode). Pinned by
 `every_drawn_character_is_where_a_click_on_it_lands`, which clicks every
 character `edtui` actually drew.
+
+Then: a click on a letter's *right half* still put the caret before it
+(requested: after it, as any editor does). A terminal reports only the
+cell, so litastum can't tell the halves apart; litastum's window can. On
+the editor screens (`editor`, `compare`, `conflict` -- the screen
+litastum names for its zoom) the window reports a press and a release
+at the cell edge nearest the pointer (`gui/src/mouse.rs::column_at`):
+a letter's right half comes as the next cell, so the caret goes after
+it. Drags and the panels keep the cell under the pointer. A character
+two cells wide (CJK, fullwidth, a tab) takes its second cell as its
+right half (`click.rs::column_in`), which also works in other
+terminals. Pinned by tables: every printable ASCII character, on one
+row and wrapped (`mouse_clicks.rs`), two-cell characters, and every
+pixel of a cell at cell widths 4-40 (`gui/src/mouse.rs`).
+
+That only worked in litastum's window; requested: Windows Terminal too.
+A terminal can't say where in a cell a click was, so litastum asks
+Windows for the pointer's pixel position (`GetPhysicalCursorPos`) and
+learns where the cells are on screen from the pointer's moves
+(`src/cell_halves.rs`): ConPTY turns on any-motion reports (`?1003`,
+checked with a probe) once litastum takes the mouse, so every move into
+the next cell is an edge crossed at about that pixel. A line fitted
+through the edges gives the cells' left edge and width; a click in a
+cell's right half becomes the next cell, as the window reports it.
+Events come a little late, so moving right the pointer is past an edge
+and moving left before it: one line each way, the edges halfway between
+-- a single fit read the two as a moved window and kept forgetting.
+A stray edge is skipped; three off in a row (the window moved, the font
+changed) start over. Skipped in litastum's window, which reports clicks
+that way already, and outside Windows. Each click logs the pixel, the
+fit and the cell it became (`click: cell half`, debug).
+

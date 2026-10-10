@@ -44,6 +44,9 @@ pub struct App {
     /// The cell under the mouse pointer, and the button held down for
     /// drag reports.
     pointer_cell: (usize, usize),
+    /// The column of the cell edge nearest the pointer, for a click in
+    /// litastum's editors (`mouse::clicks_snap_to_edges`).
+    pointer_edge_column: usize,
     /// The tab bar's column under the pointer, when it's over the bar.
     pointer_on_bar: Option<usize>,
     held_button: Option<MouseButton>,
@@ -81,6 +84,7 @@ impl App {
             failure: None,
             modifiers: ModifiersState::empty(),
             pointer_cell: (0, 0),
+            pointer_edge_column: 0,
             pointer_on_bar: None,
             held_button: None,
             wheel: WheelAccumulator::default(),
@@ -254,7 +258,11 @@ impl App {
     }
 
     fn mouse(&self, action: MouseAction) {
-        let (column, line) = self.pointer_cell;
+        let (mut column, line) = self.pointer_cell;
+        let click = matches!(action, MouseAction::Press(MouseButton::Left) | MouseAction::Release(MouseButton::Left));
+        if click && mouse::clicks_snap_to_edges(&self.active_screen()) {
+            column = self.pointer_edge_column;
+        }
         if let Some(bytes) = mouse::report(action, column, line, self.modifiers, self.mode()) {
             self.write(bytes);
         }
@@ -267,14 +275,15 @@ impl App {
             return;
         };
         let (origin_x, origin_y) = render::grid_origin(shown.window.inner_size().width, shown.grid.columns, shown.font.cell_width, shown.font.cell_height);
-        let column = ((x - f64::from(origin_x)).max(0.0) as u32 / shown.font.cell_width) as usize;
+        let column = mouse::column_at(x, origin_x, shown.font.cell_width, shown.grid.columns, false);
+        self.pointer_edge_column = mouse::column_at(x, origin_x, shown.font.cell_width, shown.grid.columns, true);
         if y < f64::from(origin_y) {
             self.pointer_on_bar = Some(column);
             return;
         }
         self.pointer_on_bar = None;
         let line = ((y - f64::from(origin_y)).max(0.0) as u32 / shown.font.cell_height) as usize;
-        let cell = (column.min(shown.grid.columns - 1), line.min(shown.grid.lines - 1));
+        let cell = (column, line.min(shown.grid.lines - 1));
         if cell != self.pointer_cell {
             self.pointer_cell = cell;
             self.mouse(MouseAction::Move { held: self.held_button });

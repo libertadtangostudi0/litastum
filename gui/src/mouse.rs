@@ -44,6 +44,27 @@ pub fn report(action: MouseAction, column: usize, line: usize, mods: ModifiersSt
 }
 
 
+/// The grid column at pixel `x`: the cell it's in, or -- `nearest_edge`
+/// -- the one starting at the cell edge nearest to it, so a point in a
+/// cell's right half gives the next cell.
+pub fn column_at(x: f64, origin: u32, cell_width: u32, columns: usize, nearest_edge: bool) -> usize {
+    let cells = (x - f64::from(origin)).max(0.0) / f64::from(cell_width.max(1));
+    let column = if nearest_edge { cells.round() } else { cells.floor() };
+    (column as usize).min(columns.saturating_sub(1))
+}
+
+
+/// Whether a click on litastum's `screen` goes to the nearest cell edge
+/// (`column_at`): in its editors a click places a caret between two
+/// characters, and one on a letter's right half belongs after it
+/// (requested: the caret landed a letter early). A terminal only reports
+/// cells, so litastum can't tell the halves apart itself; the panels and
+/// the user screen keep the cell under the pointer.
+pub fn clicks_snap_to_edges(screen: &str) -> bool {
+    matches!(screen, "editor" | "compare" | "conflict")
+}
+
+
 fn button_code(button: MouseButton) -> Option<u8> {
     match button {
         MouseButton::Left => Some(0),
@@ -59,6 +80,40 @@ mod tests {
     use super::*;
 
     const SGR_CLICKS: TermMode = TermMode::MOUSE_REPORT_CLICK.union(TermMode::SGR_MOUSE);
+
+    /// Every pixel of a row of cells, at every cell width from a tiny font
+    /// to a big zoom: the cell under it, or the nearest edge's cell.
+    #[test]
+    fn a_pixel_maps_to_its_cell_or_its_nearest_edge_at_every_cell_width() {
+        let origin = 7;
+        for cell_width in 4..=40u32 {
+            for column in 0..10usize {
+                for offset in 0..cell_width {
+                    let x = f64::from(origin) + (column as u32 * cell_width + offset) as f64 + 0.25;
+                    let right_half = f64::from(offset) + 0.25 >= f64::from(cell_width) / 2.0;
+                    assert_eq!(column_at(x, origin, cell_width, 100, false), column, "width {cell_width}, column {column}, offset {offset}: the cell");
+                    assert_eq!(column_at(x, origin, cell_width, 100, true), column + usize::from(right_half), "width {cell_width}, column {column}, offset {offset}: the nearest edge");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_column_stays_on_the_grid() {
+        assert_eq!(column_at(0.0, 10, 8, 50, true), 0, "left of the grid");
+        assert_eq!(column_at(10_000.0, 10, 8, 50, true), 49, "right of it");
+        assert_eq!(column_at(10.0 + 49.0 * 8.0 + 7.0, 10, 8, 50, true), 49, "the last cell's right half");
+    }
+
+    #[test]
+    fn only_litastums_editors_snap_clicks_to_edges() {
+        for screen in ["editor", "compare", "conflict"] {
+            assert!(clicks_snap_to_edges(screen), "{screen}");
+        }
+        for screen in ["main", ""] {
+            assert!(!clicks_snap_to_edges(screen), "{screen:?}");
+        }
+    }
 
     #[test]
     fn nothing_is_reported_without_mouse_mode() {

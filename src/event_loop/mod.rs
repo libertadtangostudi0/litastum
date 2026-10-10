@@ -343,6 +343,8 @@ fn sync_terminal_palette(app: &mut App) {
 /// Compare and the resolver route their own (`CompareState::mouse`,
 /// `ConflictState::mouse`).
 fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    let on_editor = matches!(app.mode, Mode::Editing(_) | Mode::CompareFiles(_) | Mode::ResolveConflict(_));
+    let mouse = crate::cell_halves::adjust(&mut app.cell_halves, mouse, on_editor);
     // An overlay is modal: nothing underneath reacts to the mouse.
     if app.overlay.is_some() {
         return;

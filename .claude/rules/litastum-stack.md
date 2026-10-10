@@ -47,6 +47,12 @@ click closes it, `+` opens one. Only the shown tab gets the focus
 (focus reports), since every litastum polls `Ctrl+V` system-wide. A tab
 is labelled with what its litastum calls itself -- the active panel's
 directory or the edited file (`event_loop::sync_title`, `OSC 2`).
+On the editor screens a click goes to the cell edge nearest the pointer
+(`gui/src/mouse.rs::clicks_snap_to_edges`), so a letter's right half
+puts the caret after it -- a terminal can only report the cell. In any
+other terminal on Windows litastum does the same itself
+(`src/cell_halves.rs`: the pointer's pixel position, cells learned from
+its moves).
 Zoom is per litastum screen -- panels, the editor, Compare, the conflict
 resolver each keep their own (requested), saved for the user in `config.json`
 ([[litastum-config]]): litastum names its screen with `OSC 1337 ;

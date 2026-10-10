@@ -59,6 +59,9 @@ impl Editor {
                 self.state.mode = EditorMode::Insert;
             }
         }
+        if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(_)) {
+            tracing::debug!(kind = ?mouse.kind, column = mouse.column, row = mouse.row, text_left = self.text_left(), caret = ?self.state.cursor, "editor click");
+        }
     }
 
     /// Moves the caret (and a drag's selection end) to where the pointer

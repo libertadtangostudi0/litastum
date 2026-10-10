@@ -55,17 +55,20 @@ fn position_at(lines: &Lines, top: usize, text_width: usize, x: usize, screen_ro
 }
 
 
-/// The column at cell `x` within `segment` of `line`: the character
-/// under it, else -- right of the text -- after the line's end on its
-/// last segment, on the segment's last character on a wrapped one (the
-/// position after it is drawn at the next row's start).
+/// The column at cell `x` within `segment` of `line`: before the
+/// character under it -- after it on the right half of one two cells wide
+/// (a wide character, a tab) -- else, right of the text, after the line's
+/// end on its last segment, on the segment's last character on a wrapped
+/// one (the position after it is drawn at the next row's start).
 fn column_in(line: &[char], segment: std::ops::Range<usize>, x: usize, is_last: bool) -> usize {
     let mut left = 0;
     for col in segment.clone() {
-        left += width(line[col]);
-        if x < left {
-            return col;
+        let ch_width = width(line[col]);
+        if x < left + ch_width {
+            let right_half = ch_width > 1 && (x - left) * 2 >= ch_width;
+            return col + usize::from(right_half);
         }
+        left += ch_width;
     }
     if is_last || segment.is_empty() {
         segment.end
@@ -148,9 +151,11 @@ mod tests {
     #[test]
     fn tabs_and_wide_characters_take_their_cells() {
         let text = lines("\tx\n\u{4e2d}y");
-        assert_eq!(position_at(&text, 0, 20, 1, 0), Index2::new(0, 0), "a tab's second cell");
+        assert_eq!(position_at(&text, 0, 20, 0, 0), Index2::new(0, 0), "a tab's first cell: before it");
+        assert_eq!(position_at(&text, 0, 20, 1, 0), Index2::new(0, 1), "its second, its right half: after it");
         assert_eq!(position_at(&text, 0, 20, 2, 0), Index2::new(0, 1), "\"x\" after it");
-        assert_eq!(position_at(&text, 0, 20, 1, 1), Index2::new(1, 0), "a wide character's second cell");
+        assert_eq!(position_at(&text, 0, 20, 0, 1), Index2::new(1, 0), "a wide character's first cell");
+        assert_eq!(position_at(&text, 0, 20, 1, 1), Index2::new(1, 1), "its second: after it");
         assert_eq!(position_at(&text, 0, 20, 2, 1), Index2::new(1, 1), "\"y\"");
     }
 }

@@ -151,3 +151,110 @@ fn every_drawn_character_is_where_a_click_on_it_lands() {
         assert!(checked > 30, "top {top}: only {checked} characters drawn");
     }
 }
+
+
+/// Draws `editor` into a `width` x 6 screen.
+fn draw_wide(editor: &mut Editor, width: u16) -> ratatui::buffer::Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(width, 6)).unwrap();
+    terminal
+        .draw(|frame| {
+            let view = editor.view(&Theme::dark(), frame.area());
+            frame.render_widget(view, frame.area());
+        })
+        .unwrap();
+    terminal.backend().buffer().clone()
+}
+
+
+/// A click -- press and release -- at `(x, y)`; the caret after it.
+fn click_at(editor: &mut Editor, x: u16, y: u16) -> Index2 {
+    editor.mouse(click(x, y));
+    editor.mouse(release(x, y));
+    editor.cursor()
+}
+
+
+/// Requested: every character of the English layout. A click on a
+/// character's cell puts the caret before it; a click on its right half
+/// -- which litastum's window reports as the next cell
+/// (`gui/src/mouse.rs::column_at`) -- after it. The last one's right half
+/// is past the line's end.
+#[test]
+fn every_printable_ascii_character_takes_a_click_before_and_after_it() {
+    let table: String = ('!'..='~').collect();
+    let (mut editor, _path) = open_test_editor(&format!("{table}\n"));
+    let buffer = draw_wide(&mut editor, 120);
+    let y = 1;
+
+    let text_left = editor.text_left();
+    for (index, ch) in table.chars().enumerate() {
+        let x = (text_left..buffer.area.width).find(|&x| buffer[(x, y)].symbol() == ch.to_string()).unwrap();
+        assert_eq!(click_at(&mut editor, x, y), Index2::new(0, index), "{ch:?}: on it");
+        assert_eq!(click_at(&mut editor, x + 1, y), Index2::new(0, index + 1), "{ch:?}: on its right half");
+    }
+}
+
+
+/// The same table wrapped over several rows: each row's characters,
+/// and the right half of a row's last one stays on that row.
+#[test]
+fn the_ascii_table_wrapped_over_rows_takes_clicks_the_same_way() {
+    let table: String = ('!'..='~').collect();
+    let (mut editor, _path) = open_test_editor(&format!("{table}\n"));
+    let width: u16 = 40;
+    let buffer = draw_wide(&mut editor, width);
+    let text_left = editor.text_left();
+    let row_width = usize::from(width - 1 - text_left);
+
+    for (index, ch) in table.chars().enumerate() {
+        let (y, x) = (1 + (index / row_width) as u16, text_left + (index % row_width) as u16);
+        if y >= 5 {
+            break;
+        }
+        assert_eq!(buffer[(x, y)].symbol(), ch.to_string(), "{ch:?} is drawn at ({x}, {y})");
+        assert_eq!(click_at(&mut editor, x, y), Index2::new(0, index), "{ch:?}: on it");
+        let last_on_its_row = index % row_width == row_width - 1;
+        let right_half = if last_on_its_row { index } else { index + 1 };
+        assert_eq!(click_at(&mut editor, x + 1, y).col, right_half, "{ch:?}: on its right half");
+    }
+}
+
+
+/// Spaces are characters too: a click lands between them as on letters.
+#[test]
+fn spaces_take_clicks_like_letters() {
+    let (mut editor, _path) = open_test_editor("a b  c\n");
+    let buffer = draw_wide(&mut editor, 40);
+    let x = column_of(&buffer, 1, "a");
+
+    for col in 0..6 {
+        assert_eq!(click_at(&mut editor, x + col as u16, 1), Index2::new(0, col), "cell {col}");
+    }
+    assert_eq!(click_at(&mut editor, x + 6, 1), Index2::new(0, 6), "past the end");
+}
+
+
+/// Characters two cells wide -- CJK, fullwidth Latin, a tab: the first
+/// cell (and its right half, the glyph's middle) before it... the second
+/// cell, the glyph's right half, after it.
+#[test]
+fn two_cell_characters_take_a_click_on_each_half() {
+    let line = "a\u{4e2d}b\u{ff41}c\td\u{6587}";
+    let (mut editor, _path) = open_test_editor(&format!("{line}\n"));
+    let buffer = draw_wide(&mut editor, 60);
+    let x_a = column_of(&buffer, 1, "a");
+
+    let mut x = x_a;
+    for (index, ch) in line.chars().enumerate() {
+        let cells = if ch == '\t' { 2 } else { unicode_width::UnicodeWidthChar::width(ch).unwrap() as u16 };
+        if ch != '\t' {
+            assert_eq!(buffer[(x, 1)].symbol(), ch.to_string(), "{ch:?} is drawn at {x}");
+        }
+        assert_eq!(click_at(&mut editor, x, 1), Index2::new(0, index), "{ch:?}: its first cell");
+        if cells == 2 {
+            assert_eq!(click_at(&mut editor, x + 1, 1), Index2::new(0, index + 1), "{ch:?}: its second cell");
+        }
+        assert_eq!(click_at(&mut editor, x + cells, 1), Index2::new(0, index + 1), "{ch:?}: right of it");
+        x += cells;
+    }
+}

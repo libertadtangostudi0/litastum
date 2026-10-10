@@ -263,6 +263,9 @@ pub struct App {
     pub terminal_screen: Option<&'static str>,
     /// The panels' directories for the next start (`last_paths`).
     pub last_paths: crate::last_paths::LastPaths,
+    /// Where the cells are on screen, for which half a click is in
+    /// (`cell_halves`).
+    pub cell_halves: crate::cell_halves::CellHalves,
     /// `F3` on a `.md` file: the live preview shown beside the editor
     /// (`Mode::Editing` drawn split), refreshed on `Ctrl+S`. Lives here,
     /// not in `Mode::Editing`, so other editor call sites don't carry an
@@ -333,6 +336,7 @@ impl App {
             terminal_title: None,
             terminal_screen: None,
             last_paths: Default::default(),
+            cell_halves: Default::default(),
             markdown_edit_preview: None,
             notice: None,
             user_screen: Default::default(),
