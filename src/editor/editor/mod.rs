@@ -67,6 +67,9 @@ pub struct Editor {
     /// is open. Lives here because the trim overwrites the `EditorState`
     /// fields that could have held it. History: docs/history/shift-select.md.
     vertical_shift_anchor: Option<super::bindings::VerticalAnchor>,
+    /// Where a click put the caret: the view stays while it's there, even
+    /// for a bracket pair partly off screen (`view.rs`).
+    clicked_at: Option<Index2>,
     /// Where a `Ctrl+Shift+Left`-built selection started, before
     /// `trim_anchor_off_a_word_it_never_visited` trimmed `selection.start`;
     /// `None` when no such selection is open. Retracing the walk back past
@@ -162,6 +165,7 @@ impl Editor {
             first_line,
             word_select_touch: WordSelectTouch::Untouched,
             vertical_shift_anchor: None,
+            clicked_at: None,
             word_select_true_anchor: None,
             search_history_index: None,
             search: None,

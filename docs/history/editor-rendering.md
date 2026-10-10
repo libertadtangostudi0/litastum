@@ -58,7 +58,11 @@ character ("loaded" retracted onto 'l' showed the bar between 'l' and
   row was already visible -- `edtui` only scrolls to keep the cursor's
   row in view. `widen_viewport_to_show_matched_bracket_pair` moves the
   viewport when the pair fits; `edtui` re-adjusts if the cursor would
-  leave it, so wrong math can't hide the cursor.
+  leave it, so wrong math can't hide the cursor. It put the pair's top
+  row at the top of the view every time, even with the whole pair on
+  screen, and a click by a brace moved the text up (reported): now it
+  scrolls only as far as needed, and not at all while the caret is
+  where a click put it.
 - **While the search box is open, its match is the only highlight.**
   Our `SearchSession` draws it as a plain `Highlight`, and `edtui`'s two
   render paths disagree on which of two overlapping highlights wins

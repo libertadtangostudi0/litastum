@@ -136,20 +136,35 @@ impl Editor {
         self.state.lines.len().max(1).to_string().len() + 1
     }
 
-    /// Moves the viewport so a multi-line bracket pair is fully visible
-    /// when it fits -- `edtui` only keeps the cursor's row in view.
-    /// `edtui` re-adjusts if the cursor would fall outside, so this can't
-    /// hide it. `area.height - 2` = content height (border only, no
-    /// status line).
+    /// Scrolls just enough for a multi-line bracket pair to be fully
+    /// visible when it fits -- `edtui` only keeps the cursor's row in view.
+    /// A pair already on screen leaves the view alone: it used to be put
+    /// at the top every time, and a click by a brace moved the text
+    /// (reported). Nor does the view move after a click while the caret
+    /// stays where it was clicked. `edtui` re-adjusts if the cursor would
+    /// fall outside, so this can't hide it. `area.height - 2` = content
+    /// height (border only, no status line).
     fn widen_viewport_to_show_matched_bracket_pair(&mut self, area: Rect) {
+        if self.clicked_at == Some(self.state.cursor) {
+            return;
+        }
+        self.clicked_at = None;
         let Some((top_row, bottom_row)) = matched_bracket_row_span(&self.state.lines, self.state.cursor) else {
             return;
         };
         let content_height = area.height.saturating_sub(2) as usize;
-        if bottom_row - top_row < content_height {
-            let (offset_x, _) = self.state.viewport_offset();
-            self.state.set_viewport_offset(offset_x, top_row);
+        if bottom_row - top_row >= content_height {
+            return;
         }
+        let (offset_x, view_top) = self.state.viewport_offset();
+        let wanted = if top_row < view_top {
+            top_row
+        } else if bottom_row >= view_top + content_height {
+            bottom_row + 1 - content_height
+        } else {
+            return;
+        };
+        self.state.set_viewport_offset(offset_x, wanted);
     }
 
     /// The style `edtui` should paint the cursor's own cell with, or

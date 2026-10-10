@@ -324,3 +324,83 @@ fn a_bracket_pair_that_does_not_fit_leaves_the_viewport_showing_the_cursor() {
         "the cursor's own '}}' should still render highlighted -- it's still a real match, just the far side doesn't fit on screen"
     );
 }
+
+
+/// Draws `editor` into a 20x8 screen (6 content rows).
+fn draw_small(editor: &mut Editor, terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>) {
+    let theme = Theme::dark();
+    terminal
+        .draw(|frame| {
+            let view = editor.view(&theme, frame.area());
+            frame.render_widget(view, frame.area());
+        })
+        .unwrap();
+}
+
+
+/// Reported: the caret by a brace moved the text up -- the pair's top
+/// row was put at the top of the view even when the whole pair was on
+/// screen already.
+#[test]
+fn a_bracket_pair_already_on_screen_leaves_the_view_alone() {
+    let content: String = (0..30).map(|row| match row {
+        10 => "{\n".to_string(),
+        12 => "}\n".to_string(),
+        _ => format!("line {row}\n"),
+    }).collect();
+    let (mut editor, _path) = open_test_editor(&content);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(20, 8)).unwrap();
+    draw_small(&mut editor, &mut terminal);
+    editor.set_viewport_top_row(8);
+    draw_small(&mut editor, &mut terminal);
+
+    editor.state.cursor = Index2::new(10, 0);
+    draw_small(&mut editor, &mut terminal);
+
+    assert_eq!(editor.state.viewport_offset().1, 8, "rows 8-13 show the whole pair already");
+}
+
+
+/// A pair partly off screen scrolls only as far as it needs.
+#[test]
+fn a_bracket_pair_partly_off_screen_scrolls_only_as_far_as_needed() {
+    let content: String = (0..30).map(|row| match row {
+        4 => "{\n".to_string(),
+        8 => "}\n".to_string(),
+        _ => format!("line {row}\n"),
+    }).collect();
+    let (mut editor, _path) = open_test_editor(&content);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(20, 8)).unwrap();
+    draw_small(&mut editor, &mut terminal);
+
+    editor.state.cursor = Index2::new(4, 0);
+    draw_small(&mut editor, &mut terminal);
+
+    assert_eq!(editor.state.viewport_offset().1, 3, "rows 3-8: the '}}' on the last row, not the '{{' on the first");
+}
+
+
+/// Reported: a click by a brace moved the text. A click puts the caret
+/// where it's seen; the view stays, the far brace off screen or not.
+#[test]
+fn a_click_by_a_brace_leaves_the_view_alone() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let content: String = (0..30).map(|row| match row {
+        4 => "{\n".to_string(),
+        8 => "}\n".to_string(),
+        _ => format!("line {row}\n"),
+    }).collect();
+    let (mut editor, _path) = open_test_editor(&content);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(20, 8)).unwrap();
+    draw_small(&mut editor, &mut terminal);
+
+    let (column, row) = (editor.text_left(), 1 + 4);
+    for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
+        editor.mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE });
+    }
+    draw_small(&mut editor, &mut terminal);
+
+    assert_eq!(editor.cursor(), Index2::new(4, 0), "on the '{{'");
+    assert_eq!(editor.state.viewport_offset().1, 0, "the view stays");
+}

@@ -84,6 +84,7 @@ impl Editor {
             selection.end = position;
         }
         self.state.cursor = position;
+        self.clicked_at = Some(position);
     }
 
     /// Scrolls the view `delta` lines (down positive), the caret moving
