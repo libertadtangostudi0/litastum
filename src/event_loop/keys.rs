@@ -1,12 +1,10 @@
-use std::io::Stdout;
-
 use color_eyre::eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
-use ratatui::{prelude::CrosstermBackend, Terminal};
 
 use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
 use crate::{command_line, compare, conflict, editor, explorer, keyboard_layout, theming};
+use crate::terminal_setup::Tui;
 
 use super::drain_pending_mouse_events;
 
@@ -27,7 +25,7 @@ fn is_navigation_reversal(prev: KeyCode, next: KeyCode) -> bool {
 /// Returns whether anything was dispatched: Windows also reports every
 /// key's `Release`, and redrawing for it made the cursor flicker.
 /// History: docs/history/event-loop.md.
-pub(super) fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
+pub(super) fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Tui) -> Result<bool> {
     // Normalized first so a `Ctrl+V` typed under a non-Latin layout is
     // still recognized by the swallow's own double-paste guard.
     let normalized = keyboard_layout::normalize_ctrl_shortcut(key);
@@ -84,7 +82,7 @@ fn editor_accepting_plain_typing(app: &App) -> bool {
 /// `Editor::paste_text`. A different key found mid-burst flushes the batch
 /// and is then dispatched normally -- never dropped. History:
 /// docs/history/editor-performance.md (Round 2).
-fn drain_pending_editor_typing(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+fn drain_pending_editor_typing(app: &mut App, terminal: &mut Tui) -> Result<()> {
     let mut batch = String::new();
     while event::poll(std::time::Duration::from_secs(0))? {
         match event::read()? {
@@ -133,7 +131,7 @@ fn flush_editor_typing_batch(app: &mut App, batch: &mut String) {
 /// is still fully dispatched -- it just ends this drain, same "never
 /// silently drop an event, just stop coalescing" rule
 /// `drain_pending_mouse_events` already follows.
-fn drain_pending_navigation_keys(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, mut last: KeyCode) -> Result<()> {
+fn drain_pending_navigation_keys(app: &mut App, terminal: &mut Tui, mut last: KeyCode) -> Result<()> {
     while event::poll(std::time::Duration::from_secs(0))? {
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press && is_repeatable_navigation_key(key.code) => {
@@ -158,7 +156,7 @@ fn drain_pending_navigation_keys(app: &mut App, terminal: &mut Terminal<Crosster
     Ok(())
 }
 
-pub(super) fn dispatch_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+pub(super) fn dispatch_key_event(app: &mut App, key: crossterm::event::KeyEvent, terminal: &mut Tui) -> Result<()> {
     let effect = key_effect(app, key)?;
     command_line::apply_effect(app, terminal, effect)
 }

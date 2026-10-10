@@ -115,4 +115,16 @@ real, saveable buffer would corrupt the file on save.
   travel into one step). In the resolver, the wheel over an unfocused
   top pane was undone by the next frame's alignment; it scrolls the
   focused pane now.
+- **The other pane lagged a key behind** (requested: scrolling with the
+  caret wasn't smooth and the panes didn't move together). The unfocused
+  pane was aligned to the focused one's view *before* drawing, but
+  drawing is where `edtui` scrolls the focused pane to its caret -- so
+  each caret scroll showed up in the other pane one key later. The
+  focused pane is now drawn first and the others aligned to where it
+  ended up (`ui/compare.rs`, and the resolver's top panes in
+  `ui/conflict.rs`); the `[CRLF]` markers read the scrolled view too.
+  Measured on two 50k-line files: a key plus a frame ~2 ms, ~10 KB of
+  output a scrolled frame. That output went to the console in 1 KiB
+  pieces (`Stdout`'s buffer), so a window could show a frame half drawn;
+  a frame is now one write (`terminal_setup::Tui`, event-loop.md).
 

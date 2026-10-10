@@ -1,12 +1,10 @@
-use std::io::Stdout;
-
 use color_eyre::eyre::Result;
-use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::debug;
 
 use crate::app::App;
 use crate::command_line::effect::Effect;
 use crate::command_line::history::{record_history, save_history};
+use crate::terminal_setup::Tui;
 
 mod app_paths;
 
@@ -139,7 +137,7 @@ fn wrap_leading_quote_for_cmd(line: &str) -> String {
 /// process, so a shelled-out `cd` wouldn't carry over. The active panel
 /// moves and later lines run there; a `cd` to a missing directory stops
 /// the item. History: docs/history/command-execution.md.
-pub(in crate::command_line) fn run_shell_command_lines(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, lines: &[String]) -> Result<()> {
+pub(in crate::command_line) fn run_shell_command_lines(app: &mut App, terminal: &mut Tui, lines: &[String]) -> Result<()> {
     for line in lines {
         let cwd = app.active_panel().path.clone();
         let theme = app.theme;

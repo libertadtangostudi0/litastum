@@ -38,8 +38,8 @@ pub struct CompareState {
     /// `edtui::Lines::from` normalizes `\r\n` to `\n`, so the live buffer
     /// can't tell. Inserting or deleting lines makes it drift; accepted, since
     /// checking a lightly edited file for mixed endings is the use case.
-    left_line_endings: Vec<Option<LineEnding>>,
-    right_line_endings: Vec<Option<LineEnding>>,
+    pub(crate) left_line_endings: Vec<Option<LineEnding>>,
+    pub(crate) right_line_endings: Vec<Option<LineEnding>>,
     /// The focused pane's path title while it's being edited.
     pub path_edit: Option<PathEdit>,
     /// The panes' diff, redone only when a text changes.
@@ -74,6 +74,7 @@ impl CompareState {
         Ok(Self { left, right, focus: Side::Left, left_saved_cursor: None, right_saved_cursor: None, left_line_endings, right_line_endings, path_edit: None, diff: DiffCache::default(), highlight_colors: None })
     }
 
+    #[cfg(test)]
     pub fn line_endings(&self, side: Side) -> &[Option<LineEnding>] {
         match side {
             Side::Left => &self.left_line_endings,

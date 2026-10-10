@@ -41,21 +41,24 @@ pub(super) fn draw_conflict(frame: &mut Frame, area: Rect, state: &mut ConflictS
         result.set_extra_highlights(highlights);
     }
     let diffs = TopDiffs { working: working_side, result_vs_working, result_vs_theirs, theirs: theirs_side };
-    align_top_panes(*focus, working, result, theirs, &diffs);
+    let focus = *focus;
+    let areas = [(Pane::Working, working_area), (Pane::Result, result_area), (Pane::Theirs, theirs_area)];
 
-    let focus = state.focus;
+    // The focused pane first: drawing scrolls it to its caret, and the
+    // others follow in the same frame -- aligned before it, they lagged a
+    // key behind (requested).
     let mut cursor = None;
     let mut focused_title = None;
-    for (pane, editor, pane_area) in [
-        (Pane::Working, &mut state.working, working_area),
-        (Pane::Result, &mut state.result, result_area),
-        (Pane::Theirs, &mut state.theirs, theirs_area),
-    ] {
+    if let Some(&(pane, pane_area)) = areas.iter().find(|(pane, _)| *pane == focus) {
+        let editor = top_editor(pane, working, result, theirs);
         frame.render_widget(editor.view(theme, pane_area), pane_area);
-        if pane == focus {
-            cursor = editor.cursor_screen_position();
-            focused_title = Some(editor.title_area());
-        }
+        cursor = editor.cursor_screen_position();
+        focused_title = Some(editor.title_area());
+    }
+    align_top_panes(focus, working, result, theirs, &diffs);
+    for (pane, pane_area) in areas.into_iter().filter(|(pane, _)| *pane != focus) {
+        let editor = top_editor(pane, working, result, theirs);
+        frame.render_widget(editor.view(theme, pane_area), pane_area);
     }
     let incoming_cursor = draw_compare_panes(frame, bottom, &mut state.incoming, theme, line_ending_display);
     if focus == Pane::Incoming {
@@ -67,6 +70,16 @@ pub(super) fn draw_conflict(frame: &mut Frame, area: Rect, state: &mut ConflictS
         cursor = draw_path_field(frame, title, edit, theme);
     }
     cursor
+}
+
+
+/// The top pane `pane`'s editor (`pane` is never `Incoming`).
+fn top_editor<'a>(pane: Pane, working: &'a mut Editor, result: &'a mut Editor, theirs: &'a mut Editor) -> &'a mut Editor {
+    match pane {
+        Pane::Working => working,
+        Pane::Theirs => theirs,
+        Pane::Result | Pane::Incoming => result,
+    }
 }
 
 
@@ -285,12 +298,13 @@ mod tests {
         let side: String = (0..60).map(|i| format!("l{i}\n")).collect();
         let result = format!("x0\nx1\nx2\n{side}");
         let mut state = open_with(&side, &result, &side);
+        // A first frame gives the panes their size, as on opening.
+        render(&mut state);
         state.result.set_cursor(Index2::new(40, 0));
-        // The focused pane scrolls while it's drawn; the others follow it
-        // on the next frame, as in Compare.
-        for _ in 0..3 {
-            render(&mut state);
-        }
+        // One frame: the result scrolls to its caret while it's drawn, and
+        // the side panes follow it in that same frame (requested: they
+        // lagged a key behind).
+        render(&mut state);
 
         let top = state.result.viewport_top_row();
         assert!(top > 3, "the result scrolled");

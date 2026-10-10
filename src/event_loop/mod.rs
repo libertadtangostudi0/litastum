@@ -1,13 +1,11 @@
-use std::io::Stdout;
-
 use color_eyre::eyre::Result;
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, MouseEvent, MouseEventKind};
 use crossterm::execute;
-use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::warn;
 
 use crate::app::{App, Mode};
 use crate::{explorer, ui};
+use crate::terminal_setup::Tui;
 
 mod keys;
 mod paste;
@@ -21,7 +19,7 @@ use paste::try_intercept_paste_hotkey;
 /// -- position first, then `show_cursor`, after the frame is on screen.
 /// Letting `ratatui` do it shows the cursor before moving it, which
 /// flickered. History: docs/history/event-loop.md.
-fn draw_and_apply_cursor(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<[(usize, usize); 2]> {
+fn draw_and_apply_cursor(terminal: &mut Tui, app: &mut App) -> Result<[(usize, usize); 2]> {
     let mut layout = [(1usize, 0usize); 2];
     let mut cursor = None;
     terminal.draw(|frame| {
@@ -39,7 +37,7 @@ fn draw_and_apply_cursor(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app:
     Ok(layout)
 }
 
-pub(crate) fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
+pub(crate) fn run(terminal: &mut Tui, app: &mut App) -> Result<()> {
     // One draw up front seeds the panels' real columns/visible_rows;
     // otherwise the first visible frame uses `Panel::new()`'s one-column
     // placeholder and keeps it until the next key.
@@ -98,7 +96,7 @@ const IDLE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis
 /// task finishes, or -- on Windows -- `Ctrl+V` is pressed (Windows
 /// Terminal never sends it, so it's polled).
 #[cfg(windows)]
-fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+fn wait_for_event(app: &mut App, terminal: &mut Tui) -> Result<()> {
     loop {
         // Every iteration, not only when idle: during Windows Terminal's
         // paste flood there's always an event waiting.
@@ -123,7 +121,7 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
 }
 
 #[cfg(not(windows))]
-fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+fn wait_for_event(app: &mut App, terminal: &mut Tui) -> Result<()> {
     loop {
         if !background_task_pending(app) {
             if handle_event(app, terminal)? {
@@ -146,7 +144,7 @@ fn wait_for_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout
 
 /// Returns whether the caller should redraw -- `false` for a key nothing
 /// was dispatched for.
-fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<bool> {
+fn handle_event(app: &mut App, terminal: &mut Tui) -> Result<bool> {
     let event = event::read()?;
     if app.note_focus(&event) {
         return Ok(false);
@@ -174,7 +172,7 @@ fn handle_event(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>
 /// stops right after a scroll that reverses direction (`last_scroll`) --
 /// that's the next gesture, not more of this one. A key found mid-burst
 /// is handled and ends the drain. History: docs/history/event-loop.md.
-fn drain_pending_mouse_events(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, mut last_scroll: Option<MouseEventKind>) -> Result<()> {
+fn drain_pending_mouse_events(app: &mut App, terminal: &mut Tui, mut last_scroll: Option<MouseEventKind>) -> Result<()> {
     while event::poll(std::time::Duration::from_secs(0))? {
         match event::read()? {
             Event::Mouse(mouse) => {

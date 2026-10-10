@@ -1,9 +1,7 @@
-use std::io::Stdout;
-
 use color_eyre::eyre::Result;
-use ratatui::{prelude::CrosstermBackend, Terminal};
 
 use crate::app::App;
+use crate::terminal_setup::Tui;
 
 use super::browsing::run_shell_command_lines;
 
@@ -23,7 +21,7 @@ pub enum Effect {
 }
 
 
-pub(crate) fn apply_effect(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, effect: Effect) -> Result<()> {
+pub(crate) fn apply_effect(app: &mut App, terminal: &mut Tui, effect: Effect) -> Result<()> {
     match effect {
         Effect::None => Ok(()),
         Effect::RunShell(lines) => run_shell_command_lines(app, terminal, &lines),

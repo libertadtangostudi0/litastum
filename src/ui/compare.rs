@@ -28,7 +28,7 @@ pub(super) fn draw_compare(frame: &mut Frame, area: Rect, state: &mut CompareSta
 pub(super) fn draw_compare_panes(frame: &mut Frame, area: Rect, state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) -> Option<Position> {
     let panes = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
 
-    let CompareState { left, right, diff, highlight_colors, focus, .. } = state;
+    let CompareState { left, right, diff, highlight_colors, focus, left_line_endings, right_line_endings, path_edit, .. } = state;
     let ((left_diff, right_diff), fresh) = diff.get(left, right);
     // Rebuilt only with the diff (or the theme): moving the caret used to
     // rebuild every changed row's highlight each frame.
@@ -43,35 +43,36 @@ pub(super) fn draw_compare_panes(frame: &mut Frame, area: Rect, state: &mut Comp
         right.set_extra_highlights(right_highlights);
     }
 
-    match focus {
-        Side::Left => {
-            let target = map_real_row(&left_diff.source_index, &right_diff.source_index, left.viewport_top_row());
-            right.set_viewport_top_row(target);
-        }
-        Side::Right => {
-            let target = map_real_row(&right_diff.source_index, &left_diff.source_index, right.viewport_top_row());
-            left.set_viewport_top_row(target);
-        }
-    }
-
-    let left_line_endings = state.line_endings(Side::Left).to_vec();
-    let right_line_endings = state.line_endings(Side::Right).to_vec();
-    let (left_edit, right_edit) = match state.focus {
-        Side::Left => (state.path_edit.as_ref(), None),
-        Side::Right => (None, state.path_edit.as_ref()),
+    // The focused pane is drawn first: drawing scrolls it to its caret,
+    // and the other pane follows that scroll in the same frame -- aligned
+    // before it, the other pane lagged a key behind (requested).
+    let left_pane = Pane { editor: left, diff: left_diff, line_endings: left_line_endings, area: panes[0] };
+    let right_pane = Pane { editor: right, diff: right_diff, line_endings: right_line_endings, area: panes[1] };
+    let (focused, other) = match focus {
+        Side::Left => (left_pane, right_pane),
+        Side::Right => (right_pane, left_pane),
     };
-    let left_cursor = draw_pane(frame, panes[0], &mut state.left, theme, line_ending_display, &left_line_endings, left_edit);
-    let right_cursor = draw_pane(frame, panes[1], &mut state.right, theme, line_ending_display, &right_line_endings, right_edit);
-    match state.focus {
-        Side::Left => left_cursor,
-        Side::Right => right_cursor,
-    }
+    let cursor = draw_pane(frame, focused.area, focused.editor, theme, line_ending_display, focused.line_endings, path_edit.as_ref());
+    let top = map_real_row(&focused.diff.source_index, &other.diff.source_index, focused.editor.viewport_top_row());
+    other.editor.set_viewport_top_row(top);
+    draw_pane(frame, other.area, other.editor, theme, line_ending_display, other.line_endings, None);
+    cursor
+}
+
+
+/// One side of Compare, as drawing needs it.
+struct Pane<'a> {
+    editor: &'a mut Editor,
+    diff: &'a DiffLines,
+    line_endings: &'a [Option<LineEnding>],
+    area: Rect,
 }
 
 /// Draws one pane; returns where its caret would go if it has focus.
 fn draw_pane(frame: &mut Frame, area: Rect, editor: &mut Editor, theme: &Theme, line_ending_display: LineEndingDisplay, line_endings: &[Option<LineEnding>], path_edit: Option<&PathEdit>) -> Option<Position> {
-    let viewport_top_row = editor.viewport_top_row();
     frame.render_widget(editor.view(theme, area), area);
+    // After drawing, which scrolls the view to the caret.
+    let viewport_top_row = editor.viewport_top_row();
     let mut cursor = editor.cursor_screen_position();
     if line_ending_display == LineEndingDisplay::Shown {
         draw_line_ending_overlay(frame, area, line_endings, viewport_top_row, theme);
@@ -254,6 +255,26 @@ mod tests {
 
         let right_top_row_text: String = (30..60).map(|x| buffer[(x, 1)].symbol().to_string()).collect();
         assert!(right_top_row_text.contains('d'), "right's own top row should have followed left's scroll to \"d\", not stayed at \"a\" (row 0)");
+    }
+
+    /// Requested: the other pane lagged a key behind the caret. Moving the
+    /// caret past the screen's edge scrolls the focused pane while it's
+    /// drawn, so the other one must follow in the same frame.
+    #[test]
+    fn the_other_pane_follows_a_caret_scroll_in_the_same_frame() {
+        let text: String = (0..40).map(|row| format!("line{row:02}
+")).collect();
+        let mut state = open_pair(&text, &text);
+        let theme = Theme::dark();
+        let row_text = |buffer: &ratatui::buffer::Buffer, x: std::ops::Range<u16>| -> String { x.map(|x| buffer[(x, 1)].symbol().to_string()).collect() };
+
+        for press in 0..15 {
+            state.left.input(crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Down));
+            let buffer = render(&mut state, &theme, LineEndingDisplay::Hidden);
+            let (left_top, right_top) = (row_text(&buffer, 0..30), row_text(&buffer, 30..60));
+            let left_line = left_top.split_whitespace().find(|word| word.starts_with("line")).unwrap().to_string();
+            assert!(right_top.contains(&left_line), "press {press}: left shows {left_line} at the top, right shows {right_top:?}");
+        }
     }
 
     /// `F8` to a hunk below the screen centers it, like a `Ctrl+F` match.

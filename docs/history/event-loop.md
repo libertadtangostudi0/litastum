@@ -23,6 +23,17 @@ the loop used to redraw for it too -- the cursor briefly visited
 wherever that frame left it (`Delete`/`Backspace` on the command line).
 A key nothing was dispatched for no longer redraws.
 
+## A frame reached the terminal in pieces
+
+`Stdout` flushes every 1 KiB, so a frame of a scrolled Compare (~10 KB)
+went out as about ten writes, and a window (ConPTY, litastum's own) could
+show it half drawn -- reported as the panes not moving together.
+`ratatui` draws into a `BufWriter` big enough for a whole frame
+(`terminal_setup::Tui`) and flushes it once per draw; the cursor is then
+placed with `execute!`, which flushes on its own. Everything else that
+writes straight to `stdout` (`sync_title`, `sync_screen`, the mouse
+capture) runs between draws, with the buffer already empty.
+
 ## Panels crammed into one column
 
 - **At startup**: `Panel::new()` starts with one column and

@@ -1,4 +1,4 @@
-use std::io::{self, Stdout};
+use std::io::{self, BufWriter, Stdout};
 
 use color_eyre::eyre::Result;
 use crossterm::{
@@ -20,7 +20,18 @@ pub(crate) fn install_ctrl_c_handler() -> Result<()> {
 }
 
 
-pub(crate) fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+/// The terminal litastum draws on. Its output is buffered whole and
+/// written once per frame (`ratatui` flushes after each draw): `Stdout`
+/// flushes every 1 KiB, so a frame reached the terminal in pieces and a
+/// window could show it half drawn -- one Compare pane scrolled, the
+/// other not yet (requested).
+pub(crate) type Tui = Terminal<CrosstermBackend<BufWriter<Stdout>>>;
+
+/// Big enough for a full frame of a large window.
+const FRAME_BUFFER_BYTES: usize = 1 << 20;
+
+
+pub(crate) fn setup_terminal() -> Result<Tui> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     // A thin bar matches a normal text caret (blinking, so it's still
@@ -40,11 +51,11 @@ pub(crate) fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     // focus (`App::terminal_focused`), so the polled `Ctrl+V` ignores a
     // press in another program.
     execute!(stdout, EnterAlternateScreen, SetCursorStyle::BlinkingBar, EnableBracketedPaste, EnableFocusChange, SetTitle("litastum"))?;
-    Ok(Terminal::new(CrosstermBackend::new(stdout))?)
+    Ok(Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(FRAME_BUFFER_BYTES, stdout)))?)
 }
 
 
-pub(crate) fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>, mouse_capture_enabled: bool) -> Result<()> {
+pub(crate) fn restore_terminal(terminal: &mut Tui, mouse_capture_enabled: bool) -> Result<()> {
     disable_raw_mode()?;
     // `DisableMouseCapture` is a safety net: capture is normally synced
     // to the current mode (`event_loop::sync_mouse_capture`), but

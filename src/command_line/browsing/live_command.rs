@@ -1,14 +1,13 @@
-use std::io::Stdout;
 use std::time::Duration;
 
 use color_eyre::eyre::Result;
 use crossterm::event::{self, Event, KeyEventKind};
-use ratatui::{prelude::CrosstermBackend, Terminal};
 use tracing::debug;
 
 use crate::app::App;
 use crate::ui;
 use crate::user_screen::{encode_key, LiveCommand, LiveView};
+use crate::terminal_setup::Tui;
 
 use super::shell_exec::{resolve_app_paths_command, shell_argument};
 use super::type_ahead::TypeAhead;
@@ -22,7 +21,7 @@ const FRAME: Duration = Duration::from_millis(16);
 /// until the program exits; keys go to the program (`Ctrl+C` included),
 /// and what's typed shows in the command line too (`TypeAhead`). Its
 /// output then stays on the user screen. A failed launch is said there.
-pub(super) fn run_live(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stdout>>, line: &str) -> Result<()> {
+pub(super) fn run_live(app: &mut App, terminal: &mut Tui, line: &str) -> Result<()> {
     let profile = app.shell_profiles[app.active_shell].clone();
     let cwd = app.active_panel().path.clone();
     let mut args = profile.args_prefix.clone();
@@ -92,7 +91,7 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Terminal<CrosstermBackend<S
 
 
 /// One frame of the user screen (`ui::draw_console`), then its cursor.
-pub(super) fn draw_console(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &App, live: Option<&LiveView>) -> Result<()> {
+pub(super) fn draw_console(terminal: &mut Tui, app: &App, live: Option<&LiveView>) -> Result<()> {
     let mut cursor = None;
     terminal.draw(|frame| cursor = ui::draw_console(frame, app, live))?;
     match cursor {
