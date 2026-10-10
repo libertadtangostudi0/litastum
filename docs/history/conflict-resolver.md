@@ -57,3 +57,8 @@ first tried from Find file's results (a search for the file's name
 lists all of them), where `Alt+F5` still knew only "exactly two
 marked" and did nothing. Both routes now go through
 `conflict::open_resolver`.
+
+`Ctrl+Up`/`Ctrl+Down` stepped through the stops like `F7`/`F8`; now they
+move by blocks of code, as in F4 and Compare (requested), and the stops
+are on `Alt+Up`/`Alt+Down` too.
+

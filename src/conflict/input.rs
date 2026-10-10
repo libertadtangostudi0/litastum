@@ -24,8 +24,9 @@ pub fn open_resolver(app: &mut App, files: ConflictFiles) {
 }
 
 /// A key in the resolver: `Tab`/`Shift+Tab` move between the five panes;
-/// `F7`/`F8` (and `Ctrl+Up`/`Down`) step through the focused pane's
-/// changes, and the result's conflict markers (`ConflictState::stops`).
+/// `F7`/`F8` (and `Alt+Up`/`Down`) step through the focused pane's
+/// changes, and the result's conflict markers (`ConflictState::stops`);
+/// `Ctrl+Up`/`Down` move by blocks of code, as in F4 (requested).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConflictCommand {
     Close,
@@ -53,8 +54,8 @@ fn resolve(key: KeyEvent) -> ConflictCommand {
         KeyCode::Tab => ConflictCommand::NextPane,
         KeyCode::BackTab => ConflictCommand::PreviousPane,
         KeyCode::Char('l' | 'L') if ctrl => ConflictCommand::EditPath,
-        KeyCode::Down if ctrl => ConflictCommand::Next,
-        KeyCode::Up if ctrl => ConflictCommand::Previous,
+        KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => ConflictCommand::Next,
+        KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => ConflictCommand::Previous,
         KeyCode::F(8) => ConflictCommand::Next,
         KeyCode::F(7) => ConflictCommand::Previous,
         _ if edtui_supports_key(key.code) => ConflictCommand::Forward,
@@ -148,6 +149,27 @@ mod tests {
         handle_conflict_key(&mut app, key(KeyCode::F(8))).unwrap();
 
         assert_eq!(state(&app).result.cursor().row, 1, "the <<<<<<< row");
+    }
+
+    /// Requested: the changes on `Alt+Up`/`Down` too, as in Compare.
+    #[test]
+    fn alt_down_steps_to_the_conflict_like_f8() {
+        let mut app = app_with_conflict();
+
+        handle_conflict_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::ALT)).unwrap();
+
+        assert_eq!(state(&app).result.cursor().row, 1, "the <<<<<<< row");
+    }
+
+    /// Requested: `Ctrl+Up`/`Down` move by blocks of code, as in F4 --
+    /// here past the conflict, the result being one block.
+    #[test]
+    fn ctrl_down_moves_by_blocks_as_in_the_editor() {
+        let mut app = app_with_conflict();
+
+        handle_conflict_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL)).unwrap();
+
+        assert!(state(&app).result.cursor().row >= 5, "to the last line, no next block: {:?}", state(&app).result.cursor());
     }
 
     #[test]

@@ -211,7 +211,7 @@ impl ConflictState {
         }
     }
 
-    /// `F8`/`Ctrl+Down`: the focused pane's next stop (`stops`), centered.
+    /// `F8`/`Alt+Down`: the focused pane's next stop (`stops`), centered.
     /// No-op past the last one; the bottom Compare steps through its hunks.
     pub fn jump_to_next(&mut self) {
         let Some(editor) = self.focused_top_editor() else {
@@ -224,7 +224,7 @@ impl ConflictState {
         }
     }
 
-    /// `F7`/`Ctrl+Up`: the previous stop -- from inside a hunk, its start.
+    /// `F7`/`Alt+Up`: the previous stop -- from inside a hunk, its start.
     pub fn jump_to_previous(&mut self) {
         let Some(editor) = self.focused_top_editor() else {
             self.incoming.jump_to_previous_hunk();

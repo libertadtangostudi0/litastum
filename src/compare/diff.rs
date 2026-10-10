@@ -171,7 +171,7 @@ fn hunk_start_at(kinds: &[DiffLineKind], row: usize) -> usize {
 }
 
 /// First row of the next hunk (a contiguous changed block) at or after
-/// `from`, for `F7`/`F8`/`Ctrl+Down`. Skips `from`'s own hunk first --
+/// `from`, for `F7`/`F8`/`Alt+Down`. Skips `from`'s own hunk first --
 /// searching from the next row stopped on every line of a multi-line
 /// hunk. History: docs/history/compare.md.
 pub fn next_hunk_start(kinds: &[DiffLineKind], from: usize) -> Option<usize> {

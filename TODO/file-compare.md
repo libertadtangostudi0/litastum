@@ -411,7 +411,8 @@ now describe a design this section replaces:
 - **Rebound bindings inside Compare, since `Tab` could no longer mean
   "jump to next diff hunk"**: `Tab` now means "switch pane focus"
   (this app's own convention for `Tab` everywhere else), so hunk
-  navigation moved to `Ctrl+Down`/`Ctrl+Up`.
+  navigation moved to `Ctrl+Down`/`Ctrl+Up` -- later to `Alt+Down`/
+  `Alt+Up`, `Ctrl` moving by blocks of code as in F4.
 - **Visual focus indication is a known gap, not fixed here**: which
   pane is "hot" is only conveyed by the real terminal cursor blinking
   there (and by where typed characters land) — `Editor::view()` always

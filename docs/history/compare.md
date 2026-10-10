@@ -39,6 +39,11 @@ real, saveable buffer would corrupt the file on save.
   TortoiseMerge/`merge.exe`, next to `Ctrl+Up`/`Ctrl+Down` (`Tab`
   already switches panes). The backward jump got the same fix as
   forward: land on the previous hunk's first row, not its last.
+- **`Ctrl+Up`/`Ctrl+Down` move by blocks of code**, as in F4
+  (requested, in Compare and the resolver alike): they had stepped
+  through the changes, which moved to `Alt+Up`/`Alt+Down` (requested)
+  next to `F7`/`F8`. The block move lives in `editor::text_key`, the
+  keys every editor pane shares.
 - **Syntax highlighting off in Compare**, requested: token colors
   competed with the diff colors.
 - **Line endings drift after editing**: the `CRLF`/`LF` snapshot is by

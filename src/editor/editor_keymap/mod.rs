@@ -87,7 +87,8 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
 
 /// A key for the text itself, the same in every editor -- F4's and each
 /// pane of Compare and the conflict resolver: `Ctrl+Shift+Left`/`Right`
-/// (word-wise selection), `Ctrl+A`, and everything `edtui` handles.
+/// (word-wise selection), `Ctrl+Up`/`Down` (by blocks of code), `Ctrl+A`,
+/// and everything `edtui` handles.
 /// Compare used to forward keys straight to `Editor::input`, so word
 /// selection and `Ctrl+A` did nothing there. Keys that need the app (save,
 /// search, menu, close) are the caller's; they're ignored here.
@@ -97,6 +98,7 @@ pub fn text_key(editor: &mut Editor, key: KeyEvent) {
         // Standard-only logic; under Vim the raw key goes to `edtui`,
         // where it's unbound. History: docs/history/editor-keymap.md.
         EditorCommand::WordSelect { forward } if editor.keymap_mode() == EditorKeymapMode::Standard => editor.extend_word_selection(forward),
+        EditorCommand::BlockMove { forward } if editor.keymap_mode() == EditorKeymapMode::Standard => editor.move_by_block(forward),
         EditorCommand::WordSelect { .. } | EditorCommand::BlockMove { .. } | EditorCommand::Forward => editor.input(key),
         _ => {}
     }
@@ -208,7 +210,6 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         EditorCommand::Find => active_editor.start_search(),
         EditorCommand::FindNext => active_editor.search_next(),
         EditorCommand::FindPrevious => active_editor.search_previous(),
-        EditorCommand::BlockMove { forward } if active_editor.keymap_mode() == EditorKeymapMode::Standard => active_editor.move_by_block(forward),
         EditorCommand::SelectAll | EditorCommand::WordSelect { .. } | EditorCommand::BlockMove { .. } | EditorCommand::Forward => text_key(active_editor, key),
         EditorCommand::Ignore => {}
     }

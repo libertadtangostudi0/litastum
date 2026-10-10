@@ -224,7 +224,7 @@ impl CompareState {
         self.focused_mut().save()
     }
 
-    /// `F8`/`Ctrl+Down`: moves the focused pane's cursor to the first row of
+    /// `F8`/`Alt+Down`: moves the focused pane's cursor to the first row of
     /// the next hunk, diffed live, centered (`Editor::jump_cursor_to`).
     /// Starts from the current row, not `row + 1` (`next_hunk_start`
     /// skips the current hunk). No-op past the last one.
@@ -232,7 +232,7 @@ impl CompareState {
         self.jump_to_hunk(next_hunk_start);
     }
 
-    /// `F7`/`Ctrl+Up` -- the other half of `jump_to_next_hunk`, landing
+    /// `F7`/`Alt+Up` -- the other half of `jump_to_next_hunk`, landing
     /// on the previous hunk's own first row (see `previous_hunk_start`'s
     /// own doc comment for why that's not simply the nearest changed
     /// line behind the cursor).

@@ -12,8 +12,9 @@ use super::menu::open_compare_menu;
 
 /// A key in Compare, like `editor_keymap::EditorCommand` plus:
 /// `ToggleFocus` (`Tab` switches panes, as elsewhere in the app) and
-/// `NextHunk`/`PreviousHunk` on `Ctrl+Down`/`Ctrl+Up` and on `F8`/`F7`
-/// (TortoiseMerge/`merge.exe` convention, requested).
+/// `NextHunk`/`PreviousHunk` on `Alt+Down`/`Alt+Up` and on `F8`/`F7`
+/// (TortoiseMerge/`merge.exe` convention, requested). `Ctrl+Up`/`Down`
+/// move by blocks of code, as in F4 (`text_key`, requested).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CompareCommand {
     Close,
@@ -30,6 +31,7 @@ enum CompareCommand {
 
 fn resolve(key: KeyEvent) -> CompareCommand {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
 
     match key.code {
         KeyCode::Esc => CompareCommand::Close,
@@ -40,8 +42,8 @@ fn resolve(key: KeyEvent) -> CompareCommand {
         KeyCode::F(2) => CompareCommand::Save,
         KeyCode::Tab => CompareCommand::ToggleFocus,
         KeyCode::Char('l' | 'L') if ctrl => CompareCommand::EditPath,
-        KeyCode::Down if ctrl => CompareCommand::NextHunk,
-        KeyCode::Up if ctrl => CompareCommand::PreviousHunk,
+        KeyCode::Down if alt => CompareCommand::NextHunk,
+        KeyCode::Up if alt => CompareCommand::PreviousHunk,
         KeyCode::F(8) => CompareCommand::NextHunk,
         KeyCode::F(7) => CompareCommand::PreviousHunk,
         KeyCode::F(9) => CompareCommand::OpenMenu,
@@ -214,22 +216,41 @@ mod tests {
         assert_eq!(state.focus, crate::compare::Side::Right);
     }
 
+    /// Requested: changes on `Alt+Up`/`Down` -- `Ctrl` moves by blocks.
     #[test]
-    fn ctrl_down_jumps_to_the_next_hunk() {
-        let mut app = app_with_compare("a\nb\nc\n", "a\nx\nc\n");
+    fn alt_down_and_up_step_through_the_changes() {
+        let mut app = app_with_compare("a\nb\nc\nd\n", "a\nx\nc\ny\n");
 
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL)).unwrap();
+        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::ALT)).unwrap();
+        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::ALT)).unwrap();
+        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
+        assert_eq!(state.left.cursor().row, 3);
 
+        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::ALT)).unwrap();
         let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
         assert_eq!(state.left.cursor().row, 1);
     }
 
-    /// `F7`/`F8` are the same `NextHunk`/`PreviousHunk` commands
-    /// `Ctrl+Down`/`Ctrl+Up` already drive -- requested directly to
-    /// match TortoiseMerge/`merge.exe`'s own next/previous-difference
-    /// convention, not a replacement for the existing binding.
+    /// Requested: `Ctrl+Up`/`Down` move by blocks of code, as in F4.
     #[test]
-    fn f8_jumps_to_the_next_hunk_same_as_ctrl_down() {
+    fn ctrl_down_and_up_move_by_blocks_as_in_the_editor() {
+        let mut app = app_with_compare("one\ntwo\n\nthree\nfour\n", "one\ntwo\n\nthree\nFOUR\n");
+
+        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL)).unwrap();
+        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
+        assert_eq!(state.left.cursor().row, 3, "the next block, not the change on row 4");
+
+        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL)).unwrap();
+        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
+        assert_eq!(state.left.cursor().row, 0);
+    }
+
+    /// `F7`/`F8` are the same `NextHunk`/`PreviousHunk` commands
+    /// `Alt+Down`/`Alt+Up` drive -- requested directly to match
+    /// TortoiseMerge/`merge.exe`'s own next/previous-difference
+    /// convention.
+    #[test]
+    fn f8_jumps_to_the_next_hunk_same_as_alt_down() {
         let mut app = app_with_compare("a\nb\nc\n", "a\nx\nc\n");
 
         handle_compare_key(&mut app, key(KeyCode::F(8))).unwrap();
@@ -239,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn f7_jumps_to_the_previous_hunk_same_as_ctrl_up() {
+    fn f7_jumps_to_the_previous_hunk_same_as_alt_up() {
         let mut app = app_with_compare("a\nb\nc\nd\n", "a\nx\nc\ny\n");
         handle_compare_key(&mut app, key(KeyCode::F(8))).unwrap();
         handle_compare_key(&mut app, key(KeyCode::F(8))).unwrap();
