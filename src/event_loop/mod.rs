@@ -243,17 +243,12 @@ fn sync_panel_paths(app: &mut App) {
 }
 
 
-/// Tells the terminal which screen litastum is on -- `main`, `compare` or
-/// `conflict` -- as the terminal user variable `litastum_screen` (`OSC
-/// 1337 ; SetUserVar`, WezTerm's convention; other terminals ignore it).
-/// litastum's window keeps a zoom per screen with it (requested: Compare
-/// and the resolver zoom on their own). Sent only when it changes.
+/// Tells the terminal which screen litastum is on (`screen_name`) as the
+/// terminal user variable `litastum_screen` (`OSC 1337 ; SetUserVar`,
+/// WezTerm's convention; other terminals ignore it). litastum's window
+/// keeps a zoom per screen with it. Sent only when it changes.
 fn sync_screen(app: &mut App) {
-    let wanted = match app.mode {
-        Mode::CompareFiles(_) => "compare",
-        Mode::ResolveConflict(_) => "conflict",
-        _ => "main",
-    };
+    let wanted = screen_name(&app.mode);
     if app.terminal_screen == Some(wanted) {
         return;
     }
@@ -264,6 +259,20 @@ fn sync_screen(app: &mut App) {
         return;
     }
     app.terminal_screen = Some(wanted);
+}
+
+
+/// The screen's name for its zoom (requested: the panels, the editor,
+/// Compare and the resolver each keep their own). `main` is the panels --
+/// an image preview included -- the name it had before the editor got
+/// its own, so a saved zoom stays.
+fn screen_name(mode: &Mode) -> &'static str {
+    match mode {
+        Mode::Editing(_) => "editor",
+        Mode::CompareFiles(_) => "compare",
+        Mode::ResolveConflict(_) => "conflict",
+        Mode::Browsing | Mode::ImagePreview(_) => "main",
+    }
 }
 
 
@@ -367,6 +376,19 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
 mod tests {
     use super::*;
     use crate::test_support::{test_app, unique_scratch_dir};
+
+    /// Requested: the panels, the editor, Compare and the resolver each
+    /// zoom on their own.
+    #[test]
+    fn the_editor_is_a_screen_of_its_own() {
+        let dir = crate::test_support::unique_scratch_dir("screen-name");
+        let file = dir.join("file.txt");
+        std::fs::write(&file, "text").unwrap();
+        let editor = crate::editor::Editor::open(file, None, crate::editor::EditorKeymapMode::Standard).unwrap();
+
+        assert_eq!(screen_name(&Mode::Browsing), "main");
+        assert_eq!(screen_name(&Mode::Editing(editor)), "editor");
+    }
 
     #[test]
     fn the_screen_goes_out_as_a_base64_user_variable() {

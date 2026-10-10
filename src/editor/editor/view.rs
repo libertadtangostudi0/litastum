@@ -121,9 +121,19 @@ impl Editor {
 
     /// Columns available for text: the view minus its border and the
     /// line-number gutter (the widest number plus a space).
-    fn text_width(&self) -> usize {
-        let gutter = self.state.lines.len().max(1).to_string().len() + 1;
-        (self.view_area.width as usize).saturating_sub(2 + gutter)
+    pub(super) fn text_width(&self) -> usize {
+        (self.view_area.width as usize).saturating_sub(2 + self.gutter_width())
+    }
+
+    /// The screen column the text starts at: past the left border and the
+    /// line-number gutter.
+    pub(super) fn text_left(&self) -> u16 {
+        self.view_area.x.saturating_add(1).saturating_add(self.gutter_width() as u16)
+    }
+
+    /// The line-number gutter: the widest number plus a space.
+    fn gutter_width(&self) -> usize {
+        self.state.lines.len().max(1).to_string().len() + 1
     }
 
     /// Moves the viewport so a multi-line bracket pair is fully visible

@@ -1,5 +1,5 @@
-//! The font size per litastum screen -- the panels, Compare, the conflict
-//! resolver each keep their own zoom (requested), remembered across runs
+//! The font size per litastum screen -- the panels, the editor, Compare,
+//! the conflict resolver each keep their own zoom (requested), remembered across runs
 //! for the user in litastum's own `config.json` (`window_zoom`). litastum
 //! names its screen with a terminal user variable (`litastum_screen`,
 //! `OSC 1337 ; SetUserVar`).
@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-/// The panels' (and editor's) screen, and the zoom a screen starts with
-/// before it has its own.
+/// The panels' screen, and the zoom a screen starts with before it has
+/// its own.
 pub const MAIN_SCREEN: &str = "main";
 
 /// The terminal user variable naming litastum's screen.

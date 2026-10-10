@@ -31,6 +31,7 @@ mod highlighting;
 mod search_scroll;
 mod keymap_modes;
 mod line_selection;
+mod mouse_clicks;
 mod rendering;
 mod selection;
 mod undo_and_paste;

@@ -14,6 +14,7 @@ use super::keymap_mode::EditorKeymapMode;
 
 mod block_move;
 mod changes;
+mod click;
 mod fast_paste;
 mod input;
 mod mouse;

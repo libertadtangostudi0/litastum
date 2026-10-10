@@ -108,3 +108,20 @@ centered, away from the start and end"):
   the view minus border and line-number gutter).
 - **A visible target didn't scroll** (copied from VS Code's search);
   one in the lower half stayed there. Every jump centers now.
+
+## A click right of a line put the caret before its last character
+
+Reported as the mouse caret landing one character left, in every editor
+(F4, Compare, the resolver). `edtui` maps a click past a line's text to
+its last character -- vim's Normal mode has no cell past it -- and does
+so on the release too. First fix: ask `edtui` about the cell one to the
+left and move the caret past the end when it landed on the same
+character; it still went wrong now and then (reported with an "a"), and
+leaned on `edtui`'s guesses. Now the position is ours
+(`editor/editor/click.rs`, requested: not tied to `edtui`): the same
+layout `edtui` draws -- border, line-number gutter, character wrap at
+the text width, a tab two cells, other characters their Unicode width --
+read back for the press, the release and a drag's end. `edtui` still
+handles the event first (the selection, its mode). Pinned by
+`every_drawn_character_is_where_a_click_on_it_lands`, which clicks every
+character `edtui` actually drew.

@@ -1,4 +1,4 @@
-use crossterm::event::{MouseEvent, MouseEventKind};
+use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use edtui::{EditorMode, Index2};
 
 use super::super::keymap_mode::EditorKeymapMode;
@@ -32,8 +32,10 @@ impl Editor {
         column >= area.x && column < area.right() && row >= area.y && row < area.bottom()
     }
 
-    /// A mouse event over the editor -- click and drag-select are
-    /// `edtui`'s own handling, the wheel ours (`scroll_lines`). A click
+    /// A mouse event over the editor -- the wheel is ours (`scroll_lines`);
+    /// a click and a drag-select go through `edtui` (the selection, its
+    /// mode), then land where our own layout says (`text_position_at`):
+    /// `edtui`'s kept a click right of a line on its last character. A click
     /// while the `Ctrl+F` box is open moves focus to the text but keeps the
     /// box and its match (VS Code). `edtui` ends a click-selection in
     /// `Normal`; `Standard` goes back to `Insert`.
@@ -51,9 +53,34 @@ impl Editor {
             }
         }
         self.event_handler.on_mouse_event(mouse, &mut self.state);
-        if self.keymap_mode == EditorKeymapMode::Standard && self.state.mode == EditorMode::Normal {
-            self.state.mode = EditorMode::Insert;
+        if self.keymap_mode == EditorKeymapMode::Standard {
+            self.place_mouse_caret(mouse);
+            if self.state.mode == EditorMode::Normal {
+                self.state.mode = EditorMode::Insert;
+            }
         }
+    }
+
+    /// Moves the caret (and a drag's selection end) to where the pointer
+    /// is in our layout. A press or release with no selection may land
+    /// after a line's end; a selection, inclusive, ends on a character.
+    fn place_mouse_caret(&mut self, mouse: MouseEvent) {
+        let left = |kind| matches!(kind, MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left));
+        if !left(mouse.kind) || !mouse.modifiers.is_empty() {
+            return;
+        }
+        let Some(mut position) = self.text_position_at(mouse.column, mouse.row) else {
+            return;
+        };
+        if let Some(selection) = &mut self.state.selection {
+            if mouse.kind != MouseEventKind::Drag(MouseButton::Left) {
+                return;
+            }
+            let len = self.state.lines.len_col(position.row).unwrap_or(0);
+            position.col = position.col.min(len.saturating_sub(1));
+            selection.end = position;
+        }
+        self.state.cursor = position;
     }
 
     /// Scrolls the view `delta` lines (down positive), the caret moving

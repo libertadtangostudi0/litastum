@@ -18,6 +18,7 @@ directories = "6.0"
 color-eyre = "0.6"
 edtui = { version = "0.11", default-features = false, features = ["mouse-support", "syntax-highlighting"] }
 arboard = { version = "3.6", default-features = false }
+unicode-width = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
