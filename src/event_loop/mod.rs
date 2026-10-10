@@ -53,6 +53,7 @@ pub(crate) fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut A
         sync_mouse_capture(app);
         sync_terminal_palette(app);
         sync_title(app);
+        sync_screen(app);
         let layout = draw_and_apply_cursor(terminal, app)?;
         for (panel, (cols, rows)) in app.panels.iter_mut().zip(layout) {
             panel.set_columns(cols);
@@ -230,6 +231,54 @@ fn sync_title(app: &mut App) {
 }
 
 
+/// Tells the terminal which screen litastum is on -- `main`, `compare` or
+/// `conflict` -- as the terminal user variable `litastum_screen` (`OSC
+/// 1337 ; SetUserVar`, WezTerm's convention; other terminals ignore it).
+/// litastum's window keeps a zoom per screen with it (requested: Compare
+/// and the resolver zoom on their own). Sent only when it changes.
+fn sync_screen(app: &mut App) {
+    let wanted = match app.mode {
+        Mode::CompareFiles(_) => "compare",
+        Mode::ResolveConflict(_) => "conflict",
+        _ => "main",
+    };
+    if app.terminal_screen == Some(wanted) {
+        return;
+    }
+    use std::io::Write;
+    let mut stdout = std::io::stdout();
+    if let Err(err) = stdout.write_all(screen_sequence(wanted).as_bytes()).and_then(|()| stdout.flush()) {
+        warn!(%err, "failed to tell the terminal the screen");
+        return;
+    }
+    app.terminal_screen = Some(wanted);
+}
+
+
+/// `OSC 1337 ; SetUserVar=litastum_screen=<base64 of screen>`.
+fn screen_sequence(screen: &str) -> String {
+    format!("\x1b]1337;SetUserVar=litastum_screen={}\x07", base64(screen.as_bytes()))
+}
+
+
+/// Standard base64, which `SetUserVar` wants its value in.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let value = (u32::from(chunk[0]) << 16) | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8) | u32::from(*chunk.get(2).unwrap_or(&0));
+        for index in 0..4 {
+            if index <= chunk.len() {
+                out.push(ALPHABET[(value >> (18 - 6 * index) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+
 /// The name a tab shows: the edited file's or the directory's, the whole
 /// path for a drive's root.
 fn window_title(app: &App) -> String {
@@ -306,6 +355,14 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
 mod tests {
     use super::*;
     use crate::test_support::{test_app, unique_scratch_dir};
+
+    #[test]
+    fn the_screen_goes_out_as_a_base64_user_variable() {
+        assert_eq!(base64(b"main"), "bWFpbg==");
+        assert_eq!(base64(b"compare"), "Y29tcGFyZQ==");
+        assert_eq!(base64(b"conflict"), "Y29uZmxpY3Q=");
+        assert_eq!(screen_sequence("compare"), "\x1b]1337;SetUserVar=litastum_screen=Y29tcGFyZQ==\x07");
+    }
 
     /// A tab is labelled with the active panel's directory.
     #[test]

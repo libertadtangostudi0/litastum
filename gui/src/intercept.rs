@@ -1,9 +1,11 @@
-/// Cuts iTerm2 inline images (`OSC 1337 ; File=...`) out of the
-/// program's output, which `alacritty_terminal` would ignore and the
-/// window draws itself; everything else goes on to the terminal engine.
-/// Works across reads: a start marker or an image cut between two reads
-/// is held until the rest arrives. Text is handed over as slices of the
-/// read, without copying, except around a cut.
+/// Cuts iTerm2's `OSC 1337` commands out of the program's output --
+/// inline images (`File=`), which the window draws itself, and user
+/// variables (`SetUserVar=`), litastum telling the window which screen
+/// it's on -- which `alacritty_terminal` would ignore; everything else
+/// goes on to the terminal engine. Works across reads: a start marker or
+/// a command cut between two reads is held until the rest arrives. Text
+/// is handed over as slices of the read, without copying, except around
+/// a cut.
 #[derive(Default)]
 pub struct Interceptor {
     /// A possible start marker cut off at the end of the last read.
@@ -15,28 +17,29 @@ pub struct Interceptor {
 enum State {
     #[default]
     Text,
-    /// Inside an image whose terminator hasn't arrived yet.
-    Image(Vec<u8>),
-    /// Inside an image too large to keep: dropped up to its terminator,
-    /// rather than letting its payload through as text.
+    /// Inside a command whose terminator hasn't arrived yet.
+    Command(Vec<u8>),
+    /// Inside a command too large to keep (an image): dropped up to its
+    /// terminator, rather than letting its payload through as text.
     Skipping,
 }
 
-const IMAGE_START: &[u8] = b"\x1b]1337;File=";
-/// An image body larger than this is dropped.
-const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+const COMMAND_START: &[u8] = b"\x1b]1337;";
+/// A command body (an image) larger than this is dropped.
+const MAX_COMMAND_BYTES: usize = 64 * 1024 * 1024;
 
 
 impl Interceptor {
     /// Feeds one read; `text` gets the terminal's bytes in order,
-    /// `image` each complete image body (everything after `File=`).
-    pub fn feed(&mut self, bytes: &[u8], mut text: impl FnMut(&[u8]), mut image: impl FnMut(Vec<u8>)) {
+    /// `command` each complete command body (everything after `1337;`,
+    /// as `File=...`).
+    pub fn feed(&mut self, bytes: &[u8], mut text: impl FnMut(&[u8]), mut command: impl FnMut(Vec<u8>)) {
         if self.pending.is_empty() {
-            self.feed_data(bytes, &mut text, &mut image);
+            self.feed_data(bytes, &mut text, &mut command);
         } else {
             let mut data = std::mem::take(&mut self.pending);
             data.extend_from_slice(bytes);
-            self.feed_data(&data, &mut text, &mut image);
+            self.feed_data(&data, &mut text, &mut command);
         }
     }
 
@@ -46,16 +49,16 @@ impl Interceptor {
         while let Some(offset) = data[position..].iter().position(|&byte| byte == 0x1b) {
             let escape = position + offset;
             let rest = &data[escape..];
-            if rest.starts_with(IMAGE_START) {
+            if rest.starts_with(COMMAND_START) {
                 flush(text, &data[text_start..escape]);
-                self.state = State::Image(Vec::new());
-                position = escape + IMAGE_START.len();
+                self.state = State::Command(Vec::new());
+                position = escape + COMMAND_START.len();
                 position += self.finish_image(&data[position..], image);
                 if !matches!(self.state, State::Text) {
                     return;
                 }
                 text_start = position;
-            } else if IMAGE_START.starts_with(rest) {
+            } else if COMMAND_START.starts_with(rest) {
                 // Possibly a start marker cut off by the read.
                 flush(text, &data[text_start..escape]);
                 self.pending = rest.to_vec();
@@ -75,18 +78,18 @@ impl Interceptor {
         let end = terminator(data);
         match (state, end) {
             (State::Text, _) => 0,
-            (State::Image(mut body), Some((end, after))) => {
+            (State::Command(mut body), Some((end, after))) => {
                 body.extend_from_slice(&data[..end]);
                 image(body);
                 after
             }
-            (State::Image(mut body), None) => {
+            (State::Command(mut body), None) => {
                 let (data, cut) = self.hold_cut_terminator(data);
-                if body.len() + data.len() > MAX_IMAGE_BYTES {
+                if body.len() + data.len() > MAX_COMMAND_BYTES {
                     self.state = State::Skipping;
                 } else {
                     body.extend_from_slice(data);
-                    self.state = State::Image(body);
+                    self.state = State::Command(body);
                 }
                 data.len() + cut
             }
@@ -182,7 +185,16 @@ mod tests {
         let mut interceptor = Interceptor::default();
         assert_eq!(
             feed(&mut interceptor, b"ab\x1b]1337;File=inline=1:QUJD\x07cd\x1b]1337;File=x:Rg==\x1b\\e"),
-            [text(b"ab"), image(b"inline=1:QUJD"), text(b"cd"), image(b"x:Rg=="), text(b"e")]
+            [text(b"ab"), image(b"File=inline=1:QUJD"), text(b"cd"), image(b"File=x:Rg=="), text(b"e")]
+        );
+    }
+
+    #[test]
+    fn a_user_variable_is_cut_out_too() {
+        let mut interceptor = Interceptor::default();
+        assert_eq!(
+            feed(&mut interceptor, b"a\x1b]1337;SetUserVar=litastum_screen=Y29tcGFyZQ==\x07b"),
+            [text(b"a"), image(b"SetUserVar=litastum_screen=Y29tcGFyZQ=="), text(b"b")]
         );
     }
 
@@ -191,14 +203,14 @@ mod tests {
         let mut interceptor = Interceptor::default();
         assert_eq!(feed(&mut interceptor, b"ab\x1b]13"), [text(b"ab")], "a cut start marker waits");
         assert_eq!(feed(&mut interceptor, b"37;File=inline=1:QU"), []);
-        assert_eq!(feed(&mut interceptor, b"JD\x07cd"), [image(b"inline=1:QUJD"), text(b"cd")]);
+        assert_eq!(feed(&mut interceptor, b"JD\x07cd"), [image(b"File=inline=1:QUJD"), text(b"cd")]);
     }
 
     #[test]
     fn a_terminator_split_across_reads() {
         let mut interceptor = Interceptor::default();
         assert_eq!(feed(&mut interceptor, b"\x1b]1337;File=x:QQ==\x1b"), []);
-        assert_eq!(feed(&mut interceptor, b"\\z"), [image(b"x:QQ=="), text(b"z")]);
+        assert_eq!(feed(&mut interceptor, b"\\z"), [image(b"File=x:QQ=="), text(b"z")]);
     }
 
     #[test]
@@ -215,7 +227,7 @@ mod tests {
     fn an_oversized_image_is_skipped_to_its_end_not_printed() {
         let mut interceptor = Interceptor::default();
         assert_eq!(feed(&mut interceptor, b"a\x1b]1337;File=x:"), [text(b"a")]);
-        let chunk = vec![b'Q'; MAX_IMAGE_BYTES / 2 + 1];
+        let chunk = vec![b'Q'; MAX_COMMAND_BYTES / 2 + 1];
         assert_eq!(feed(&mut interceptor, &chunk), []);
         assert_eq!(feed(&mut interceptor, &chunk), [], "now over the limit");
         assert_eq!(feed(&mut interceptor, b"QQQ\x07b"), [text(b"b")], "skipped to the terminator, nothing printed");

@@ -134,19 +134,25 @@ pub fn alternate_scroll(lines: i32, mode: TermMode) -> Option<Vec<u8>> {
 }
 
 
-/// Wheel and touchpad movement in whole lines (positive up). Touchpads
-/// and fine-grained wheels report fractions of a line, which used to
-/// round to nothing on every event; the remainder now carries over.
+/// Wheel and touchpad movement in whole wheel steps (positive up): a
+/// mouse notch is one, three lines of touchpad travel are one -- the
+/// program scrolls three lines a step (Windows' default), as for a notch
+/// in Windows Terminal. Touchpads and fine-grained wheels report
+/// fractions of a step, which used to round to nothing on every event;
+/// the remainder carries over.
+/// Lines of touchpad travel that make one wheel step.
+const LINES_PER_STEP: u32 = 3;
+
 #[derive(Default)]
 pub struct WheelAccumulator {
     remainder: f64,
 }
 
 impl WheelAccumulator {
-    pub fn lines(&mut self, delta: MouseScrollDelta, cell_height: u32) -> i32 {
+    pub fn steps(&mut self, delta: MouseScrollDelta, cell_height: u32) -> i32 {
         let lines = match delta {
             MouseScrollDelta::LineDelta(_, lines) => f64::from(lines),
-            MouseScrollDelta::PixelDelta(position) => position.y / f64::from(cell_height.max(1)),
+            MouseScrollDelta::PixelDelta(position) => position.y / f64::from(cell_height.max(1) * LINES_PER_STEP),
         };
         self.remainder += lines;
         let whole = self.remainder.trunc();
@@ -163,19 +169,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn touchpad_fractions_add_up_to_whole_lines() {
+    fn touchpad_fractions_add_up_to_whole_steps_of_three_lines() {
         let mut wheel = WheelAccumulator::default();
         let pixels = |y: f64| MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, y));
-        assert_eq!(wheel.lines(pixels(8.0), 20), 0, "0.4 of a line");
-        assert_eq!(wheel.lines(pixels(8.0), 20), 0, "0.8");
-        assert_eq!(wheel.lines(pixels(8.0), 20), 1, "1.2: one line, 0.2 left");
-        assert_eq!(wheel.lines(MouseScrollDelta::LineDelta(0.0, -1.5), 20), -1, "-1.3");
+        assert_eq!(wheel.steps(pixels(24.0), 20), 0, "0.4 of a step (three 20-pixel lines)");
+        assert_eq!(wheel.steps(pixels(24.0), 20), 0, "0.8");
+        assert_eq!(wheel.steps(pixels(24.0), 20), 1, "1.2: one step, 0.2 left");
+        assert_eq!(wheel.steps(MouseScrollDelta::LineDelta(0.0, -1.5), 20), -1, "-1.3");
     }
 
     #[test]
-    fn a_whole_wheel_notch_is_one_line_at_once() {
+    fn a_mouse_notch_is_one_step() {
         let mut wheel = WheelAccumulator::default();
-        assert_eq!(wheel.lines(MouseScrollDelta::LineDelta(0.0, 3.0), 20), 3);
+        assert_eq!(wheel.steps(MouseScrollDelta::LineDelta(0.0, 3.0), 20), 3);
     }
 
     #[test]

@@ -28,7 +28,7 @@ pub(super) fn spawn_tab(shown: &mut Shown, proxy: &EventLoopProxy<UserEvent>) ->
     let id = shown.tabs.new_id();
     let cell = (shown.font.cell_width, shown.font.cell_height);
     let session = Session::spawn(&shown.program, &shown.working_directory, shown.grid, cell, EventProxy { proxy: proxy.clone(), tab: id })?;
-    shown.tabs.add(Tab { id, session, title: DEFAULT_TITLE.to_string() });
+    shown.tabs.add(Tab { id, session, title: DEFAULT_TITLE.to_string(), screen: crate::zoom::MAIN_SCREEN.to_string() });
     Ok(())
 }
 
@@ -179,6 +179,26 @@ impl App {
         }
     }
 
+    /// Tab `id`'s litastum set a terminal variable: its screen
+    /// (`zoom::SCREEN_VARIABLE`) brings that screen's zoom when shown.
+    pub(super) fn set_user_var(&mut self, id: TabId, name: &str, value: String) {
+        if name != crate::zoom::SCREEN_VARIABLE {
+            return;
+        }
+        let Some(tab) = self.shown.as_mut().and_then(|shown| shown.tabs.get_mut(id)) else {
+            return;
+        };
+        tab.screen = value;
+        if self.active_tab_id() == Some(id) {
+            self.sync_zoom();
+        }
+    }
+
+    /// The shown tab's screen, for its zoom.
+    pub(super) fn active_screen(&self) -> String {
+        self.shown.as_ref().and_then(|shown| shown.tabs.active()).map_or_else(|| crate::zoom::MAIN_SCREEN.to_string(), |tab| tab.screen.clone())
+    }
+
     /// Tab `id` named itself (`OSC 0`/`2`): on the bar, and on the window
     /// while it's shown.
     pub(super) fn set_title(&mut self, id: TabId, title: String) {
@@ -194,12 +214,13 @@ impl App {
         self.request_redraw();
     }
 
-    /// Another tab is shown: everything is drawn anew, in its colors and
-    /// with its title.
+    /// Another tab is shown: everything is drawn anew, in its colors, with
+    /// its title and its screen's zoom.
     pub(super) fn after_tab_change(&mut self) {
         if let Some(shown) = &mut self.shown {
             shown.renderer.invalidate();
         }
+        self.sync_zoom();
         self.sync_window_title();
         self.frame_colors = None;
         self.sync_frame_colors();

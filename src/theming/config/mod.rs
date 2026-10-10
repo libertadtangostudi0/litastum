@@ -97,6 +97,11 @@ struct Config {
     markdown_preview_page_size: Option<usize>,
     max_log_bytes: Option<u64>,
     max_paste_undo_stack: Option<usize>,
+    /// litastum's window (`gui/`) keeps each screen's zoom here, by the
+    /// screen it reports (`main`, `compare`, `conflict`). Unused by the
+    /// console app, but kept: every save writes the whole file, and an
+    /// unknown key would be dropped.
+    window_zoom: Option<std::collections::BTreeMap<String, f32>>,
 }
 
 

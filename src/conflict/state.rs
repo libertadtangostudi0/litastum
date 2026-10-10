@@ -164,8 +164,10 @@ impl ConflictState {
 
     /// A mouse event: a click focuses the pane under the pointer and
     /// places the caret there; drags go only to the focused pane. The
-    /// wheel scrolls the pane under the pointer -- the top panes don't
-    /// follow each other yet. The bottom Compare routes its own halves.
+    /// wheel over the top panes scrolls the focused one, which the others
+    /// follow -- scrolling an unfocused one was undone on the next frame
+    /// (reported: the wheel sometimes did nothing). The bottom Compare
+    /// routes its own halves.
     pub fn mouse(&mut self, mouse: MouseEvent) {
         let Some(pane) = self.pane_at(mouse.column, mouse.row) else {
             return;
@@ -186,6 +188,7 @@ impl ConflictState {
         if !is_scroll && pane != self.focus {
             return;
         }
+        let pane = if is_scroll && pane != Pane::Incoming && self.focus != Pane::Incoming { self.focus } else { pane };
         match pane {
             Pane::Working => self.working.mouse(mouse),
             Pane::Result => self.result.mouse(mouse),

@@ -15,6 +15,9 @@ pub struct Tab<S> {
     pub session: S,
     /// What the program last called itself (`OSC 0`/`2`), else its name.
     pub title: String,
+    /// The screen litastum says it's on (`zoom::SCREEN_VARIABLE`), for
+    /// that screen's zoom.
+    pub screen: String,
 }
 
 
@@ -157,7 +160,7 @@ mod tests {
         let mut tabs = Tabs::new();
         for _ in 0..count {
             let id = tabs.new_id();
-            tabs.add(Tab { id, session: (), title: format!("tab {id}") });
+            tabs.add(Tab { id, session: (), title: format!("tab {id}"), screen: String::new() });
         }
         tabs
     }
@@ -171,7 +174,7 @@ mod tests {
         let mut tabs = tabs(3);
         tabs.select(0);
         let id = tabs.new_id();
-        tabs.add(Tab { id, session: (), title: String::new() });
+        tabs.add(Tab { id, session: (), title: String::new(), screen: String::new() });
 
         assert_eq!(ids(&tabs), [1, 4, 2, 3]);
         assert_eq!(tabs.active().unwrap().id, 4);

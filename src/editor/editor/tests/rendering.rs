@@ -236,3 +236,38 @@ fn cursor_screen_position_is_not_shifted_for_a_backward_selection() {
         "cursor screen x should land exactly on 'l', not one column past it, while retracting a backward selection"
     );
 }
+
+
+/// Reported: the wheel sometimes did nothing -- `edtui` scrolled only the
+/// view, then pulled it back on the next frame to keep the caret off the
+/// edge. With the caret near the top, scrolling down must keep going,
+/// the caret moving along on its screen row, three lines a step.
+#[test]
+fn the_wheel_keeps_scrolling_with_the_caret_near_the_edge() {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let text: String = (0..200).map(|n| format!("line {n}\n")).collect();
+    let (mut editor, _path) = open_test_editor(&text);
+    let theme = Theme::dark();
+    let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+    let mut draw = |editor: &mut Editor| {
+        terminal.draw(|frame| frame.render_widget(editor.view(&theme, frame.area()), frame.area())).unwrap();
+    };
+    draw(&mut editor);
+    let wheel = |kind| MouseEvent { kind, column: 5, row: 5, modifiers: KeyModifiers::NONE };
+
+    for _ in 0..5 {
+        editor.mouse(wheel(MouseEventKind::ScrollDown));
+        draw(&mut editor);
+    }
+    assert_eq!(editor.viewport_top_row(), 15, "five steps of three lines, none undone");
+    assert_eq!(editor.cursor().row, 15, "the caret moved along, on its screen row");
+
+    for _ in 0..2 {
+        editor.mouse(wheel(MouseEventKind::ScrollUp));
+        draw(&mut editor);
+    }
+    assert_eq!(editor.viewport_top_row(), 9);
+}

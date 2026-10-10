@@ -259,6 +259,8 @@ pub struct App {
     pub terminal_palette: Option<String>,
     /// The title last handed to the terminal (`event_loop::sync_title`).
     pub terminal_title: Option<String>,
+    /// The screen last reported to the terminal (`event_loop::sync_screen`).
+    pub terminal_screen: Option<&'static str>,
     /// `F3` on a `.md` file: the live preview shown beside the editor
     /// (`Mode::Editing` drawn split), refreshed on `Ctrl+S`. Lives here,
     /// not in `Mode::Editing`, so other editor call sites don't carry an
@@ -327,6 +329,7 @@ impl App {
             mouse_capture_enabled: false,
             terminal_palette: None,
             terminal_title: None,
+            terminal_screen: None,
             markdown_edit_preview: None,
             notice: None,
             user_screen: Default::default(),

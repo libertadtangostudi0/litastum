@@ -26,6 +26,7 @@ mod mouse;
 mod render;
 mod session;
 mod tabs;
+mod zoom;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod win32_input;
 mod window_style;

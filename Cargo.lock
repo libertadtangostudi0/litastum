@@ -1584,6 +1584,7 @@ dependencies = [
  "base64 0.23.1",
  "cosmic-text",
  "image",
+ "serde_json",
  "softbuffer",
  "winit",
 ]

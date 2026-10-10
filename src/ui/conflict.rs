@@ -328,4 +328,37 @@ mod tests {
         state.mouse(left_click(5, 2));
         assert_eq!(state.focus, Pane::Working);
     }
+
+    /// Reported: the wheel sometimes did nothing. Over an unfocused top
+    /// pane it scrolled that pane, which the next frame lined up with the
+    /// focused one again; it now scrolls the focused pane, the others
+    /// following.
+    #[test]
+    fn the_wheel_over_an_unfocused_top_pane_scrolls_the_focused_one() {
+        let dir = crate::test_support::unique_scratch_dir("conflict-wheel");
+        let body: String = (0..100).map(|n| format!("line {n}
+")).collect();
+        let result = format!("{body}<<<<<<< .working
+mine
+=======
+theirs
+>>>>>>> .merge-right.r2
+");
+        for (name, content) in [("a.txt", result.as_str()), ("a.txt.merge-left.r1", body.as_str()), ("a.txt.merge-right.r2", body.as_str()), ("a.txt.working", body.as_str())] {
+            std::fs::write(dir.join(name), content).unwrap();
+        }
+        let files = crate::conflict::detect(&["a.txt", "a.txt.merge-left.r1", "a.txt.merge-right.r2", "a.txt.working"].map(|name| dir.join(name))).unwrap();
+        let mut state = ConflictState::open(files, None, crate::editor::EditorKeymapMode::Standard).unwrap();
+        render(&mut state);
+        let wheel = MouseEvent { kind: MouseEventKind::ScrollDown, column: 5, row: 5, modifiers: KeyModifiers::NONE };
+
+        for _ in 0..4 {
+            state.mouse(wheel);
+            render(&mut state);
+        }
+
+        assert_eq!(state.focus, crate::conflict::Pane::Result, "the wheel doesn't move the focus");
+        assert_eq!(state.result.viewport_top_row(), 12, "the focused pane scrolled four steps");
+        assert!(state.working.viewport_top_row() > 0, "and the pane under the pointer followed it");
+    }
 }

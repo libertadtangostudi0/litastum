@@ -104,3 +104,15 @@ real, saveable buffer would corrupt the file on save.
   and Compare drop their key-hint rows, as the conflict resolver already
   had. F4's `[modified]` lived in that row; it's in the border title now,
   after the path, for every editor pane (`Editor::title`).
+- **The wheel sometimes did nothing** (reported with a touchpad, "and
+  it lags"). Measured: a frame was ~1.5 ms, not the cause. `edtui`
+  scrolls only the view on the wheel, then pulls it back on the next
+  frame to keep the caret a few rows off the edge -- so scrolling
+  stopped dead once the caret got there (on the project's own sources,
+  every wheel frame changed nothing). `Editor::scroll_lines` now moves
+  the caret along, on its screen row, three lines a step (Windows'
+  default per notch; litastum's window turns three lines of touchpad
+  travel into one step). In the resolver, the wheel over an unfocused
+  top pane was undone by the next frame's alignment; it scrolls the
+  focused pane now.
+

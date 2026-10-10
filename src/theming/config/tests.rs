@@ -231,3 +231,18 @@ fn bundled_themes_dont_depend_on_the_current_directory() {
     assert!(dirs[1].is_absolute());
     assert!(dirs[1].join("github-dark-default.json").is_file(), "the project's own bundled default theme");
 }
+
+
+/// The window's zoom lives in the same file: saving a setting here must
+/// keep it.
+#[test]
+fn saving_a_setting_keeps_the_windows_zoom() {
+    let dir = crate::test_support::unique_scratch_dir("config-window-zoom");
+    std::fs::write(dir.join("config.json"), r#"{ "window_zoom": { "main": 16.0, "compare": 11.0 } }"#).unwrap();
+
+    persist(&dir, |config| config.popup_style = Some(PopupStyle::Classic));
+
+    let written: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("config.json")).unwrap()).unwrap();
+    assert_eq!(written["window_zoom"]["compare"], 11.0);
+    assert_eq!(written["popup_style"], "Classic");
+}

@@ -24,6 +24,16 @@ shell profile stay separate on purpose: themes are looked up by name
 across directories, and the shell is only saved by F9 -> Options ->
 Save setup.
 
+## `window_zoom`: litastum's window keeps its zoom here
+
+The window (`gui/src/zoom.rs`) saves each screen's font size (`main`,
+`compare`, `conflict` -- litastum reports its screen with the terminal
+user variable `litastum_screen`, `event_loop::sync_screen`) under
+`window_zoom` in this same `config.json`, editing the file as plain
+JSON so every other key stays. The console app doesn't use the field
+but declares it on `Config`: every save writes the whole file, and an
+unknown key would be dropped (`saving_a_setting_keeps_the_windows_zoom`).
+
 ## `Limits` (`theming/config/limits.rs`): tunable caps, one place
 
 Requested directly, after a perf/weak-spot audit pass turned up five

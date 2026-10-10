@@ -19,6 +19,7 @@ use crate::render::{self, Renderer, View};
 use crate::session::{GridSize, Session, UserEvent};
 use crate::tabs::Tabs;
 use crate::window_style;
+use crate::zoom::Zooms;
 
 mod tab_bar;
 
@@ -52,8 +53,10 @@ pub struct App {
     next_blink: Instant,
     /// The background and text colors the window frame was last given.
     frame_colors: Option<(alacritty_terminal::vte::ansi::Rgb, alacritty_terminal::vte::ansi::Rgb)>,
-    /// The font size in logical pixels, changed by zoom.
+    /// The font size in logical pixels now: the shown screen's zoom.
     font_size: f32,
+    /// Each litastum screen's zoom, kept for the user (`zoom`).
+    zooms: Zooms,
     /// The last tab closed: the event loop ends when it next can.
     exit_requested: bool,
 }
@@ -84,20 +87,21 @@ impl App {
             cursor_shown: true,
             next_blink: Instant::now() + BLINK_INTERVAL,
             frame_colors: None,
-            font_size: FONT_SIZE,
+            font_size: Zooms::load(FONT_SIZE).size_for(crate::zoom::MAIN_SCREEN),
+            zooms: Zooms::load(FONT_SIZE),
             exit_requested: false,
         }
     }
 
     fn open(&self, event_loop: &ActiveEventLoop) -> Result<Shown, String> {
-        let mut font = CellFont::new(FONT_SIZE);
+        let mut font = CellFont::new(self.font_size);
         let start = LogicalSize::new(START_GRID.columns as u32 * font.cell_width, (START_GRID.lines as u32 + 1) * font.cell_height);
         let attributes = window_style::themed(Window::default_attributes().with_title("litastum").with_inner_size(start));
         let window = Rc::new(event_loop.create_window(attributes).map_err(|err| err.to_string())?);
         // Committed IME text (Win+. emoji, CJK input) arrives as `Ime`.
         window.set_ime_allowed(true);
 
-        font.set_size(FONT_SIZE * window.scale_factor() as f32);
+        font.set_size(self.font_size * window.scale_factor() as f32);
         let context = softbuffer::Context::new(window.clone()).map_err(|err| err.to_string())?;
         let surface = softbuffer::Surface::new(&context, window.clone()).map_err(|err| err.to_string())?;
         let grid = grid_for(window.inner_size(), &font);
@@ -281,7 +285,7 @@ impl App {
     /// alternate screen (`input::alternate_scroll`).
     fn wheel(&mut self, delta: MouseScrollDelta) {
         let cell_height = self.shown.as_ref().map_or(16, |shown| shown.font.cell_height);
-        let lines = self.wheel.lines(delta, cell_height);
+        let lines = self.wheel.steps(delta, cell_height);
         if self.modifiers.control_key() {
             let zoom = if lines > 0 { Zoom::In } else { Zoom::Out };
             for _ in 0..lines.unsigned_abs() {
@@ -319,9 +323,26 @@ impl App {
 
     /// `Ctrl+=`/`Ctrl+-`/`Ctrl+0` or `Ctrl`+wheel: a bigger or smaller
     /// font in the same window, so more or fewer cells -- litastum gets
-    /// the new grid size as for any resize.
+    /// the new grid size as for any resize. Kept for the shown tab's
+    /// screen only (requested: Compare and the resolver zoom on their
+    /// own), and saved.
     fn zoom(&mut self, zoom: Zoom) {
         self.font_size = input::zoomed(self.font_size, zoom, FONT_SIZE);
+        let screen = self.active_screen();
+        self.zooms.set(&screen, self.font_size);
+        if let Some(scale_factor) = self.shown.as_ref().map(|shown| shown.window.scale_factor()) {
+            self.scale_changed(scale_factor);
+        }
+    }
+
+    /// The shown screen's zoom, when it isn't the one in use: after a
+    /// switch to another tab or another litastum screen.
+    fn sync_zoom(&mut self) {
+        let wanted = self.zooms.size_for(&self.active_screen());
+        if (wanted - self.font_size).abs() < f32::EPSILON {
+            return;
+        }
+        self.font_size = wanted;
         if let Some(scale_factor) = self.shown.as_ref().map(|shown| shown.window.scale_factor()) {
             self.scale_changed(scale_factor);
         }
@@ -435,8 +456,10 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
-        let UserEvent::Term(id, event) = event;
-        self.term_event(id, event);
+        match event {
+            UserEvent::Term(id, event) => self.term_event(id, event),
+            UserEvent::UserVar(id, name, value) => self.set_user_var(id, &name, value),
+        }
         if self.exit_requested {
             event_loop.exit();
         }

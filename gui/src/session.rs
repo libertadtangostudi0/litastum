@@ -20,6 +20,9 @@ use crate::tabs::TabId;
 #[derive(Debug)]
 pub enum UserEvent {
     Term(TabId, Event),
+    /// `OSC 1337 ; SetUserVar=name=base64`: the program set a variable
+    /// for its terminal -- litastum's screen (`litastum_screen`).
+    UserVar(TabId, String, String),
 }
 
 /// Forwards a tab's terminal events into the window's event loop, which
@@ -186,14 +189,21 @@ impl Io {
     /// grid at the cursor cell they arrive at. The term is locked once per
     /// read, not per piece.
     fn output(&mut self, bytes: &[u8]) {
-        let Self { term, images, parser, interceptor, .. } = self;
+        let Self { term, images, parser, interceptor, proxy, .. } = self;
         let term = std::cell::RefCell::new(term.lock());
         interceptor.feed(
             bytes,
             |text| parser.advance(&mut **term.borrow_mut(), text),
             |body| {
+                if let Some((name, value)) = body.strip_prefix(b"SetUserVar=").and_then(user_var) {
+                    let _ = proxy.proxy.send_event(UserEvent::UserVar(proxy.tab, name, value));
+                    return;
+                }
+                let Some(body) = body.strip_prefix(b"File=") else {
+                    return;
+                };
                 let cursor = term.borrow().grid().cursor.point;
-                if let Some(image) = images::decode(&body, cursor.line.0.max(0) as usize, cursor.column.0) {
+                if let Some(image) = images::decode(body, cursor.line.0.max(0) as usize, cursor.column.0) {
                     let mut images = images.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                     // A new image where another was replaces it.
                     images.retain(|old| (old.line, old.column) != (image.line, image.column));
@@ -202,6 +212,16 @@ impl Io {
             },
         );
     }
+}
+
+
+/// `name=base64` of a `SetUserVar`, decoded; `None` if malformed.
+fn user_var(body: &[u8]) -> Option<(String, String)> {
+    use base64::Engine;
+    let text = std::str::from_utf8(body).ok()?;
+    let (name, encoded) = text.split_once('=')?;
+    let value = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
+    Some((name.to_string(), String::from_utf8(value).ok()?))
 }
 
 
