@@ -82,19 +82,13 @@ impl Write for SizeCappedFile {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
 
-    /// A distinct scratch path per test (`cargo test` runs in parallel
-    /// threads within one process).
+    /// A log path in a fresh, empty directory per test. A name made of the
+    /// process id and a counter met a file left by an earlier run with the
+    /// same id, and `writes_under_the_cap_accumulate` failed now and then.
     fn test_log_path() -> String {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir()
-            .join(format!("litastum-log-test-{}-{n}.log", std::process::id()))
-            .to_string_lossy()
-            .into_owned()
+        crate::test_support::unique_scratch_dir("log").join("test.log").to_string_lossy().into_owned()
     }
 
     #[test]

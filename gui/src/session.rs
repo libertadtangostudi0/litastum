@@ -100,7 +100,7 @@ impl Session {
         let term = Arc::new(FairMutex::new(Term::new(Config::default(), &size, proxy.clone())));
         let images = Arc::new(Mutex::new(Vec::new()));
         let (sender, receiver) = mpsc::channel();
-        let io = Io { term: term.clone(), images: images.clone(), proxy, parser: Processor::new(), interceptor: Interceptor::default() };
+        let io = Io { term: term.clone(), images: images.clone(), proxy, parser: Processor::new(), interceptor: Interceptor::default(), image_at: None };
         std::thread::Builder::new().name("pty-io".into()).spawn(move || io.run(pty, receiver))?;
         Ok(Self { term, images, sender })
     }
@@ -131,6 +131,20 @@ struct Io {
     proxy: EventProxy,
     parser: Processor,
     interceptor: Interceptor,
+    /// Where litastum said the next image goes (`IMAGE_AT_VARIABLE`).
+    image_at: Option<(usize, usize)>,
+}
+
+
+/// The user variable litastum sends right before an image: where it goes,
+/// `"line,column"`. Its `image_host` sets the same name.
+const IMAGE_AT_VARIABLE: &str = "litastum_image_at";
+
+
+/// `"line,column"`, as litastum sends it.
+fn parse_image_at(value: &str) -> Option<(usize, usize)> {
+    let (line, column) = value.split_once(',')?;
+    Some((line.trim().parse().ok()?, column.trim().parse().ok()?))
 }
 
 impl Io {
@@ -185,25 +199,32 @@ impl Io {
         }
     }
 
-    /// One read: text to the terminal engine, inline images onto the
-    /// grid at the cursor cell they arrive at. The term is locked once per
-    /// read, not per piece.
+    /// One read: text to the terminal engine, inline images onto the grid
+    /// where litastum said (`IMAGE_AT_VARIABLE`), else at the cursor cell
+    /// they arrive at -- which ConPTY doesn't keep in order with an image:
+    /// it forwards the image at once and the cursor moves before it with
+    /// its next redraw. The term is locked once per read, not per piece.
     fn output(&mut self, bytes: &[u8]) {
-        let Self { term, images, parser, interceptor, proxy, .. } = self;
+        let Self { term, images, parser, interceptor, proxy, image_at, .. } = self;
         let term = std::cell::RefCell::new(term.lock());
         interceptor.feed(
             bytes,
             |text| parser.advance(&mut **term.borrow_mut(), text),
             |body| {
                 if let Some((name, value)) = body.strip_prefix(b"SetUserVar=").and_then(user_var) {
-                    let _ = proxy.proxy.send_event(UserEvent::UserVar(proxy.tab, name, value));
+                    if name == IMAGE_AT_VARIABLE {
+                        *image_at = parse_image_at(&value);
+                    } else {
+                        let _ = proxy.proxy.send_event(UserEvent::UserVar(proxy.tab, name, value));
+                    }
                     return;
                 }
                 let Some(body) = body.strip_prefix(b"File=") else {
                     return;
                 };
                 let cursor = term.borrow().grid().cursor.point;
-                if let Some(image) = images::decode(body, cursor.line.0.max(0) as usize, cursor.column.0) {
+                let (line, column) = image_at.take().unwrap_or((cursor.line.0.max(0) as usize, cursor.column.0));
+                if let Some(image) = images::decode(body, line, column) {
                     let mut images = images.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                     // A new image where another was replaces it.
                     images.retain(|old| (old.line, old.column) != (image.line, image.column));
@@ -254,6 +275,13 @@ fn window_size(size: GridSize, cell: (u32, u32)) -> WindowSize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn where_litastum_says_an_image_goes() {
+        assert_eq!(parse_image_at("3,51"), Some((3, 51)));
+        assert_eq!(parse_image_at("3"), None);
+        assert_eq!(parse_image_at("x,1"), None);
+    }
 
     #[test]
     fn a_quiet_program_is_polled_less_often_up_to_a_cap() {

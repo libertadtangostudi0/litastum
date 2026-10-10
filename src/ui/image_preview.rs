@@ -22,7 +22,10 @@ pub fn draw_image_preview(frame: &mut Frame, area: Rect, state: &mut ImagePrevie
 
     state.set_area(inner.as_size());
     match state.frame_mut() {
-        PreviewFrame::Ready(protocol) => frame.render_widget(Image::new(protocol), inner),
+        PreviewFrame::Ready(protocol) => {
+            frame.render_widget(Image::new(protocol), inner);
+            crate::image_host::place_image_for_host(frame.buffer_mut(), inner);
+        }
         PreviewFrame::Loading => {
             frame.render_widget(Paragraph::new(Line::from(Span::styled("Loading...", Style::default().fg(theme.text_dim)))), inner);
         }

@@ -1,3 +1,5 @@
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::FontSize;
 
@@ -36,6 +38,38 @@ pub(crate) fn hosted_picker(cell: (u16, u16)) -> Picker {
 }
 
 
+/// The terminal user variable telling the window where the next image
+/// goes, `"line,column"` (0-based cells).
+pub(crate) const IMAGE_AT_VARIABLE: &str = "litastum_image_at";
+
+
+/// Tells the window where the image drawn at `area`'s top-left goes,
+/// right before it, in the same cell of `buffer`. The window used to put
+/// an image at the cursor, but ConPTY forwards an image as soon as it
+/// reads it and the cursor moves before it later, with its own redraw:
+/// the image landed elsewhere and was wiped (reported: no previews in
+/// the window). The two sequences go through ConPTY in order.
+pub(crate) fn place_image_for_host(buffer: &mut Buffer, area: Rect) {
+    if host_cell_size().is_none() {
+        return;
+    }
+    mark_image_position(buffer, area);
+}
+
+
+fn mark_image_position(buffer: &mut Buffer, area: Rect) {
+    let Some(cell) = buffer.cell_mut((area.x, area.y)) else {
+        return;
+    };
+    if !cell.symbol().contains("\x1b]1337;File=") {
+        return;
+    }
+    let position = format!("{},{}", area.y, area.x);
+    let symbol = format!("\x1b]1337;SetUserVar={IMAGE_AT_VARIABLE}={}\x07{}", crate::event_loop::base64(position.as_bytes()), cell.symbol());
+    cell.set_symbol(&symbol);
+}
+
+
 fn parse_cell_size(value: &str) -> Option<(u16, u16)> {
     let (width, height) = value.split_once('x')?;
     let size = (width.trim().parse().ok()?, height.trim().parse().ok()?);
@@ -59,6 +93,21 @@ mod tests {
     #[test]
     fn the_variable_name_matches_the_windows() {
         assert_eq!(HOST_CELL_SIZE_ENV_VAR, "LITASTUM_HOST_CELL_SIZE");
+    }
+
+    /// The window places the image by this, not by the cursor.
+    #[test]
+    fn an_image_cell_says_where_the_image_goes_first() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 10));
+        buffer[(7, 3)].set_symbol("\x1b]1337;File=inline=1:AAAA\x07");
+        buffer[(2, 2)].set_symbol("x");
+
+        mark_image_position(&mut buffer, Rect::new(7, 3, 5, 5));
+        mark_image_position(&mut buffer, Rect::new(2, 2, 5, 5));
+
+        // "3,7" in base64.
+        assert_eq!(buffer[(7, 3)].symbol(), "\x1b]1337;SetUserVar=litastum_image_at=Myw3\x07\x1b]1337;File=inline=1:AAAA\x07");
+        assert_eq!(buffer[(2, 2)].symbol(), "x", "no image there");
     }
 
     #[test]

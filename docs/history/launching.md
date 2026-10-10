@@ -168,6 +168,18 @@ answers `CSI c`, `5n` and `6n` itself, and forwards `CSI 14t`/`16t`.
 The cell size is passed once, at start: after a DPI change images are
 still sized for the old cells until litastum restarts.
 
+Later the previews stopped showing in the window (reported). A probe
+(litastum in a ConPTY, its output fed through the window's own
+interceptor) showed the image arriving with the cursor far from the
+preview -- line 4, column 99 instead of 1, 51: ConPTY forwards an
+`OSC 1337` it doesn't know as soon as it reads it, while the cursor
+moves written before it go out later, with its own redraw. The image
+landed off to the side and the next draw wiped it. Writing the frame in
+smaller pieces didn't change it. Now litastum says where the image goes,
+right before it in the same cell (`image_host::place_image_for_host`,
+the user variable `litastum_image_at`, `"line,column"`), and the window
+places it there (`session.rs`), the cursor only a fallback.
+
 ## Review pass: refactor, bugs, performance
 
 `main.rs` was split (`app`, `input`, `window_style`), and a review
