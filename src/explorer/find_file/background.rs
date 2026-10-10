@@ -12,7 +12,7 @@ use super::state::FindFilePhase;
 
 /// A search running on a background thread, so a large one shows live
 /// progress and `Esc` can cancel it, as in Far. Same shape as
-/// `image_preview::PendingDecode`: one at a time, and dropping it makes the
+/// an image preview job (`image_preview::Entry::Pending`): one at a time, and dropping it makes the
 /// thread's final `send` fail silently -- no stale-result tracking.
 /// History: docs/history/find-file-search.md.
 pub struct PendingSearch {

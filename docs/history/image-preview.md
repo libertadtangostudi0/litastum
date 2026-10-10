@@ -42,3 +42,22 @@ Crate choice and the terminal-protocol query: `litastum-stack.md`.
 - **Stray text before the first frame.** The protocol query writes to
   the real screen behind `ratatui`'s buffer, and some text showed in a
   panel until overwritten. `main` clears the terminal after the query.
+
+## Switching images was very slow in Windows Terminal
+
+Reported. Measured on 1100x684 screenshots in a debug build: decoding
+38 ms, but resizing (`Lanczos3`) and encoding to Sixel 3.2 s -- done by
+`StatefulImage` while drawing, on the UI thread, which froze meanwhile
+(iTerm2 1.8 s, half-blocks 1.5 s). Two causes, two fixes:
+- **The image crates ran unoptimized in debug builds.** Sixel's colour
+  quantizer (`quantette`, `palette`, `wide`, ...) above all. They get
+  `opt-level = 3` in `[profile.dev.package]` like the editor's crates:
+  Sixel 3.2 s -> 67 ms, iTerm2 -> 50 ms, decoding -> 2 ms.
+- **Resizing and encoding moved off the UI thread.** A job decodes,
+  resizes and encodes for the preview's size (`Picker::new_protocol`,
+  drawn with the plain `Image` widget); the size comes from the first
+  draw (`set_area`, shared with the jobs; waited for up to 200 ms), and
+  a new size encodes again from the decoded pixels. The two neighbors
+  are prepared once the current image is ready, so `Left`/`Right` show
+  at once; only those three are kept.
+

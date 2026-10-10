@@ -104,3 +104,66 @@ opt-level = 3
 
 [profile.dev.package."unicode-width"]
 opt-level = 3
+
+# The image preview (F3): decoding, resizing and encoding an image for
+# the terminal (Sixel, iTerm2) took ~3 s per image unoptimized, the UI
+# frozen meanwhile. Same reasoning as the editor's crates above.
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package."ratatui-image"]
+opt-level = 3
+
+[profile.dev.package.icy_sixel]
+opt-level = 3
+
+[profile.dev.package.png]
+opt-level = 3
+
+[profile.dev.package.fdeflate]
+opt-level = 3
+
+[profile.dev.package.flate2]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+[profile.dev.package.crc32fast]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.zune-core]
+opt-level = 3
+
+[profile.dev.package."base64-simd"]
+opt-level = 3
+
+[profile.dev.package.moxcms]
+opt-level = 3
+
+[profile.dev.package.quantette]
+opt-level = 3
+
+[profile.dev.package.palette]
+opt-level = 3
+
+[profile.dev.package.wide]
+opt-level = 3
+
+[profile.dev.package.bitvec]
+opt-level = 3
+
+[profile.dev.package.libm]
+opt-level = 3
+
+[profile.dev.package."ordered-float"]
+opt-level = 3
+
+[profile.dev.package.rand_xoshiro]
+opt-level = 3
+
+[profile.dev.package."num-traits"]
+opt-level = 3

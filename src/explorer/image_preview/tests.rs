@@ -160,11 +160,63 @@ mod image_preview_state_tests {
         state.next();
 
         assert_eq!(state.current_path(), dir.join("b.png"), "the index/title should move immediately, not wait for the new decode");
-        assert!(state.is_loading(), "the new image's own decode should now be in flight");
-        assert!(matches!(state.frame_mut(), PreviewFrame::Ready(_)), "should still show the previous image's pixels while the new one decodes");
+        // "b" may be prepared already (a neighbor); either way, pixels show.
+        assert!(matches!(state.frame_mut(), PreviewFrame::Ready(_)), "the previous image's pixels, or the new one's, never a placeholder");
 
         wait_until_not_loading(&mut state);
         assert!(matches!(state.frame_mut(), PreviewFrame::Ready(_)), "and the new pixels should be showing once the decode actually finishes");
+    }
+
+    /// Polls until `ready` holds or a generous timeout.
+    fn poll_until(state: &mut ImagePreviewState, ready: impl Fn(&ImagePreviewState) -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !ready(state) {
+            assert!(std::time::Instant::now() < deadline, "never got there");
+            state.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn is_ready(state: &ImagePreviewState, index: usize) -> bool {
+        matches!(state.entries.get(&index), Some(Entry::Ready(_)))
+    }
+
+    /// Requested: switching was very slow. The neighbors are prepared once
+    /// the current image is, so `Right` shows the next one at once.
+    #[test]
+    fn the_neighbors_are_prepared_so_a_switch_shows_at_once() {
+        let dir = unique_scratch_dir("image-preview");
+        for name in ["a.png", "b.png", "c.png", "d.png"] {
+            write_test_png(&dir.join(name));
+        }
+        let mut state = ImagePreviewState::open(&Picker::halfblocks(), &dir, &dir.join("b.png")).unwrap();
+        wait_until_not_loading(&mut state);
+        poll_until(&mut state, |state| is_ready(state, 0) && is_ready(state, 2));
+
+        state.next();
+
+        assert!(!state.is_loading(), "\"c\" was prepared ahead");
+        assert!(state.entries.len() <= 3, "only the current image and its neighbors are kept");
+        assert!(!state.entries.contains_key(&0), "\"a\" is no longer a neighbor");
+    }
+
+    /// The image is encoded for the preview's size, off the UI thread --
+    /// again, from the decoded pixels, when the size changes.
+    #[test]
+    fn a_new_size_encodes_the_image_again() {
+        let dir = unique_scratch_dir("image-preview");
+        write_test_png(&dir.join("a.png"));
+        let mut state = ImagePreviewState::open(&Picker::halfblocks(), &dir, &dir.join("a.png")).unwrap();
+        state.set_area(Size { width: 40, height: 10 });
+        wait_until_not_loading(&mut state);
+
+        state.set_area(Size { width: 60, height: 20 });
+        assert!(state.is_loading(), "encoding again for the new size");
+        assert!(matches!(state.frame_mut(), PreviewFrame::Ready(_)), "the old one shows meanwhile");
+        wait_until_not_loading(&mut state);
+
+        let Some(Entry::Ready(encoded)) = state.entries.get(&0) else { panic!("ready") };
+        assert_eq!(encoded.size, Size { width: 60, height: 20 });
     }
 }
 

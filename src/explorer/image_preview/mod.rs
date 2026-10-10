@@ -1,12 +1,18 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
+use image::DynamicImage;
+use ratatui::layout::Size;
 use ratatui_image::picker::Picker;
-use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::protocol::Protocol;
+use ratatui_image::{FilterType, Resize};
 use tracing::warn;
 
 use crate::app::{App, Mode};
@@ -23,58 +29,130 @@ pub fn is_supported_image(path: &Path) -> bool {
 
 
 /// What `ui::draw_image_preview` renders this frame: a borrowing view
-/// over the private `Display`, so only this module can produce `Ready`
-/// (a successfully decoded protocol).
+/// over the private entries, so only this module can produce `Ready` (an
+/// image encoded for the terminal).
 pub enum PreviewFrame<'a> {
-    Ready(&'a mut StatefulProtocol),
+    Ready(&'a Protocol),
     Loading,
     Failed,
 }
 
-/// What is on screen. Decoding runs on a background thread
-/// (`spawn_decode`) because decode plus resize took visible time and
-/// froze the UI; `poll` applies the result. History: docs/history/image-preview.md.
-enum Display {
-    Ready(StatefulProtocol),
-    Loading,
+/// How long a job waits for the preview's size (`set_area`, from the
+/// first draw) before encoding at `DEFAULT_SIZE`.
+const AREA_WAIT: Duration = if cfg!(test) { Duration::from_millis(1) } else { Duration::from_millis(200) };
+const DEFAULT_SIZE: Size = Size { width: 80, height: 24 };
+
+/// The preview's size in cells, shared with the jobs: the image is
+/// resized and encoded for it off the UI thread.
+type SharedArea = Arc<Mutex<Option<Size>>>;
+
+/// An image encoded for the terminal at `size`, and the decoded image
+/// it came from, to encode again at another size without decoding.
+struct Encoded {
+    image: Arc<DynamicImage>,
+    size: Size,
+    protocol: Protocol,
+}
+
+/// One image of the preview: being prepared, ready, or failed.
+enum Entry {
+    /// A job in flight. Dropping the receiver abandons it: its `send`
+    /// fails silently.
+    Pending(Receiver<Option<Encoded>>),
+    Ready(Encoded),
     Failed,
 }
 
-/// A decode in flight. Only one exists at a time: starting another drops
-/// this `Receiver`, and the old thread's `send` fails silently -- no
-/// generation counter needed for stale results.
-struct PendingDecode {
-    receiver: Receiver<Option<StatefulProtocol>>,
+/// Where a job starts: a file to decode, or a decoded image to encode at
+/// a new size.
+enum Source {
+    File(PathBuf),
+    Decoded(Arc<DynamicImage>),
 }
 
-fn spawn_decode(picker: &Picker, path: PathBuf) -> PendingDecode {
+/// Decodes, resizes and encodes an image on a thread of its own -- all
+/// of it, since resizing and encoding (Sixel above all) cost far more
+/// than decoding and froze the UI when done while drawing (reported:
+/// switching images was very slow in Windows Terminal).
+fn spawn_job(picker: &Picker, source: Source, area: &SharedArea) -> Entry {
     let (sender, receiver) = std::sync::mpsc::channel();
-    let picker = picker.clone();
+    let (picker, area) = (picker.clone(), area.clone());
     thread::spawn(move || {
-        let result = load_protocol(&picker, &path);
-        let _ = sender.send(result);
+        let _ = sender.send(prepare(&picker, source, &area));
     });
-    PendingDecode { receiver }
+    Entry::Pending(receiver)
+}
+
+fn prepare(picker: &Picker, source: Source, area: &SharedArea) -> Option<Encoded> {
+    let image = match source {
+        Source::File(path) => Arc::new(decode(&path)?),
+        Source::Decoded(image) => image,
+    };
+    let size = wait_for_area(area);
+    let protocol = picker.new_protocol((*image).clone(), size, Resize::Fit(Some(FilterType::Lanczos3)));
+    match protocol {
+        Ok(protocol) => Some(Encoded { image, size, protocol }),
+        Err(err) => {
+            warn!(%err, "failed to encode image for preview");
+            None
+        }
+    }
+}
+
+/// The preview's size, once the first draw told it.
+fn wait_for_area(area: &SharedArea) -> Size {
+    let deadline = Instant::now() + AREA_WAIT;
+    loop {
+        if let Some(size) = *area.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) {
+            return size;
+        }
+        if Instant::now() >= deadline {
+            return DEFAULT_SIZE;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn decode(path: &Path) -> Option<DynamicImage> {
+    let reader = match image::ImageReader::open(path) {
+        Ok(reader) => reader,
+        Err(err) => {
+            warn!(path = %path.display(), %err, "failed to open image for preview");
+            return None;
+        }
+    };
+    match reader.decode() {
+        Ok(image) => Some(image),
+        Err(err) => {
+            warn!(path = %path.display(), %err, "failed to decode image for preview");
+            None
+        }
+    }
 }
 
 
-/// `F3` on an image (`Mode::ImagePreview`): the directory's images, the
-/// current one, and its decoded protocol, drawn in place of the right
-/// panel's listing. `Left`/`Right` cycle through the directory.
+/// `F3` on an image (`Mode::ImagePreview`): the directory's images and the
+/// current one, drawn in place of the right panel's listing. `Left`/
+/// `Right` cycle through the directory. The current image and its two
+/// neighbors are kept encoded, the neighbors prepared once the current
+/// one is ready, so a switch shows at once. History: docs/history/image-preview.md.
 pub struct ImagePreviewState {
     images: Vec<PathBuf>,
     index: usize,
     picker: Picker,
-    display: Display,
-    pending: Option<PendingDecode>,
+    area: SharedArea,
+    entries: HashMap<usize, Entry>,
+    /// What's on screen until the current image is ready: switching
+    /// showed a placeholder even for fast images, and was reverted.
+    shown: Option<Protocol>,
 }
 
 impl ImagePreviewState {
     /// Opens a preview on `initial_path` among `dir`'s images. `None` if
     /// it isn't a supported image or `dir` can't be read -- both cheap;
-    /// the decode itself starts in `Loading` and resolves in `poll`.
+    /// the image itself starts `Loading` and resolves in `poll`.
     /// `picker` is `app.image_picker`, queried from the real terminal at
-    /// startup. History: docs/history/image-preview.md.
+    /// startup.
     pub fn open(picker: &Picker, dir: &Path, initial_path: &Path) -> Option<Self> {
         if !is_supported_image(initial_path) {
             return None;
@@ -91,55 +169,84 @@ impl ImagePreviewState {
         images.sort_by_key(|path| path.file_name().map(|name| name.to_string_lossy().to_lowercase()));
 
         let index = images.iter().position(|path| path == initial_path)?;
-        let pending = spawn_decode(picker, images[index].clone());
-
-        Some(Self { images, index, picker: picker.clone(), display: Display::Loading, pending: Some(pending) })
+        let mut state = Self { images, index, picker: picker.clone(), area: SharedArea::default(), entries: HashMap::new(), shown: None };
+        state.prepare(index);
+        Some(state)
     }
 
     pub fn current_path(&self) -> &Path {
         &self.images[self.index]
     }
 
+    /// The preview's size in cells, from each draw: images are encoded for
+    /// it, again (from their decoded pixels) when it changes.
+    pub fn set_area(&mut self, size: Size) {
+        let mut area = self.area.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *area == Some(size) {
+            return;
+        }
+        *area = Some(size);
+        drop(area);
+        for index in self.entries.keys().copied().collect::<Vec<_>>() {
+            if let Some(Entry::Ready(encoded)) = self.entries.get(&index) {
+                let source = Source::Decoded(encoded.image.clone());
+                self.entries.insert(index, spawn_job(&self.picker, source, &self.area));
+            }
+        }
+    }
+
     /// See `PreviewFrame`.
     pub fn frame_mut(&mut self) -> PreviewFrame<'_> {
-        match &mut self.display {
-            Display::Ready(protocol) => PreviewFrame::Ready(protocol),
-            Display::Loading => PreviewFrame::Loading,
-            Display::Failed => PreviewFrame::Failed,
+        match (self.entries.get(&self.index), &self.shown) {
+            (Some(Entry::Ready(encoded)), _) => PreviewFrame::Ready(&encoded.protocol),
+            (_, Some(shown)) => PreviewFrame::Ready(shown),
+            (Some(Entry::Failed), None) => PreviewFrame::Failed,
+            _ => PreviewFrame::Loading,
         }
     }
 
-    /// Whether a decode is in flight -- `wait_for_event` polls faster
-    /// meanwhile, so the result shows without waiting for input.
+    /// Whether the current image is still being prepared --
+    /// `wait_for_event` polls faster meanwhile, so it shows without
+    /// waiting for input.
     pub fn is_loading(&self) -> bool {
-        self.pending.is_some()
+        !matches!(self.entries.get(&self.index), Some(Entry::Ready(_) | Entry::Failed))
     }
 
-    /// Applies a finished decode; `true` if the screen should redraw.
-    /// Called from `wait_for_event`'s poll and again from `ui::draw`, so a
-    /// result arriving between ticks isn't left a frame stale.
+    /// Applies finished jobs; `true` if the screen should redraw. Called
+    /// from `wait_for_event`'s poll and again from `ui::draw`, so a result
+    /// arriving between ticks isn't left a frame stale. Once the current
+    /// image is ready its neighbors are prepared.
     pub fn poll(&mut self) -> bool {
-        let Some(pending) = &self.pending else {
-            return false;
-        };
-        match pending.receiver.try_recv() {
-            Err(TryRecvError::Empty) => false,
-            Ok(Some(protocol)) => {
-                self.display = Display::Ready(protocol);
-                self.pending = None;
-                true
-            }
-            // A failed decode or a panicked thread: stop waiting. A
-            // previous image stays on screen; `Failed` only when there's
-            // nothing to fall back to.
-            Ok(None) | Err(TryRecvError::Disconnected) => {
-                if !matches!(self.display, Display::Ready(_)) {
-                    self.display = Display::Failed;
+        let area = *self.area.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut current_done = false;
+        for (&index, entry) in &mut self.entries {
+            let Entry::Pending(receiver) = entry else {
+                continue;
+            };
+            let outcome = match receiver.try_recv() {
+                Err(TryRecvError::Empty) => continue,
+                Ok(Some(encoded)) if area.is_some_and(|area| area != encoded.size) => {
+                    // Encoded before the size was known, or before it changed.
+                    *entry = spawn_job(&self.picker, Source::Decoded(encoded.image), &self.area);
+                    continue;
                 }
-                self.pending = None;
-                true
+                Ok(Some(encoded)) => Entry::Ready(encoded),
+                // A failed decode or a panicked thread: stop waiting.
+                Ok(None) | Err(TryRecvError::Disconnected) => Entry::Failed,
+            };
+            *entry = outcome;
+            current_done |= index == self.index;
+        }
+        if !current_done {
+            return false;
+        }
+        if let Some(Entry::Ready(encoded)) = self.entries.get(&self.index) {
+            self.shown = Some(encoded.protocol.clone());
+            for neighbor in self.neighbors() {
+                self.prepare(neighbor);
             }
         }
+        true
     }
 
     /// `Right`: advances to the next image file in the directory,
@@ -154,33 +261,39 @@ impl ImagePreviewState {
         self.step(self.images.len() - 1); // (-1) mod len, without signed arithmetic
     }
 
-    /// Moves `index` (and the title) at once and starts a background
-    /// decode. `display` keeps the previous image until `poll` replaces
-    /// it: switching to `Loading` on every press flashed a placeholder
-    /// even for fast images, and was reverted. History: docs/history/image-preview.md.
+    /// Moves `index` (and the title) at once; a neighbor prepared ahead
+    /// shows right away, else the previous image stays until `poll`.
+    /// Images no longer next to the current one are dropped.
     fn step(&mut self, delta: usize) {
         if self.images.len() <= 1 {
             return;
         }
-        let new_index = (self.index + delta) % self.images.len();
-        self.index = new_index;
-        self.pending = Some(spawn_decode(&self.picker, self.images[new_index].clone()));
-    }
-}
-
-fn load_protocol(picker: &Picker, path: &Path) -> Option<StatefulProtocol> {
-    let reader = match image::ImageReader::open(path) {
-        Ok(reader) => reader,
-        Err(err) => {
-            warn!(path = %path.display(), %err, "failed to open image for preview");
-            return None;
+        self.index = (self.index + delta) % self.images.len();
+        let keep: Vec<usize> = std::iter::once(self.index).chain(self.neighbors()).collect();
+        self.entries.retain(|index, _| keep.contains(index));
+        self.prepare(self.index);
+        if let Some(Entry::Ready(encoded)) = self.entries.get(&self.index) {
+            self.shown = Some(encoded.protocol.clone());
+            for neighbor in self.neighbors() {
+                self.prepare(neighbor);
+            }
         }
-    };
-    match reader.decode() {
-        Ok(image) => Some(picker.new_resize_protocol(image)),
-        Err(err) => {
-            warn!(path = %path.display(), %err, "failed to decode image for preview");
-            None
+    }
+
+    /// The images before and after the current one.
+    fn neighbors(&self) -> Vec<usize> {
+        let count = self.images.len();
+        let mut neighbors = vec![(self.index + 1) % count, (self.index + count - 1) % count];
+        neighbors.retain(|&index| index != self.index);
+        neighbors.dedup();
+        neighbors
+    }
+
+    /// Starts preparing image `index`, unless it is already.
+    fn prepare(&mut self, index: usize) {
+        if !self.entries.contains_key(&index) {
+            let entry = spawn_job(&self.picker, Source::File(self.images[index].clone()), &self.area);
+            self.entries.insert(index, entry);
         }
     }
 }
