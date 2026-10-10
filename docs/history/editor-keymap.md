@@ -86,3 +86,16 @@ version drove it through the table and failed, because `edtui`'s
   sequence (checked against `vim_keybindings()`), so they're exempt too.
   `w`/`b`/`e`/... aren't: `w` also completes `dw`/`cw`, and a per-key
   check can't see `edtui`'s pending sequence.
+
+## `Ctrl+Up`/`Ctrl+Down`: blocks, and levels in data files
+
+Blocks are runs of non-blank lines (`editor/editor/block_move.rs`), as
+in Vim's paragraph moves. Reported on a JSON file: with no blank lines
+it was one block, and the caret went from the top straight to the end.
+In data formats (JSON, YAML, XML-like; `NESTED_DATA_EXTENSIONS`) the
+keys go by levels instead, as in a tree: down to the next line as deep
+or shallower (the next key, its nested lines passed over; after the
+last one, the next one up), up to the previous one (from the first
+key, its parent); blank lines and lines that only close (`}`, `],`,
+`</a>`) aren't stops. Code keeps blank-line blocks -- by levels, a
+function body would go line by line.
