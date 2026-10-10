@@ -395,6 +395,12 @@ fn apply_edit_key(text: &mut String, cursor: &mut usize, anchor: &mut Option<usi
             paste_clipboard(text, cursor, anchor);
             EditOutcome::TextChanged
         }
+        // Requested for the editor's `Ctrl+F` box, as in the text itself.
+        KeyCode::Char('a' | 'A') if ctrl => {
+            *anchor = Some(0);
+            *cursor = text.chars().count();
+            EditOutcome::NoTextChange
+        }
         KeyCode::Char(c) if !ctrl => {
             delete_selection(text, cursor, anchor);
             insert_char(text, cursor, c);
