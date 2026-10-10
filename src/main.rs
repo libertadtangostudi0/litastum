@@ -17,6 +17,7 @@ mod notice;
 mod path_edit;
 mod terminal_palette;
 mod terminal_setup;
+mod terminal_zoom;
 #[cfg(test)]
 mod test_support;
 mod text_field;
@@ -74,6 +75,10 @@ fn main() -> Result<()> {
             let _ = panel.change_dir(&path.to_string_lossy());
         }
     }
+    #[cfg(windows)]
+    {
+        app.terminal_zoom = windows_terminal::zoom_keys::start();
+    }
     app.last_paths = last_paths::LastPaths::new([app.panels[0].path.clone(), app.panels[1].path.clone()]);
     last_paths::install_close_handler();
     // Loaded here rather than in `App::new` itself so every test that
@@ -97,6 +102,16 @@ fn main() -> Result<()> {
         app.overlay = Some(Overlay::ConfirmPortFarMenu(far_path));
     }
     let result = event_loop::run(&mut terminal, &mut app);
+    // Windows Terminal back at the size it had before litastum.
+    #[cfg(windows)]
+    if let Some(zoom) = &mut app.terminal_zoom {
+        if windows_terminal::zoom_keys::terminal_in_front() {
+            let presses = zoom.presses_to_restore();
+            windows_terminal::zoom_keys::press(presses);
+            zoom.pressed(presses);
+        }
+        event_loop::save_terminal_zoom(zoom);
+    }
     if let Some(paths) = app.last_paths.take_pending() {
         last_paths::save(&paths);
     }

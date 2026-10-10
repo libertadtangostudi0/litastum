@@ -106,6 +106,19 @@ struct Config {
     /// next start (`load_panel_paths`).
     left_panel_path: Option<PathBuf>,
     right_panel_path: Option<PathBuf>,
+    /// Windows Terminal's zoom per screen, in its steps (`terminal_zoom`).
+    terminal_zoom: Option<std::collections::BTreeMap<String, i32>>,
+    /// Where the terminal's tab is now, in steps.
+    terminal_zoom_now: Option<TerminalZoomNow>,
+}
+
+
+/// Windows Terminal's tab (`WT_SESSION`) and the steps it's zoomed by
+/// now: a litastum that ended without putting it back left it there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalZoomNow {
+    pub session: String,
+    pub steps: i32,
 }
 
 
@@ -314,6 +327,29 @@ pub fn load_panel_paths() -> [Option<PathBuf>; 2] {
     };
     let config = read_config(&config_dir);
     [config.left_panel_path, config.right_panel_path]
+}
+
+
+/// Windows Terminal's zoom per screen, in steps (`terminal_zoom`) -- none
+/// saved, every screen at the terminal's own size -- and where its tab
+/// was last.
+pub fn load_terminal_zoom() -> (std::collections::BTreeMap<String, i32>, Option<TerminalZoomNow>) {
+    let Some(config) = config_dir().map(|dir| read_config(&dir)) else {
+        return Default::default();
+    };
+    (config.terminal_zoom.unwrap_or_default(), config.terminal_zoom_now)
+}
+
+
+/// Saves Windows Terminal's zoom per screen and where its tab is,
+/// best-effort.
+pub fn save_terminal_zoom(steps: &std::collections::BTreeMap<String, i32>, now: TerminalZoomNow) {
+    if let Some(config_dir) = config_dir() {
+        persist(&config_dir, |config| {
+            config.terminal_zoom = Some(steps.clone());
+            config.terminal_zoom_now = Some(now);
+        });
+    }
 }
 
 

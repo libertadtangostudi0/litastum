@@ -52,6 +52,10 @@ pub(crate) fn run(terminal: &mut Tui, app: &mut App) -> Result<()> {
         sync_terminal_palette(app);
         sync_title(app);
         sync_screen(app);
+        #[cfg(windows)]
+        if sync_terminal_zoom(app) {
+            settle_terminal_zoom(app, terminal)?;
+        }
         sync_panel_paths(app);
         let layout = draw_and_apply_cursor(terminal, app)?;
         for (panel, (cols, rows)) in app.panels.iter_mut().zip(layout) {
@@ -92,6 +96,85 @@ fn poll_background_tasks(app: &mut App) -> bool {
 #[cfg(windows)]
 const IDLE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
 
+/// Windows Terminal's zoom per screen (`terminal_zoom`): the user's
+/// presses counted for the screen shown, the screen's steps pressed once
+/// no key is held and the terminal is in front, a change saved. `true`
+/// when it pressed keys: the terminal is changing size.
+#[cfg(windows)]
+fn sync_terminal_zoom(app: &mut App) -> bool {
+    use crate::windows_terminal::zoom_keys;
+
+    let screen = screen_name(&app.mode);
+    let focused = app.terminal_focused;
+    let Some(zoom) = &mut app.terminal_zoom else {
+        return false;
+    };
+    zoom_keys::set_focused(focused);
+    // Presses made on the screen before this one was shown count for it:
+    // taken before the switch.
+    let (steps, reset) = zoom_keys::take_presses();
+    if reset {
+        zoom.reset();
+    }
+    zoom.stepped(steps);
+    zoom.set_screen(screen);
+    let presses = zoom.presses_needed();
+    let press = presses != 0 && focused && !zoom_keys::keys_held() && zoom_keys::terminal_in_front();
+    if press {
+        zoom_keys::press(presses);
+        zoom.pressed(presses);
+    }
+    save_terminal_zoom(zoom);
+    press
+}
+
+
+/// How long Windows Terminal may take to start changing size after
+/// litastum's zoom presses, and between its steps.
+#[cfg(windows)]
+const ZOOM_FIRST_RESIZE: std::time::Duration = std::time::Duration::from_millis(150);
+#[cfg(windows)]
+const ZOOM_NEXT_RESIZE: std::time::Duration = std::time::Duration::from_millis(60);
+/// The longest litastum waits for the terminal's zoom to settle.
+#[cfg(windows)]
+const ZOOM_SETTLE_MAX: std::time::Duration = std::time::Duration::from_millis(800);
+
+
+/// Waits out Windows Terminal's zoom after litastum's presses -- it
+/// changes size a step at a time, and drawing at each step showed the
+/// zoom crawl (reported): the resizes are let by until they stop, so the
+/// next frame is drawn once, at the final size. Any other event ends the
+/// wait and is handled.
+#[cfg(windows)]
+fn settle_terminal_zoom(app: &mut App, terminal: &mut Tui) -> Result<()> {
+    let deadline = std::time::Instant::now() + ZOOM_SETTLE_MAX;
+    let mut quiet = ZOOM_FIRST_RESIZE;
+    loop {
+        let wait = quiet.min(deadline.saturating_duration_since(std::time::Instant::now()));
+        if wait.is_zero() || !event::poll(wait)? {
+            return Ok(());
+        }
+        match event::read()? {
+            Event::Resize(..) => quiet = ZOOM_NEXT_RESIZE,
+            other => {
+                dispatch_event(app, terminal, other)?;
+                return Ok(());
+            }
+        }
+    }
+}
+
+
+/// Saves a changed zoom per screen and where the tab is (`terminal_zoom`).
+#[cfg(windows)]
+pub(crate) fn save_terminal_zoom(zoom: &mut crate::terminal_zoom::TerminalZoom) {
+    if let Some((steps, now)) = zoom.take_unsaved() {
+        let now = crate::theming::config::TerminalZoomNow { session: crate::windows_terminal::zoom_keys::session(), steps: now };
+        crate::theming::config::save_terminal_zoom(&steps, now);
+    }
+}
+
+
 /// Blocks until a terminal event arrives (`handle_event`), a background
 /// task finishes, or -- on Windows -- `Ctrl+V` is pressed (Windows
 /// Terminal never sends it, so it's polled).
@@ -101,6 +184,10 @@ fn wait_for_event(app: &mut App, terminal: &mut Tui) -> Result<()> {
         // Every iteration, not only when idle: during Windows Terminal's
         // paste flood there's always an event waiting.
         if try_intercept_paste_hotkey(app)? {
+            return Ok(());
+        }
+        if sync_terminal_zoom(app) {
+            settle_terminal_zoom(app, terminal)?;
             return Ok(());
         }
         let poll_interval = if background_task_pending(app) { BACKGROUND_TASK_POLL_INTERVAL } else { IDLE_POLL_INTERVAL };
@@ -146,6 +233,12 @@ fn wait_for_event(app: &mut App, terminal: &mut Tui) -> Result<()> {
 /// was dispatched for.
 fn handle_event(app: &mut App, terminal: &mut Tui) -> Result<bool> {
     let event = event::read()?;
+    dispatch_event(app, terminal, event)
+}
+
+
+/// `handle_event` for an event already read.
+fn dispatch_event(app: &mut App, terminal: &mut Tui, event: Event) -> Result<bool> {
     if app.note_focus(&event) {
         return Ok(false);
     }

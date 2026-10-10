@@ -231,3 +231,42 @@ background tab's replies and title still reach it. A hung program ties
 up only its tab; closing the tab ends it -- the "can't stop a program
 that ignores Ctrl+C" gap, mostly closed this way.
 
+## A zoom per screen in Windows Terminal
+
+Reported: `Ctrl`+`+`/`-` in Compare zoomed the panels too, run with
+`cargo run` in Windows Terminal -- the per-screen zoom was only the
+window's. Windows Terminal keeps its zoom keys (the app never sees
+them) and has no sequence to set its font size. Weighed with the user:
+leave it, or press the keys ourselves; the latter, knowing it's a
+workaround (`Ctrl`+wheel isn't seen -- awkward on a touchpad anyway --
+and rebound keys break it). `terminal_zoom.rs` counts the presses per
+screen from the polled keys -- a held key by the keyboard's repeat
+delay and rate (`SPI_GETKEYBOARDDELAY`/`SPEED`), by time, polled every
+10 ms meanwhile -- and presses the difference with `SendInput` on a
+switch of screen, once no key is held; its own presses show in the
+polled keys for a moment and are ignored (300 ms). At exit the
+terminal goes back to its size. ConPTY's own focus reports
+(`App::terminal_focused`) keep it from counting keys meant for another
+window.
+
+First version, reported right away: the zooms weren't kept and changed
+on their own. Two causes. The keys were polled every 50 ms with
+`GetAsyncKeyState`: a quick press could fall between two polls, and a
+held key's repeats were only estimated from the keyboard's repeat rate
+-- every miss shifted the count for good. And the terminal went back to
+its size only at `F10`: ended otherwise (`Ctrl+C` under `cargo run`, a
+rebuild), the tab stayed zoomed, and the next litastum in it counted
+from there, the panels' zoom applied twice. Now a low-level keyboard
+hook sees every press and repeat, Windows marks litastum's own
+(`LLKHF_INJECTED`), and where the tab is now is saved with its
+`WT_SESSION` (`terminal_zoom_now`) on every change. The keys are pressed
+only into Windows Terminal's window (`CASCADIA_HOSTING_WINDOW_CLASS`).
+
+Then: the zoom was seen to crawl on a switch to Compare. Windows
+Terminal changes size a step (one point) at a time, and litastum drew a
+whole frame at each step -- first the new screen at the old size, then
+once per resize. Now, after its own presses, litastum lets the resizes
+by until they stop (`event_loop::settle_terminal_zoom`: 150 ms for the
+first, 60 ms between, 800 ms at most; any other event ends the wait and
+is handled) and draws once, at the final size.
+

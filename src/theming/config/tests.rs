@@ -264,3 +264,18 @@ fn the_panels_directories_are_saved_and_read_back() {
     assert_eq!(config.right_panel_path.as_deref(), Some(std::path::Path::new("W:\\right")));
     assert_eq!(config.interface_theme.as_deref(), Some("dracula"), "the rest kept");
 }
+
+
+/// Windows Terminal's zoom per screen survives every other save.
+#[test]
+fn the_terminals_zoom_steps_are_saved_and_kept() {
+    let dir = crate::test_support::unique_scratch_dir("config-terminal-zoom");
+    std::fs::write(dir.join("config.json"), r#"{ "terminal_zoom": { "main": -1, "compare": 2 }, "terminal_zoom_now": { "session": "tab", "steps": 2 } }"#).unwrap();
+
+    persist(&dir, |config| config.popup_style = Some(PopupStyle::Classic));
+
+    let config = read_config(&dir);
+    let steps = config.terminal_zoom.expect("kept");
+    assert_eq!((steps["main"], steps["compare"]), (-1, 2));
+    assert_eq!(config.terminal_zoom_now, Some(TerminalZoomNow { session: "tab".to_string(), steps: 2 }));
+}

@@ -266,6 +266,9 @@ pub struct App {
     /// Where the cells are on screen, for which half a click is in
     /// (`cell_halves`).
     pub cell_halves: crate::cell_halves::CellHalves,
+    /// A zoom per screen in Windows Terminal, when litastum runs there
+    /// (`terminal_zoom`).
+    pub terminal_zoom: Option<crate::terminal_zoom::TerminalZoom>,
     /// `F3` on a `.md` file: the live preview shown beside the editor
     /// (`Mode::Editing` drawn split), refreshed on `Ctrl+S`. Lives here,
     /// not in `Mode::Editing`, so other editor call sites don't carry an
@@ -337,6 +340,7 @@ impl App {
             terminal_screen: None,
             last_paths: Default::default(),
             cell_halves: Default::default(),
+            terminal_zoom: None,
             markdown_edit_preview: None,
             notice: None,
             user_screen: Default::default(),

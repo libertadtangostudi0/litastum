@@ -54,7 +54,8 @@ other terminal on Windows litastum does the same itself
 (`src/cell_halves.rs`: the pointer's pixel position, cells learned from
 its moves).
 Zoom is per litastum screen -- panels, the editor, Compare, the conflict
-resolver each keep their own (requested), saved for the user in `config.json`
+resolver each keep their own (requested; in Windows Terminal by pressing
+its zoom keys, `src/terminal_zoom.rs`, [[litastum-config]]), saved for the user in `config.json`
 ([[litastum-config]]): litastum names its screen with `OSC 1337 ;
 SetUserVar=litastum_screen=...` (ConPTY passes it through; the window
 cuts it out with the inline images, `intercept.rs`).

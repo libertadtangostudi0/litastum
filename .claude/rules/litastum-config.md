@@ -47,6 +47,22 @@ JSON so every other key stays. The console app doesn't use the field
 but declares it on `Config`: every save writes the whole file, and an
 unknown key would be dropped (`saving_a_setting_keeps_the_windows_zoom`).
 
+## `terminal_zoom`: the same in Windows Terminal, in its steps
+
+Requested: in Windows Terminal too, Compare's zoom left the panels'
+alone. Windows Terminal keeps `Ctrl`+`+`/`-`/`0` and nothing sets its
+font size, so `terminal_zoom.rs` counts the user's presses -- a
+low-level keyboard hook (`windows_terminal::zoom_keys`), every repeat,
+its own presses told apart by `LLKHF_INJECTED` -- as steps of the screen
+shown, and on a switch of screen presses the keys itself (`SendInput`,
+only into Windows Terminal's window) to that screen's steps; at exit
+back to the terminal's own size. Saved per screen under `terminal_zoom`,
+in steps from that size, and where the tab is now under
+`terminal_zoom_now` (with its `WT_SESSION`): a litastum that ended
+without putting the tab back left it zoomed. Only with `WT_SESSION` set
+and not in litastum's window. `Ctrl`+wheel isn't seen (not used,
+requested), and rebound zoom keys would break it.
+
 ## `Limits` (`theming/config/limits.rs`): tunable caps, one place
 
 Requested directly, after a perf/weak-spot audit pass turned up five
