@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Position, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Clear},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
@@ -13,17 +13,35 @@ use crate::theming::Theme;
 /// Margin between the popup and the editor area's own top/right edges.
 const MARGIN: u16 = 1;
 
-/// Total popup width, border included -- deliberately compact per
-/// explicit request: just the border and the query field inside, no
-/// title/label ("this is standard editor behavior, doesn't need
-/// spelling out") and no footer hints.
-const WIDTH: u16 = 30;
+/// The popup's narrowest width, border included -- just the border and
+/// the query field inside, no title/label and no footer hints (requested).
+const MIN_WIDTH: u16 = 30;
+
+
+/// The box's width for a query (and its suggestion) of `content` cells:
+/// it grows with it, plus the caret's cell, up to a third of the editor
+/// (requested: a long query couldn't be seen), never under `MIN_WIDTH`.
+fn popup_width(content: usize, area_width: u16) -> u16 {
+    let wanted = u16::try_from(content + 3).unwrap_or(u16::MAX);
+    let widest = (area_width / 3).max(MIN_WIDTH);
+    wanted.clamp(MIN_WIDTH, widest).min(area_width)
+}
+
 
 /// The `Ctrl+F` box: a single-row bordered field at the editor's top-right,
 /// like VS Code's (the first version, a full popup card, was too big).
+/// A query wider than the box scrolls sideways to keep the caret in view.
 /// Returns the cursor position.
 pub fn draw_find_popup(frame: &mut Frame, area: Rect, editor: &Editor, search_history: &[String], theme: &Theme) -> Position {
-    let width = WIDTH.min(area.width);
+    let empty = TextField::new();
+    let field = editor.search_field().unwrap_or(&empty);
+    // Char-based, not a byte slice -- a query can easily contain
+    // non-ASCII text, where slicing by `len()` could split a character.
+    let suggestion_suffix = crate::editor::find_history::suggest(search_history, field.text())
+        .map(|full| full.chars().skip(field.text().chars().count()).collect::<String>());
+    let content = field.text().chars().count() + suggestion_suffix.as_ref().map_or(0, |suffix| suffix.chars().count());
+
+    let width = popup_width(content, area.width);
     let popup = Rect {
         x: area.right().saturating_sub(width + MARGIN).max(area.x),
         y: area.y + MARGIN,
@@ -36,20 +54,14 @@ pub fn draw_find_popup(frame: &mut Frame, area: Rect, editor: &Editor, search_hi
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let empty = TextField::new();
-    let field = editor.search_field().unwrap_or(&empty);
-    // Char-based, not a byte slice -- a query can easily contain
-    // non-ASCII text, where slicing by `len()` could split a character.
-    let suggestion_suffix = crate::editor::find_history::suggest(search_history, field.text())
-        .map(|full| full.chars().skip(field.text().chars().count()).collect::<String>());
-
     let mut spans = super::text_field::field_spans(field, theme);
     if let Some(suffix) = suggestion_suffix {
         spans.push(Span::styled(suffix, Style::default().fg(theme.text_dim)));
     }
-    frame.render_widget(Line::from(spans), inner);
+    let scroll = (field.cursor() + 1).saturating_sub(usize::from(inner.width));
+    frame.render_widget(Paragraph::new(Line::from(spans)).scroll((0, scroll as u16)), inner);
 
-    Position { x: inner.x + field.cursor() as u16, y: inner.y }
+    Position { x: inner.x + (field.cursor() - scroll) as u16, y: inner.y }
 }
 
 
@@ -164,6 +176,44 @@ mod tests {
         let right_border_x = area.right() - 1 - MARGIN;
         assert!(buffer[(right_border_x, MARGIN)].symbol() != " ", "should have a border cell near the top-right corner");
         assert_eq!(buffer[(area.width / 2, area.height / 2)].symbol(), " ", "should not be drawn centered");
+    }
+
+    /// Requested: a long query couldn't be seen -- the box grows with it,
+    /// up to a third of the editor, and never shrinks below its old size.
+    #[test]
+    fn the_box_grows_with_the_query_up_to_a_third_of_the_editor() {
+        assert_eq!(popup_width(5, 150), MIN_WIDTH, "a short query keeps the compact box");
+        assert_eq!(popup_width(40, 150), 43, "the query, the caret's cell and the border");
+        assert_eq!(popup_width(200, 150), 50, "a third of the editor at most");
+        assert_eq!(popup_width(200, 60), MIN_WIDTH, "a narrow editor still gets the compact box");
+        assert_eq!(popup_width(200, 20), 20, "never wider than the editor");
+    }
+
+    /// Requested: the caret of a long query went past the box -- the text
+    /// scrolls to keep it, and the end of the query, in view.
+    #[test]
+    fn a_query_wider_than_the_box_scrolls_to_keep_the_caret_in_view() {
+        let mut editor = open_test_editor("hello world");
+        editor.start_search();
+        let query: String = (0..60).map(|i| char::from(b'a' + (i % 26) as u8)).collect();
+        for c in query.chars() {
+            editor.search_push_char(c);
+        }
+        let theme = Theme::dark();
+
+        let mut terminal = Terminal::new(TestBackend::new(90, 24)).unwrap();
+        let mut cursor = Position::default();
+        terminal
+            .draw(|frame| {
+                cursor = draw_find_popup(frame, frame.area(), &editor, &[], &theme);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let popup_right = 90 - 1 - MARGIN;
+        assert!(cursor.x < popup_right, "the caret stays inside the box, left of its border");
+        let shown: String = (cursor.x - 5..cursor.x).map(|x| buffer[(x, cursor.y)].symbol().to_string()).collect();
+        assert_eq!(shown, query[55..], "the query's end shows right before the caret");
     }
 
 }
