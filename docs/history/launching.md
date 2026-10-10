@@ -270,3 +270,10 @@ by until they stop (`event_loop::settle_terminal_zoom`: 150 ms for the
 first, 60 ms between, 800 ms at most; any other event ends the wait and
 is handled) and draws once, at the final size.
 
+Considered and turned down: `"delta": 2` on Windows Terminal's
+`adjustFontSize` (`Ctrl`+`=`/`-`) would halve the steps of a switch,
+and litastum, counting presses, would work unchanged. But the delta
+belongs to the keys, not to litastum's presses: the user's own zoom
+would go two points at a time too, in every tab. One-point steps by
+hand matter more than a faster switch.
+

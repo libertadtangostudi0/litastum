@@ -61,7 +61,11 @@ in steps from that size, and where the tab is now under
 `terminal_zoom_now` (with its `WT_SESSION`): a litastum that ended
 without putting the tab back left it zoomed. Only with `WT_SESSION` set
 and not in litastum's window. `Ctrl`+wheel isn't seen (not used,
-requested), and rebound zoom keys would break it.
+requested), and rebound zoom keys would break it. A switch of screen
+takes as many steps as the zooms differ by, one point each; don't
+suggest a bigger `delta` on Windows Terminal's `adjustFontSize` to
+speed it up -- turned down: the same keys are the user's, who wants
+one-point steps by hand.
 
 ## `Limits` (`theming/config/limits.rs`): tunable caps, one place
 
