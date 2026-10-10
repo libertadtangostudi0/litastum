@@ -54,6 +54,7 @@ pub(crate) fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut A
         sync_terminal_palette(app);
         sync_title(app);
         sync_screen(app);
+        sync_panel_paths(app);
         let layout = draw_and_apply_cursor(terminal, app)?;
         for (panel, (cols, rows)) in app.panels.iter_mut().zip(layout) {
             panel.set_columns(cols);
@@ -70,14 +71,19 @@ pub(crate) fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut A
 /// without waiting for input.
 const BACKGROUND_TASK_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(30);
 
-/// Whether an image decode or a Find file search is in flight.
+/// Whether an image decode or a Find file search is in flight, or the
+/// panels' directories wait to be written (`last_paths`).
 fn background_task_pending(app: &App) -> bool {
-    explorer::is_image_decode_pending(app) || explorer::is_find_file_search_pending(app)
+    explorer::is_image_decode_pending(app) || explorer::is_find_file_search_pending(app) || app.last_paths.pending()
 }
 
 /// Polls every background task once; `true` if one finished and the
-/// screen should redraw.
+/// screen should redraw. Writing the panels' directories, once due,
+/// changes nothing on screen.
 fn poll_background_tasks(app: &mut App) -> bool {
+    if let Some(paths) = app.last_paths.take_due(std::time::Instant::now()) {
+        crate::last_paths::save(&paths);
+    }
     let image = explorer::poll_pending_image_decode(app);
     let search = explorer::poll_pending_find_file_search(app);
     image || search
@@ -228,6 +234,14 @@ fn sync_title(app: &mut App) {
         return;
     }
     app.terminal_title = Some(wanted);
+}
+
+
+/// Notes the panels' directories for the next start (`last_paths`): a
+/// change is written 30 s later, from the background-task polling below.
+fn sync_panel_paths(app: &mut App) {
+    let current = [app.panels[0].path.clone(), app.panels[1].path.clone()];
+    app.last_paths.note(current, std::time::Instant::now());
 }
 
 

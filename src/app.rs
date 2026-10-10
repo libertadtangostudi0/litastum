@@ -261,6 +261,8 @@ pub struct App {
     pub terminal_title: Option<String>,
     /// The screen last reported to the terminal (`event_loop::sync_screen`).
     pub terminal_screen: Option<&'static str>,
+    /// The panels' directories for the next start (`last_paths`).
+    pub last_paths: crate::last_paths::LastPaths,
     /// `F3` on a `.md` file: the live preview shown beside the editor
     /// (`Mode::Editing` drawn split), refreshed on `Ctrl+S`. Lives here,
     /// not in `Mode::Editing`, so other editor call sites don't carry an
@@ -330,6 +332,7 @@ impl App {
             terminal_palette: None,
             terminal_title: None,
             terminal_screen: None,
+            last_paths: Default::default(),
             markdown_edit_preview: None,
             notice: None,
             user_screen: Default::default(),

@@ -102,6 +102,10 @@ struct Config {
     /// console app, but kept: every save writes the whole file, and an
     /// unknown key would be dropped.
     window_zoom: Option<std::collections::BTreeMap<String, f32>>,
+    /// The panels' last directories (`last_paths`), opened again at the
+    /// next start (`load_panel_paths`).
+    left_panel_path: Option<PathBuf>,
+    right_panel_path: Option<PathBuf>,
 }
 
 
@@ -298,6 +302,29 @@ fn settings_from(config: &Config) -> Settings {
         popup_style: config.popup_style.unwrap_or_default(),
         editor_keymap_mode: config.editor_keymap_mode.unwrap_or_default(),
         compare_line_ending_display: config.compare_line_ending_display.unwrap_or_default(),
+    }
+}
+
+
+/// The left and right panels' last directories, if saved -- litastum
+/// opens them again at start (requested), each one that still exists.
+pub fn load_panel_paths() -> [Option<PathBuf>; 2] {
+    let Some(config_dir) = config_dir() else {
+        return [None, None];
+    };
+    let config = read_config(&config_dir);
+    [config.left_panel_path, config.right_panel_path]
+}
+
+
+/// Saves the panels' directories, best-effort (`last_paths` decides
+/// when).
+pub fn save_panel_paths(left: &Path, right: &Path) {
+    if let Some(config_dir) = config_dir() {
+        persist(&config_dir, |config| {
+            config.left_panel_path = Some(left.to_path_buf());
+            config.right_panel_path = Some(right.to_path_buf());
+        });
     }
 }
 

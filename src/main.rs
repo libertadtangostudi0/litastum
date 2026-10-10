@@ -9,6 +9,7 @@ mod explorer;
 mod image_host;
 mod app_data;
 mod keyboard_layout;
+mod last_paths;
 mod list_cursor;
 mod logging;
 mod notice;
@@ -65,6 +66,15 @@ fn main() -> Result<()> {
     // -- loaded here, not in App::new, so tests via test_support::test_app
     // never touch the real config.json for this.
     app.settings = theming::config::load_settings();
+    // The panels open where they were last time (requested), each whose
+    // directory still exists; else where litastum was started.
+    for (panel, path) in app.panels.iter_mut().zip(theming::config::load_panel_paths()) {
+        if let Some(path) = path.filter(|path| path.is_dir()) {
+            let _ = panel.change_dir(&path.to_string_lossy());
+        }
+    }
+    app.last_paths = last_paths::LastPaths::new([app.panels[0].path.clone(), app.panels[1].path.clone()]);
+    last_paths::install_close_handler();
     // Loaded here rather than in `App::new` itself so every test that
     // builds an `App` (nearly all of them, via `test_support::test_app`)
     // stays isolated from whatever real `command_history.txt` happens
@@ -86,6 +96,9 @@ fn main() -> Result<()> {
         app.overlay = Some(Overlay::ConfirmPortFarMenu(far_path));
     }
     let result = event_loop::run(&mut terminal, &mut app);
+    if let Some(paths) = app.last_paths.take_pending() {
+        last_paths::save(&paths);
+    }
     restore_terminal(&mut terminal, app.mouse_capture_enabled)?;
     // Unlike command_history.txt (saved per command, from
     // browsing::submit_command_line), the editor's search history is

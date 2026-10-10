@@ -246,3 +246,21 @@ fn saving_a_setting_keeps_the_windows_zoom() {
     assert_eq!(written["window_zoom"]["compare"], 11.0);
     assert_eq!(written["popup_style"], "Classic");
 }
+
+
+/// Requested: the panels open where they were last time.
+#[test]
+fn the_panels_directories_are_saved_and_read_back() {
+    let dir = crate::test_support::unique_scratch_dir("config-panel-paths");
+    std::fs::write(dir.join("config.json"), r#"{ "interface_theme": "dracula" }"#).unwrap();
+
+    persist(&dir, |config| {
+        config.left_panel_path = Some(std::path::PathBuf::from("W:\\left"));
+        config.right_panel_path = Some(std::path::PathBuf::from("W:\\right"));
+    });
+
+    let config = read_config(&dir);
+    assert_eq!(config.left_panel_path.as_deref(), Some(std::path::Path::new("W:\\left")));
+    assert_eq!(config.right_panel_path.as_deref(), Some(std::path::Path::new("W:\\right")));
+    assert_eq!(config.interface_theme.as_deref(), Some("dracula"), "the rest kept");
+}

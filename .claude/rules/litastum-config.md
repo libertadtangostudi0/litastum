@@ -24,6 +24,18 @@ shell profile stay separate on purpose: themes are looked up by name
 across directories, and the shell is only saved by F9 -> Options ->
 Save setup.
 
+## `left_panel_path`/`right_panel_path`: the panels reopen where they were
+
+Requested: litastum starts with each panel in its last directory (one
+that no longer exists falls back to the start directory, `main.rs`).
+Written (`last_paths.rs`) 30 s after a change -- a crash loses at most
+that -- at exit, and when the console is closed: litastum's window or
+tab, Windows Terminal's tab, a logoff (`CTRL_CLOSE_EVENT`, handled with
+`SetConsoleCtrlHandler`, synchronously -- Windows ends the process when
+the handler returns, so `ctrlc`'s handler thread could be too late).
+Not on every change (requested). With several tabs, the last write
+wins.
+
 ## `window_zoom`: litastum's window keeps its zoom here
 
 The window (`gui/src/zoom.rs`) saves each screen's font size (`main`,
