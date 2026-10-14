@@ -179,3 +179,24 @@ fn typing_over_a_shift_selection_replaces_it() {
     assert_eq!(editor.state.lines, Lines::from("Xllo"));
     assert!(!editor.has_selection());
 }
+
+
+/// Reported: after selecting a word, `Ctrl+C` moved the caret a character
+/// left -- `edtui`'s copy is vim's yank, which drops the selection. It
+/// copies and leaves everything as it was, as in VS Code.
+#[test]
+fn ctrl_c_copies_and_keeps_the_selection_and_the_caret() {
+    let (mut editor, _path) = open_test_editor("hello world\n");
+    editor.extend_word_selection(true);
+    let (selection, cursor) = (editor.state.selection.clone(), editor.cursor());
+    assert!(selection.is_some(), "precondition: \"hello\" selected");
+
+    editor.input(ctrl_key('c'));
+
+    assert_eq!(editor.state.selection, selection, "still selected");
+    assert_eq!(editor.cursor(), cursor, "the caret where it was");
+    assert_eq!(editor.state.mode, EditorMode::Visual);
+
+    editor.input(key(KeyCode::Right));
+    assert!(!editor.has_selection(), "and the selection goes as usual");
+}

@@ -151,7 +151,11 @@ impl Editor {
         let has_long_line = super::word_highlight::has_pathologically_long_line(&lines);
         let mut state = EditorState::new(lines);
         state.mode = starting_mode(keymap_mode);
-        state.set_clipboard(OsClipboardBridge);
+        // Tests keep `edtui`'s own clipboard: a copy must never reach the
+        // real one of whoever runs the suite.
+        if !cfg!(test) {
+            state.set_clipboard(OsClipboardBridge);
+        }
 
         Ok(Self {
             path,

@@ -99,3 +99,14 @@ last one, the next one up), up to the previous one (from the first
 key, its parent); blank lines and lines that only close (`}`, `],`,
 `</a>`) aren't stops. Code keeps blank-line blocks -- by levels, a
 function body would go line by line.
+
+## `Ctrl+C` on a selection
+
+`Ctrl+C` went to `edtui`'s `CopySelection`, vim's yank: it dropped the
+selection and left Visual mode. The caret, drawn after a selection's
+last character while there was one, then showed before it -- reported
+as the caret moving a character left after copying a selected word.
+`Editor::input` now copies and puts the selection, caret and mode back,
+as VS Code leaves them. Tests keep `edtui`'s own clipboard
+(`Editor::open` sets the OS one outside tests only), so a test's copy
+never reaches the real clipboard.

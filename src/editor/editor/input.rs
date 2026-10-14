@@ -132,6 +132,19 @@ impl Editor {
             }
         }
 
+        // Ctrl+C copies and changes nothing, as in VS Code: `edtui`'s
+        // `CopySelection` is vim's yank -- it dropped the selection, and
+        // the caret, drawn after the selection's last character while
+        // there was one, showed a character to the left (reported).
+        if ctrl && key.code == KeyCode::Char('c') && self.state.mode == EditorMode::Visual {
+            let (selection, cursor) = (self.state.selection.clone(), self.state.cursor);
+            CopySelection.execute(&mut self.state);
+            self.state.selection = selection;
+            self.state.cursor = cursor;
+            self.state.mode = EditorMode::Visual;
+            return true;
+        }
+
         // Typing over a selection replaces it. A plain `Char` has no
         // `Visual`-mode binding and `edtui` only inserts in Insert mode,
         // so without this the key was dropped. The snapshot above already
