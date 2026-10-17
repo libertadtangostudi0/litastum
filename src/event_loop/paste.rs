@@ -176,8 +176,7 @@ mod tests {
     /// reach the buffer underneath.
     #[test]
     fn a_paste_over_an_overlay_leaves_the_editor_alone() {
-        let mut app = editor_app("hello
-");
+        let mut app = editor_app("hello\n");
         app.overlay = Some(crate::app::Overlay::ConfirmDiscard);
 
         handle_paste_event(&mut app, "pasted").unwrap();

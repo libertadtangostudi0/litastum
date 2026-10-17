@@ -102,9 +102,7 @@ fn a_drag_past_the_end_still_selects_the_line() {
 /// right of it puts the caret after it.
 #[test]
 fn a_one_character_line_tells_a_click_on_it_from_one_past_it() {
-    let (mut editor, _path) = open_test_editor("first
-}
-");
+    let (mut editor, _path) = open_test_editor("first\n}\n");
     let buffer = draw(&mut editor);
     let y = (0..buffer.area.height).find(|&y| (0..buffer.area.width).any(|x| buffer[(x, y)].symbol() == "}")).unwrap();
     let x = column_of(&buffer, y, "}");

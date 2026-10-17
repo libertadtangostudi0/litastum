@@ -255,8 +255,7 @@ mod tests {
             while !command.is_finished() && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(20));
             }
-            command.output().iter().map(|line| line.to_string()).collect::<Vec<_>>().join("
-")
+            command.output().iter().map(|line| line.to_string()).collect::<Vec<_>>().join("\n")
         }
 
         /// Regression: `.arg(line)` delivered `"Project Alpha"` to `svn`
@@ -268,8 +267,7 @@ mod tests {
         fn a_quoted_argument_survives_cmds_own_reparsing_unmangled() {
             let dir = unique_scratch_dir("shell-argument");
             let script = dir.join("echo_arg.bat");
-            fs::write(&script, "@echo [%~1]
-").unwrap();
+            fs::write(&script, "@echo [%~1]\n").unwrap();
 
             let output = run_to_end(&format!("call \"{}\" \"Project Alpha\"", script.display()), &dir);
 
@@ -283,8 +281,7 @@ mod tests {
         fn a_quoted_program_path_followed_by_a_quoted_argument_survives_too() {
             let dir = unique_scratch_dir("shell-argument leading quote");
             let script = dir.join("echo_arg.bat");
-            fs::write(&script, "@echo [%~1]
-").unwrap();
+            fs::write(&script, "@echo [%~1]\n").unwrap();
 
             let output = run_to_end(&format!("\"{}\" \"Project Alpha\"", script.display()), &dir);
 

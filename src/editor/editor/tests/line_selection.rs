@@ -144,16 +144,12 @@ fn shift_home_at_the_start_and_shift_end_at_the_end_select_nothing() {
 /// line break, so a paste over it ran into the next line ("Xnext").
 #[test]
 fn a_paste_over_a_fully_selected_line_keeps_the_next_line_apart() {
-    let mut editor = editor_at("hello world
-next
-", 0, 0);
+    let mut editor = editor_at("hello world\nnext\n", 0, 0);
     editor.input(shift_key(KeyCode::End));
 
     editor.paste_text("X");
 
-    assert_eq!(editor.text(), "X
-next
-");
+    assert_eq!(editor.text(), "X\nnext\n");
 }
 
 
@@ -175,14 +171,10 @@ next
 
 #[test]
 fn typing_over_a_fully_selected_line_replaces_just_its_text() {
-    let mut editor = editor_at("hello
-next
-", 0, 0);
+    let mut editor = editor_at("hello\nnext\n", 0, 0);
     editor.input(shift_key(KeyCode::End));
 
     editor.input(key(KeyCode::Char('x')));
 
-    assert_eq!(editor.text(), "x
-next
-");
+    assert_eq!(editor.text(), "x\nnext\n");
 }

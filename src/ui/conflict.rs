@@ -350,8 +350,7 @@ mod tests {
     #[test]
     fn the_wheel_over_an_unfocused_top_pane_scrolls_the_focused_one() {
         let dir = crate::test_support::unique_scratch_dir("conflict-wheel");
-        let body: String = (0..100).map(|n| format!("line {n}
-")).collect();
+        let body: String = (0..100).map(|n| format!("line {n}\n")).collect();
         let result = format!("{body}<<<<<<< .working
 mine
 =======

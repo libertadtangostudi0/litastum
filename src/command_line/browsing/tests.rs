@@ -270,8 +270,7 @@ mod handle_browsing_key_tests {
     #[test]
     fn f4_opens_a_file_whose_name_is_also_in_the_history() {
         let dir = unique_scratch_dir("browsing-keys-f4");
-        fs::write(dir.join("cmt_msg.txt"), "message
-").unwrap();
+        fs::write(dir.join("cmt_msg.txt"), "message\n").unwrap();
         let mut app = test_app(dir.clone());
         app.command_history = vec!["cmt_msg.txt".into(), "svn commit -F cmt_msg.txt RFI14.1".into()];
         app.command_line.set_text("cmt");

@@ -85,8 +85,7 @@ fn paste_undo_stack_is_capped_dropping_the_oldest_entry() {
 
     // Multi-line pastes: whole-buffer entries, the ones the cap is for.
     for i in 0..cap + 3 {
-        editor.paste_text(&format!("{i}
-next"));
+        editor.paste_text(&format!("{i}\nnext"));
     }
 
     assert_eq!(editor.undo_stack.len(), cap, "the stack must never grow past the configured cap");
@@ -97,8 +96,7 @@ next"));
 /// whole-buffer ones, but not without end either.
 #[test]
 fn typing_keeps_up_to_a_thousand_undo_steps() {
-    let (mut editor, _path) = open_test_editor("x
-");
+    let (mut editor, _path) = open_test_editor("x\n");
 
     for _ in 0..1005 {
         editor.input(key(KeyCode::Char('a')));
@@ -247,27 +245,21 @@ fn select_chars_right(editor: &mut Editor, from: Index2, count: usize) {
 /// in place and pasted next to it.
 #[test]
 fn paste_text_replaces_the_selected_text() {
-    let (mut editor, _path) = open_test_editor("hello world
-");
+    let (mut editor, _path) = open_test_editor("hello world\n");
     select_chars_right(&mut editor, Index2::new(0, 6), 5); // "world"
 
     editor.paste_text("there");
 
-    assert_eq!(editor.state.lines, Lines::from("hello there
-"));
+    assert_eq!(editor.state.lines, Lines::from("hello there\n"));
 }
 
 
 #[test]
 fn a_multi_line_paste_replaces_the_selected_text_too() {
-    let (mut editor, _path) = open_test_editor("let x = old;
-rest
-");
+    let (mut editor, _path) = open_test_editor("let x = old;\nrest\n");
     select_chars_right(&mut editor, Index2::new(0, 8), 3); // "old"
 
-    editor.paste_text("f(
-    1,
-)");
+    editor.paste_text("f(\n    1,\n)");
 
     assert_eq!(editor.state.lines, Lines::from("let x = f(
     1,
@@ -289,8 +281,7 @@ d
     editor.state.cursor = Index2::new(1, 1);
     editor.input(shift_key(KeyCode::Down));
 
-    editor.paste_text("X
-Y");
+    editor.paste_text("X\nY");
 
     assert_eq!(editor.state.lines, Lines::from("a
 xX
@@ -302,15 +293,13 @@ d
 
 #[test]
 fn undoing_a_paste_over_a_selection_brings_the_selected_text_back_in_one_step() {
-    let (mut editor, _path) = open_test_editor("hello world
-");
+    let (mut editor, _path) = open_test_editor("hello world\n");
     select_chars_right(&mut editor, Index2::new(0, 6), 5);
 
     editor.paste_text("there");
     editor.input(ctrl_key('z'));
 
-    assert_eq!(editor.state.lines, Lines::from("hello world
-"));
+    assert_eq!(editor.state.lines, Lines::from("hello world\n"));
 }
 
 

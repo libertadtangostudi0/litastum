@@ -35,24 +35,21 @@ c
 /// F2 saves, as in Far's editor.
 #[test]
 fn f2_saves_like_ctrl_s() {
-    let (mut app, path) = open_editor_app("hi
-");
+    let (mut app, path) = open_editor_app("hi\n");
     handle_editor_key(&mut app, key(KeyCode::Char('!'))).unwrap();
 
     handle_editor_key(&mut app, key(KeyCode::F(2))).unwrap();
 
     let Mode::Editing(editor) = &app.mode else { panic!("expected Mode::Editing") };
     assert!(!editor.is_dirty());
-    assert_eq!(fs::read_to_string(&path).unwrap(), "!hi
-");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "!hi\n");
 }
 
 /// Shift+F2 turns the title into a path field; Enter saves there and the
 /// editor carries on with the new file. Esc first leaves the field only.
 #[test]
 fn shift_f2_saves_as_a_typed_path() {
-    let (mut app, path) = open_editor_app("hi
-");
+    let (mut app, path) = open_editor_app("hi\n");
     handle_editor_key(&mut app, key(KeyCode::Char('!'))).unwrap();
 
     handle_editor_key(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::SHIFT)).unwrap();
@@ -61,10 +58,8 @@ fn shift_f2_saves_as_a_typed_path() {
     handle_editor_key(&mut app, key(KeyCode::Enter)).unwrap();
 
     assert!(app.editor_save_as.is_none());
-    assert_eq!(fs::read_to_string(&target).unwrap(), "!hi
-");
-    assert_eq!(fs::read_to_string(&path).unwrap(), "hi
-", "the original is untouched");
+    assert_eq!(fs::read_to_string(&target).unwrap(), "!hi\n");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "hi\n", "the original is untouched");
     let Mode::Editing(editor) = &app.mode else { panic!("expected Mode::Editing") };
     assert_eq!(editor.path(), target);
     assert!(!editor.is_dirty());
@@ -72,8 +67,7 @@ fn shift_f2_saves_as_a_typed_path() {
 
 #[test]
 fn esc_in_the_save_as_field_keeps_the_editor_open() {
-    let (mut app, _path) = open_editor_app("hi
-");
+    let (mut app, _path) = open_editor_app("hi\n");
     handle_editor_key(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::SHIFT)).unwrap();
     handle_editor_key(&mut app, key(KeyCode::Char('x'))).unwrap();
 

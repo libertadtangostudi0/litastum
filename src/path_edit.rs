@@ -50,6 +50,21 @@ pub enum PathEditKey {
     Submit(PathBuf),
 }
 
+/// What's left after a key in a field over an editor's title
+/// (`PathEdit::key_over`).
+#[derive(Debug, PartialEq, Eq)]
+pub enum PathEditStep {
+    /// Still typing: the field stays.
+    Editing,
+    /// `Esc`: the field closes.
+    Cancelled,
+    /// Saved as the typed path: the field closes.
+    Saved,
+    /// Load this path into the pane, then close the field -- or keep it
+    /// open, on an error, to fix the path.
+    Open(PathBuf),
+}
+
 impl PathEdit {
     /// Starts with the pane's path and the caret at its end, by the file
     /// name.
@@ -125,6 +140,26 @@ impl PathEdit {
     /// which becomes its file. Another file already there is overwritten
     /// only on a second `Enter` with the same path; the first one fails
     /// with `AlreadyExists`, saying so. Errors read as a whole notice.
+    /// A key in a field over `editor`'s title -- F4's, Compare's, the
+    /// resolver's: `Esc` closes it, `Enter` saves `editor` as the typed
+    /// path (`SaveAs`) or hands the path back to be loaded (`Open`), which
+    /// only the caller can do. `Err` (the field stays open) if saving
+    /// failed or asks for a second `Enter` to overwrite.
+    pub fn key_over(&mut self, key: KeyEvent, editor: &mut Editor) -> io::Result<PathEditStep> {
+        match self.key(key) {
+            PathEditKey::Editing => Ok(PathEditStep::Editing),
+            PathEditKey::Cancel => Ok(PathEditStep::Cancelled),
+            PathEditKey::Submit(path) => match self.purpose {
+                PathPurpose::Open => Ok(PathEditStep::Open(path)),
+                PathPurpose::SaveAs => {
+                    self.save_editor_as(editor, path)?;
+                    Ok(PathEditStep::Saved)
+                }
+            },
+        }
+    }
+
+
     pub fn save_editor_as(&mut self, editor: &mut Editor, typed: PathBuf) -> io::Result<()> {
         let target = match editor.path().parent() {
             Some(dir) if typed.is_relative() => dir.join(&typed),
@@ -152,6 +187,32 @@ mod tests {
     use super::*;
     use crate::editor::EditorKeymapMode;
     use crate::test_support::{key, unique_scratch_dir};
+
+    /// What's left to do after a key, the same for F4, Compare and the
+    /// resolver: close, save as, or load a path.
+    #[test]
+    fn a_key_over_an_editor_closes_saves_or_hands_a_path_back() {
+        let dir = unique_scratch_dir("path-edit-step");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "text").unwrap();
+        let mut editor = Editor::open(file.clone(), None, EditorKeymapMode::Standard).unwrap();
+
+        let mut open = PathEdit::new(&file);
+        assert_eq!(open.key_over(key(KeyCode::Char('x')), &mut editor).unwrap(), PathEditStep::Editing);
+        assert_eq!(open.key_over(key(KeyCode::Esc), &mut editor).unwrap(), PathEditStep::Cancelled);
+        let mut open = PathEdit::new(&file);
+        assert_eq!(open.key_over(key(KeyCode::Enter), &mut editor).unwrap(), PathEditStep::Open(file.clone()));
+
+        let mut save_as = PathEdit::save_as(&file);
+        for _ in 0..5 {
+            save_as.key_over(key(KeyCode::Backspace), &mut editor).unwrap();
+        }
+        for c in "b.txt".chars() {
+            save_as.key_over(key(KeyCode::Char(c)), &mut editor).unwrap();
+        }
+        assert_eq!(save_as.key_over(key(KeyCode::Enter), &mut editor).unwrap(), PathEditStep::Saved);
+        assert_eq!(std::fs::read_to_string(dir.join("b.txt")).unwrap(), "text");
+    }
 
     #[test]
     fn starts_with_the_path_and_the_caret_at_its_end() {

@@ -486,8 +486,7 @@ fn plain_keys_are_swallowed_by_the_search_box_not_forwarded_to_the_buffer() {
 /// Requested: `Ctrl+A` in the box selects the whole query, not the text.
 #[test]
 fn ctrl_a_in_the_search_box_selects_the_whole_query() {
-    let (mut app, _path) = open_editor_app("hello world
-");
+    let (mut app, _path) = open_editor_app("hello world\n");
     handle_editor_key(&mut app, ctrl_key('f')).unwrap();
     for c in "world".chars() {
         handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();

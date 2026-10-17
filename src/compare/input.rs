@@ -1,56 +1,15 @@
 use color_eyre::eyre::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
 use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
-use crate::editor::{cancel_selection, edtui_supports_key, text_key};
+use crate::editor::{cancel_selection, text_key};
 use crate::notice::Notice;
 use crate::yes_no::{self, Answer};
 
+use super::keys::{resolve, DiffCommand};
 use super::menu::open_compare_menu;
-
-/// A key in Compare, like `editor_keymap::EditorCommand` plus:
-/// `ToggleFocus` (`Tab` switches panes, as elsewhere in the app) and
-/// `NextHunk`/`PreviousHunk` on `Alt+Down`/`Alt+Up` and on `F8`/`F7`
-/// (TortoiseMerge/`merge.exe` convention, requested). `Ctrl+Up`/`Down`
-/// move by blocks of code, as in F4 (`text_key`, requested).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CompareCommand {
-    Close,
-    Save,
-    SaveAs,
-    ToggleFocus,
-    EditPath,
-    NextHunk,
-    PreviousHunk,
-    OpenMenu,
-    Forward,
-    Ignore,
-}
-
-fn resolve(key: KeyEvent) -> CompareCommand {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let alt = key.modifiers.contains(KeyModifiers::ALT);
-
-    match key.code {
-        KeyCode::Esc => CompareCommand::Close,
-        KeyCode::Char('s' | 'S') if ctrl => CompareCommand::Save,
-        // Ctrl+F2 edits the path, as on a panel's title; above plain F2 (save).
-        KeyCode::F(2) if ctrl => CompareCommand::EditPath,
-        KeyCode::F(2) if key.modifiers.contains(KeyModifiers::SHIFT) => CompareCommand::SaveAs,
-        KeyCode::F(2) => CompareCommand::Save,
-        KeyCode::Tab => CompareCommand::ToggleFocus,
-        KeyCode::Char('l' | 'L') if ctrl => CompareCommand::EditPath,
-        KeyCode::Down if alt => CompareCommand::NextHunk,
-        KeyCode::Up if alt => CompareCommand::PreviousHunk,
-        KeyCode::F(8) => CompareCommand::NextHunk,
-        KeyCode::F(7) => CompareCommand::PreviousHunk,
-        KeyCode::F(9) => CompareCommand::OpenMenu,
-        _ if edtui_supports_key(key.code) => CompareCommand::Forward,
-        _ => CompareCommand::Ignore,
-    }
-}
 
 /// Key handling for `Mode::CompareFiles` -- Compare-level commands
 /// (above) are resolved first; anything left over that `edtui` itself
@@ -73,22 +32,23 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     debug!(?key, ?command, "compare key");
 
     match command {
-        CompareCommand::Close if cancel_selection(state.focused_mut(), key) => {}
-        CompareCommand::Close => close_compare_or_confirm(app)?,
-        CompareCommand::Save => {
+        DiffCommand::Close if cancel_selection(state.focused_mut(), key) => {}
+        DiffCommand::Close => close_compare_or_confirm(app)?,
+        DiffCommand::Save => {
             if let Err(err) = state.save_focused() {
                 tracing::warn!(%err, "compare: failed to save the focused pane");
                 app.notice = Some(Notice::error(format!("Save failed: {err}")));
             }
         }
-        CompareCommand::ToggleFocus => state.toggle_focus(),
-        CompareCommand::EditPath => state.start_path_edit(),
-        CompareCommand::SaveAs => state.start_save_as(),
-        CompareCommand::NextHunk => state.jump_to_next_hunk(),
-        CompareCommand::PreviousHunk => state.jump_to_previous_hunk(),
-        CompareCommand::OpenMenu => app.overlay = Some(Overlay::CompareMenu(open_compare_menu())),
-        CompareCommand::Forward => text_key(state.focused_mut(), key),
-        CompareCommand::Ignore => {}
+        // Two panes: either way is the other one.
+        DiffCommand::NextPane | DiffCommand::PreviousPane => state.toggle_focus(),
+        DiffCommand::EditPath => state.start_path_edit(),
+        DiffCommand::SaveAs => state.start_save_as(),
+        DiffCommand::NextChange => state.jump_to_next_hunk(),
+        DiffCommand::PreviousChange => state.jump_to_previous_hunk(),
+        DiffCommand::OpenMenu => app.overlay = Some(Overlay::CompareMenu(open_compare_menu())),
+        DiffCommand::Forward => text_key(state.focused_mut(), key),
+        DiffCommand::Ignore => {}
     }
 
     Ok(Effect::None)
@@ -134,283 +94,4 @@ pub fn handle_compare_confirm_discard_key(app: &mut App, key: KeyEvent) -> Resul
 
 
 #[cfg(test)]
-mod tests {
-    use crossterm::event::KeyEvent;
-
-    use super::*;
-    use crate::compare::CompareState;
-    use crate::editor::EditorKeymapMode;
-    use crate::test_support::{key, test_app, unique_scratch_dir};
-
-    fn app_with_compare(left_content: &str, right_content: &str) -> App {
-        let dir = unique_scratch_dir("compare-input");
-        let left_path = dir.join("left.txt");
-        let right_path = dir.join("right.txt");
-        std::fs::write(&left_path, left_content).unwrap();
-        std::fs::write(&right_path, right_content).unwrap();
-        let state = CompareState::open(left_path, right_path, None, EditorKeymapMode::Standard).unwrap();
-
-        let mut app = test_app(dir);
-        app.mode = Mode::CompareFiles(state);
-        app
-    }
-
-    #[test]
-    fn esc_closes_to_browsing_when_nothing_is_dirty() {
-        let mut app = app_with_compare("a\n", "b\n");
-
-        handle_compare_key(&mut app, key(KeyCode::Esc)).unwrap();
-
-        assert!(matches!(app.mode, Mode::Browsing));
-    }
-
-    #[test]
-    fn esc_asks_to_confirm_discard_when_a_pane_is_dirty() {
-        let mut app = app_with_compare("a\n", "b\n");
-        handle_compare_key(&mut app, key(KeyCode::Char('!'))).unwrap();
-
-        handle_compare_key(&mut app, key(KeyCode::Esc)).unwrap();
-
-        assert!(matches!(app.overlay, Some(Overlay::ConfirmDiscard)));
-    }
-
-    #[test]
-    fn confirm_discard_y_closes_without_saving() {
-        let mut app = app_with_compare("a\n", "b\n");
-        handle_compare_key(&mut app, key(KeyCode::Char('!'))).unwrap();
-        handle_compare_key(&mut app, key(KeyCode::Esc)).unwrap();
-
-        handle_compare_confirm_discard_key(&mut app, key(KeyCode::Char('y'))).unwrap();
-
-        assert!(matches!(app.mode, Mode::Browsing));
-    }
-
-    #[test]
-    fn confirm_discard_n_returns_to_compare_with_nothing_lost() {
-        let mut app = app_with_compare("a\n", "b\n");
-        handle_compare_key(&mut app, key(KeyCode::Char('!'))).unwrap();
-        handle_compare_key(&mut app, key(KeyCode::Esc)).unwrap();
-
-        handle_compare_confirm_discard_key(&mut app, key(KeyCode::Char('n'))).unwrap();
-
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert!(state.is_dirty(), "cancel shouldn't lose the unsaved edit");
-    }
-
-    #[test]
-    fn f9_opens_the_compare_menu() {
-        let mut app = app_with_compare("a\n", "b\n");
-
-        handle_compare_key(&mut app, key(KeyCode::F(9))).unwrap();
-
-        assert!(matches!(app.overlay, Some(Overlay::CompareMenu(_))));
-    }
-
-    #[test]
-    fn tab_toggles_focus_instead_of_typing_a_tab_character() {
-        let mut app = app_with_compare("a\n", "b\n");
-
-        handle_compare_key(&mut app, key(KeyCode::Tab)).unwrap();
-
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert_eq!(state.focus, crate::compare::Side::Right);
-    }
-
-    /// Requested: changes on `Alt+Up`/`Down` -- `Ctrl` moves by blocks.
-    #[test]
-    fn alt_down_and_up_step_through_the_changes() {
-        let mut app = app_with_compare("a\nb\nc\nd\n", "a\nx\nc\ny\n");
-
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::ALT)).unwrap();
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::ALT)).unwrap();
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert_eq!(state.left.cursor().row, 3);
-
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::ALT)).unwrap();
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert_eq!(state.left.cursor().row, 1);
-    }
-
-    /// Requested: `Ctrl+Up`/`Down` move by blocks of code, as in F4.
-    #[test]
-    fn ctrl_down_and_up_move_by_blocks_as_in_the_editor() {
-        let mut app = app_with_compare("one\ntwo\n\nthree\nfour\n", "one\ntwo\n\nthree\nFOUR\n");
-
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL)).unwrap();
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert_eq!(state.left.cursor().row, 3, "the next block, not the change on row 4");
-
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL)).unwrap();
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert_eq!(state.left.cursor().row, 0);
-    }
-
-    /// `F7`/`F8` are the same `NextHunk`/`PreviousHunk` commands
-    /// `Alt+Down`/`Alt+Up` drive -- requested directly to match
-    /// TortoiseMerge/`merge.exe`'s own next/previous-difference
-    /// convention.
-    #[test]
-    fn f8_jumps_to_the_next_hunk_same_as_alt_down() {
-        let mut app = app_with_compare("a\nb\nc\n", "a\nx\nc\n");
-
-        handle_compare_key(&mut app, key(KeyCode::F(8))).unwrap();
-
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert_eq!(state.left.cursor().row, 1);
-    }
-
-    #[test]
-    fn f7_jumps_to_the_previous_hunk_same_as_alt_up() {
-        let mut app = app_with_compare("a\nb\nc\nd\n", "a\nx\nc\ny\n");
-        handle_compare_key(&mut app, key(KeyCode::F(8))).unwrap();
-        handle_compare_key(&mut app, key(KeyCode::F(8))).unwrap();
-
-        handle_compare_key(&mut app, key(KeyCode::F(7))).unwrap();
-
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert_eq!(state.left.cursor().row, 1, "should land back on the first hunk, not stay on the second");
-    }
-
-    #[test]
-    fn ctrl_l_edits_the_path_and_keys_go_into_the_field() {
-        let mut app = app_with_compare("a\n", "b\n");
-
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)).unwrap();
-        handle_compare_key(&mut app, key(KeyCode::Char('z'))).unwrap();
-        handle_compare_key(&mut app, key(KeyCode::Esc)).unwrap();
-
-        let Mode::CompareFiles(state) = &app.mode else { panic!("Esc closed the field, not Compare") };
-        assert!(state.path_edit.is_none());
-        assert_eq!(state.left.text(), "a\n", "typing went into the field, not the file");
-    }
-
-    #[test]
-    fn plain_typing_is_forwarded_into_the_focused_pane() {
-        let mut app = app_with_compare("a\n", "b\n");
-
-        handle_compare_key(&mut app, key(KeyCode::Char('z'))).unwrap();
-
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert!(state.left.text().starts_with('z'), "should have typed into the focused (left) pane");
-        assert_eq!(state.right.text(), "b\n", "the unfocused pane should be untouched");
-    }
-
-    fn left_text(app: &App) -> String {
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        state.left.text()
-    }
-
-    fn ctrl_shift(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
-    }
-
-    /// Reported: Ctrl+Shift+arrows didn't select in Compare -- its keys
-    /// went to `Editor::input`, past F4's word selection.
-    #[test]
-    fn ctrl_shift_right_selects_a_word_as_in_the_editor() {
-        let mut app = app_with_compare("hello world\n", "x\n");
-
-        handle_compare_key(&mut app, ctrl_shift(KeyCode::Right)).unwrap();
-        handle_compare_key(&mut app, key(KeyCode::Char('X'))).unwrap();
-
-        assert_eq!(left_text(&app), "X world\n", "the word was selected, then typed over");
-    }
-
-    #[test]
-    fn ctrl_a_selects_everything_in_the_pane() {
-        let mut app = app_with_compare("one\ntwo\n", "x\n");
-
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)).unwrap();
-        handle_compare_key(&mut app, key(KeyCode::Char('Z'))).unwrap();
-
-        assert_eq!(left_text(&app).trim_end(), "Z");
-    }
-
-    /// Esc with a selection cancels it, as in F4, instead of closing
-    /// Compare.
-    #[test]
-    fn esc_cancels_a_selection_before_it_closes_compare() {
-        let mut app = app_with_compare("hello\n", "x\n");
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT)).unwrap();
-
-        handle_compare_key(&mut app, key(KeyCode::Esc)).unwrap();
-
-        let Mode::CompareFiles(state) = &app.mode else { panic!("Compare closed instead") };
-        assert!(!state.left.has_selection());
-        handle_compare_key(&mut app, key(KeyCode::Esc)).unwrap();
-        assert!(matches!(app.mode, Mode::Browsing), "the next Esc closes");
-    }
-
-    /// The rest of selection editing goes through the same `Editor` as
-    /// F4: Shift+End and typing over, Shift+Left and Backspace.
-    #[test]
-    fn selection_editing_matches_the_editor() {
-        let mut app = app_with_compare("hello world\n", "x\n");
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::End, KeyModifiers::SHIFT)).unwrap();
-        handle_compare_key(&mut app, key(KeyCode::Char('Y'))).unwrap();
-        assert_eq!(left_text(&app), "Y\n");
-
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap();
-        handle_compare_key(&mut app, key(KeyCode::Backspace)).unwrap();
-        assert_eq!(left_text(&app), "\n");
-    }
-
-    /// Requested: Ctrl+F2 edits the path here too, as on the panels.
-    #[test]
-    fn ctrl_f2_edits_the_focused_panes_path_and_saves_nothing() {
-        let mut app = app_with_compare("a
-", "b
-");
-        handle_compare_key(&mut app, key(KeyCode::Char('!'))).unwrap();
-
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::CONTROL)).unwrap();
-
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert!(state.path_edit.is_some());
-        assert!(state.left.is_dirty(), "not saved");
-    }
-
-    #[test]
-    fn f2_saves_the_focused_pane() {
-        let mut app = app_with_compare("a
-", "b
-");
-        handle_compare_key(&mut app, key(KeyCode::Char('!'))).unwrap();
-
-        handle_compare_key(&mut app, key(KeyCode::F(2))).unwrap();
-
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert!(!state.left.is_dirty());
-    }
-
-    #[test]
-    fn shift_f2_saves_the_focused_pane_as_a_typed_path() {
-        let mut app = app_with_compare("a
-", "b
-");
-        handle_compare_key(&mut app, key(KeyCode::Char('!'))).unwrap();
-
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::SHIFT)).unwrap();
-        let Mode::CompareFiles(state) = &mut app.mode else { panic!("expected Mode::CompareFiles") };
-        let target = state.left.path().with_file_name("left-copy.txt");
-        state.path_edit.as_mut().expect("the field is open").field.set_text(target.to_string_lossy().into_owned());
-        handle_compare_key(&mut app, key(KeyCode::Enter)).unwrap();
-
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert!(state.path_edit.is_none());
-        assert_eq!(state.left.path(), target);
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), "!a
-");
-    }
-
-    #[test]
-    fn ctrl_s_saves_the_focused_pane() {
-        let mut app = app_with_compare("a\n", "b\n");
-        handle_compare_key(&mut app, key(KeyCode::Char('!'))).unwrap();
-
-        handle_compare_key(&mut app, KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)).unwrap();
-
-        let Mode::CompareFiles(state) = &app.mode else { panic!("expected Mode::CompareFiles") };
-        assert!(!state.left.is_dirty());
-    }
-}
+mod tests;

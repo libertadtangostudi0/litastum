@@ -125,9 +125,7 @@ fn enter_on_an_item_with_a_prompt_opens_the_prompt_popup_instead_of_running() {
 
 #[test]
 fn enter_on_a_commands_item_runs_it_and_closes_the_menu() {
-    let mut app = app_with_menu("a: A
-echo a
-");
+    let mut app = app_with_menu("a: A\necho a\n");
 
     let effect = handle_user_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 

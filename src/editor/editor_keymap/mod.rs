@@ -4,7 +4,7 @@ use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
-use crate::path_edit::{PathEdit, PathEditKey};
+use crate::path_edit::{PathEdit, PathEditStep};
 use crate::explorer;
 use crate::notice::Notice;
 use crate::yes_no::{self, Answer};
@@ -226,18 +226,18 @@ fn save_as_key(app: &mut App, key: KeyEvent) {
         app.editor_save_as = None;
         return;
     };
-    match edit.key(key) {
-        PathEditKey::Editing => {}
-        PathEditKey::Cancel => app.editor_save_as = None,
-        PathEditKey::Submit(path) => match edit.save_editor_as(editor, path) {
-            Ok(()) => {
-                app.editor_save_as = None;
-                if let Some(preview) = &mut app.markdown_edit_preview {
-                    preview.reload();
-                }
+    // The field is always a save-as one here (`Shift+F2`): `Open` can't
+    // come back.
+    match edit.key_over(key, editor) {
+        Ok(PathEditStep::Editing | PathEditStep::Open(_)) => {}
+        Ok(PathEditStep::Cancelled) => app.editor_save_as = None,
+        Ok(PathEditStep::Saved) => {
+            app.editor_save_as = None;
+            if let Some(preview) = &mut app.markdown_edit_preview {
+                preview.reload();
             }
-            Err(err) => app.notice = Some(Notice::error(err.to_string())),
-        },
+        }
+        Err(err) => app.notice = Some(Notice::error(err.to_string())),
     }
 }
 

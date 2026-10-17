@@ -7,11 +7,13 @@
 //! - `line_ending`: per-line `CRLF`/`LF` detection (F9 -> Line endings);
 //! - `state`: two real `Editor`s and which has focus;
 //! - `input`: Compare commands first, the rest to the focused editor;
+//! - `keys`: the key table Compare shares with the conflict resolver;
 //! - `menu`/`line_ending_menu`: the F9 menu.
 
 mod diff;
 mod diff_cache;
 mod input;
+pub(crate) mod keys;
 mod line_ending;
 mod line_ending_menu;
 mod menu;

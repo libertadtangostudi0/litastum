@@ -245,8 +245,7 @@ mod tests {
     use crate::test_support::{editing_app, key};
 
     fn editor_app() -> App {
-        editing_app("hello
-", EditorKeymapMode::Standard)
+        editing_app("hello\n", EditorKeymapMode::Standard)
     }
 
     #[test]

@@ -6,7 +6,7 @@ use edtui::syntect::highlighting::Theme as SynTheme;
 use edtui::Index2;
 
 use crate::compare::{hunk_start_rows, CompareState, DiffCache, Side};
-use crate::path_edit::{open_failed, PathEdit, PathEditKey, PathPurpose};
+use crate::path_edit::{open_failed, PathEdit, PathEditStep};
 use crate::editor::{Editor, EditorKeymapMode};
 
 use super::files::ConflictFiles;
@@ -321,21 +321,16 @@ impl ConflictState {
         let Some(edit) = self.path_edit.as_mut() else {
             return Ok(());
         };
-        match edit.key(key) {
-            PathEditKey::Editing => {}
-            PathEditKey::Cancel => self.path_edit = None,
-            PathEditKey::Submit(path) => {
-                match edit.purpose {
-                    PathPurpose::Open => self.replace_focused_top(path).map_err(open_failed)?,
-                    PathPurpose::SaveAs => {
-                        let editor = match self.focus {
-                            Pane::Working => &mut self.working,
-                            Pane::Theirs => &mut self.theirs,
-                            _ => &mut self.result,
-                        };
-                        edit.save_editor_as(editor, path)?;
-                    }
-                }
+        let editor = match self.focus {
+            Pane::Working => &mut self.working,
+            Pane::Theirs => &mut self.theirs,
+            _ => &mut self.result,
+        };
+        match edit.key_over(key, editor)? {
+            PathEditStep::Editing => {}
+            PathEditStep::Cancelled | PathEditStep::Saved => self.path_edit = None,
+            PathEditStep::Open(path) => {
+                self.replace_focused_top(path).map_err(open_failed)?;
                 self.path_edit = None;
             }
         }

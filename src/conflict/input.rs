@@ -1,10 +1,11 @@
 use color_eyre::eyre::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
 use tracing::debug;
 
 use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
-use crate::editor::{cancel_selection, edtui_supports_key, text_key};
+use crate::compare::keys::{resolve, DiffCommand};
+use crate::editor::{cancel_selection, text_key};
 use crate::notice::Notice;
 
 use super::files::ConflictFiles;
@@ -23,48 +24,11 @@ pub fn open_resolver(app: &mut App, files: ConflictFiles) {
     }
 }
 
-/// A key in the resolver: `Tab`/`Shift+Tab` move between the five panes;
-/// `F7`/`F8` (and `Alt+Up`/`Down`) step through the focused pane's
-/// changes, and the result's conflict markers (`ConflictState::stops`);
-/// `Ctrl+Up`/`Down` move by blocks of code, as in F4 (requested).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConflictCommand {
-    Close,
-    Save,
-    SaveAs,
-    NextPane,
-    PreviousPane,
-    EditPath,
-    Next,
-    Previous,
-    Forward,
-    Ignore,
-}
-
-fn resolve(key: KeyEvent) -> ConflictCommand {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-
-    match key.code {
-        KeyCode::Esc => ConflictCommand::Close,
-        KeyCode::Char('s' | 'S') if ctrl => ConflictCommand::Save,
-        // Ctrl+F2 edits the path, as on a panel's title; above plain F2 (save).
-        KeyCode::F(2) if ctrl => ConflictCommand::EditPath,
-        KeyCode::F(2) if key.modifiers.contains(KeyModifiers::SHIFT) => ConflictCommand::SaveAs,
-        KeyCode::F(2) => ConflictCommand::Save,
-        KeyCode::Tab => ConflictCommand::NextPane,
-        KeyCode::BackTab => ConflictCommand::PreviousPane,
-        KeyCode::Char('l' | 'L') if ctrl => ConflictCommand::EditPath,
-        KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => ConflictCommand::Next,
-        KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => ConflictCommand::Previous,
-        KeyCode::F(8) => ConflictCommand::Next,
-        KeyCode::F(7) => ConflictCommand::Previous,
-        _ if edtui_supports_key(key.code) => ConflictCommand::Forward,
-        _ => ConflictCommand::Ignore,
-    }
-}
-
-/// Key handling for `Mode::ResolveConflict`: resolver commands first,
-/// anything `edtui` understands goes to the focused pane.
+/// Key handling for `Mode::ResolveConflict`, by Compare's table
+/// (`compare::keys`): `Tab`/`Shift+Tab` move between the five panes,
+/// `F7`/`F8` and `Alt+Up`/`Down` step through the focused pane's changes
+/// and the result's conflict markers (`ConflictState::stops`); anything
+/// else `edtui` understands goes to the focused pane. No `F9` menu.
 pub fn handle_conflict_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Mode::ResolveConflict(state) = &mut app.mode else {
         return Ok(Effect::None);
@@ -81,23 +45,23 @@ pub fn handle_conflict_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     debug!(?key, ?command, "conflict key");
 
     match command {
-        ConflictCommand::Close if cancel_selection(state.focused_mut(), key) => {}
-        ConflictCommand::Close if state.is_dirty() => app.overlay = Some(Overlay::ConfirmDiscard),
-        ConflictCommand::Close => app.mode = Mode::Browsing,
-        ConflictCommand::Save => {
+        DiffCommand::Close if cancel_selection(state.focused_mut(), key) => {}
+        DiffCommand::Close if state.is_dirty() => app.overlay = Some(Overlay::ConfirmDiscard),
+        DiffCommand::Close => app.mode = Mode::Browsing,
+        DiffCommand::Save => {
             if let Err(err) = state.save_focused() {
                 tracing::warn!(%err, "conflict: failed to save the focused pane");
                 app.notice = Some(Notice::error(format!("Save failed: {err}")));
             }
         }
-        ConflictCommand::NextPane => state.focus_next(),
-        ConflictCommand::PreviousPane => state.focus_previous(),
-        ConflictCommand::EditPath => state.start_path_edit(),
-        ConflictCommand::SaveAs => state.start_save_as(),
-        ConflictCommand::Next => state.jump_to_next(),
-        ConflictCommand::Previous => state.jump_to_previous(),
-        ConflictCommand::Forward => text_key(state.focused_mut(), key),
-        ConflictCommand::Ignore => {}
+        DiffCommand::NextPane => state.focus_next(),
+        DiffCommand::PreviousPane => state.focus_previous(),
+        DiffCommand::EditPath => state.start_path_edit(),
+        DiffCommand::SaveAs => state.start_save_as(),
+        DiffCommand::NextChange => state.jump_to_next(),
+        DiffCommand::PreviousChange => state.jump_to_previous(),
+        DiffCommand::Forward => text_key(state.focused_mut(), key),
+        DiffCommand::OpenMenu | DiffCommand::Ignore => {}
     }
 
     Ok(Effect::None)
@@ -106,6 +70,8 @@ pub fn handle_conflict_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
     use super::*;
     use crate::conflict::state::tests::open_conflict;
     use crate::conflict::Pane;
