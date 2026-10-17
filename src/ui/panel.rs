@@ -17,6 +17,12 @@ use crate::theming::Theme;
 /// number of text rows `draw_entry_grid` itself renders into for every
 /// column (they're vertical slices of one shared height).
 pub(super) fn draw_panel(frame: &mut Frame, area: Rect, panel: &Panel, is_active: bool, theme: &Theme) -> (usize, usize) {
+    draw_panel_in_columns(frame, area, panel, is_active, theme, None)
+}
+
+
+/// `draw_panel` with `columns` columns, else as many as fit.
+pub(super) fn draw_panel_in_columns(frame: &mut Frame, area: Rect, panel: &Panel, is_active: bool, theme: &Theme, columns: Option<usize>) -> (usize, usize) {
     let border_style = if is_active {
         Style::default().fg(theme.accent)
     } else {
@@ -34,7 +40,7 @@ pub(super) fn draw_panel(frame: &mut Frame, area: Rect, panel: &Panel, is_active
     // Panels narrower than `panel_min_column_width` (per column) fall
     // back to a single column.
     let min_column_width = crate::theming::config::limits().panel_min_column_width;
-    let columns = (inner.width / min_column_width).max(1) as usize;
+    let columns = columns.unwrap_or((inner.width / min_column_width).max(1) as usize);
     draw_entry_grid(frame, inner, panel, columns, is_active, theme);
     (columns, inner.height as usize)
 }
@@ -91,6 +97,19 @@ fn draw_entry_grid(
 
         frame.render_widget(List::new(items).block(divider), column_area);
     }
+}
+
+
+/// How wide `panel` needs to be for one column of its names, borders
+/// included: the widest name (a directory's with its `/`), at least
+/// `panel_min_column_width`, at most `widest`.
+pub(super) fn one_column_width(panel: &Panel, widest: u16) -> u16 {
+    use unicode_width::UnicodeWidthStr;
+
+    let names = panel.entries.iter().map(|entry| entry.name.width() + usize::from(entry.is_dir)).max().unwrap_or(0);
+    let min_column_width = crate::theming::config::limits().panel_min_column_width;
+    let wanted = u16::try_from(names + 2).unwrap_or(u16::MAX).max(min_column_width + 2);
+    wanted.min(widest)
 }
 
 

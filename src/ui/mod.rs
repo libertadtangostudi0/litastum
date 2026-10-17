@@ -128,10 +128,16 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
         ])
         .split(frame.area());
 
-    let panels = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(root[0]);
+    // `F3` on an image: the panel it came from in one column on the left,
+    // the rest of the width the image's (requested: it was hard to see in
+    // half the screen).
+    let image_preview = matches!(app.mode, Mode::ImagePreview(_));
+    let halves = if image_preview {
+        [Constraint::Length(panel::one_column_width(&app.panels[app.active], root[0].width / 3)), Constraint::Min(0)]
+    } else {
+        [Constraint::Percentage(50), Constraint::Percentage(50)]
+    };
+    let panels = Layout::default().direction(Direction::Horizontal).constraints(halves).split(root[0]);
 
     // Keeps the linked preview's highlighted line level with the editor's
     // cursor on the page. Heights mirror `draw_editor`'s (border + hint
@@ -165,11 +171,27 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
     // Where each panel lands, for a click on its title; nowhere while the
     // editor or a preview takes its place.
     let editor_split = has_linked_preview && matches!(app.mode, Mode::Editing(_));
-    let panel_drawn = [!editor_split, !editor_split && !matches!(app.mode, Mode::ImagePreview(_))];
+    let panel_drawn = [!editor_split, !editor_split && !image_preview];
     for (panel, (drawn, area)) in app.panels.iter_mut().zip(panel_drawn.into_iter().zip(panels.iter())) {
         panel.screen_area = if drawn { *area } else { Rect::default() };
     }
+    let preview_layout = if image_preview {
+        let source = app.active;
+        app.panels[1 - source].screen_area = Rect::default();
+        app.panels[source].screen_area = panels[0];
+        let mut layout = unchanged_layout;
+        layout[source] = panel::draw_panel_in_columns(frame, panels[0], &app.panels[source], true, &theme, Some(1));
+        if let Mode::ImagePreview(state) = &mut app.mode {
+            // Picks up a decode that finished since the last poll.
+            state.poll();
+            image_preview::draw_image_preview(frame, panels[1], state, &theme);
+        }
+        Some(layout)
+    } else {
+        None
+    };
     let left_columns = match &mut app.mode {
+        _ if image_preview => (0, 0),
         Mode::Editing(editor) if has_linked_preview => {
             draw_editor(frame, panels[0], editor, &theme);
             if let Some(edit) = &app.editor_save_as {
@@ -179,14 +201,11 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
         }
         _ => draw_panel(frame, panels[0], &app.panels[0], app.active == 0, &theme),
     };
-    // `F3` replaces the right panel's listing with the image or the
-    // Markdown preview. Its reported layout doesn't matter meanwhile: the
-    // preview takes the keys, and the next frame after closing is real.
-    let right_columns = if let Mode::ImagePreview(state) = &mut app.mode {
-        // Picks up a decode that finished since the last poll.
-        state.poll();
-        image_preview::draw_image_preview(frame, panels[1], state, &theme);
-        (1, 1)
+    // `F3` on a Markdown file replaces the right panel's listing with its
+    // preview. Its reported layout doesn't matter meanwhile: the preview
+    // takes the keys, and the next frame after closing is real.
+    let right_columns = if image_preview {
+        (0, 0)
     } else if has_linked_preview && matches!(&app.mode, Mode::Editing(_)) {
         let preview = app.markdown_edit_preview.as_mut().expect("has_linked_preview just confirmed this is Some");
         markdown_preview::draw_markdown_preview(frame, panels[1], preview, &theme);
@@ -226,7 +245,7 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
         cursor = Some(overlay_cursor);
     }
 
-    ([left_columns, right_columns], cursor)
+    (preview_layout.unwrap_or([left_columns, right_columns]), cursor)
 }
 
 

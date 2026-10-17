@@ -307,6 +307,17 @@ impl Panel {
 
 
     /// Full path to the entry currently under the cursor, if any.
+    /// Puts the cursor on the entry called `name`; `false` if there's none.
+    /// The view follows on the next frame (`set_visible_rows`).
+    pub fn select_name(&mut self, name: &str) -> bool {
+        let Some(index) = self.entries.iter().position(|entry| entry.name == name) else {
+            return false;
+        };
+        self.selected = index;
+        true
+    }
+
+
     pub fn selected_path(&self) -> Option<PathBuf> {
         self.current().map(|entry| self.path.join(&entry.name))
     }

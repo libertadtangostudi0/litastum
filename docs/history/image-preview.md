@@ -61,3 +61,23 @@ Reported. Measured on 1100x684 screenshots in a debug build: decoding
   are prepared once the current image is ready, so `Left`/`Right` show
   at once; only those three are kept.
 
+
+## One column of names, the rest for the image
+
+Requested: half the screen was too little for the image. The panel `F3`
+came from is drawn on the left in one column, as wide as its longest
+name (at least a column, at most a third of the screen), and the image
+takes the rest. Fixed along the way:
+- the images went in the preview's own name order (`10.png` right
+  after `1.png`), not the panel's; they go in the panel's now
+  (`open_among`);
+- the panel's cursor didn't follow the image; it does, and stays on the
+  last one shown after closing;
+- `F3` made the right panel active, so it was active after closing; the
+  panel `F3` came from stays active, and is the one drawn beside the
+  image (`F3` in the right panel showed the left one's directory);
+- an image that failed showed the previous picture under its name; it
+  shows `Failed`;
+- jobs for images switched past ran to the end (holding `Right` over
+  large photos: dozens of them); dropped, they're cancelled before
+  decoding and before encoding.

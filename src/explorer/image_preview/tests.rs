@@ -1,3 +1,4 @@
+use std::fs;
 use std::time::Duration;
 
 use super::*;
@@ -167,6 +168,37 @@ mod image_preview_state_tests {
         assert!(matches!(state.frame_mut(), PreviewFrame::Ready(_)), "and the new pixels should be showing once the decode actually finishes");
     }
 
+    /// A file that can't be shown says so, rather than the previous image
+    /// showing under its name.
+    #[test]
+    fn a_broken_image_after_a_good_one_shows_as_failed() {
+        let dir = unique_scratch_dir("image-preview");
+        write_test_png(&dir.join("a.png"));
+        fs::write(dir.join("b.png"), b"not a png").unwrap();
+        let mut state = ImagePreviewState::open(&Picker::halfblocks(), &dir, &dir.join("a.png")).unwrap();
+        wait_until_not_loading(&mut state);
+
+        state.next();
+        wait_until_not_loading(&mut state);
+
+        assert!(matches!(state.frame_mut(), PreviewFrame::Failed));
+    }
+
+    /// An image switched past is no longer prepared: its job is cancelled.
+    #[test]
+    fn an_image_switched_past_is_cancelled() {
+        let (_receiver, cancelled) = {
+            let (sender, receiver) = std::sync::mpsc::channel::<Option<Encoded>>();
+            drop(sender);
+            (receiver, Arc::new(AtomicBool::new(false)))
+        };
+        let entry = Entry::Pending(_receiver, cancelled.clone());
+        drop(entry);
+        assert!(cancelled.load(Ordering::Relaxed));
+        let area = SharedArea::default();
+        assert!(prepare(&Picker::halfblocks(), Source::File(PathBuf::from("nowhere.png")), &area, &cancelled).is_none(), "a cancelled job stops before decoding");
+    }
+
     /// Polls until `ready` holds or a generous timeout.
     fn poll_until(state: &mut ImagePreviewState, ready: impl Fn(&ImagePreviewState) -> bool) {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -222,10 +254,13 @@ mod image_preview_state_tests {
 
 mod open_preview_tests {
     use super::*;
-    use crate::test_support::test_app;
+    use crate::test_support::{key, test_app};
 
+    /// The panel `F3` came from stays active: it's drawn beside the image,
+    /// and is where the cursor is after closing (it used to be the right
+    /// one's).
     #[test]
-    fn opens_the_preview_and_switches_the_right_panel_active() {
+    fn opens_the_preview_and_keeps_its_panel_active() {
         let dir = unique_scratch_dir("image-preview-open");
         write_test_png(&dir.join("photo.png"));
         let mut app = test_app(dir.clone());
@@ -234,7 +269,30 @@ mod open_preview_tests {
         open_preview(&mut app);
 
         assert!(matches!(app.mode, Mode::ImagePreview(_)));
-        assert_eq!(app.active, 1, "the right panel should become active");
+        assert_eq!(app.active, 0);
+    }
+
+    /// The panel's own order, not the preview's: `2.png` after `1.png`,
+    /// not `10.png`; and the panel's cursor follows the image.
+    #[test]
+    fn images_go_in_the_panels_order_and_its_cursor_follows() {
+        let dir = unique_scratch_dir("image-preview-order");
+        for name in ["1.png", "2.png", "10.png"] {
+            write_test_png(&dir.join(name));
+        }
+        let mut app = test_app(dir.clone());
+        let order: Vec<String> = app.panels[0].entries.iter().map(|entry| entry.name.clone()).filter(|name| name.ends_with(".png")).collect();
+        assert_eq!(order, ["1.png", "2.png", "10.png"], "precondition: the panel's natural order");
+        app.panels[0].select_name("1.png");
+        open_preview(&mut app);
+
+        handle_image_preview_key(&mut app, key(KeyCode::Right)).unwrap();
+        let Mode::ImagePreview(state) = &app.mode else { panic!("in the preview") };
+        assert_eq!(state.current_path(), dir.join("2.png"));
+        assert_eq!(app.panels[0].current().map(|entry| entry.name.as_str()), Some("2.png"), "the cursor followed");
+
+        handle_image_preview_key(&mut app, key(KeyCode::Esc)).unwrap();
+        assert_eq!(app.panels[0].current().map(|entry| entry.name.as_str()), Some("2.png"), "and stays there after closing");
     }
 
     #[test]

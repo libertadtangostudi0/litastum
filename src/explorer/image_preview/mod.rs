@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -56,11 +56,21 @@ struct Encoded {
 
 /// One image of the preview: being prepared, ready, or failed.
 enum Entry {
-    /// A job in flight. Dropping the receiver abandons it: its `send`
-    /// fails silently.
-    Pending(Receiver<Option<Encoded>>),
+    /// A job in flight, and its cancel flag. Dropped -- an image switched
+    /// past -- it's cancelled: the job stops before its next step
+    /// (holding `Right` over large photos started dozens of jobs that all
+    /// ran to the end), and its `send` fails silently.
+    Pending(Receiver<Option<Encoded>>, Arc<AtomicBool>),
     Ready(Encoded),
     Failed,
+}
+
+impl Drop for Entry {
+    fn drop(&mut self) {
+        if let Entry::Pending(_, cancelled) = self {
+            cancelled.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 /// Where a job starts: a file to decode, or a decoded image to encode at
@@ -76,19 +86,26 @@ enum Source {
 /// switching images was very slow in Windows Terminal).
 fn spawn_job(picker: &Picker, source: Source, area: &SharedArea) -> Entry {
     let (sender, receiver) = std::sync::mpsc::channel();
-    let (picker, area) = (picker.clone(), area.clone());
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let (picker, area, job_cancelled) = (picker.clone(), area.clone(), cancelled.clone());
     thread::spawn(move || {
-        let _ = sender.send(prepare(&picker, source, &area));
+        let _ = sender.send(prepare(&picker, source, &area, &job_cancelled));
     });
-    Entry::Pending(receiver)
+    Entry::Pending(receiver, cancelled)
 }
 
-fn prepare(picker: &Picker, source: Source, area: &SharedArea) -> Option<Encoded> {
+fn prepare(picker: &Picker, source: Source, area: &SharedArea, cancelled: &AtomicBool) -> Option<Encoded> {
+    if cancelled.load(Ordering::Relaxed) {
+        return None;
+    }
     let image = match source {
         Source::File(path) => Arc::new(decode(&path)?),
         Source::Decoded(image) => image,
     };
     let size = wait_for_area(area);
+    if cancelled.load(Ordering::Relaxed) {
+        return None;
+    }
     let protocol = picker.new_protocol((*image).clone(), size, Resize::Fit(Some(FilterType::Lanczos3)));
     match protocol {
         Ok(protocol) => Some(Encoded { image, size, protocol }),
@@ -148,26 +165,25 @@ pub struct ImagePreviewState {
 }
 
 impl ImagePreviewState {
-    /// Opens a preview on `initial_path` among `dir`'s images. `None` if
-    /// it isn't a supported image or `dir` can't be read -- both cheap;
-    /// the image itself starts `Loading` and resolves in `poll`.
-    /// `picker` is `app.image_picker`, queried from the real terminal at
-    /// startup.
+    /// Opens a preview on `initial_path` among `dir`'s images, by name (the
+    /// tests' way; litastum opens it with the panel's own order,
+    /// `open_among`). The image starts `Loading` and resolves in `poll`.
+    #[cfg(test)]
     pub fn open(picker: &Picker, dir: &Path, initial_path: &Path) -> Option<Self> {
+        let mut images: Vec<PathBuf> = std::fs::read_dir(dir).ok()?.filter_map(|entry| entry.ok()).map(|entry| entry.path()).collect();
+        images.sort();
+        Self::open_among(picker, images, initial_path)
+    }
+
+    /// Opens a preview on `initial_path` among `paths`' images, in that
+    /// order -- the panel's (`open_preview`): the preview used to sort by
+    /// name on its own, `10.png` right after `1.png` while the panel went
+    /// on to `2.png`. `None` if it isn't a supported image among them.
+    pub fn open_among(picker: &Picker, paths: Vec<PathBuf>, initial_path: &Path) -> Option<Self> {
         if !is_supported_image(initial_path) {
             return None;
         }
-
-        let mut images: Vec<PathBuf> = fs::read_dir(dir)
-            .ok()?
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| is_supported_image(path))
-            .collect();
-        // Case-insensitive by name, not `Panel`'s natural sort (private to
-        // `panel`); "10.jpg before 2.jpg" is an accepted gap.
-        images.sort_by_key(|path| path.file_name().map(|name| name.to_string_lossy().to_lowercase()));
-
+        let images: Vec<PathBuf> = paths.into_iter().filter(|path| is_supported_image(path)).collect();
         let index = images.iter().position(|path| path == initial_path)?;
         let mut state = Self { images, index, picker: picker.clone(), area: SharedArea::default(), entries: HashMap::new(), shown: None };
         state.prepare(index);
@@ -197,10 +213,12 @@ impl ImagePreviewState {
 
     /// See `PreviewFrame`.
     pub fn frame_mut(&mut self) -> PreviewFrame<'_> {
+        // A failed image says so, rather than the previous picture showing
+        // under its name.
         match (self.entries.get(&self.index), &self.shown) {
             (Some(Entry::Ready(encoded)), _) => PreviewFrame::Ready(&encoded.protocol),
+            (Some(Entry::Failed), _) => PreviewFrame::Failed,
             (_, Some(shown)) => PreviewFrame::Ready(shown),
-            (Some(Entry::Failed), None) => PreviewFrame::Failed,
             _ => PreviewFrame::Loading,
         }
     }
@@ -220,7 +238,7 @@ impl ImagePreviewState {
         let area = *self.area.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut current_done = false;
         for (&index, entry) in &mut self.entries {
-            let Entry::Pending(receiver) = entry else {
+            let Entry::Pending(receiver, _) = entry else {
                 continue;
             };
             let outcome = match receiver.try_recv() {
@@ -300,25 +318,26 @@ impl ImagePreviewState {
 
 
 /// `F3`: opens `Mode::ImagePreview` on the selected entry if it's a
-/// supported image, else a no-op. Makes the right panel active -- it's
-/// the one showing the preview, where `Left`/`Right` apply.
+/// supported image, else a no-op, among the active panel's images in its
+/// own order. That panel stays active and is drawn beside the image, its
+/// cursor following it (`handle_image_preview_key`); it used to switch to
+/// the right panel, which was active after closing.
 pub fn open_preview(app: &mut App) {
     let panel = app.active_panel();
     let Some(path) = panel.selected_path() else {
         return;
     };
-    let dir = panel.path.clone();
+    let paths = panel.entries.iter().filter(|entry| !entry.is_dir).map(|entry| panel.path.join(&entry.name)).collect();
 
-    let Some(state) = ImagePreviewState::open(&app.image_picker, &dir, &path) else {
+    let Some(state) = ImagePreviewState::open_among(&app.image_picker, paths, &path) else {
         return;
     };
-
-    app.active = 1;
     app.mode = Mode::ImagePreview(state);
 }
 
 
-/// `Left`/`Right` cycle images; `Esc` or `F3` close the preview.
+/// `Left`/`Right` cycle images, the panel's cursor following; `Esc` or
+/// `F3` close the preview, the cursor on the image last shown.
 pub fn handle_image_preview_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Mode::ImagePreview(state) = &mut app.mode else {
         return Ok(Effect::None);
@@ -328,7 +347,13 @@ pub fn handle_image_preview_key(app: &mut App, key: KeyEvent) -> Result<Effect> 
         KeyCode::Left => state.prev(),
         KeyCode::Right => state.next(),
         KeyCode::Esc | KeyCode::F(3) => app.mode = Mode::Browsing,
-        _ => {}
+        _ => return Ok(Effect::None),
+    }
+    if let Mode::ImagePreview(state) = &app.mode {
+        let name = state.current_path().file_name().map(|name| name.to_string_lossy().into_owned());
+        if let Some(name) = name {
+            app.active_panel().select_name(&name);
+        }
     }
     Ok(Effect::None)
 }

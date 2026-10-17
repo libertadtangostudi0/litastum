@@ -92,3 +92,34 @@ fn selected_row_uses_the_theme_override_color_when_set() {
     let fg = terminal.backend().buffer()[(0, 0)].fg;
     assert_eq!(fg, Color::Rgb(0, 0, 0), "the selected row should use the theme's override color");
 }
+
+
+/// Requested: in an image preview the left panel is one column, the rest
+/// of the width the image's -- it was hard to see in half the screen.
+#[test]
+fn an_image_preview_takes_all_but_one_column_of_names() {
+    use crate::app::Mode;
+    use crate::explorer::ImagePreviewState;
+    use crate::test_support::{test_app, unique_scratch_dir};
+
+    let dir = unique_scratch_dir("ui-image-preview-layout");
+    for n in 0..60 {
+        std::fs::write(dir.join(format!("{n}.txt")), "").unwrap();
+    }
+    let image = dir.join("a long screenshot name.png");
+    image::RgbImage::new(2, 2).save(&image).unwrap();
+    let mut app = test_app(dir.clone());
+    app.panels[0].reload().unwrap();
+    let state = ImagePreviewState::open(&ratatui_image::picker::Picker::halfblocks(), &dir, &image).unwrap();
+    app.mode = Mode::ImagePreview(state);
+
+    let mut terminal = Terminal::new(TestBackend::new(150, 30)).unwrap();
+    let mut layout = [(0usize, 0usize); 2];
+    terminal.draw(|frame| layout = draw(frame, &mut app).0).unwrap();
+
+    assert_eq!(layout[0].0, 1, "one column of names");
+    let width = app.panels[0].screen_area.width;
+    assert_eq!(width, "a long screenshot name.png".len() as u16 + 2, "as wide as the longest name, borders included");
+    let text = buffer_text(terminal.backend().buffer());
+    assert!(text.contains("a long screenshot name.png"), "the long name isn't cut");
+}
