@@ -7,20 +7,21 @@ use alacritty_terminal::event::WindowSize;
 use alacritty_terminal::term::TermMode;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
+use winit::event::{Ime, MouseButton, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::font::CellFont;
 use crate::input::{self, WheelAccumulator, Zoom};
-use crate::mouse::{self, MouseAction};
 use crate::render::{self, Renderer, View};
 use crate::session::{GridSize, Session, UserEvent};
 use crate::tabs::Tabs;
 use crate::window_style;
 use crate::zoom::Zooms;
 
+mod keyboard;
+mod pointer;
 mod tab_bar;
 
 /// The starting font size in logical pixels (`Ctrl+0`); scaled by the
@@ -190,129 +191,6 @@ impl App {
         let _ = buffer.present();
     }
 
-    /// A key press or release. The window's own keys come first: tabs,
-    /// full screen, zoom, paste. `Ctrl+V`/`Shift+Insert` paste the
-    /// clipboard as typed text, as Windows Terminal does: the key itself
-    /// never reaches litastum, which reads the clipboard on that key
-    /// (`windows_terminal::paste_hotkey`) and swallows the typed copy.
-    fn key(&mut self, event: winit::event::KeyEvent) {
-        let pressed = event.state == ElementState::Pressed;
-        if pressed {
-            // Typing keeps the cursor steady, as in other terminals.
-            self.cursor_shown = true;
-            self.next_blink = Instant::now() + BLINK_INTERVAL;
-        }
-        if let Some(chord) = input::tab_chord(event.physical_key, self.modifiers) {
-            if pressed {
-                self.tab_chord(chord);
-            }
-            return;
-        }
-        if input::is_fullscreen_key(event.physical_key, self.modifiers) {
-            if pressed && !event.repeat {
-                self.toggle_fullscreen();
-            }
-            return;
-        }
-        if let Some(zoom) = input::zoom_chord(event.physical_key, self.modifiers) {
-            if pressed {
-                self.zoom(zoom);
-            }
-            return;
-        }
-        if input::is_paste_chord(&event.logical_key, event.physical_key, self.modifiers) {
-            if pressed {
-                self.paste();
-            }
-            return;
-        }
-        if pressed && !self.modifiers.control_key() && input::needs_plain_text(event.text.as_deref()) {
-            self.write(event.text.as_deref().unwrap_or_default());
-            return;
-        }
-        #[cfg(windows)]
-        {
-            use winit::platform::scancode::PhysicalKeyExtScancode;
-            let scan_code = event.physical_key.to_scancode().map_or(0, |code| (code & 0xFF) as u16);
-            if let Some(record) = crate::win32_input::key_record(&event.logical_key, event.physical_key, event.text.as_deref(), self.modifiers, pressed, scan_code) {
-                self.write(record.sequence());
-            }
-        }
-        #[cfg(not(windows))]
-        if pressed {
-            let app_cursor = self.mode().contains(TermMode::APP_CURSOR);
-            if let Some(bytes) = crate::keys::encode(&event.logical_key, event.physical_key, event.text.as_deref(), self.modifiers, app_cursor) {
-                self.write(bytes);
-            }
-        }
-    }
-
-    /// The clipboard's text as input. Bracketed on Unix when the program
-    /// asked for it; ConPTY has no use for the brackets.
-    fn paste(&self) {
-        let Ok(text) = arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) else {
-            return;
-        };
-        let bracketed = cfg!(not(windows)) && self.mode().contains(TermMode::BRACKETED_PASTE);
-        self.write(input::paste_bytes(&text, bracketed));
-    }
-
-    fn mouse(&self, action: MouseAction) {
-        let (mut column, line) = self.pointer_cell;
-        let click = matches!(action, MouseAction::Press(MouseButton::Left) | MouseAction::Release(MouseButton::Left));
-        if click && mouse::clicks_snap_to_edges(&self.active_screen()) {
-            column = self.pointer_edge_column;
-        }
-        if let Some(bytes) = mouse::report(action, column, line, self.modifiers, self.mode()) {
-            self.write(bytes);
-        }
-    }
-
-    /// The pointer over the tab bar (the top row) is the window's; under
-    /// it, the cell it's over goes to the program.
-    fn pointer_moved(&mut self, x: f64, y: f64) {
-        let Some(shown) = &self.shown else {
-            return;
-        };
-        let (origin_x, origin_y) = render::grid_origin(shown.window.inner_size().width, shown.grid.columns, shown.font.cell_width, shown.font.cell_height);
-        let column = mouse::column_at(x, origin_x, shown.font.cell_width, shown.grid.columns, false);
-        self.pointer_edge_column = mouse::column_at(x, origin_x, shown.font.cell_width, shown.grid.columns, true);
-        if y < f64::from(origin_y) {
-            self.pointer_on_bar = Some(column);
-            return;
-        }
-        self.pointer_on_bar = None;
-        let line = ((y - f64::from(origin_y)).max(0.0) as u32 / shown.font.cell_height) as usize;
-        let cell = (column, line.min(shown.grid.lines - 1));
-        if cell != self.pointer_cell {
-            self.pointer_cell = cell;
-            self.mouse(MouseAction::Move { held: self.held_button });
-        }
-    }
-
-    /// Mouse reports when the program takes them, else arrow keys on the
-    /// alternate screen (`input::alternate_scroll`).
-    fn wheel(&mut self, delta: MouseScrollDelta) {
-        let cell_height = self.shown.as_ref().map_or(16, |shown| shown.font.cell_height);
-        let lines = self.wheel.steps(delta, cell_height);
-        if self.modifiers.control_key() {
-            let zoom = if lines > 0 { Zoom::In } else { Zoom::Out };
-            for _ in 0..lines.unsigned_abs() {
-                self.zoom(zoom);
-            }
-            return;
-        }
-        let mode = self.mode();
-        if let Some(arrows) = input::alternate_scroll(lines, mode) {
-            self.write(arrows);
-            return;
-        }
-        let action = if lines > 0 { MouseAction::WheelUp } else { MouseAction::WheelDown };
-        for _ in 0..lines.unsigned_abs() {
-            self.mouse(action);
-        }
-    }
-
     fn cursor_blinks(&self) -> bool {
         self.session().is_some_and(|session| session.term.lock().cursor_style().blinking)
     }
@@ -415,22 +293,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => self.pointer_moved(position.x, position.y),
-            WindowEvent::MouseInput { state, button, .. } => {
-                if let Some(column) = self.pointer_on_bar {
-                    if state == ElementState::Pressed {
-                        self.bar_click(column, button);
-                    }
-                    return;
-                }
-                let action = if state == ElementState::Pressed {
-                    self.held_button = Some(button);
-                    MouseAction::Press(button)
-                } else {
-                    self.held_button = None;
-                    MouseAction::Release(button)
-                };
-                self.mouse(action);
-            }
+            WindowEvent::MouseInput { state, button, .. } => self.mouse_button(state, button),
             WindowEvent::MouseWheel { delta, .. } => self.wheel(delta),
             WindowEvent::RedrawRequested => self.redraw(),
             _ => {}
