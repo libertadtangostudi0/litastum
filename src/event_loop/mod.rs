@@ -1,7 +1,5 @@
 use color_eyre::eyre::Result;
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, MouseEvent, MouseEventKind};
-use crossterm::execute;
-use tracing::warn;
+use crossterm::event::{self, Event, MouseEvent, MouseEventKind};
 
 use crate::app::{App, Mode};
 use crate::{explorer, ui};
@@ -9,11 +7,19 @@ use crate::terminal_setup::Tui;
 
 mod keys;
 mod paste;
+mod sync;
+#[cfg(windows)]
+mod zoom;
 
 use keys::handle_key_event;
 use paste::handle_paste_event;
 #[cfg(windows)]
 use paste::try_intercept_paste_hotkey;
+use sync::{sync_mouse_capture, sync_panel_paths, sync_screen, sync_terminal_palette, sync_title};
+#[cfg(windows)]
+pub(crate) use zoom::save_terminal_zoom;
+#[cfg(windows)]
+use zoom::{settle_terminal_zoom, sync_terminal_zoom};
 
 /// Draws one frame, then places the terminal cursor `ui::draw` returned
 /// -- position first, then `show_cursor`, after the frame is on screen.
@@ -95,85 +101,6 @@ fn poll_background_tasks(app: &mut App) -> bool {
 /// on Windows (`try_intercept_paste_hotkey`).
 #[cfg(windows)]
 const IDLE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
-
-/// Windows Terminal's zoom per screen (`terminal_zoom`): the user's
-/// presses counted for the screen shown, the screen's steps pressed once
-/// no key is held and the terminal is in front, a change saved. `true`
-/// when it pressed keys: the terminal is changing size.
-#[cfg(windows)]
-fn sync_terminal_zoom(app: &mut App) -> bool {
-    use crate::windows_terminal::zoom_keys;
-
-    let screen = screen_name(&app.mode);
-    let focused = app.terminal_focused;
-    let Some(zoom) = &mut app.terminal_zoom else {
-        return false;
-    };
-    zoom_keys::set_focused(focused);
-    // Presses made on the screen before this one was shown count for it:
-    // taken before the switch.
-    let (steps, reset) = zoom_keys::take_presses();
-    if reset {
-        zoom.reset();
-    }
-    zoom.stepped(steps);
-    zoom.set_screen(screen);
-    let presses = zoom.presses_needed();
-    let press = presses != 0 && focused && !zoom_keys::keys_held() && zoom_keys::terminal_in_front();
-    if press {
-        zoom_keys::press(presses);
-        zoom.pressed(presses);
-    }
-    save_terminal_zoom(zoom);
-    press
-}
-
-
-/// How long Windows Terminal may take to start changing size after
-/// litastum's zoom presses, and between its steps.
-#[cfg(windows)]
-const ZOOM_FIRST_RESIZE: std::time::Duration = std::time::Duration::from_millis(150);
-#[cfg(windows)]
-const ZOOM_NEXT_RESIZE: std::time::Duration = std::time::Duration::from_millis(60);
-/// The longest litastum waits for the terminal's zoom to settle.
-#[cfg(windows)]
-const ZOOM_SETTLE_MAX: std::time::Duration = std::time::Duration::from_millis(800);
-
-
-/// Waits out Windows Terminal's zoom after litastum's presses -- it
-/// changes size a step at a time, and drawing at each step showed the
-/// zoom crawl (reported): the resizes are let by until they stop, so the
-/// next frame is drawn once, at the final size. Any other event ends the
-/// wait and is handled.
-#[cfg(windows)]
-fn settle_terminal_zoom(app: &mut App, terminal: &mut Tui) -> Result<()> {
-    let deadline = std::time::Instant::now() + ZOOM_SETTLE_MAX;
-    let mut quiet = ZOOM_FIRST_RESIZE;
-    loop {
-        let wait = quiet.min(deadline.saturating_duration_since(std::time::Instant::now()));
-        if wait.is_zero() || !event::poll(wait)? {
-            return Ok(());
-        }
-        match event::read()? {
-            Event::Resize(..) => quiet = ZOOM_NEXT_RESIZE,
-            other => {
-                dispatch_event(app, terminal, other)?;
-                return Ok(());
-            }
-        }
-    }
-}
-
-
-/// Saves a changed zoom per screen and where the tab is (`terminal_zoom`).
-#[cfg(windows)]
-pub(crate) fn save_terminal_zoom(zoom: &mut crate::terminal_zoom::TerminalZoom) {
-    if let Some((steps, now)) = zoom.take_unsaved() {
-        let now = crate::theming::config::TerminalZoomNow { session: crate::windows_terminal::zoom_keys::session(), steps: now };
-        crate::theming::config::save_terminal_zoom(&steps, now);
-    }
-}
-
 
 /// Blocks until a terminal event arrives (`handle_event`), a background
 /// task finishes, or -- on Windows -- `Ctrl+V` is pressed (Windows
@@ -292,141 +219,6 @@ fn drain_pending_mouse_events(app: &mut App, terminal: &mut Tui, mut last_scroll
 }
 
 
-/// Mouse capture is on in the browser (a click on a panel's title edits
-/// its path) and while an editor is open (F4, Compare or the conflict
-/// resolver), synced once per loop iteration rather than at each place one
-/// opens or closes. Capture takes over the terminal's own text selection
-/// (Windows Terminal still selects with `Shift` held); the user screen has
-/// its own (`user_screen/selection.rs`). Only set after the terminal call
-/// succeeds -- `restore_terminal` relies on it.
-fn sync_mouse_capture(app: &mut App) {
-    let wanted = matches!(app.mode, Mode::Browsing | Mode::Editing(_) | Mode::CompareFiles(_) | Mode::ResolveConflict(_));
-    if wanted == app.mouse_capture_enabled {
-        return;
-    }
-    let result = if wanted { execute!(std::io::stdout(), EnableMouseCapture) } else { execute!(std::io::stdout(), DisableMouseCapture) };
-    match result {
-        Ok(()) => app.mouse_capture_enabled = wanted,
-        Err(err) => warn!(%err, wanted, "failed to toggle mouse capture"),
-    }
-}
-
-
-/// The terminal's title (`OSC 2`): the active panel's directory, or the
-/// file being edited -- what a tab is labelled with, in litastum's own
-/// window and in Windows Terminal alike. Sent only when it changes.
-fn sync_title(app: &mut App) {
-    let wanted = window_title(app);
-    if app.terminal_title.as_deref() == Some(wanted.as_str()) {
-        return;
-    }
-    if let Err(err) = execute!(std::io::stdout(), crossterm::terminal::SetTitle(&wanted)) {
-        warn!(%err, "failed to set the terminal's title");
-        return;
-    }
-    app.terminal_title = Some(wanted);
-}
-
-
-/// Notes the panels' directories for the next start (`last_paths`): a
-/// change is written 30 s later, from the background-task polling below.
-fn sync_panel_paths(app: &mut App) {
-    let current = [app.panels[0].path.clone(), app.panels[1].path.clone()];
-    app.last_paths.note(current, std::time::Instant::now());
-}
-
-
-/// Tells the terminal which screen litastum is on (`screen_name`) as the
-/// terminal user variable `litastum_screen` (`OSC 1337 ; SetUserVar`,
-/// WezTerm's convention; other terminals ignore it). litastum's window
-/// keeps a zoom per screen with it. Sent only when it changes.
-fn sync_screen(app: &mut App) {
-    let wanted = screen_name(&app.mode);
-    if app.terminal_screen == Some(wanted) {
-        return;
-    }
-    use std::io::Write;
-    let mut stdout = std::io::stdout();
-    if let Err(err) = stdout.write_all(screen_sequence(wanted).as_bytes()).and_then(|()| stdout.flush()) {
-        warn!(%err, "failed to tell the terminal the screen");
-        return;
-    }
-    app.terminal_screen = Some(wanted);
-}
-
-
-/// The screen's name for its zoom (requested: the panels, the editor,
-/// Compare and the resolver each keep their own). `main` is the panels --
-/// an image preview included -- the name it had before the editor got
-/// its own, so a saved zoom stays.
-fn screen_name(mode: &Mode) -> &'static str {
-    match mode {
-        Mode::Editing(_) => "editor",
-        Mode::CompareFiles(_) => "compare",
-        Mode::ResolveConflict(_) => "conflict",
-        Mode::Browsing | Mode::ImagePreview(_) => "main",
-    }
-}
-
-
-/// `OSC 1337 ; SetUserVar=litastum_screen=<base64 of screen>`.
-fn screen_sequence(screen: &str) -> String {
-    format!("\x1b]1337;SetUserVar=litastum_screen={}\x07", base64(screen.as_bytes()))
-}
-
-
-/// Standard base64, which `SetUserVar` wants its value in.
-pub(crate) fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::new();
-    for chunk in bytes.chunks(3) {
-        let value = (u32::from(chunk[0]) << 16) | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8) | u32::from(*chunk.get(2).unwrap_or(&0));
-        for index in 0..4 {
-            if index <= chunk.len() {
-                out.push(ALPHABET[(value >> (18 - 6 * index) & 63) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
-
-
-/// The name a tab shows: the edited file's or the directory's, the whole
-/// path for a drive's root.
-fn window_title(app: &App) -> String {
-    let path = match &app.mode {
-        Mode::Editing(editor) => editor.path().to_path_buf(),
-        Mode::CompareFiles(_) => return "Compare".to_string(),
-        Mode::ResolveConflict(_) => return "Conflict".to_string(),
-        _ => app.panels[app.active].path.clone(),
-    };
-    path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned())
-}
-
-
-/// Hands the theme's colors to the terminal whenever they change -- on
-/// the first frame and after F9 -> Color schemes -- rather than at each
-/// place the theme is set. `restore_terminal` gives the terminal its own
-/// back.
-fn sync_terminal_palette(app: &mut App) {
-    let wanted = crate::terminal_palette::palette_sequence(&app.theme);
-    if wanted == app.terminal_palette {
-        return;
-    }
-    if let Some(sequence) = &wanted {
-        use std::io::Write;
-        let mut stdout = std::io::stdout();
-        if let Err(err) = stdout.write_all(sequence.as_bytes()).and_then(|()| stdout.flush()) {
-            warn!(%err, "failed to set the terminal's colors");
-            return;
-        }
-    }
-    app.terminal_palette = wanted;
-}
-
-
 /// One mouse event: the editor gets it when it lands on the editor
 /// (`Editor::contains_screen_position`), a linked Markdown preview gets
 /// everything else (`explorer::handle_markdown_preview_mouse`, which
@@ -464,41 +256,4 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         }
     }
     explorer::handle_markdown_preview_mouse(app, mouse);
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_support::{test_app, unique_scratch_dir};
-
-    /// Requested: the panels, the editor, Compare and the resolver each
-    /// zoom on their own.
-    #[test]
-    fn the_editor_is_a_screen_of_its_own() {
-        let dir = crate::test_support::unique_scratch_dir("screen-name");
-        let file = dir.join("file.txt");
-        std::fs::write(&file, "text").unwrap();
-        let editor = crate::editor::Editor::open(file, None, crate::editor::EditorKeymapMode::Standard).unwrap();
-
-        assert_eq!(screen_name(&Mode::Browsing), "main");
-        assert_eq!(screen_name(&Mode::Editing(editor)), "editor");
-    }
-
-    #[test]
-    fn the_screen_goes_out_as_a_base64_user_variable() {
-        assert_eq!(base64(b"main"), "bWFpbg==");
-        assert_eq!(base64(b"compare"), "Y29tcGFyZQ==");
-        assert_eq!(base64(b"conflict"), "Y29uZmxpY3Q=");
-        assert_eq!(screen_sequence("compare"), "\x1b]1337;SetUserVar=litastum_screen=Y29tcGFyZQ==\x07");
-    }
-
-    /// A tab is labelled with the active panel's directory.
-    #[test]
-    fn the_title_is_the_active_panels_directory() {
-        let dir = unique_scratch_dir("title");
-        let app = test_app(dir.clone());
-
-        assert_eq!(window_title(&app), dir.file_name().unwrap().to_string_lossy());
-    }
 }

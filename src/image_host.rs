@@ -64,8 +64,8 @@ fn mark_image_position(buffer: &mut Buffer, area: Rect) {
     if !cell.symbol().contains("\x1b]1337;File=") {
         return;
     }
-    let position = format!("{},{}", area.y, area.x);
-    let symbol = format!("\x1b]1337;SetUserVar={IMAGE_AT_VARIABLE}={}\x07{}", crate::event_loop::base64(position.as_bytes()), cell.symbol());
+    let position = crate::user_var::set_user_var(IMAGE_AT_VARIABLE, &format!("{},{}", area.y, area.x));
+    let symbol = format!("{position}{}", cell.symbol());
     cell.set_symbol(&symbol);
 }
 

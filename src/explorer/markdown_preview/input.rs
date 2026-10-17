@@ -12,7 +12,7 @@ use super::state::MarkdownPreviewState;
 /// `F3` on a `.md` file: the editor (as `F4`) and a live preview side by
 /// side (`App::markdown_edit_preview`). Focus starts in the editor; `Tab`
 /// switches to the preview. A no-op if either fails to open. Mouse
-/// capture comes with the editor (`event_loop::sync_mouse_capture`).
+/// capture comes with the editor (`event_loop::sync::sync_mouse_capture`).
 pub fn open_edit_preview(app: &mut App) {
     let Some(path) = app.active_panel().selected_path() else {
         return;

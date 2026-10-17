@@ -163,55 +163,11 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
         }
     }
 
-    // `F3` on a `.md`/`.markdown` file draws the built-in editor into
-    // the *left* slot (`App::markdown_edit_preview`'s own doc comment,
-    // `Mode::Editing`'s doc comment) instead of that panel's own file
-    // listing -- also under the link-search overlay.
-    let mut save_as_cursor = None;
-    // Where each panel lands, for a click on its title; nowhere while the
-    // editor or a preview takes its place.
-    let editor_split = has_linked_preview && matches!(app.mode, Mode::Editing(_));
-    let panel_drawn = [!editor_split, !editor_split && !image_preview];
-    for (panel, (drawn, area)) in app.panels.iter_mut().zip(panel_drawn.into_iter().zip(panels.iter())) {
-        panel.screen_area = if drawn { *area } else { Rect::default() };
-    }
-    let preview_layout = if image_preview {
-        let source = app.active;
-        app.panels[1 - source].screen_area = Rect::default();
-        app.panels[source].screen_area = panels[0];
-        let mut layout = unchanged_layout;
-        layout[source] = panel::draw_panel_in_columns(frame, panels[0], &app.panels[source], true, &theme, Some(1));
-        if let Mode::ImagePreview(state) = &mut app.mode {
-            // Picks up a decode that finished since the last poll.
-            state.poll();
-            image_preview::draw_image_preview(frame, panels[1], state, &theme);
-        }
-        Some(layout)
+    let halves = [panels[0], panels[1]];
+    let (layout, save_as_cursor) = if image_preview {
+        (draw_image_preview_screen(frame, halves, app, &theme, unchanged_layout), None)
     } else {
-        None
-    };
-    let left_columns = match &mut app.mode {
-        _ if image_preview => (0, 0),
-        Mode::Editing(editor) if has_linked_preview => {
-            draw_editor(frame, panels[0], editor, &theme);
-            if let Some(edit) = &app.editor_save_as {
-                save_as_cursor = path_edit::draw_path_field(frame, editor.title_area(), edit, &theme);
-            }
-            (1, 1)
-        }
-        _ => draw_panel(frame, panels[0], &app.panels[0], app.active == 0, &theme),
-    };
-    // `F3` on a Markdown file replaces the right panel's listing with its
-    // preview. Its reported layout doesn't matter meanwhile: the preview
-    // takes the keys, and the next frame after closing is real.
-    let right_columns = if image_preview {
-        (0, 0)
-    } else if has_linked_preview && matches!(&app.mode, Mode::Editing(_)) {
-        let preview = app.markdown_edit_preview.as_mut().expect("has_linked_preview just confirmed this is Some");
-        markdown_preview::draw_markdown_preview(frame, panels[1], preview, &theme);
-        (1, 1)
-    } else {
-        draw_panel(frame, panels[1], &app.panels[1], app.active == 1, &theme)
+        draw_halves(frame, halves, app, &theme, has_linked_preview)
     };
     let command_cursor = draw_command_rows(frame, root[1], app, &theme, true);
 
@@ -245,7 +201,61 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
         cursor = Some(overlay_cursor);
     }
 
-    (preview_layout.unwrap_or([left_columns, right_columns]), cursor)
+    (layout, cursor)
+}
+
+
+/// `F3` on an image: the panel it came from in one column on the left
+/// (`halves[0]`), the image in the rest. That panel's layout is the
+/// one-column one; the hidden panel's stays as it was.
+fn draw_image_preview_screen(frame: &mut Frame, halves: [Rect; 2], app: &mut App, theme: &Theme, unchanged_layout: [(usize, usize); 2]) -> [(usize, usize); 2] {
+    let source = app.active;
+    app.panels[1 - source].screen_area = Rect::default();
+    app.panels[source].screen_area = halves[0];
+    let mut layout = unchanged_layout;
+    layout[source] = panel::draw_panel_in_columns(frame, halves[0], &app.panels[source], true, theme, Some(1));
+    if let Mode::ImagePreview(state) = &mut app.mode {
+        // Picks up a decode that finished since the last poll.
+        state.poll();
+        image_preview::draw_image_preview(frame, halves[1], state, theme);
+    }
+    layout
+}
+
+
+/// The two halves: the panels, or -- `F3` on a `.md` file -- the built-in
+/// editor on the left (`App::markdown_edit_preview`) and its preview on
+/// the right, also under the link-search overlay. Returns each half's
+/// layout and the cursor of a `Shift+F2` path field.
+fn draw_halves(frame: &mut Frame, halves: [Rect; 2], app: &mut App, theme: &Theme, has_linked_preview: bool) -> ([(usize, usize); 2], Option<Position>) {
+    // Where each panel lands, for a click on its title; nowhere while the
+    // editor or its preview takes its place.
+    let editor_split = has_linked_preview && matches!(app.mode, Mode::Editing(_));
+    for (panel, area) in app.panels.iter_mut().zip(halves) {
+        panel.screen_area = if editor_split { Rect::default() } else { area };
+    }
+    let mut save_as_cursor = None;
+    let left_columns = match &mut app.mode {
+        Mode::Editing(editor) if has_linked_preview => {
+            draw_editor(frame, halves[0], editor, theme);
+            if let Some(edit) = &app.editor_save_as {
+                save_as_cursor = path_edit::draw_path_field(frame, editor.title_area(), edit, theme);
+            }
+            (1, 1)
+        }
+        _ => draw_panel(frame, halves[0], &app.panels[0], app.active == 0, theme),
+    };
+    // `F3` on a Markdown file replaces the right panel's listing with its
+    // preview. Its reported layout doesn't matter meanwhile: the preview
+    // takes the keys, and the next frame after closing is real.
+    let right_columns = if has_linked_preview && matches!(&app.mode, Mode::Editing(_)) {
+        let preview = app.markdown_edit_preview.as_mut().expect("has_linked_preview just confirmed this is Some");
+        markdown_preview::draw_markdown_preview(frame, halves[1], preview, theme);
+        (1, 1)
+    } else {
+        draw_panel(frame, halves[1], &app.panels[1], app.active == 1, theme)
+    };
+    ([left_columns, right_columns], save_as_cursor)
 }
 
 

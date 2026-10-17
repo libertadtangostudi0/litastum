@@ -58,7 +58,7 @@ pub(crate) fn setup_terminal() -> Result<Tui> {
 pub(crate) fn restore_terminal(terminal: &mut Tui, mouse_capture_enabled: bool) -> Result<()> {
     disable_raw_mode()?;
     // `DisableMouseCapture` is a safety net: capture is normally synced
-    // to the current mode (`event_loop::sync_mouse_capture`), but
+    // to the current mode (`event_loop::sync::sync_mouse_capture`), but
     // quitting mid-session would otherwise leak it into the user's
     // terminal. Sent only if `EnableMouseCapture` actually succeeded
     // earlier -- on Windows, disabling without it crashes with

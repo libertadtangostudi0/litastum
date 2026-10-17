@@ -248,18 +248,18 @@ pub struct App {
     pub image_picker: Picker,
     /// Whether mouse capture is on -- in the browser and while an editor
     /// (F4, Compare, the resolver) is open, synced by
-    /// `event_loop::sync_mouse_capture` and
+    /// `event_loop::sync::sync_mouse_capture` and
     /// set only after the terminal call succeeded. `restore_terminal` sends
     /// `DisableMouseCapture` only when this is `true` (disabling it
     /// without enabling first crashes on Windows).
     pub mouse_capture_enabled: bool,
     /// The colors last handed to the terminal (`terminal_palette`),
-    /// synced by `event_loop::sync_terminal_palette` when the theme
+    /// synced by `event_loop::sync::sync_terminal_palette` when the theme
     /// changes; `None` before the first sync.
     pub terminal_palette: Option<String>,
-    /// The title last handed to the terminal (`event_loop::sync_title`).
+    /// The title last handed to the terminal (`event_loop::sync::sync_title`).
     pub terminal_title: Option<String>,
-    /// The screen last reported to the terminal (`event_loop::sync_screen`).
+    /// The screen last reported to the terminal (`event_loop::sync::sync_screen`).
     pub terminal_screen: Option<&'static str>,
     /// The panels' directories for the next start (`last_paths`).
     pub last_paths: crate::last_paths::LastPaths,

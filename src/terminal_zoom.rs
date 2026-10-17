@@ -32,7 +32,7 @@ impl TerminalZoom {
         Self { steps, screen: "main".to_string(), applied, unsaved: false }
     }
 
-    /// The screen shown now (`event_loop::screen_name`).
+    /// The screen shown now (`event_loop::sync::screen_name`).
     pub fn set_screen(&mut self, screen: &str) {
         if self.screen != screen {
             self.screen = screen.to_string();

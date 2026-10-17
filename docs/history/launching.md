@@ -278,7 +278,7 @@ Then: the zoom was seen to crawl on a switch to Compare. Windows
 Terminal changes size a step (one point) at a time, and litastum drew a
 whole frame at each step -- first the new screen at the old size, then
 once per resize. Now, after its own presses, litastum lets the resizes
-by until they stop (`event_loop::settle_terminal_zoom`: 150 ms for the
+by until they stop (`event_loop::zoom::settle_terminal_zoom`: 150 ms for the
 first, 60 ms between, 800 ms at most; any other event ends the wait and
 is handled) and draws once, at the final size.
 

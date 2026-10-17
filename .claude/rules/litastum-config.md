@@ -41,7 +41,7 @@ wins.
 The window (`gui/src/zoom.rs`) saves each screen's font size (`main` --
 the panels, `editor`, `compare`, `conflict`; requested, each its own --
 litastum reports its screen with the terminal user variable
-`litastum_screen`, `event_loop::screen_name`) under
+`litastum_screen`, `event_loop::sync::screen_name`) under
 `window_zoom` in this same `config.json`, editing the file as plain
 JSON so every other key stays. The console app doesn't use the field
 but declares it on `Config`: every save writes the whole file, and an
