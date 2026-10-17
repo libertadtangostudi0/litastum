@@ -15,22 +15,14 @@ pub fn draw_editor_keymap_menu(frame: &mut Frame, area: Rect, menu: &EditorKeyma
 
 #[cfg(test)]
 mod tests {
-    use crate::test_support::buffer_text;
-    use ratatui::{backend::TestBackend, Terminal};
+    use crate::test_support::render_text;
 
     use super::*;
     use crate::choice_menu::ChoiceMenu;
 
     fn rendered(menu: &EditorKeymapMenu, style: PopupStyle, current: EditorKeymapMode) -> String {
-        let backend = TestBackend::new(80, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
         let theme = Theme::dark();
-        terminal
-            .draw(|frame| {
-                draw_editor_keymap_menu(frame, frame.area(), menu, &theme, style, current);
-            })
-            .unwrap();
-        buffer_text(terminal.backend().buffer())
+        render_text(80, 24, |frame| draw_editor_keymap_menu(frame, frame.area(), menu, &theme, style, current))
     }
 
     #[test]

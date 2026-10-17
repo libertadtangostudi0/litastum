@@ -137,10 +137,7 @@ fn perform(app: &mut App, action: BrowserAction) -> Result<Effect> {
             if let Some(Suggestion::File { name, is_dir: false }) = suggestions(app).get(app.command_line_suggestion_selected).cloned() {
                 // As F4 in the panel path field's list: the panel's cursor
                 // moves onto the file, then the editor opens it.
-                let panel = app.active_panel();
-                if let Some(index) = panel.entries.iter().position(|entry| entry.name == name) {
-                    panel.selected = index;
-                }
+                app.active_panel().select_name(&name);
                 app.command_line_suggestion_selected = 0;
                 app.command_line_suggestion_dismissed = true;
             }

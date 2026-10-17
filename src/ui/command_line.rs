@@ -150,9 +150,6 @@ pub fn draw_suggestions(frame: &mut Frame, command_line_area: Rect, suggestions:
 
 #[cfg(test)]
 mod tests {
-    use crate::test_support::buffer_text;
-    use ratatui::{backend::TestBackend, Terminal};
-
     use super::*;
     use crate::command_line::CommandHistoryMenu;
     use crate::theming::Theme;
@@ -162,11 +159,8 @@ mod tests {
     }
 
     fn rendered(menu: &CommandHistoryMenu, history: &[String], style: PopupStyle) -> String {
-        let backend = TestBackend::new(80, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
         let theme = Theme::dark();
-        terminal.draw(|frame| draw_command_history(frame, frame.area(), menu, history, "", &theme, style)).unwrap();
-        buffer_text(terminal.backend().buffer())
+        crate::test_support::render_text(80, 24, |frame| draw_command_history(frame, frame.area(), menu, history, "", &theme, style))
     }
 
     /// A selection deep in a long history stays on screen.

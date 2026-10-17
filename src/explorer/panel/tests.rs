@@ -482,3 +482,39 @@ mod marks_tests {
         assert!(panel.marked.is_empty(), "marks shouldn't carry over into an unrelated directory");
     }
 }
+
+
+/// Going to a file elsewhere (a Find file result, a typed path): its
+/// directory opens with the cursor on it, and the marks go -- they're
+/// names, and going straight to the directory kept them, so a file of
+/// the same name there showed marked (and F5/F6/F8 took it).
+#[test]
+fn revealing_a_file_opens_its_directory_on_it_and_drops_the_marks() {
+    let here = unique_scratch_dir("panel-reveal-here");
+    let there = unique_scratch_dir("panel-reveal-there");
+    for dir in [&here, &there] {
+        std::fs::write(dir.join("same.txt"), "").unwrap();
+    }
+    std::fs::write(there.join("wanted.txt"), "").unwrap();
+    let mut panel = Panel::new(here).unwrap();
+    panel.select_name("same.txt");
+    panel.select_all();
+    assert!(!panel.marked_entries().is_empty(), "precondition: marked");
+
+    assert!(panel.reveal(&there.join("wanted.txt")).unwrap());
+
+    assert_eq!(panel.path, there);
+    assert_eq!(panel.current().map(|entry| entry.name.as_str()), Some("wanted.txt"));
+    assert!(panel.marked_entries().is_empty(), "the old directory's marks are gone");
+}
+
+
+#[test]
+fn revealing_a_file_whose_directory_is_gone_leaves_the_panel() {
+    let here = unique_scratch_dir("panel-reveal-here");
+    let mut panel = Panel::new(here.clone()).unwrap();
+
+    assert!(!panel.reveal(&here.join("gone").join("a.txt")).unwrap());
+
+    assert_eq!(panel.path, here);
+}

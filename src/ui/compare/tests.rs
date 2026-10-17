@@ -44,10 +44,9 @@ fn syntax_highlighting_is_disabled_even_for_a_recognized_language() {
 }
 
 fn render(state: &mut CompareState, theme: &Theme, line_ending_display: LineEndingDisplay) -> ratatui::buffer::Buffer {
-    let backend = TestBackend::new(60, 11);
-    let mut terminal = Terminal::new(backend).unwrap();
-    terminal.draw(|frame| { draw_compare(frame, frame.area(), state, theme, line_ending_display); }).unwrap();
-    terminal.backend().buffer().clone()
+    crate::test_support::render(60, 11, |frame| {
+        draw_compare(frame, frame.area(), state, theme, line_ending_display);
+    })
 }
 
 /// A changed row should carry the diff background on both panes;

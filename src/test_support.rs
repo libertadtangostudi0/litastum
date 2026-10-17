@@ -81,6 +81,28 @@ pub fn test_app(dir: PathBuf) -> App {
 }
 
 
+/// One frame of `width` x `height` cells drawn by `draw`, as a buffer.
+pub fn render(width: u16, height: u16, draw: impl FnOnce(&mut ratatui::Frame)) -> ratatui::buffer::Buffer {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).expect("test terminal");
+    terminal.draw(draw).expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+
+/// `render`, as the text a test asserts against (`buffer_text`).
+pub fn render_text(width: u16, height: u16, draw: impl FnOnce(&mut ratatui::Frame)) -> String {
+    buffer_text(&render(width, height, draw))
+}
+
+
+/// `editor` drawn over the whole of a `width` x `height` screen, in the
+/// dark theme -- also what lets it know its size (it scrolls while drawn).
+pub fn render_editor(editor: &mut crate::editor::Editor, width: u16, height: u16) -> ratatui::buffer::Buffer {
+    let theme = Theme::dark();
+    render(width, height, |frame| frame.render_widget(editor.view(&theme, frame.area()), frame.area()))
+}
+
+
 /// Every row of a rendered buffer, joined with newlines -- what a test
 /// asserts against after drawing onto a `TestBackend`.
 pub fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {

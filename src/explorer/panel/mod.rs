@@ -318,6 +318,23 @@ impl Panel {
     }
 
 
+    /// Opens `file`'s directory and puts the cursor on it -- a Find file
+    /// result, a typed path. `Ok(false)`, panel untouched, if the
+    /// directory isn't there. Through `change_dir`, so the marks go:
+    /// going straight to the directory kept them, and a file of the same
+    /// name there showed marked.
+    pub fn reveal(&mut self, file: &std::path::Path) -> io::Result<bool> {
+        let (Some(dir), Some(name)) = (file.parent(), file.file_name()) else {
+            return Ok(false);
+        };
+        if !self.change_dir(&dir.to_string_lossy())? {
+            return Ok(false);
+        }
+        self.select_name(&name.to_string_lossy());
+        Ok(true)
+    }
+
+
     pub fn selected_path(&self) -> Option<PathBuf> {
         self.current().map(|entry| self.path.join(&entry.name))
     }

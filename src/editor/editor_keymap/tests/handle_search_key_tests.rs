@@ -340,9 +340,7 @@ fn end_mid_query_moves_to_the_end_before_accepting_a_suggestion() {
 /// mouse position through the screen area it recorded while drawing.
 fn render(app: &mut App) {
     let Mode::Editing(editor) = &mut app.mode else { unreachable!() };
-    let theme = crate::theming::Theme::dark();
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 8)).unwrap();
-    terminal.draw(|frame| frame.render_widget(editor.view(&theme, frame.area()), frame.area())).unwrap();
+    crate::test_support::render_editor(editor, 60, 8);
 }
 
 /// Clicks the cell holding buffer column `col` on the caret's own row

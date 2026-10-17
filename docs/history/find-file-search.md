@@ -98,3 +98,13 @@ No default exclusion of other noise (`target/`, `node_modules/`, ...):
 only the caps bound it. `ignore`'s gitignore pruning would cover it,
 but that changes which files are found -- a design question, not free
 speed.
+
+## Going to a result kept the old directory's marks
+
+A result's directory was opened by setting the panel's path and
+reloading it, past `Panel::change_dir`: the marks -- file names -- stayed,
+so a file of the same name in the new directory showed marked and `F5`/
+`F6`/`F8` took it; a directory gone since the search was an error out of
+the key handler. Now `Panel::reveal` (also the panel path field's way to
+a typed file): through `change_dir`, the cursor on the file, a missing
+directory leaving the panel where it was.

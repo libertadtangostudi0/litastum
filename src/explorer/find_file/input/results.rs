@@ -175,24 +175,15 @@ fn goto_selected_result_directory(app: &mut App) -> Result<()> {
     navigate_active_panel_to_result(app, &path)
 }
 
-/// Moves the active panel to `path`'s own directory and, if it's still
-/// listed there under its own name, selects it -- shared by
-/// `open_selected_result` and `goto_selected_result_directory`, which
-/// only differ in whether `app.mode` also switches back to
-/// `Mode::Browsing` afterward.
+/// Moves the active panel to `path`'s own directory and selects it there
+/// (`Panel::reveal`) -- shared by `open_selected_result` and
+/// `goto_selected_result_directory`, which only differ in whether
+/// `app.mode` also switches back to `Mode::Browsing` afterward. A
+/// directory gone since the search leaves the panel where it was.
 fn navigate_active_panel_to_result(app: &mut App, path: &Path) -> Result<()> {
-    let Some(parent) = path.parent() else {
-        return Ok(());
-    };
     // Opened over the user screen (`Ctrl+O`): going to a file shows it.
     app.panels_hidden = false;
-    app.panels[app.active].path = parent.to_path_buf();
-    app.panels[app.active].reload()?;
-    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        if let Some(index) = app.panels[app.active].entries.iter().position(|entry| entry.name == name) {
-            app.panels[app.active].selected = index;
-        }
-    }
+    app.active_panel().reveal(path)?;
     Ok(())
 }
 

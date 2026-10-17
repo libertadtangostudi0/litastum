@@ -1,19 +1,10 @@
 use super::*;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::backend::TestBackend;
-use ratatui::Terminal;
 
 
 /// Draws `editor` into a 40x6 screen and returns the buffer.
 fn draw(editor: &mut Editor) -> ratatui::buffer::Buffer {
-    let mut terminal = Terminal::new(TestBackend::new(40, 6)).unwrap();
-    terminal
-        .draw(|frame| {
-            let view = editor.view(&Theme::dark(), frame.area());
-            frame.render_widget(view, frame.area());
-        })
-        .unwrap();
-    terminal.backend().buffer().clone()
+    crate::test_support::render_editor(editor, 40, 6)
 }
 
 
@@ -153,14 +144,7 @@ fn every_drawn_character_is_where_a_click_on_it_lands() {
 
 /// Draws `editor` into a `width` x 6 screen.
 fn draw_wide(editor: &mut Editor, width: u16) -> ratatui::buffer::Buffer {
-    let mut terminal = Terminal::new(TestBackend::new(width, 6)).unwrap();
-    terminal
-        .draw(|frame| {
-            let view = editor.view(&Theme::dark(), frame.area());
-            frame.render_widget(view, frame.area());
-        })
-        .unwrap();
-    terminal.backend().buffer().clone()
+    crate::test_support::render_editor(editor, width, 6)
 }
 
 

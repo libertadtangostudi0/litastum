@@ -126,13 +126,7 @@ fn go_to(app: &mut App, path: &Path) -> io::Result<()> {
     let panel = &mut app.panels[app.active];
     let full = base.join(path);
     if full.is_file() {
-        let (Some(parent), Some(name)) = (full.parent(), full.file_name()) else {
-            return Err(io::Error::from(io::ErrorKind::NotFound));
-        };
-        panel.change_dir(&parent.to_string_lossy())?;
-        if let Some(index) = panel.entries.iter().position(|entry| std::ffi::OsStr::new(&entry.name) == name) {
-            panel.selected = index;
-        }
+        panel.reveal(&full)?;
         return Ok(());
     }
     if panel.change_dir(&full.to_string_lossy())? {

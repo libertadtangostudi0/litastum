@@ -13,23 +13,15 @@ pub fn draw_compare_menu(frame: &mut Frame, area: Rect, menu: &CompareMenu, them
 
 #[cfg(test)]
 mod tests {
-    use crate::test_support::buffer_text;
-    use ratatui::{backend::TestBackend, Terminal};
+    use crate::test_support::render_text;
 
     use super::*;
     use crate::choice_menu::ChoiceMenu;
     use crate::compare::CompareMenuItem;
 
     fn rendered(menu: &CompareMenu, style: PopupStyle) -> String {
-        let backend = TestBackend::new(80, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
         let theme = Theme::dark();
-        terminal
-            .draw(|frame| {
-                draw_compare_menu(frame, frame.area(), menu, &theme, style);
-            })
-            .unwrap();
-        buffer_text(terminal.backend().buffer())
+        render_text(80, 24, |frame| draw_compare_menu(frame, frame.area(), menu, &theme, style))
     }
 
     #[test]

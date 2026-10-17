@@ -76,13 +76,9 @@ pub(super) fn sync_screen(app: &mut App) {
     if app.terminal_screen == Some(wanted) {
         return;
     }
-    let mut stdout = std::io::stdout();
-    let sequence = crate::user_var::set_user_var("litastum_screen", wanted);
-    if let Err(err) = stdout.write_all(sequence.as_bytes()).and_then(|()| stdout.flush()) {
-        warn!(%err, "failed to tell the terminal the screen");
-        return;
+    if send(&crate::user_var::set_user_var("litastum_screen", wanted), "the screen") {
+        app.terminal_screen = Some(wanted);
     }
-    app.terminal_screen = Some(wanted);
 }
 
 
@@ -109,14 +105,23 @@ pub(super) fn sync_terminal_palette(app: &mut App) {
     if wanted == app.terminal_palette {
         return;
     }
-    if let Some(sequence) = &wanted {
-        let mut stdout = std::io::stdout();
-        if let Err(err) = stdout.write_all(sequence.as_bytes()).and_then(|()| stdout.flush()) {
-            warn!(%err, "failed to set the terminal's colors");
-            return;
+    if wanted.as_deref().is_none_or(|sequence| send(sequence, "the colors")) {
+        app.terminal_palette = wanted;
+    }
+}
+
+
+/// Writes `sequence` to the terminal at once; `false`, logged, if it
+/// couldn't -- the sync is tried again next iteration.
+fn send(sequence: &str, what: &str) -> bool {
+    let mut stdout = std::io::stdout();
+    match stdout.write_all(sequence.as_bytes()).and_then(|()| stdout.flush()) {
+        Ok(()) => true,
+        Err(err) => {
+            warn!(%err, "failed to tell the terminal {what}");
+            false
         }
     }
-    app.terminal_palette = wanted;
 }
 
 
