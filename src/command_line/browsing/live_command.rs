@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use color_eyre::eyre::Result;
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, Event, KeyEventKind, MouseButton, MouseEventKind};
 use tracing::debug;
 
 use crate::app::App;
@@ -49,6 +49,19 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Tui, line: &str) -> Result<
         if command.is_finished() {
             break;
         }
+        // Windows Terminal keeps `Ctrl+V` and types the clipboard in as
+        // keys -- a password pasted that way wasn't accepted (reported).
+        // As in the main loop: the key is polled, the clipboard pasted
+        // whole, the typed copy swallowed.
+        #[cfg(windows)]
+        if app.paste_flood.ctrl_v_just_pressed(app.terminal_focused) {
+            if let Some(text) = crate::text_field::clipboard::get() {
+                let rest = app.paste_flood.not_yet_delivered(&text);
+                paste_into(app, &command, &mut type_ahead, &rest);
+                app.paste_flood.expect(&rest);
+                redraw = true;
+            }
+        }
         if !event::poll(FRAME)? {
             continue;
         }
@@ -59,6 +72,10 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Tui, line: &str) -> Result<
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => {
                 let key = crate::keyboard_layout::normalize_ctrl_shortcut(key);
+                if app.paste_flood.should_swallow(key.code, key.modifiers) {
+                    continue;
+                }
+                app.paste_flood.record_typed_key(key.code, key.modifiers);
                 if let Some(bytes) = encode_key(key, command.app_cursor()) {
                     command.write(bytes);
                 }
@@ -69,11 +86,15 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Tui, line: &str) -> Result<
                 }
             }
             Event::Paste(text) => {
-                if !command.full_screen() {
-                    type_ahead.paste(&mut app.command_line, &text, command.output_line(), &command.text_before_cursor());
+                paste_into(app, &command, &mut type_ahead, &text);
+                redraw = true;
+            }
+            // The right button pastes, as in a console window (requested).
+            Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Right) => {
+                if let Some(text) = crate::text_field::clipboard::get() {
+                    paste_into(app, &command, &mut type_ahead, &text);
                     redraw = true;
                 }
-                command.paste(&text);
             }
             Event::Resize(width, height) => {
                 rows = ui::console_rows(height);
@@ -90,6 +111,26 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Tui, line: &str) -> Result<
 }
 
 
+/// Pastes `text` into the running program, and mirrors it in our line
+/// (`TypeAhead`, as `*`s at a password prompt). Line breaks go as `Enter`
+/// presses do (`\r`). Never logged: it may be a password.
+fn paste_into(app: &mut App, command: &LiveCommand, type_ahead: &mut TypeAhead, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    if !command.full_screen() {
+        type_ahead.paste(&mut app.command_line, text, command.output_line(), &command.text_before_cursor());
+    }
+    command.paste(&program_text(text));
+}
+
+
+/// `text` as a terminal types it: each line break an `Enter` (`\r`).
+fn program_text(text: &str) -> String {
+    text.replace("\r\n", "\r").replace('\n', "\r")
+}
+
+
 /// One frame of the user screen (`ui::draw_console`), then its cursor.
 pub(super) fn draw_console(terminal: &mut Tui, app: &App, live: Option<&LiveView>) -> Result<()> {
     let mut cursor = None;
@@ -102,4 +143,16 @@ pub(super) fn draw_console(terminal: &mut Tui, app: &App, live: Option<&LiveView
         None => terminal.hide_cursor()?,
     }
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_paste_goes_to_the_program_with_enter_for_each_line_break() {
+        assert_eq!(program_text("pass"), "pass", "a password as it is");
+        assert_eq!(program_text("a\r\nb\nc"), "a\rb\rc");
+    }
 }

@@ -119,7 +119,14 @@ line. Order matters and the table is grouped by it:
   its echo in the output; a line sent with `Enter` never comes back (a
   password prompt doesn't echo), nor do a full-screen program's keys
   (`browsing/type_ahead.rs`). Once the program echoes what's typed
-  right before its cursor, it reads its input and gets the keys alone. When it exits, its output joins the user screen and
+  right before its cursor, it reads its input and gets the keys alone.
+  At a password prompt (`type_ahead::asks_for_secret`: `password:`,
+  `passphrase`, ...) the typed text shows as `*`s and never stays in the
+  line; nothing typed or pasted during a run is logged. `Ctrl+V` is
+  polled as in the main loop and the clipboard pasted whole (Windows
+  Terminal typed it in as keys, and `hg`'s password wasn't accepted);
+  the right mouse button pastes too, and on the user screen it copies a
+  selection, else pastes into the command line, as in a console window. When it exits, its output joins the user screen and
   the panels come back -- `Ctrl+O` shows it again. Replaced suspending
   the TUI with inherited stdio, so our own UI (popups, suggestions) can
   be drawn over the output, as in Far.

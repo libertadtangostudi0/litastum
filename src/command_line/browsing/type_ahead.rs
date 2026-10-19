@@ -14,6 +14,10 @@ use crate::text_field::TextField;
 /// A program seen reading -- the typed text echoed right before its
 /// cursor (`observe`) -- gets the keys alone from then on: reported, a
 /// paste into a script's prompt showed twice, there and in our line.
+///
+/// At a password prompt (`asks_for_secret`) the text shows as `*`s and
+/// never stays in the line (reported: `hg pull`'s password showed in the
+/// clear).
 pub(super) struct TypeAhead {
     /// Where the typed text starts in the command line, in characters.
     start: usize,
@@ -25,12 +29,31 @@ pub(super) struct TypeAhead {
     before_typing: Option<String>,
     /// The program reads what's typed: nothing is mirrored any more.
     program_reads: bool,
+    /// The current text answers a password prompt: mirrored as `*`s.
+    secret: bool,
+}
+
+
+/// Whether `before_cursor`, the program's line up to its cursor, asks for
+/// a password -- `Password:`, `Password for 'https://...':`, `Enter
+/// passphrase for key '...':`, `user@host's password:`. By the words,
+/// since a program that turns echo off doesn't say so on the terminal.
+pub(super) fn asks_for_secret(before_cursor: &str) -> bool {
+    const WORDS: &[&str] = &["password", "passphrase", "passcode", "пароль", "kennwort", "mot de passe", "pin"];
+    let prompt = before_cursor.trim_end();
+    if !prompt.ends_with(':') {
+        return false;
+    }
+    let lower = prompt.to_lowercase();
+    let is_letter = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+    // Whole words: `pin` isn't in `shipping`.
+    WORDS.iter().any(|word| lower.match_indices(word).any(|(at, _)| !is_letter(lower[..at].chars().next_back()) && !is_letter(lower[at + word.len()..].chars().next())))
 }
 
 impl TypeAhead {
     pub fn begin(line: &mut TextField) -> Self {
         line.move_to_end();
-        Self { start: line.text().chars().count(), echo_from: None, before_typing: None, program_reads: false }
+        Self { start: line.text().chars().count(), echo_from: None, before_typing: None, program_reads: false, secret: false }
     }
 
     /// Mirrors `key`, already sent to the program, into `line`.
@@ -45,7 +68,7 @@ impl TypeAhead {
         match key.code {
             KeyCode::Char(c) if !ctrl && !alt => {
                 self.typing_starts(output_line, before_cursor);
-                line.insert_char(c);
+                line.insert_char(self.shown(c));
             }
             // Editing the line, as when nothing runs -- reported: what was
             // typed couldn't be deleted. Earlier text too: it's the
@@ -82,7 +105,7 @@ impl TypeAhead {
         };
         for c in typed.chars() {
             self.typing_starts(output_line, before_cursor);
-            line.insert_char(c);
+            line.insert_char(self.shown(c));
         }
     }
 
@@ -104,6 +127,16 @@ impl TypeAhead {
         if self.echo_from.is_none() {
             self.echo_from = Some(output_line);
             self.before_typing = Some(before_cursor.to_string());
+            self.secret = asks_for_secret(before_cursor);
+        }
+    }
+
+    /// What our line shows for a typed `c`.
+    fn shown(&self, c: char) -> char {
+        if self.secret {
+            '*'
+        } else {
+            c
         }
     }
 
@@ -112,6 +145,11 @@ impl TypeAhead {
     pub fn finish(mut self, line: &mut TextField, output: &[Line]) {
         let typed: String = line.text().chars().skip(self.start).collect();
         if typed.is_empty() {
+            return;
+        }
+        // Not a command for the next prompt: an unsent password.
+        if self.secret {
+            self.drop_typed(line);
             return;
         }
         let from = self.echo_from.unwrap_or(0).min(output.len());
@@ -126,6 +164,7 @@ impl TypeAhead {
         line.set_text(kept);
         self.echo_from = None;
         self.before_typing = None;
+        self.secret = false;
     }
 }
 
@@ -251,5 +290,48 @@ mod tests {
         type_text(&mut type_ahead, &mut line, "dir", 0);
         type_ahead.finish(&mut line, &[Line::raw("output")]);
         assert_eq!(line.text(), "dir");
+    }
+
+    #[test]
+    fn password_prompts_are_told_by_their_words() {
+        for prompt in ["password: ", "Password for 'https://hg.example.com':", "Enter passphrase for key 'C:/u/.ssh/id_rsa': ", "me@host's password:", "Пароль:", "PIN:"] {
+            assert!(asks_for_secret(prompt), "{prompt:?}");
+        }
+        for prompt in ["C:\\work> ", "Proceed? [y/N]: ", "password reset done", "Enter your name:", "Shipping:"] {
+            assert!(!asks_for_secret(prompt), "{prompt:?}");
+        }
+    }
+
+    /// Reported: `hg pull`'s password showed in the clear in our line.
+    #[test]
+    fn a_password_shows_as_stars_and_never_stays() {
+        let mut line = TextField::new();
+        let mut type_ahead = TypeAhead::begin(&mut line);
+        for c in "s3cr".chars() {
+            type_ahead.key(&mut line, key(KeyCode::Char(c)), 2, "password: ");
+        }
+        type_ahead.paste(&mut line, "et!", 2, "password: ");
+        assert_eq!(line.text(), "*******");
+
+        type_ahead.finish(&mut line, &[Line::raw("password: ")]);
+        assert_eq!(line.text(), "", "an unsent password isn't left for the next prompt");
+    }
+
+    /// After the password's line is sent, the next text is shown as typed.
+    #[test]
+    fn after_the_password_the_next_text_shows_as_typed() {
+        let mut line = TextField::new();
+        let mut type_ahead = TypeAhead::begin(&mut line);
+        type_text_at(&mut type_ahead, &mut line, "pw", "password: ");
+        type_ahead.key(&mut line, key(KeyCode::Enter), 2, "password: ");
+        type_text_at(&mut type_ahead, &mut line, "hg up", "pulling...");
+
+        assert_eq!(line.text(), "hg up");
+    }
+
+    fn type_text_at(type_ahead: &mut TypeAhead, line: &mut TextField, text: &str, before_cursor: &str) {
+        for c in text.chars() {
+            type_ahead.key(line, key(KeyCode::Char(c)), 2, before_cursor);
+        }
     }
 }

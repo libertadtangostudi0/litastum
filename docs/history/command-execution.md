@@ -150,3 +150,21 @@ fix, Far's own design: the user screen is ours.
   loop) used to leave the program and its thread running unseen; now it
   closes the pseudoconsole.
 
+## Passwords at a prompt
+
+Reported with `hg pull`: the password showed in the clear, and a pasted
+one wasn't accepted. The clear text was our own line mirroring what's
+typed (`TypeAhead`) -- the program doesn't echo, and we did. At a prompt
+that asks for a password (by its words, `type_ahead::asks_for_secret`;
+a program turning echo off doesn't say so on the terminal) the mirror
+shows `*`s, and an unsent password doesn't stay in the line for the next
+prompt. The paste: while a command ran, `Ctrl+V` was Windows Terminal's
+own, typing the clipboard in as simulated keys, so what reached the
+program depended on that; it's now polled as in the main loop, the
+clipboard pasted whole (line breaks as `Enter`), the typed copy
+swallowed (`PasteFlood`). Requested at the same time: the right mouse
+button pastes too -- into the program while it runs, into the command
+line on the user screen, where it copies a selection first if there's
+one. Nothing typed or pasted during a run goes to the log.
+Not verified with a real `hg` server.
+

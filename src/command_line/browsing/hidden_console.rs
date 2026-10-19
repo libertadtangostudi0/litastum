@@ -130,6 +130,21 @@ pub(super) fn console_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
 /// selection, which can't scroll the alternate screen; the wheel scrolls
 /// back.
 pub(super) fn mouse(app: &mut App, mouse: MouseEvent) {
+    // The right button, as in a console window (requested): copies the
+    // selection if there is one, else pastes into the command line.
+    if mouse.kind == MouseEventKind::Down(MouseButton::Right) {
+        if let Some(text) = app.user_screen.selection().and_then(|_| app.user_screen.selected_text()) {
+            crate::text_field::clipboard::set(text);
+            app.user_screen.clear_selection();
+            app.notice = Some(Notice::info("Copied"));
+        } else if let Some(text) = crate::text_field::clipboard::get() {
+            for c in text.chars().filter(|&c| c != '\n' && c != '\r') {
+                app.command_line.insert_char(c);
+            }
+            super::line_edited(app);
+        }
+        return;
+    }
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
         // The command line is the row under the screen's lines.
         let on_prompt = usize::from(mouse.row) == app.user_screen.visible_rows() && usize::from(mouse.column) < app.panels[app.active].path.display().to_string().chars().count();
@@ -304,5 +319,29 @@ commands = [\"svn st\"]
         assert_eq!(screen, [format!("{}> cd no-such-dir", dir.display()), "cd: no such directory: no-such-dir".to_string()]);
         assert_eq!(app.panels[app.active].path, dir);
         assert!(app.notice.is_none(), "the screen shows it already");
+    }
+
+    fn right_click() -> MouseEvent {
+        MouseEvent { kind: MouseEventKind::Down(MouseButton::Right), column: 3, row: 1, modifiers: KeyModifiers::NONE }
+    }
+
+    /// Requested: the right button pastes, as in a console window -- or
+    /// copies a selection, if there's one.
+    #[test]
+    fn the_right_button_pastes_into_the_line_or_copies_a_selection() {
+        let mut app = hidden("");
+        crate::text_field::clipboard::set("hg pull".to_string());
+
+        mouse(&mut app, right_click());
+        assert_eq!(app.command_line.text(), "hg pull");
+
+        app.user_screen.extend(vec![Line::raw("abc def")]);
+        let row = u16::try_from(app.user_screen.visible_rows().saturating_sub(1)).unwrap();
+        app.user_screen.click(row, 0, false, std::time::Instant::now());
+        app.user_screen.select_to(row, 2);
+        app.user_screen.select_finish();
+        mouse(&mut app, right_click());
+        assert_eq!(crate::text_field::clipboard::get().as_deref(), Some("abc"), "copied, not pasted");
+        assert_eq!(app.command_line.text(), "hg pull");
     }
 }
