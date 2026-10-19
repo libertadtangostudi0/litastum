@@ -1,5 +1,6 @@
 mod browsing;
 mod completion;
+mod dangerous;
 mod effect;
 mod history;
 mod secrets;
@@ -9,6 +10,7 @@ mod suggestions;
 pub use browsing::{handle_browsing_key, handle_browsing_mouse};
 pub(crate) use effect::apply_effect;
 pub use effect::Effect;
+pub use dangerous::handle_confirm_command_key;
 pub use completion::CompletionCycle;
 pub use history::{handle_history_key, load_history, matching_history, CommandHistoryMenu};
 pub use suggestions::{suggestions, Suggestion};

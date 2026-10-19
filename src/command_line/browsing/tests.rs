@@ -157,6 +157,17 @@ mod handle_browsing_key_tests {
         assert!(app.command_history.is_empty());
     }
 
+    /// A command that deletes a lot asks before it runs.
+    #[test]
+    fn enter_on_a_dangerous_command_asks_first() {
+        let mut app = typed("rd /s /q build");
+
+        let effect = handle_browsing_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert_eq!(effect, Effect::None, "not run yet");
+        assert!(matches!(app.overlay, Some(crate::app::Overlay::ConfirmCommand(_))));
+    }
+
     /// As bash's `ignorespace`: a leading space keeps a command out of the
     /// history.
     #[test]

@@ -279,3 +279,14 @@ fn the_terminals_zoom_steps_are_saved_and_kept() {
     assert_eq!((steps["main"], steps["compare"]), (-1, 2));
     assert_eq!(config.terminal_zoom_now, Some(TerminalZoomNow { session: "tab".to_string(), steps: 2 }));
 }
+
+
+/// Asking before a dangerous command is on unless `config.json` says no.
+#[test]
+fn dangerous_commands_ask_unless_turned_off() {
+    assert!(settings_from(&Config::default()).confirm_dangerous_commands);
+    let dir = crate::test_support::unique_scratch_dir("config-dangerous");
+    std::fs::write(dir.join("config.json"), r#"{ "confirm_dangerous_commands": false }"#).unwrap();
+    assert!(!settings_from(&read_config(&dir)).confirm_dangerous_commands);
+}
+

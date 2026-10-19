@@ -57,6 +57,9 @@ pub(crate) fn submit_command_line(app: &mut App) -> Result<Effect> {
         debug!("command line: clear screen (handled directly, no subprocess)");
         return Ok(Effect::ClearScreen);
     }
+    if crate::command_line::dangerous::ask_first(app, &input) {
+        return Ok(Effect::None);
+    }
     Ok(Effect::RunShell(vec![input]))
 }
 

@@ -114,6 +114,13 @@ line. Order matters and the table is grouped by it:
   where `cd` is Far's own. A `cd` line now moves the active panel and
   every following line runs there; a `cd` to a missing directory stops
   the item instead of running the rest in the wrong place.
+- **A command that deletes a lot asks first** (requested):
+  `rd /s`, `del /s`, `del /q *`, `format X:`, `rm -r`, `Remove-Item
+  -Recurse`, `diskpart`, `cipher /w` -- by their words, each part of a
+  chain on its own (`command_line/dangerous.rs`) -- open
+  `Overlay::ConfirmCommand`: `Y` runs it, `N`/`Esc` don't.
+  `"confirm_dangerous_commands": false` in `config.json` turns it off.
+  F2 menu items aren't asked about: they're the user's own.
 - **`cls`/`clear` are special-cased too**, the same way `cd` is:
   `submit_command_line` returns `Effect::ClearScreen`, which empties the
   user screen (below) and repaints -- no subprocess.

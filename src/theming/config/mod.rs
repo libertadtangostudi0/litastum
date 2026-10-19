@@ -88,6 +88,8 @@ struct Config {
     editor_keymap_mode: Option<EditorKeymapMode>,
     /// Compare's F9 -> Line endings (`LineEndingDisplay`).
     compare_line_ending_display: Option<LineEndingDisplay>,
+    /// Ask before a command that deletes a lot at once (`Settings`).
+    confirm_dangerous_commands: Option<bool>,
     /// The fields below override `Limits` (`limits.rs`) one by one; no
     /// menu for them, hand-edit `config.json`.
     max_command_history: Option<usize>,
@@ -288,14 +290,25 @@ pub fn load_active_shell() -> Option<String> {
 
 
 /// The UI choices restored at startup: the popup style (F9 -> Options ->
-/// UI), the keymap new editor sessions open with, and Compare's line-
-/// ending display. Kept on `App::settings`; each menu changes its field
-/// and saves the whole thing (`save_settings`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// UI), the keymap new editor sessions open with, Compare's line-ending
+/// display, and whether a command that deletes a lot asks first. Kept on
+/// `App::settings`; each menu changes its field and saves the whole thing
+/// (`save_settings`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Settings {
     pub popup_style: PopupStyle,
     pub editor_keymap_mode: EditorKeymapMode,
     pub compare_line_ending_display: LineEndingDisplay,
+    /// `rd /s`, `format`, `rm -rf`, ... ask before they run
+    /// (`command_line::dangerous`); on unless `config.json` says
+    /// `"confirm_dangerous_commands": false`.
+    pub confirm_dangerous_commands: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { popup_style: PopupStyle::default(), editor_keymap_mode: EditorKeymapMode::default(), compare_line_ending_display: LineEndingDisplay::default(), confirm_dangerous_commands: true }
+    }
 }
 
 
@@ -315,6 +328,7 @@ fn settings_from(config: &Config) -> Settings {
         popup_style: config.popup_style.unwrap_or_default(),
         editor_keymap_mode: config.editor_keymap_mode.unwrap_or_default(),
         compare_line_ending_display: config.compare_line_ending_display.unwrap_or_default(),
+        confirm_dangerous_commands: config.confirm_dangerous_commands.unwrap_or(true),
     }
 }
 
@@ -373,6 +387,7 @@ pub fn save_settings(settings: &Settings) {
             config.popup_style = Some(settings.popup_style);
             config.editor_keymap_mode = Some(settings.editor_keymap_mode);
             config.compare_line_ending_display = Some(settings.compare_line_ending_display);
+            config.confirm_dangerous_commands = Some(settings.confirm_dangerous_commands);
         });
     }
 }

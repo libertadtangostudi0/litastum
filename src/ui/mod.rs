@@ -303,6 +303,7 @@ fn draw_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) -> Opti
         Overlay::ShellMenu(menu) => shell::draw_shell_menu(frame, area, menu, &app.shell_profiles, theme, style),
         Overlay::PopupStyleMenu(menu) => popup_style_menu::draw_popup_style_menu(frame, area, menu, theme, style),
         Overlay::ConfirmDelete(pending) => confirm::draw_confirm_delete_popup(frame, area, pending, theme, style),
+        Overlay::ConfirmCommand(pending) => confirm::draw_confirm_command_popup(frame, area, pending, theme, style),
         Overlay::ConfirmTransfer(pending) => return Some(confirm::draw_confirm_transfer_popup(frame, area, pending, theme, style)),
         Overlay::FindFile(state) => return find_file::draw_find_file(frame, area, state, theme, style),
         // Filters against the command line underneath, whose cursor stays.

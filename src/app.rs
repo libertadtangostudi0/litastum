@@ -64,6 +64,9 @@ pub enum Overlay {
     /// over the browser rather than deleting immediately — see
     /// `PendingDelete`.
     ConfirmDelete(PendingDelete),
+    /// A typed command that deletes a lot at once (`command_line::dangerous`),
+    /// asked about before it runs.
+    ConfirmCommand(PendingCommand),
     /// F5/F6 was pressed on a real entry: shown as a "copy/move to?"
     /// prompt with an editable destination path, defaulting to the
     /// *other* panel's directory — see `PendingTransfer`.
@@ -114,6 +117,14 @@ pub struct DeleteEntry {
     /// Shown in the delete popup for a single file (a directory's
     /// reported size isn't its contents' total, so it's not shown).
     pub size: u64,
+}
+
+
+/// A command waiting for `Y` (`Overlay::ConfirmCommand`): the line, and
+/// what makes it dangerous.
+pub struct PendingCommand {
+    pub line: String,
+    pub reason: &'static str,
 }
 
 

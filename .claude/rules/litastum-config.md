@@ -14,8 +14,9 @@ slightly imprecise.
 
 ## `Settings`: the persisted UI choices, one struct
 
-`popup_style`, `editor_keymap_mode` and `compare_line_ending_display`
-are one `theming::config::Settings`, kept on `App::settings`:
+`popup_style`, `editor_keymap_mode`, `compare_line_ending_display` and
+`confirm_dangerous_commands` (on unless `false` in `config.json`; no
+menu yet) are one `theming::config::Settings`, kept on `App::settings`:
 `load_settings()` reads them in one pass (each missing field falling
 back on its own), and a menu that changes one sets the field and calls
 `save_settings(&app.settings)`. A new setting of this kind is one field
