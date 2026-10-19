@@ -82,7 +82,7 @@ const BACKGROUND_TASK_POLL_INTERVAL: std::time::Duration = std::time::Duration::
 /// Whether an image decode or a Find file search is in flight, or the
 /// panels' directories wait to be written (`last_paths`).
 fn background_task_pending(app: &App) -> bool {
-    explorer::is_image_decode_pending(app) || explorer::is_find_file_search_pending(app) || app.last_paths.pending()
+    explorer::is_image_decode_pending(app) || explorer::is_find_file_search_pending(app) || app.last_paths.pending() || app.clipboard_wipe.pending()
 }
 
 /// Polls every background task once; `true` if one finished and the
@@ -92,6 +92,7 @@ fn poll_background_tasks(app: &mut App) -> bool {
     if let Some(paths) = app.last_paths.take_due(std::time::Instant::now()) {
         crate::last_paths::save(&paths);
     }
+    app.clipboard_wipe.poll(std::time::Instant::now());
     let image = explorer::poll_pending_image_decode(app);
     let search = explorer::poll_pending_find_file_search(app);
     image || search

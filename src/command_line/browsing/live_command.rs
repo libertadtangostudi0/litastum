@@ -50,6 +50,7 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Tui, line: &str) -> Result<
         if command.is_finished() {
             break;
         }
+        app.clipboard_wipe.poll(std::time::Instant::now());
         // Windows Terminal keeps `Ctrl+V` and types the clipboard in as
         // keys -- a password pasted that way wasn't accepted (reported).
         // As in the main loop: the key is polled, the clipboard pasted
@@ -119,8 +120,13 @@ fn paste_into(app: &mut App, command: &LiveCommand, type_ahead: &mut TypeAhead, 
     if text.is_empty() {
         return;
     }
+    let before_cursor = command.text_before_cursor();
     if !command.full_screen() {
-        type_ahead.paste(&mut app.command_line, text, command.output_line(), &command.text_before_cursor());
+        type_ahead.paste(&mut app.command_line, text, command.output_line(), &before_cursor);
+    }
+    // A password: off the clipboard in a while (`clipboard_wipe`).
+    if super::type_ahead::asks_for_secret(&before_cursor) {
+        app.clipboard_wipe.arm(text, std::time::Instant::now());
     }
     command.paste(&program_text(text));
 }

@@ -266,6 +266,9 @@ pub struct App {
     /// Where the cells are on screen, for which half a click is in
     /// (`cell_halves`).
     pub cell_halves: crate::cell_halves::CellHalves,
+    /// The clipboard emptied a while after a password was pasted from it
+    /// (`clipboard_wipe`).
+    pub clipboard_wipe: crate::clipboard_wipe::ClipboardWipe,
     /// A zoom per screen in Windows Terminal, when litastum runs there
     /// (`terminal_zoom`).
     pub terminal_zoom: Option<crate::terminal_zoom::TerminalZoom>,
@@ -340,6 +343,7 @@ impl App {
             terminal_screen: None,
             last_paths: Default::default(),
             cell_halves: Default::default(),
+            clipboard_wipe: Default::default(),
             terminal_zoom: None,
             markdown_edit_preview: None,
             notice: None,

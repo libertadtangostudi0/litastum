@@ -133,7 +133,10 @@ line. Order matters and the table is grouped by it:
   polled as in the main loop and the clipboard pasted whole (Windows
   Terminal typed it in as keys, and `hg`'s password wasn't accepted);
   the right mouse button pastes too, and on the user screen it copies a
-  selection, else pastes into the command line, as in a console window. When it exits, its output joins the user screen and
+  selection, else pastes into the command line, as in a console window.
+  A password pasted at such a prompt is wiped off the clipboard 30 s
+  later, unless something else was copied since (`clipboard_wipe.rs`,
+  only its hash kept; Windows' clipboard history `Win+V` isn't ours). When it exits, its output joins the user screen and
   the panels come back -- `Ctrl+O` shows it again. Replaced suspending
   the TUI with inherited stdio, so our own UI (popups, suggestions) can
   be drawn over the output, as in Far.

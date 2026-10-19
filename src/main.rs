@@ -1,5 +1,6 @@
 mod app;
 mod cell_halves;
+mod clipboard_wipe;
 mod choice_menu;
 mod command_line;
 mod compare;
