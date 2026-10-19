@@ -39,7 +39,7 @@ pub(super) struct TypeAhead {
 /// passphrase for key '...':`, `user@host's password:`. By the words,
 /// since a program that turns echo off doesn't say so on the terminal.
 pub(super) fn asks_for_secret(before_cursor: &str) -> bool {
-    const WORDS: &[&str] = &["password", "passphrase", "passcode", "пароль", "kennwort", "mot de passe", "pin"];
+    const WORDS: &[&str] = &["password", "passphrase", "passcode", "passwort", "kennwort", "пароль", "mot de passe", "pin"];
     let prompt = before_cursor.trim_end();
     if !prompt.ends_with(':') {
         return false;
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn password_prompts_are_told_by_their_words() {
-        for prompt in ["password: ", "Password for 'https://hg.example.com':", "Enter passphrase for key 'C:/u/.ssh/id_rsa': ", "me@host's password:", "Пароль:", "PIN:"] {
+        for prompt in ["password: ", "Password for 'https://hg.example.com':", "Enter passphrase for key 'C:/u/.ssh/id_rsa': ", "me@host's password:", "Пароль:", "PIN:", "Passwort für 'https://git.example.com':", "Enter password:"] {
             assert!(asks_for_secret(prompt), "{prompt:?}");
         }
         for prompt in ["C:\\work> ", "Proceed? [y/N]: ", "password reset done", "Enter your name:", "Shipping:"] {
