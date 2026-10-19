@@ -117,7 +117,7 @@ pub fn handle_theme_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     };
 
     let command = resolve(key);
-    debug!(?key, ?command, "theme menu key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?command, "theme menu key");
 
     match command {
         ThemeMenuCommand::Up => menu.move_up(),

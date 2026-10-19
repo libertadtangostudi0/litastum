@@ -27,7 +27,7 @@ pub fn handle_popup_style_menu_key(app: &mut App, key: KeyEvent) -> Result<Effec
     };
 
     let outcome = menu.handle_key(key);
-    debug!(?key, ?outcome, "popup style menu key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?outcome, "popup style menu key");
     match outcome {
         MenuOutcome::Open => {}
         MenuOutcome::Closed => app.overlay = None,

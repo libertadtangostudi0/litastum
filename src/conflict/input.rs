@@ -42,7 +42,7 @@ pub fn handle_conflict_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     }
 
     let command = resolve(key);
-    debug!(?key, ?command, "conflict key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?command, "conflict key");
 
     match command {
         DiffCommand::Close if cancel_selection(state.focused_mut(), key) => {}

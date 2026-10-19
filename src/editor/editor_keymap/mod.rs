@@ -156,7 +156,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     }
 
     let command = resolve(key);
-    debug!(?key, ?command, "editor key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?command, "editor key");
 
     // `Esc` with the search box open but the text focused closes just
     // the box, VS Code-style, before it can mean "cancel the selection"
@@ -325,7 +325,7 @@ fn return_from_editor(app: &mut App) -> Result<()> {
 /// nothing lost, anything else is ignored.
 pub fn handle_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let answer = yes_no::answer(key);
-    debug!(?key, ?answer, "confirm-discard key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?answer, "confirm-discard key");
 
     match answer {
         Answer::Yes => return_from_editor(app)?,

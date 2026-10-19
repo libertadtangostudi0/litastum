@@ -27,7 +27,7 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<Effect>
     };
 
     let answer = yes_no::answer(key);
-    debug!(?key, ?answer, count = pending.entries.len(), "confirm-delete key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?answer, count = pending.entries.len(), "confirm-delete key");
 
     match answer {
         Answer::Yes => {

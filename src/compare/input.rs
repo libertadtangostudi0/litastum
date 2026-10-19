@@ -29,7 +29,7 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     }
 
     let command = resolve(key);
-    debug!(?key, ?command, "compare key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?command, "compare key");
 
     match command {
         DiffCommand::Close if cancel_selection(state.focused_mut(), key) => {}
@@ -78,7 +78,7 @@ fn close_compare_or_confirm(app: &mut App) -> Result<()> {
 /// the conflict resolver -- either way, `Yes` drops back to browsing.
 pub fn handle_compare_confirm_discard_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let answer = yes_no::answer(key);
-    debug!(?key, ?answer, "compare confirm-discard key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?answer, "compare confirm-discard key");
 
     match answer {
         Answer::Yes => {

@@ -72,7 +72,7 @@ pub fn handle_shell_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     };
 
     let outcome = menu.handle_key(key);
-    debug!(?key, ?outcome, "shell menu key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?outcome, "shell menu key");
     match outcome {
         MenuOutcome::Open => {}
         MenuOutcome::Closed => app.overlay = None,

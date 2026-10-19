@@ -27,7 +27,7 @@ pub fn handle_editor_keymap_menu_key(app: &mut App, key: KeyEvent) -> Result<Eff
     };
 
     let outcome = menu.handle_key(key);
-    debug!(?key, ?outcome, "editor keymap menu key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?outcome, "editor keymap menu key");
     if outcome == MenuOutcome::Open {
         return Ok(Effect::None);
     }

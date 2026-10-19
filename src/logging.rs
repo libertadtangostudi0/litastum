@@ -8,6 +8,26 @@ use tracing_subscriber::EnvFilter;
 const LOG_PATH: &str = "logs/litastum.log";
 
 
+/// A key as the log shows it: which key and modifiers, never the
+/// character typed -- what's typed in the command line or the editor can
+/// be a password or a token, and the log is on by default (requested:
+/// secrets never go to the log). `Ctrl`/`Alt` chords keep their letter:
+/// they're commands, not text.
+pub struct LoggedKey(pub crossterm::event::KeyEvent);
+
+impl std::fmt::Debug for LoggedKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        let key = self.0;
+        let chord = key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        match key.code {
+            KeyCode::Char(_) if !chord => write!(f, "Char(_) {:?}", key.modifiers),
+            code => write!(f, "{code:?} {:?}", key.modifiers),
+        }
+    }
+}
+
+
 /// File logging to `logs/litastum.log` -- the TUI owns the terminal.
 /// Capped at `limits().max_log_bytes` (`SizeCappedFile`); reading
 /// `limits()` this early is fine, it's cached after the first read. Level
@@ -133,5 +153,18 @@ mod tests {
         file.write_all(b"!").unwrap();
 
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello!");
+    }
+
+    /// Requested: a typed character never reaches the log -- it may be
+    /// part of a password.
+    #[test]
+    fn a_typed_character_is_not_logged_but_a_chord_is() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let typed = format!("{:?}", LoggedKey(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SHIFT)));
+        assert!(typed.starts_with("Char(_)"), "{typed}");
+        let chord = format!("{:?}", LoggedKey(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)));
+        assert!(chord.contains("Char('s')"), "{chord}");
+        let arrow = format!("{:?}", LoggedKey(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)));
+        assert!(arrow.starts_with("Left"), "{arrow}");
     }
 }

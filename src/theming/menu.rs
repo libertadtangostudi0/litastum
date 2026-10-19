@@ -120,7 +120,7 @@ pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     };
 
     let outcome = menu.list.handle_key(key);
-    debug!(?key, ?outcome, "main menu key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?outcome, "main menu key");
 
     match outcome {
         MenuOutcome::Open => {}

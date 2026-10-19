@@ -28,7 +28,7 @@ use bindings::{BrowserAction, LineState};
 /// plain character types into the command line. Order and scope cuts:
 /// `.claude/rules/litastum-command-line.md`.
 pub fn handle_browsing_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
-    debug!(?key, "browsing key");
+    debug!(key = ?crate::logging::LoggedKey(key), "browsing key");
     if app.panel_path_edit.is_some() {
         panel_path::key(app, key);
         return Ok(Effect::None);

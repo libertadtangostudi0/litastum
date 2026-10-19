@@ -43,7 +43,7 @@ pub fn handle_compare_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     };
 
     let outcome = menu.handle_key(key);
-    debug!(?key, ?outcome, "compare menu key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?outcome, "compare menu key");
     app.overlay = match outcome {
         MenuOutcome::Open => return Ok(Effect::None),
         MenuOutcome::Chosen(CompareMenuItem::LineEndings) => Some(Overlay::CompareLineEndingMenu(open_compare_line_ending_menu(app.settings.compare_line_ending_display))),

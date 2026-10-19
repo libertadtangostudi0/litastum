@@ -27,7 +27,7 @@ pub fn handle_compare_line_ending_menu_key(app: &mut App, key: KeyEvent) -> Resu
     };
 
     let outcome = menu.handle_key(key);
-    debug!(?key, ?outcome, "compare line ending menu key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?outcome, "compare line ending menu key");
     if outcome == MenuOutcome::Open {
         return Ok(Effect::None);
     }

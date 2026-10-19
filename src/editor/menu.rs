@@ -45,7 +45,7 @@ pub fn handle_editor_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     };
 
     let outcome = menu.handle_key(key);
-    debug!(?key, ?outcome, "editor menu key");
+    debug!(key = ?crate::logging::LoggedKey(key), ?outcome, "editor menu key");
     app.overlay = match outcome {
         MenuOutcome::Open => return Ok(Effect::None),
         MenuOutcome::Chosen(EditorMenuItem::Keybindings) => {
