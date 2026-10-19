@@ -136,7 +136,11 @@ line. Order matters and the table is grouped by it:
   selection, else pastes into the command line, as in a console window.
   A password pasted at such a prompt is wiped off the clipboard 30 s
   later, unless something else was copied since (`clipboard_wipe.rs`,
-  only its hash kept; Windows' clipboard history `Win+V` isn't ours). When it exits, its output joins the user screen and
+  only its hash kept; Windows' clipboard history `Win+V` isn't ours).
+  A paste of several lines into a running program asks first (each line
+  goes with `Enter` and runs; text copied from a page can hide a
+  command): `Enter` pastes, `Esc` drops it -- not one line with a break
+  at its end, nor at a password prompt (`live_command::needs_confirmation`). When it exits, its output joins the user screen and
   the panels come back -- `Ctrl+O` shows it again. Replaced suspending
   the TUI with inherited stdio, so our own UI (popups, suggestions) can
   be drawn over the output, as in Far.

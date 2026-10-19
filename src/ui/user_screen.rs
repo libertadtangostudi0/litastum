@@ -26,6 +26,11 @@ pub fn draw_console(frame: &mut Frame, app: &App, live: Option<&LiveView>) -> Op
     let [screen, line_row] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
     let screen_cursor = draw_screen_lines(frame, screen, app, live);
     let command_cursor = super::draw_command_rows(frame, line_row, app, &theme, live.is_none());
+    // While a command runs, nothing else draws the notices: a paste
+    // waiting to be confirmed asks there.
+    if let (Some(_), Some(notice)) = (live, &app.notice) {
+        super::notice::draw_notice(frame, notice, &theme, app.settings.popup_style);
+    }
     match live {
         Some(_) => screen_cursor,
         None => Some(command_cursor),
