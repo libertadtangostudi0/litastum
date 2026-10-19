@@ -72,7 +72,7 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Tui, line: &str) -> Result<
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => {
                 let key = crate::keyboard_layout::normalize_ctrl_shortcut(key);
-                if app.paste_flood.should_swallow(key.code, key.modifiers) {
+                if app.paste_flood.should_swallow(key.code, key.modifiers) || (cfg!(windows) && is_ctrl_v(key)) {
                     continue;
                 }
                 app.paste_flood.record_typed_key(key.code, key.modifiers);
@@ -131,6 +131,15 @@ fn program_text(text: &str) -> String {
 }
 
 
+/// `Ctrl+V` as a key, when the terminal hands it over rather than pasting
+/// itself: on Windows the paste is ours (the key is polled), and the key
+/// must not reach the program as `0x16` ahead of the pasted text.
+fn is_ctrl_v(key: crossterm::event::KeyEvent) -> bool {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    matches!(key.code, KeyCode::Char('v' | 'V')) && key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT)
+}
+
+
 /// One frame of the user screen (`ui::draw_console`), then its cursor.
 pub(super) fn draw_console(terminal: &mut Tui, app: &App, live: Option<&LiveView>) -> Result<()> {
     let mut cursor = None;
@@ -149,6 +158,14 @@ pub(super) fn draw_console(terminal: &mut Tui, app: &App, live: Option<&LiveView
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ctrl_v_is_the_paste_not_a_key_for_the_program() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        assert!(is_ctrl_v(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL)));
+        assert!(!is_ctrl_v(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE)), "a plain v is typed");
+        assert!(!is_ctrl_v(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL | KeyModifiers::ALT)), "AltGr+v is a character");
+    }
 
     #[test]
     fn a_paste_goes_to_the_program_with_enter_for_each_line_break() {
