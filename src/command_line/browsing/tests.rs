@@ -145,6 +145,42 @@ mod handle_browsing_key_tests {
         assert_eq!(app.command_history.last().map(String::as_str), Some("echo hi"));
     }
 
+    /// Requested: passwords never go to the history. A command with one
+    /// still runs, as typed.
+    #[test]
+    fn a_command_with_a_password_runs_but_isnt_kept() {
+        let mut app = typed("hg pull https://me:s3cr3t@hg.example.com/repo");
+
+        let effect = handle_browsing_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert_eq!(effect, Effect::RunShell(vec!["hg pull https://me:s3cr3t@hg.example.com/repo".to_string()]));
+        assert!(app.command_history.is_empty());
+    }
+
+    /// As bash's `ignorespace`: a leading space keeps a command out of the
+    /// history.
+    #[test]
+    fn a_command_with_a_leading_space_isnt_kept() {
+        let mut app = typed(" echo private");
+
+        let effect = handle_browsing_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        assert_eq!(effect, Effect::RunShell(vec!["echo private".to_string()]));
+        assert!(app.command_history.is_empty());
+    }
+
+    /// The user screen shows the command as typed, but for its secret.
+    #[test]
+    fn the_user_screen_shows_a_command_without_its_password() {
+        let mut app = typed("cd W:\\nowhere --password s3cr3t");
+
+        handle_browsing_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        let shown: String = app.user_screen.lines().iter().map(|line| line.to_string()).collect::<Vec<_>>().join("\n");
+        assert!(!shown.contains("s3cr3t"), "{shown}");
+        assert!(shown.contains("--password ***"), "{shown}");
+    }
+
     #[test]
     fn enter_on_cls_asks_for_a_repaint_not_a_shell() {
         let mut app = typed("cls");

@@ -4,6 +4,7 @@ use tracing::debug;
 use crate::app::App;
 use crate::command_line::effect::Effect;
 use crate::command_line::history::{record_history, save_history};
+use crate::command_line::secrets;
 use crate::terminal_setup::Tui;
 
 mod app_paths;
@@ -17,16 +18,22 @@ use super::live_command::run_live;
 /// anything else becomes `Effect::RunShell` -- run in a pseudoconsole
 /// with its output on the user screen (`run_shell_command_lines`).
 pub(crate) fn submit_command_line(app: &mut App) -> Result<Effect> {
+    // A leading space keeps the command out of the history, as bash's
+    // `ignorespace`; so does a secret in it (`secrets`) -- with `***` in
+    // its place it would run wrong when recalled.
+    let private = app.command_line.text().starts_with(' ');
     let input = app.command_line.text().trim().to_string();
     app.command_line.clear();
     if input.is_empty() {
         return Ok(Effect::None);
     }
-    record_history(app, &input);
-    save_history(&app.command_history);
+    if !private && !secrets::has_secret(&input) {
+        record_history(app, &input);
+        save_history(&app.command_history);
+    }
 
     if let Some(target) = parse_cd_target(&input) {
-        debug!(target, "command line: cd");
+        debug!(target = %secrets::redact(target), "command line: cd");
         let cwd = app.active_panel().path.clone();
         let failure = match app.active_panel().change_dir(target) {
             Ok(true) => None,
@@ -36,9 +43,9 @@ pub(crate) fn submit_command_line(app: &mut App) -> Result<Effect> {
         // Reported: a cd to a missing directory said nothing. The user
         // screen gets the line and the answer, as a shell would show them;
         // over the panels, a notice too, or it'd go unseen.
-        if let Some(message) = failure {
+        if let Some(message) = failure.map(|message| secrets::redact(&message)) {
             let theme = app.theme;
-            app.user_screen.begin_command(&cwd, &input, &theme);
+            app.user_screen.begin_command(&cwd, &secrets::redact(&input), &theme);
             app.user_screen.push_message(&message, &theme);
             if !app.panels_hidden {
                 app.notice = Some(crate::notice::Notice::error(message));
@@ -141,15 +148,15 @@ pub(in crate::command_line) fn run_shell_command_lines(app: &mut App, terminal: 
     for line in lines {
         let cwd = app.active_panel().path.clone();
         let theme = app.theme;
-        app.user_screen.begin_command(&cwd, line, &theme);
+        app.user_screen.begin_command(&cwd, &secrets::redact(line), &theme);
         if let Some(target) = parse_cd_target(line) {
-            debug!(target, "command line: cd");
+            debug!(target = %secrets::redact(target), "command line: cd");
             let failure = match app.active_panel().change_dir(target) {
                 Ok(true) => None,
                 Ok(false) => Some(format!("cd: no such directory: {target}")),
                 Err(err) => Some(format!("cd: {target}: {err}")),
             };
-            if let Some(message) = failure {
+            if let Some(message) = failure.map(|message| secrets::redact(&message)) {
                 app.user_screen.push_message(&format!("{message} -- the remaining commands were not run"), &theme);
                 break;
             }

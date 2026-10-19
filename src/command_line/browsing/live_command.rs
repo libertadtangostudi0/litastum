@@ -28,7 +28,8 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Tui, line: &str) -> Result<
     args.push(shell_argument(&resolve_app_paths_command(line)));
     let size = terminal.size()?;
     let mut rows = ui::console_rows(size.height);
-    debug!(shell = profile.name, %line, cwd = %cwd.display(), "running a command in a pseudoconsole");
+    let shown = crate::command_line::secrets::redact(line);
+    debug!(shell = profile.name, line = %shown, cwd = %cwd.display(), "running a command in a pseudoconsole");
     let command = match LiveCommand::spawn(&profile.program, args, &cwd, size.width, rows) {
         Ok(command) => command,
         Err(err) => {

@@ -2,6 +2,7 @@ mod browsing;
 mod completion;
 mod effect;
 mod history;
+mod secrets;
 mod shell;
 mod suggestions;
 

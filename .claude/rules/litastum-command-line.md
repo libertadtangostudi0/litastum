@@ -85,6 +85,13 @@ line. Order matters and the table is grouped by it:
   `move_word_left`/`move_word_right`.
 - **No command history** (no up-arrow recall) — same reason, arrows are
   taken.
+- **Secrets stay out of what's kept** (requested): a command with one
+  -- a URL's password, `--password x`, `DB_PASSWORD=x`, `-Password x`
+  (`command_line/secrets.rs`) -- runs but isn't added to the history
+  (with `***` it would run wrong when recalled); the log, the user
+  screen's echo and a `cd` error show it with `***`. A leading space
+  keeps any command out of the history, as bash's `ignorespace`. Keys
+  go to the log without their characters (`logging::LoggedKey`).
 - **Bare `cd`** (no argument) is a no-op, not "go to home directory".
 - **`cd` is special-cased**, everything else is shelled out. A spawned
   shell's own `cd` would only change *its* directory, not our
