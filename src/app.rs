@@ -123,6 +123,8 @@ pub struct PendingDelete {
     /// The marked entries if any are marked, else the cursor entry
     /// (same rule as `PendingTransfer::sources`). Never empty.
     pub entries: Vec<DeleteEntry>,
+    /// `Shift+Del`: for good, not to the Recycle Bin (`F8`).
+    pub permanent: bool,
 }
 
 

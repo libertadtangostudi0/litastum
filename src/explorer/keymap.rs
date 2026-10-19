@@ -49,6 +49,9 @@ pub enum Command {
     /// (`Overlay::ConfirmDelete`), never deletes directly. Matches Far
     /// Manager's own F8 binding.
     DeleteSelected,
+    /// `Shift+Del` on an empty command line -- as `DeleteSelected`, but
+    /// for good rather than to the Recycle Bin, as in Far.
+    WipeSelected,
     /// `Shift+A` (only on an empty command line -- see the binding table)
     /// — marks every entry in the active panel except `..`
     /// (`panel/marks.rs::select_all`).

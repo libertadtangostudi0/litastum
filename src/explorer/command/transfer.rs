@@ -9,7 +9,7 @@ use crate::text_field::TextField;
 /// (the cursor on `..` and nothing marked, or an empty panel) — never
 /// deletes directly, see `confirm::handle_confirm_delete_key` for the
 /// actual filesystem call.
-pub(super) fn request_delete(app: &mut App) {
+pub(super) fn request_delete(app: &mut App, permanent: bool) {
     let panel = app.active_panel();
     let entries: Vec<DeleteEntry> = panel
         .marked_or_current()
@@ -20,7 +20,9 @@ pub(super) fn request_delete(app: &mut App) {
         return;
     }
 
-    app.overlay = Some(Overlay::ConfirmDelete(PendingDelete { entries }));
+    // No Recycle Bin here: say it's for good.
+    let permanent = permanent || !crate::explorer::recycle::available();
+    app.overlay = Some(Overlay::ConfirmDelete(PendingDelete { entries, permanent }));
 }
 
 
@@ -93,12 +95,25 @@ mod tests {
     use crate::explorer::command::{app_with_selected_file, scratch_dir};
     use crate::test_support::test_app;
 
+    /// `Shift+Del` asks to delete for good; the prompt says so.
+    #[test]
+    fn a_delete_for_good_is_asked_as_such() {
+        let mut app = app_with_selected_file("victim.txt");
+
+        request_delete(&mut app, true);
+
+        let Some(Overlay::ConfirmDelete(pending)) = &app.overlay else {
+            panic!("expected Overlay::ConfirmDelete");
+        };
+        assert!(pending.permanent);
+    }
+
     #[test]
     fn request_delete_targets_the_selected_entry() {
         let mut app = app_with_selected_file("victim.txt");
         let expected_path = app.panels[0].path.join("victim.txt");
 
-        request_delete(&mut app);
+        request_delete(&mut app, false);
 
         let Some(Overlay::ConfirmDelete(pending)) = &app.overlay else {
             panic!("expected Overlay::ConfirmDelete");
@@ -126,7 +141,7 @@ mod tests {
         panel.toggle_mark_move_down();
         panel.selected = c_index; // cursor ends up on the unmarked entry
 
-        request_delete(&mut app);
+        request_delete(&mut app, false);
 
         let Some(Overlay::ConfirmDelete(pending)) = &app.overlay else {
             panic!("expected Overlay::ConfirmDelete");
@@ -141,7 +156,7 @@ mod tests {
         let mut app = app_with_selected_file("victim.txt");
         app.panels[0].selected = 0; // ".." is always entry 0 when a parent exists
 
-        request_delete(&mut app);
+        request_delete(&mut app, false);
 
         assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }
@@ -150,7 +165,7 @@ mod tests {
     fn request_delete_on_an_empty_panel_does_nothing() {
         let mut app = test_app(scratch_dir());
 
-        request_delete(&mut app);
+        request_delete(&mut app, false);
 
         assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     }

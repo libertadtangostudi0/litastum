@@ -1,3 +1,5 @@
+use std::fs;
+
 use super::*;
 use crate::app::Mode;
 use crate::app::{App, DeleteEntry, Overlay, PendingDelete, PendingTransfer, TransferSource};
@@ -13,7 +15,7 @@ fn scratch_app() -> App {
 }
 
 fn pending_delete(path: PathBuf, name: &str, is_dir: bool, size: u64) -> PendingDelete {
-    PendingDelete { entries: vec![DeleteEntry { path, name: name.into(), is_dir, size }] }
+    PendingDelete { entries: vec![DeleteEntry { path, name: name.into(), is_dir, size }], permanent: false }
 }
 
 #[test]
@@ -69,6 +71,7 @@ fn confirm_delete_removes_every_entry_in_a_multi_entry_prompt() {
             DeleteEntry { path: a.clone(), name: "a.txt".into(), is_dir: false, size: 1 },
             DeleteEntry { path: b.clone(), name: "b.txt".into(), is_dir: false, size: 1 },
         ],
+        permanent: false,
     }));
 
     handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();

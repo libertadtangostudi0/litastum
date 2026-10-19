@@ -3,7 +3,6 @@
 //! rename (`Overlay::ConfirmTransfer`), each over a `Pending*` from
 //! `app.rs`.
 
-use std::fs;
 use std::io;
 use std::path::PathBuf;
 
@@ -18,9 +17,11 @@ use crate::yes_no::{self, Answer};
 use super::fs_ops;
 
 
-/// The F8 prompt: `Y` deletes every entry (directories recursively, as
-/// Far does without asking twice) and reloads; `N`/`Esc` cancel. A failed
-/// delete doesn't stop the rest; the failures show as an error notice.
+/// The F8/`Shift+Del` prompt: `Y` sends every entry to the Recycle Bin --
+/// or, `permanent`, deletes it for good (directories with all in them, as
+/// Far does without asking twice) -- and reloads; `N`/`Esc` cancel. A
+/// failed delete doesn't stop the rest; the failures show as an error
+/// notice.
 pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::ConfirmDelete(pending)) = &app.overlay else {
         return Ok(Effect::None);
@@ -36,10 +37,10 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<Effect>
             };
             let mut failures = Vec::new();
             for entry in &pending.entries {
-                let result = if entry.is_dir {
-                    fs::remove_dir_all(&entry.path)
+                let result = if pending.permanent {
+                    super::recycle::delete_for_good(&entry.path, entry.is_dir)
                 } else {
-                    fs::remove_file(&entry.path)
+                    super::recycle::to_recycle_bin(&entry.path, entry.is_dir)
                 };
                 if let Err(err) = result {
                     debug!(path = %entry.path.display(), %err, "delete failed");

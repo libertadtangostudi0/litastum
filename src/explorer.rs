@@ -8,6 +8,7 @@ mod image_preview;
 mod keymap;
 mod markdown_preview;
 mod panel;
+mod recycle;
 mod system_open;
 mod user_menu;
 

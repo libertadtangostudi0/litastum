@@ -137,6 +137,8 @@ pub(super) static BINDINGS: &[Binding] = &[
     with(KeyCode::Insert, CTRL, TypedLine, A::CopySelection),
     with(KeyCode::Char('x'), CTRL, TypedLine, A::CutSelection),
     with(KeyCode::Delete, SHIFT, TypedLine, A::CutSelection),
+    // Far's: for good, where F8 sends to the Recycle Bin.
+    with(KeyCode::Delete, SHIFT, EmptyLine, A::Navigate(Command::WipeSelected)),
     // Marking (`panel/marks.rs`). Shift+A only on an empty line, or a
     // command could never start with a capital letter.
     without(KeyCode::Char('a'), SHIFT, CTRL, EmptyLine, A::Command(Command::SelectAll)),
@@ -216,6 +218,8 @@ mod tests {
         assert_eq!(lookup(chord(KeyCode::Insert, CTRL), TYPED), Some(A::CopySelection));
         assert_eq!(lookup(chord(KeyCode::Char('x'), CTRL), TYPED), Some(A::CutSelection));
         assert_eq!(lookup(chord(KeyCode::Delete, SHIFT), TYPED), Some(A::CutSelection));
+        // Far's: for good on an empty line, where F8 recycles.
+        assert_eq!(lookup(chord(KeyCode::Delete, SHIFT), EMPTY), Some(A::Navigate(Command::WipeSelected)));
         assert_eq!(lookup(chord(KeyCode::Delete, NONE), TYPED), Some(A::DeleteForward));
         assert_eq!(lookup(chord(KeyCode::Char('c'), CTRL), EMPTY), None);
     }

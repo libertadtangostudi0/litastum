@@ -36,6 +36,9 @@ line. Order matters and the table is grouped by it:
    arrows); `Shift+Left/Right` select only while something is typed.
    `Ctrl+C`/`Ctrl+Insert` copy and `Ctrl+X`/`Shift+Delete` cut the
    selection, on a typed line only (above `Delete` = delete forward).
+   On an empty line `Shift+Delete` deletes for good, where `F8` sends to
+   the Recycle Bin, as in Far (`explorer/recycle.rs`; requested). The
+   prompt says which.
 3. Marking -- `Shift+arrows`, and `Shift+A` on an empty line only.
 4. The typed line -- `Enter` runs it; while suggestions show (history
    entries, then the active panel's names starting with the typed word,

@@ -21,3 +21,15 @@
   `LitastumMenu.toml`.
 - **`Shift+F6` renames in place**: the same transfer prompt as a move,
   defaulting to the entry's own directory, with the cursor at the name.
+
+## F8 to the Recycle Bin, Shift+Del for good
+
+Requested, as safety: `F8` deleted for good (`remove_dir_all`). It
+sends to the Recycle Bin now, through the shell's own file operation
+(`SHFileOperationW`, `FOF_ALLOWUNDO`), as Explorer does; `Shift+Del` on
+an empty command line deletes for good, as in Far. The prompt says
+which ("To the Recycle Bin" / "Delete for good"). Outside Windows there's
+no Recycle Bin and the prompt says it's for good. Tests delete for good
+too: they must never fill the Recycle Bin of whoever runs them, so the
+shell call itself isn't under test.
+

@@ -29,18 +29,20 @@ pub fn draw_confirm_delete_popup(frame: &mut Frame, area: Rect, pending: &Pendin
     // bakes whatever title it's given straight into the border instead
     // (no room for a right-aligned badge there), so it gets a plain
     // flat string, same as every other Classic-style popup.
+    let (heading, badge, verb) = if pending.permanent { ("Delete for good", "Shift+Del", "delete") } else { ("To the Recycle Bin", "F8", "recycle") };
     let title = match style {
-        PopupStyle::Classic => Line::from(Span::raw(" Delete (F8) ")),
+        PopupStyle::Classic => Line::from(Span::raw(format!(" {heading} ({badge}) "))),
         PopupStyle::Rounded => {
             // Content width once `Rounded`'s border + padding are
             // subtracted -- see `popup.rs`'s own `PADDING` constant (2
             // cells, each side) plus the 1-cell border itself.
             let content_width = WIDTH.saturating_sub(2 * (1 + 2));
+            let used = 2 + heading.chars().count() + badge.chars().count();
             Line::from(vec![
                 Span::styled("● ", Style::default().fg(theme.danger)),
-                Span::styled("Delete", Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
-                Span::raw(" ".repeat((content_width as usize).saturating_sub(11))),
-                Span::styled("F8", Style::default().fg(theme.text_dim)),
+                Span::styled(heading, Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
+                Span::raw(" ".repeat((content_width as usize).saturating_sub(used))),
+                Span::styled(badge, Style::default().fg(theme.text_dim)),
             ])
         }
     };
@@ -70,7 +72,7 @@ pub fn draw_confirm_delete_popup(frame: &mut Frame, area: Rect, pending: &Pendin
 
     frame.render_widget(popup::separator(inner.width, theme), rows[2]);
 
-    let hints = Line::from(vec![popup::key_pill("y", "delete", theme.danger, theme), Span::raw("  "), popup::key_pill("esc", "keep", theme.accent, theme)]);
+    let hints = Line::from(vec![popup::key_pill("y", verb, theme.danger, theme), Span::raw("  "), popup::key_pill("esc", "keep", theme.accent, theme)]);
     frame.render_widget(hints, rows[3]);
 }
 
@@ -173,6 +175,7 @@ mod tests {
     fn draw_confirm_delete_popup_does_not_panic_and_shows_the_size() {
         let pending = PendingDelete {
             entries: vec![DeleteEntry { path: PathBuf::from("C:/dev/litastum/TODO.md"), name: "TODO.md".into(), is_dir: false, size: 23_300 }],
+            permanent: false,
         };
         let theme = Theme::dark();
 
@@ -185,17 +188,34 @@ mod tests {
             .unwrap();
 
         let contents = buffer_text(terminal.backend().buffer());
-        assert!(contents.contains("Delete"));
+        assert!(contents.contains("To the Recycle Bin"));
         assert!(contents.contains("TODO.md"));
         assert!(contents.contains("23.3 kB"));
-        assert!(contents.contains("delete"));
+        assert!(contents.contains("recycle"));
         assert!(contents.contains("keep"));
+    }
+
+    /// `Shift+Del` says it's for good, so it's never mistaken for `F8`.
+    #[test]
+    fn a_delete_for_good_says_so() {
+        let pending = PendingDelete {
+            entries: vec![DeleteEntry { path: PathBuf::from("C:/dev/litastum/TODO.md"), name: "TODO.md".into(), is_dir: false, size: 23_300 }],
+            permanent: true,
+        };
+        let theme = Theme::dark();
+        for style in [PopupStyle::Rounded, PopupStyle::Classic] {
+            let contents = crate::test_support::render_text(80, 24, |frame| draw_confirm_delete_popup(frame, frame.area(), &pending, &theme, style));
+            assert!(contents.contains("Delete for good"), "{style:?}");
+            assert!(contents.contains("Shift+Del"), "{style:?}");
+            assert!(!contents.contains("Recycle Bin"), "{style:?}");
+        }
     }
 
     #[test]
     fn draw_confirm_delete_popup_classic_style_still_shows_the_size() {
         let pending = PendingDelete {
             entries: vec![DeleteEntry { path: PathBuf::from("C:/dev/litastum/TODO.md"), name: "TODO.md".into(), is_dir: false, size: 23_300 }],
+            permanent: false,
         };
         let theme = Theme::dark();
 
@@ -208,7 +228,7 @@ mod tests {
             .unwrap();
 
         let contents = buffer_text(terminal.backend().buffer());
-        assert!(contents.contains("Delete"));
+        assert!(contents.contains("To the Recycle Bin"));
         assert!(contents.contains("TODO.md"));
         assert!(contents.contains("23.3 kB"));
     }
