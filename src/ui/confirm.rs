@@ -106,6 +106,37 @@ pub fn draw_confirm_command_popup(frame: &mut Frame, area: Rect, pending: &Pendi
 }
 
 
+/// The question before a save writes over a file changed on disk
+/// (`Overlay::ConfirmOverwrite`): the file, `y overwrite` / `esc keep
+/// editing` -- the delete prompt's shape.
+pub fn draw_confirm_overwrite_popup(frame: &mut Frame, area: Rect, path: &std::path::Path, theme: &Theme, style: PopupStyle) {
+    const WIDTH: u16 = 60;
+    let height = match style {
+        PopupStyle::Classic => 4 + 2,
+        PopupStyle::Rounded => 4 + 1 + 2 * (1 + 2),
+    };
+    let heading = "Changed on disk";
+    let title = match style {
+        PopupStyle::Classic => Line::from(Span::raw(format!(" {heading} "))),
+        PopupStyle::Rounded => Line::from(vec![
+            Span::styled("● ", Style::default().fg(theme.warning)),
+            Span::styled(heading, Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
+        ]),
+    };
+    let inner = popup::draw_frame(frame, area, theme, style, title, WIDTH, height);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
+        .split(inner);
+    let name = path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned());
+    frame.render_widget(Line::from(Span::styled(name, Style::default().fg(theme.text))), rows[0]);
+    frame.render_widget(Line::from(Span::styled("changed since you opened it. Write yours over it?", Style::default().fg(theme.text_dim))), rows[1]);
+    frame.render_widget(popup::separator(inner.width, theme), rows[2]);
+    let hints = Line::from(vec![popup::key_pill("y", "overwrite", theme.danger, theme), Span::raw("  "), popup::key_pill("esc", "keep editing", theme.accent, theme)]);
+    frame.render_widget(hints, rows[3]);
+}
+
+
 /// Human-readable byte count for the delete popup's file-size line
 /// (`"23.3 kB"`-style, metric units matching the reference mockup --
 /// not `drive_menu.rs::format_bytes`'s GiB/MiB, which only makes sense

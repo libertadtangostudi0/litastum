@@ -348,11 +348,6 @@ impl ConflictState {
         *self.focused_mut() = editor;
         Ok(())
     }
-
-    /// `Ctrl+S`: saves the focused pane only, as in Compare.
-    pub fn save_focused(&mut self) -> io::Result<()> {
-        self.focused_mut().save()
-    }
 }
 
 

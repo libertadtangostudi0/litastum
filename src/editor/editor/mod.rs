@@ -112,6 +112,8 @@ pub struct Editor {
     /// editor only when it actually lands on it (`contains_screen_position`),
     /// not to a linked Markdown preview drawn beside it.
     view_area: ratatui::layout::Rect,
+    /// The file as read or last saved (`save_checked`).
+    on_disk: Option<file_write::DiskStamp>,
 }
 
 
@@ -127,6 +129,15 @@ fn event_handler_for(mode: EditorKeymapMode) -> EditorEventHandler {
         EditorKeymapMode::Vim => EditorEventHandler::vim_mode(),
     }
 }
+
+/// What `Editor::save_checked` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Saved {
+    Done,
+    /// Not saved: the file changed on disk meanwhile.
+    ChangedOnDisk,
+}
+
 
 /// Each keymap's starting mode: `Standard` types immediately (`Insert`),
 /// `Vim` starts in `Normal`. The two keymaps' `Insert` aren't the same
@@ -145,6 +156,7 @@ impl Editor {
     /// `custom_syntax_theme` is `None` for the built-in theme. `keymap_mode`
     /// is normally `App::settings.editor_keymap_mode`.
     pub fn open(path: PathBuf, custom_syntax_theme: Option<SynTheme>, keymap_mode: EditorKeymapMode) -> io::Result<Self> {
+        let on_disk = file_write::stamp(&path);
         let contents = fs::read_to_string(&path)?;
         let lines = Lines::from(contents.as_str());
         let first_line = contents.lines().next().unwrap_or("").to_string();
@@ -181,6 +193,7 @@ impl Editor {
             redo_stack: Vec::new(),
             row_edit: None,
             view_area: ratatui::layout::Rect::default(),
+            on_disk,
         })
     }
 
@@ -363,6 +376,7 @@ impl Editor {
             Ok(()) => {
                 self.saved = None;
                 self.differing = changes::Differing::Nowhere;
+                self.on_disk = file_write::stamp(&self.path);
                 debug!(path = %self.path.display(), "editor save: ok");
                 Ok(())
             }
@@ -371,6 +385,25 @@ impl Editor {
                 Err(err)
             }
         }
+    }
+
+
+    /// `save`, unless the file changed on disk since it was read or last
+    /// saved -- written over then, someone else's change would be lost
+    /// unseen. `ChangedOnDisk` leaves it untouched for the caller to ask.
+    pub fn save_checked(&mut self) -> io::Result<Saved> {
+        if self.changed_on_disk() {
+            debug!(path = %self.path.display(), "editor save: the file changed on disk, asking");
+            return Ok(Saved::ChangedOnDisk);
+        }
+        self.save().map(|()| Saved::Done)
+    }
+
+
+    /// Whether the file isn't as it was read or last saved: changed, or
+    /// gone.
+    pub fn changed_on_disk(&self) -> bool {
+        file_write::stamp(&self.path) != self.on_disk
     }
 
 

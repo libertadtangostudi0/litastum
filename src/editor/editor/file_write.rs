@@ -9,6 +9,24 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::time::SystemTime;
+
+
+/// What a file on disk looked like when it was read or last saved: a
+/// save checks it's still so (`Editor::save_checked`) -- another program,
+/// `hg pull`, `git checkout` may have changed it meanwhile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct DiskStamp {
+    modified: Option<SystemTime>,
+    len: u64,
+}
+
+
+/// `path`'s stamp now; `None` if it isn't there.
+pub(super) fn stamp(path: &Path) -> Option<DiskStamp> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some(DiskStamp { modified: metadata.modified().ok(), len: metadata.len() })
+}
 
 
 /// Writes `contents` to `path`, over the file if there is one, and waits

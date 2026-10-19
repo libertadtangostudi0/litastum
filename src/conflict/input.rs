@@ -48,12 +48,7 @@ pub fn handle_conflict_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         DiffCommand::Close if cancel_selection(state.focused_mut(), key) => {}
         DiffCommand::Close if state.is_dirty() => app.overlay = Some(Overlay::ConfirmDiscard),
         DiffCommand::Close => app.mode = Mode::Browsing,
-        DiffCommand::Save => {
-            if let Err(err) = state.save_focused() {
-                tracing::warn!(%err, "conflict: failed to save the focused pane");
-                app.notice = Some(Notice::error(format!("Save failed: {err}")));
-            }
-        }
+        DiffCommand::Save => crate::editor::save_focused_or_ask(app),
         DiffCommand::NextPane => state.focus_next(),
         DiffCommand::PreviousPane => state.focus_previous(),
         DiffCommand::EditPath => state.start_path_edit(),

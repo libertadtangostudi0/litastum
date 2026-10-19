@@ -19,7 +19,7 @@ hard links break, some streams go, and a crash leaves the temp file.
 
 The plan, in stages:
 1. **Write over the file and flush it** -- done, below.
-2. **A save notices the file changed on disk**: `mtime` and size kept
+2. **A save notices the file changed on disk** (overwrite / cancel done, below; compare next): `mtime` and size kept
    at open and at each save; changed, the save asks -- overwrite /
    compare (`Alt+F5`, our Compare) / cancel.
 3. **Backups of unsaved edits**: a copy of the text in
@@ -37,3 +37,16 @@ after it (a failure leaves the start written, never an empty file) and
 `sync_all`s before the save counts as done. Pinned: a hard link keeps
 seeing the file (a rename would cut it), a hidden file stays hidden
 with its other streams.
+
+## Stage 2: a save notices the file changed on disk
+
+Each editor keeps its file's modification time and length as read and
+as last saved (`file_write::DiskStamp`). `Editor::save_checked` writes
+only if the file is still so; changed -- or gone -- it writes nothing,
+and `editor::save_focused_or_ask` asks (`Overlay::ConfirmOverwrite`,
+"Changed on disk"): `Y` writes over it, `N`/`Esc` go back to editing.
+One path for F4, Compare's and the resolver's panes (their own
+`save_focused` went). The length is compared too: two changes within
+the file system's time resolution would look the same by time alone.
+`Shift+F2` (save as) asks about an existing target already.
+

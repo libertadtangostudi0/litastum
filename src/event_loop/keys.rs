@@ -195,6 +195,7 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
             Overlay::CompareMenu(_) => compare::handle_compare_menu_key(app, key),
             Overlay::CompareLineEndingMenu(_) => compare::handle_compare_line_ending_menu_key(app, key),
             Overlay::ConfirmDelete(_) => explorer::handle_confirm_delete_key(app, key),
+            Overlay::ConfirmOverwrite(_) => editor::handle_confirm_overwrite_key(app, key),
             Overlay::ConfirmCommand(_) => crate::command_line::handle_confirm_command_key(app, key),
             Overlay::ConfirmTransfer(_) => explorer::handle_confirm_transfer_key(app, key),
             Overlay::MainMenu(_) => theming::handle_main_menu_key(app, key),

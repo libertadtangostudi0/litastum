@@ -211,14 +211,6 @@ impl CompareState {
         Ok(())
     }
 
-    /// `Ctrl+S` -- saves whichever pane currently has focus, same
-    /// single-file-at-a-time convention `F4` editing already has (there
-    /// is no "save both" gesture; switch focus and save again for the
-    /// other side).
-    pub fn save_focused(&mut self) -> io::Result<()> {
-        self.focused_mut().save()
-    }
-
     /// `F8`/`Alt+Down`: moves the focused pane's cursor to the first row of
     /// the next hunk, diffed live, centered (`Editor::jump_cursor_to`).
     /// Starts from the current row, not `row + 1` (`next_hunk_start`

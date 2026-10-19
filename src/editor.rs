@@ -7,10 +7,12 @@ pub mod find_history;
 mod keymap_menu;
 mod keymap_mode;
 mod menu;
+mod save_flow;
 mod syntax;
 mod word_highlight;
 
 pub use editor::Editor;
+pub use save_flow::{handle_confirm_overwrite_key, save_focused_or_ask};
 pub use editor_keymap::{handle_confirm_discard_key, handle_editor_key};
 pub use keymap_menu::{handle_editor_keymap_menu_key, EditorKeymapMenu};
 pub use keymap_mode::EditorKeymapMode;

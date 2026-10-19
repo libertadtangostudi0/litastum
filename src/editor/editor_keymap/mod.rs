@@ -183,6 +183,11 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         return Ok(Effect::None);
     }
 
+    if command == EditorCommand::Save {
+        super::save_focused_or_ask(app);
+        return Ok(Effect::None);
+    }
+
     if command == EditorCommand::OpenMenu {
         app.overlay = Some(Overlay::EditorMenu(super::menu::open_editor_menu()));
         return Ok(Effect::None);
@@ -195,17 +200,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     match command {
         EditorCommand::Close => unreachable!("handled above"),
         EditorCommand::OpenMenu => unreachable!("handled above"),
-        // A failed save is shown, not returned: an `Err` from a key handler
-        // ends the event loop.
-        EditorCommand::Save => match active_editor.save() {
-            Ok(()) => {
-                // Saving refreshes a linked Markdown preview.
-                if let Some(preview) = &mut app.markdown_edit_preview {
-                    preview.reload();
-                }
-            }
-            Err(err) => app.notice = Some(Notice::error(format!("Save failed: {err}"))),
-        },
+        EditorCommand::Save => unreachable!("handled above"),
         EditorCommand::SaveAs => app.editor_save_as = Some(PathEdit::save_as(active_editor.path())),
         EditorCommand::Find => active_editor.start_search(),
         EditorCommand::FindNext => active_editor.search_next(),

@@ -64,6 +64,9 @@ pub enum Overlay {
     /// over the browser rather than deleting immediately — see
     /// `PendingDelete`.
     ConfirmDelete(PendingDelete),
+    /// `Ctrl+S` on a file changed on disk since it was read or saved
+    /// (`editor::save_flow`): write over it?
+    ConfirmOverwrite(PathBuf),
     /// A typed command that deletes a lot at once (`command_line::dangerous`),
     /// asked about before it runs.
     ConfirmCommand(PendingCommand),

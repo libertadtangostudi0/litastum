@@ -34,12 +34,7 @@ pub fn handle_compare_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     match command {
         DiffCommand::Close if cancel_selection(state.focused_mut(), key) => {}
         DiffCommand::Close => close_compare_or_confirm(app)?,
-        DiffCommand::Save => {
-            if let Err(err) = state.save_focused() {
-                tracing::warn!(%err, "compare: failed to save the focused pane");
-                app.notice = Some(Notice::error(format!("Save failed: {err}")));
-            }
-        }
+        DiffCommand::Save => crate::editor::save_focused_or_ask(app),
         // Two panes: either way is the other one.
         DiffCommand::NextPane | DiffCommand::PreviousPane => state.toggle_focus(),
         DiffCommand::EditPath => state.start_path_edit(),
