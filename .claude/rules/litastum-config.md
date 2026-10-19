@@ -54,7 +54,9 @@ Requested: in Windows Terminal too, Compare's zoom left the panels'
 alone. Windows Terminal keeps `Ctrl`+`+`/`-`/`0` and nothing sets its
 font size, so `terminal_zoom.rs` counts the user's presses -- a
 low-level keyboard hook (`windows_terminal::zoom_keys`), every repeat,
-its own presses told apart by `LLKHF_INJECTED` -- as steps of the screen
+its own presses told apart by `LLKHF_INJECTED`; set only while litastum's
+tab has the focus and taken off when it goes (requested: a system-wide
+hook always on reads as a keylogger) -- as steps of the screen
 shown, and on a switch of screen presses the keys itself (`SendInput`,
 only into Windows Terminal's window) to that screen's steps; at exit
 back to the terminal's own size. Saved per screen under `terminal_zoom`,

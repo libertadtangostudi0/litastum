@@ -6,10 +6,11 @@
 //! keys (as `Ctrl+V` is) missed quick presses and could only guess the
 //! repeats, and the count drifted.
 
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState,
     SendInput,
@@ -32,11 +33,17 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetClassNameW,
     GetForegroundWindow,
     GetMessageW,
+    PeekMessageW,
+    PostThreadMessageW,
     SetWindowsHookExW,
+    UnhookWindowsHookEx,
+    HHOOK,
     KBDLLHOOKSTRUCT,
     LLKHF_INJECTED,
     MSG,
+    PM_NOREMOVE,
     WH_KEYBOARD_LL,
+    WM_APP,
     WM_KEYDOWN,
     WM_SYSKEYDOWN,
 };
@@ -55,8 +62,14 @@ static STEPS: AtomicI32 = AtomicI32::new(0);
 /// `Ctrl`+`0` pressed since last taken.
 static RESET: AtomicBool = AtomicBool::new(false);
 /// Whether litastum's tab has the focus: only then are presses its own
-/// (every litastum in Windows Terminal's tabs sees every key).
+/// (every litastum in Windows Terminal's tabs sees every key), and only
+/// then is the hook set at all (`watch_keys`).
 static FOCUSED: AtomicBool = AtomicBool::new(true);
+/// The hook thread's id, once its message queue is there: told when the
+/// focus changes. `0` before.
+static HOOK_THREAD: AtomicU32 = AtomicU32::new(0);
+/// The message that wakes the hook thread to set or take off its hook.
+const FOCUS_CHANGED: u32 = WM_APP + 1;
 
 
 /// A zoom per screen, when litastum runs in Windows Terminal (`WT_SESSION`)
@@ -81,9 +94,19 @@ pub fn session() -> String {
 }
 
 
-/// Whether litastum's tab has the focus now (`App::terminal_focused`).
+/// Whether litastum's tab has the focus now (`App::terminal_focused`): on
+/// a change the hook thread sets or takes off the hook.
 pub fn set_focused(focused: bool) {
-    FOCUSED.store(focused, Ordering::Relaxed);
+    if FOCUSED.swap(focused, Ordering::Relaxed) == focused {
+        return;
+    }
+    let thread = HOOK_THREAD.load(Ordering::Acquire);
+    if thread != 0 {
+        // SAFETY: posts a message with no pointers to a thread of ours.
+        unsafe {
+            PostThreadMessageW(thread, FOCUS_CHANGED, 0, 0);
+        }
+    }
 }
 
 
@@ -95,18 +118,35 @@ pub fn take_presses() -> (i32, bool) {
 
 
 /// The hook's thread: a low-level hook runs on the thread that set it,
-/// which must pump messages.
+/// which must pump messages. The hook is set only while litastum's tab has
+/// the focus (requested: a system-wide keyboard hook only while it's
+/// needed -- a hook always on reads as a keylogger to antivirus), taken
+/// off when it goes; each wake-up just follows `FOCUSED`, so changes in a
+/// row can't leave it wrong.
 fn watch_keys() {
-    // SAFETY: a plain function as the hook, this module's own handle;
-    // the loop below only waits for messages.
+    let mut hook: HHOOK = std::ptr::null_mut();
+    // SAFETY: a plain function as the hook, this module's own handle; the
+    // message loop only waits for messages.
     unsafe {
-        let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(on_key), GetModuleHandleW(std::ptr::null()), 0);
-        if hook.is_null() {
-            tracing::warn!("zoom keys: the keyboard hook failed");
-            return;
-        }
         let mut message: MSG = std::mem::zeroed();
-        while GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {}
+        // Makes the thread's message queue before anyone posts to it.
+        PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_NOREMOVE);
+        HOOK_THREAD.store(GetCurrentThreadId(), Ordering::Release);
+        loop {
+            let wanted = FOCUSED.load(Ordering::Relaxed);
+            if wanted && hook.is_null() {
+                hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(on_key), GetModuleHandleW(std::ptr::null()), 0);
+                if hook.is_null() {
+                    tracing::warn!("zoom keys: the keyboard hook failed");
+                }
+            } else if !wanted && !hook.is_null() {
+                UnhookWindowsHookEx(hook);
+                hook = std::ptr::null_mut();
+            }
+            if GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) <= 0 {
+                break;
+            }
+        }
     }
 }
 

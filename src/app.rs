@@ -318,6 +318,12 @@ impl App {
             crossterm::event::Event::FocusLost => self.terminal_focused = false,
             _ => return false,
         }
+        // The zoom keys' hook goes with the focus -- here, as a running
+        // command's loop sees focus changes too (`zoom_keys::set_focused`).
+        #[cfg(windows)]
+        if self.terminal_zoom.is_some() {
+            crate::windows_terminal::zoom_keys::set_focused(self.terminal_focused);
+        }
         true
     }
 
