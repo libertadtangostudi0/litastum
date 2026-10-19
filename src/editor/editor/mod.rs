@@ -16,6 +16,7 @@ mod block_move;
 mod changes;
 mod click;
 mod fast_paste;
+mod file_write;
 mod input;
 mod mouse;
 mod search;
@@ -358,7 +359,7 @@ impl Editor {
     pub fn save(&mut self) -> io::Result<()> {
         let contents = changes::lines_to_string(&self.state.lines);
         debug!(path = %self.path.display(), bytes = contents.len(), "editor save: writing");
-        match fs::write(&self.path, &contents) {
+        match file_write::write_in_place(&self.path, contents.as_bytes()) {
             Ok(()) => {
                 self.saved = None;
                 self.differing = changes::Differing::Nowhere;
