@@ -2,6 +2,8 @@ mod input;
 mod links;
 mod render;
 mod state;
+mod trust;
+mod trusted_links_menu;
 mod wrap;
 
 use std::path::Path;
@@ -9,6 +11,10 @@ use std::path::Path;
 pub use input::{handle_markdown_edit_preview_key, handle_markdown_link_search_key, handle_markdown_preview_mouse, open_edit_preview};
 pub use links::MarkdownLinkSearchState;
 pub use state::MarkdownPreviewState;
+pub use trust::{handle_confirm_open_link_key, PendingLink};
+#[cfg(test)]
+pub(crate) use trust::save_trusted;
+pub use trusted_links_menu::{handle_trusted_links_menu_key, TrustedLinksMenu};
 pub use wrap::wrap_markdown_line;
 // `MarkdownLink` has no production caller outside this module tree --
 // only `crate::explorer`'s own test-only re-export (for

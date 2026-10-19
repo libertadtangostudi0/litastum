@@ -18,3 +18,4 @@ mod markdown_link_search_state_tests;
 mod handle_markdown_link_search_key_tests;
 mod resolve_link_target_tests;
 mod handle_markdown_preview_mouse_tests;
+mod trust_tests;

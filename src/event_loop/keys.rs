@@ -210,6 +210,8 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
             Overlay::ConfirmPortFarMenu(_) => explorer::handle_confirm_port_far_menu_key(app, key),
             Overlay::AddUserMenuItem(..) => explorer::handle_add_user_menu_item_key(app, key),
             Overlay::MarkdownLinkSearch(_) => explorer::handle_markdown_link_search_key(app, key),
+            Overlay::ConfirmOpenLink(_) => explorer::handle_confirm_open_link_key(app, key),
+            Overlay::TrustedLinks(_) => explorer::handle_trusted_links_menu_key(app, key),
             // Any key dismisses -- there's nothing to answer, just
             // something to acknowledge having read.
             Overlay::Info(_) => {

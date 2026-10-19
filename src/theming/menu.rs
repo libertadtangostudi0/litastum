@@ -6,14 +6,14 @@ use crate::app::{App, Overlay};
 use crate::choice_menu::{ChoiceMenu, MenuOutcome};
 use crate::command_line::CommandHistoryMenu;
 use crate::command_line::Effect;
-use crate::explorer::FindFileState;
+use crate::explorer::{FindFileState, TrustedLinksMenu};
 use super::config;
 use super::popup_style_menu::open_popup_style_menu;
 use super::theme_menu::ThemeMenu;
 
 /// F9's top menu. Enough structure to reach what's actually been asked
 /// for so far (Commands → Find file/History, Options → Color schemes/
-/// UI/Save setup) — not Far Manager's full Left/Files/Commands/Options/
+/// UI/Trusted links/Save setup) — not Far Manager's full Left/Files/Commands/Options/
 /// View/Right top-menu bar; see `TODO/f9-menu.md` for what a real one would
 /// still need.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +34,7 @@ pub enum MainMenuItem {
     History,
     ColorSchemes,
     Ui,
+    TrustedLinks,
     SaveSetup,
 }
 
@@ -47,6 +48,7 @@ impl MainMenuItem {
             Self::History => "History",
             Self::ColorSchemes => "Color schemes",
             Self::Ui => "UI",
+            Self::TrustedLinks => "Trusted links",
             Self::SaveSetup => "Save setup",
         }
     }
@@ -59,7 +61,7 @@ impl MenuLevel {
         match self {
             MenuLevel::Main => &[MainMenuItem::Commands, MainMenuItem::Options],
             MenuLevel::Commands => &[MainMenuItem::FindFile, MainMenuItem::History],
-            MenuLevel::Options => &[MainMenuItem::ColorSchemes, MainMenuItem::Ui, MainMenuItem::SaveSetup],
+            MenuLevel::Options => &[MainMenuItem::ColorSchemes, MainMenuItem::Ui, MainMenuItem::TrustedLinks, MainMenuItem::SaveSetup],
         }
     }
 
@@ -136,6 +138,7 @@ pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
             MainMenuItem::History => app.overlay = Some(Overlay::CommandHistory(CommandHistoryMenu::open())),
             MainMenuItem::ColorSchemes => app.overlay = Some(Overlay::ThemeMenu(ThemeMenu::open())),
             MainMenuItem::Ui => app.overlay = Some(Overlay::PopupStyleMenu(open_popup_style_menu(app.settings.popup_style))),
+            MainMenuItem::TrustedLinks => app.overlay = Some(Overlay::TrustedLinks(TrustedLinksMenu::open())),
             MainMenuItem::SaveSetup => {
                 // Far Manager's own Shift+F9 -- persists the current
                 // session's choices (so far, the active shell profile)
@@ -177,7 +180,7 @@ mod tests {
             menu.enter(MenuLevel::Options);
             assert_eq!(menu.level, MenuLevel::Options);
             assert_eq!(menu.list.selected_index(), 0);
-            assert_eq!(menu.list.options(), &[MainMenuItem::ColorSchemes, MainMenuItem::Ui, MainMenuItem::SaveSetup]);
+            assert_eq!(menu.list.options(), &[MainMenuItem::ColorSchemes, MainMenuItem::Ui, MainMenuItem::TrustedLinks, MainMenuItem::SaveSetup]);
         }
 
         #[test]
@@ -244,7 +247,7 @@ mod tests {
     fn handle_main_menu_key_select_color_schemes_opens_theme_menu() {
         let mut app = app_in_main_menu();
         let Some(Overlay::MainMenu(menu)) = &mut app.overlay else { unreachable!() };
-        menu.enter(MenuLevel::Options); // Color schemes, UI, Save setup
+        menu.enter(MenuLevel::Options); // Color schemes, UI, Trusted links, Save setup
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
@@ -261,6 +264,7 @@ mod tests {
         let mut app = app_in_main_menu();
         let Some(Overlay::MainMenu(menu)) = &mut app.overlay else { unreachable!() };
         menu.enter(MenuLevel::Options);
+        menu.list.move_down();
         menu.list.move_down();
         menu.list.move_down(); // "Save setup"
 

@@ -2,10 +2,12 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
 use crate::app::{DeleteEntry, PendingCommand, PendingDelete, PendingTransfer, TransferOp};
+use crate::explorer::PendingLink;
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
@@ -137,6 +139,45 @@ pub fn draw_confirm_overwrite_popup(frame: &mut Frame, area: Rect, path: &std::p
 }
 
 
+/// The question before an untrusted Markdown link opens
+/// (`Overlay::ConfirmOpenLink`): its text, then where it really goes
+/// (wrapped over two rows -- the start, its scheme, matters most), then
+/// `y open` / `t always trust` / `esc cancel`.
+pub fn draw_confirm_open_link_popup(frame: &mut Frame, area: Rect, pending: &PendingLink, theme: &Theme, style: PopupStyle) {
+    const WIDTH: u16 = 70;
+    const ROWS: u16 = 5;
+    let height = match style {
+        PopupStyle::Classic => ROWS + 2,
+        PopupStyle::Rounded => ROWS + 1 + 2 * (1 + 2),
+    };
+    let heading = "Open this link?";
+    let title = match style {
+        PopupStyle::Classic => Line::from(Span::raw(format!(" {heading} "))),
+        PopupStyle::Rounded => Line::from(vec![
+            Span::styled("● ", Style::default().fg(theme.warning)),
+            Span::styled(heading, Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
+        ]),
+    };
+    let inner = popup::draw_frame(frame, area, theme, style, title, WIDTH, height);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(2), Constraint::Length(1), Constraint::Length(1)])
+        .split(inner);
+    frame.render_widget(Line::from(Span::styled(pending.label().to_string(), Style::default().fg(theme.text_dim))), rows[0]);
+    let destination = Paragraph::new(Span::styled(pending.destination(), Style::default().fg(theme.text))).wrap(Wrap { trim: false });
+    frame.render_widget(destination, rows[1]);
+    frame.render_widget(popup::separator(inner.width, theme), rows[2]);
+    let hints = Line::from(vec![
+        popup::key_pill("y", "open", theme.accent, theme),
+        Span::raw("  "),
+        popup::key_pill("t", "always trust", theme.warning, theme),
+        Span::raw("  "),
+        popup::key_pill("esc", "cancel", theme.accent, theme),
+    ]);
+    frame.render_widget(hints, rows[3]);
+}
+
+
 /// Human-readable byte count for the delete popup's file-size line
 /// (`"23.3 kB"`-style, metric units matching the reference mockup --
 /// not `drive_menu.rs::format_bytes`'s GiB/MiB, which only makes sense
@@ -253,6 +294,20 @@ mod tests {
         assert!(contents.contains("23.3 kB"));
         assert!(contents.contains("recycle"));
         assert!(contents.contains("keep"));
+    }
+
+    /// A link's text can say anything: the question shows where it goes.
+    #[test]
+    fn the_link_question_shows_where_the_link_really_goes() {
+        let pending = PendingLink::url("Docs", "ms-settings:privacy");
+        let theme = Theme::dark();
+        for style in [PopupStyle::Rounded, PopupStyle::Classic] {
+            let contents = crate::test_support::render_text(80, 24, |frame| draw_confirm_open_link_popup(frame, frame.area(), &pending, &theme, style));
+            assert!(contents.contains("Open this link?"), "{style:?}");
+            assert!(contents.contains("Docs"), "{style:?}");
+            assert!(contents.contains("ms-settings:privacy"), "{style:?}");
+            assert!(contents.contains("always trust"), "{style:?}");
+        }
     }
 
     /// `Shift+Del` says it's for good, so it's never mistaken for `F8`.

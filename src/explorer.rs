@@ -24,9 +24,11 @@ pub use find_file::spawn_search;
 pub use image_preview::{handle_image_preview_key, is_image_decode_pending, poll_pending_image_decode, ImagePreviewState, PreviewFrame};
 pub use keymap::Command;
 pub use markdown_preview::{
-    handle_markdown_edit_preview_key, handle_markdown_link_search_key, handle_markdown_preview_mouse, wrap_markdown_line, MarkdownLine, MarkdownLinkSearchState, MarkdownPreviewState,
-    MarkdownSpan, MarkdownSpanKind,
+    handle_confirm_open_link_key, handle_markdown_edit_preview_key, handle_markdown_link_search_key, handle_markdown_preview_mouse, wrap_markdown_line, MarkdownLine, MarkdownLinkSearchState, MarkdownPreviewState,
+    MarkdownSpan, MarkdownSpanKind, PendingLink, TrustedLinksMenu, handle_trusted_links_menu_key,
 };
+#[cfg(test)]
+pub(crate) use markdown_preview::save_trusted as save_trusted_for_tests;
 // `MarkdownLink` has no production caller outside `markdown_preview`
 // itself (`MarkdownPreviewState::links()` returns it, but only the
 // link-search machinery in the same file constructs/consumes one

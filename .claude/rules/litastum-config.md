@@ -158,6 +158,7 @@ appdata/
   config.json          settings, themes, shell, Limits overrides
   themes/              user theme files (the repo's themes/ stays the bundled set)
   LitastumMenu.toml    the common F2 menu
+  trusted_links.txt    Markdown links trusted for good (newest last, capped)
   history/             command line, editor search, Find file histories
 ```
 

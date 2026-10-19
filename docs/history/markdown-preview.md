@@ -55,3 +55,16 @@ on, often the same as that block's last real line.
   (`ShellExecute` directly), paths still through `explorer.exe`.
 - **Source-row mapping is approximate** by request ("roughly the same
   line"): a soft-wrapped paragraph maps to its first line.
+- **A link asks before it opens** (requested, for safety): a link can
+  name any URL scheme a program registered, a UNC path (`file://\host`
+  -- Windows sends the user's credentials to it) or a script next to the
+  document. `trust::request_open_link` opens a trusted link at once;
+  any other asks (`Overlay::ConfirmOpenLink`), showing where it really
+  goes -- the link's text can say anything. `Y` opens it once, `T`
+  trusts it for good, `Esc` opens nothing. Trusted links are kept by
+  target, not text, in `appdata/trusted_links.txt`, newest last, at
+  most 200 (the oldest drop off). Tests keep the list in memory and
+  never start a browser (`trust::test_store`).
+- **F9 -> Options -> Trusted links** lists them, newest first
+  (`trusted_links_menu.rs`, `ui/trusted_links_menu.rs`): `Del`/`F8`
+  forgets the highlighted one -- saved at once, it asks again next time.

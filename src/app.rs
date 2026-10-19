@@ -10,7 +10,7 @@ use crate::compare::{CompareLineEndingMenu, CompareMenu, CompareState};
 use crate::conflict::ConflictState;
 use crate::editor::{Editor, EditorKeymapMenu, EditorMenu};
 use crate::explorer::{
-    AddUserMenuItemState, DriveMenu, FindFileState, ImagePreviewState, MarkdownLinkSearchState, MarkdownPreviewState, Panel, UserMenuCommandEdit, UserMenuPromptState,
+    AddUserMenuItemState, DriveMenu, FindFileState, ImagePreviewState, MarkdownLinkSearchState, MarkdownPreviewState, Panel, PendingLink, TrustedLinksMenu, UserMenuCommandEdit, UserMenuPromptState,
     UserMenuState,
 };
 use crate::notice::Notice;
@@ -108,6 +108,11 @@ pub enum Overlay {
     /// alternative to `Ctrl`+click, whose row hit-testing drifts with
     /// word-wrap.
     MarkdownLinkSearch(MarkdownLinkSearchState),
+    /// A Markdown link not trusted yet: open it, trust it, or not
+    /// (`explorer::markdown_preview::trust`).
+    ConfirmOpenLink(PendingLink),
+    /// F9 -> Options -> Trusted links.
+    TrustedLinks(TrustedLinksMenu),
 }
 
 

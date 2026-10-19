@@ -31,6 +31,7 @@ mod popup_style_menu;
 mod shell;
 mod text_field;
 mod theme_menu;
+mod trusted_links_menu;
 mod user_menu;
 mod user_screen;
 
@@ -321,6 +322,8 @@ fn draw_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) -> Opti
         }
         Overlay::Info(message) => draw_info_popup(frame, area, message, theme, style),
         Overlay::MarkdownLinkSearch(search) => return Some(markdown_preview::draw_markdown_link_search(frame, area, search, theme, style)),
+        Overlay::ConfirmOpenLink(pending) => confirm::draw_confirm_open_link_popup(frame, area, pending, theme, style),
+        Overlay::TrustedLinks(menu) => trusted_links_menu::draw_trusted_links_menu(frame, area, menu, theme, style),
     }
     None
 }

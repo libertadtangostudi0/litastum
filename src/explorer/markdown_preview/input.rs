@@ -6,8 +6,9 @@ use crate::app::{App, Mode, Overlay};
 use crate::command_line::Effect;
 use crate::editor::{self, Editor};
 
-use super::links::{open_link, MarkdownLinkSearchState};
+use super::links::MarkdownLinkSearchState;
 use super::state::MarkdownPreviewState;
+use super::trust::request_open_link;
 
 /// `F3` on a `.md` file: the editor (as `F4`) and a live preview side by
 /// side (`App::markdown_edit_preview`). Focus starts in the editor; `Tab`
@@ -82,7 +83,7 @@ fn open_link_search(app: &mut App) {
 
 /// Key handling on `Overlay::MarkdownLinkSearch`: typing filters the
 /// list, `Up`/`Down` move within it, `Enter` opens the highlighted link
-/// (`links::open_link`, against `App::markdown_edit_preview`) and
+/// (`trust::request_open_link`, asking first if it isn't trusted) and
 /// closes, `Esc` just closes.
 pub fn handle_markdown_link_search_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if key.code == KeyCode::Esc {
@@ -99,9 +100,7 @@ pub fn handle_markdown_link_search_key(app: &mut App, key: KeyEvent) -> Result<E
         let selected = search.selected_link();
         app.overlay = None;
         if let Some(link) = selected {
-            if let Some(preview) = &mut app.markdown_edit_preview {
-                open_link(preview, &link.url);
-            }
+            request_open_link(app, &link.url);
         }
         return Ok(Effect::None);
     }
@@ -141,7 +140,7 @@ pub fn handle_markdown_preview_mouse(app: &mut App, mouse: MouseEvent) {
                 return;
             };
             let url = url.to_string();
-            open_link(state, &url);
+            request_open_link(app, &url);
         }
         MouseEventKind::ScrollDown => state.scroll_down(),
         MouseEventKind::ScrollUp => state.scroll_up(),

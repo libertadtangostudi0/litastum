@@ -1,9 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use tracing::{debug, warn};
-
-use crate::explorer::system_open;
-
 use super::state::MarkdownPreviewState;
 
 /// One link found in the document -- `label` is its own rendered text
@@ -92,6 +88,7 @@ pub(super) enum LinkTarget {
 /// - contains `://` or is `mailto:` -- `LinkTarget::Url`;
 /// - anything else -- a file relative to `markdown_dir`, with any
 ///   `#fragment` stripped, only if it exists.
+///
 /// Anything unresolved passed to `explorer.exe` opened its default folder
 /// instead. History: docs/history/markdown-preview.md.
 pub(super) fn resolve_link_target(url: &str, markdown_dir: &Path) -> Option<LinkTarget> {
@@ -112,40 +109,6 @@ pub(super) fn resolve_link_target(url: &str, markdown_dir: &Path) -> Option<Link
 
 /// The link's label for the status message (first match in
 /// `state.links()`), never the raw URL -- see `link_message`.
-fn label_for_url(state: &MarkdownPreviewState, url: &str) -> String {
+pub(super) fn label_for_url(state: &MarkdownPreviewState, url: &str) -> String {
     state.links().into_iter().find(|link| link.url == url).map(|link| link.label).unwrap_or_else(|| url.to_string())
-}
-
-/// Resolves and opens `url` (from a click or the link search) and always
-/// records the outcome in `link_message` ("Opened", "Failed to open",
-/// "Can't open yet"), named by label. History: docs/history/markdown-preview.md.
-pub(super) fn open_link(state: &mut MarkdownPreviewState, url: &str) {
-    let markdown_dir = state.path().parent().map(Path::to_path_buf).unwrap_or_default();
-    let label = label_for_url(state, url);
-    match resolve_link_target(url, &markdown_dir) {
-        Some(LinkTarget::Url(target)) => {
-            debug!(url, "markdown preview: opening link as a url");
-            match system_open::open_url(&target) {
-                Ok(_) => state.set_link_message(format!("Opened: {label}")),
-                Err(err) => {
-                    warn!(url, %err, "failed to open a markdown preview link as a url");
-                    state.set_link_message(format!("Failed to open {label}: {err}"));
-                }
-            }
-        }
-        Some(LinkTarget::File(target)) => {
-            debug!(url, target = %target.display(), "markdown preview: opening link as a file");
-            match system_open::open(&target) {
-                Ok(_) => state.set_link_message(format!("Opened: {label}")),
-                Err(err) => {
-                    warn!(url, target = %target.display(), %err, "failed to open a markdown preview link");
-                    state.set_link_message(format!("Failed to open {label}: {err}"));
-                }
-            }
-        }
-        None => {
-            debug!(url, "markdown preview: link has no openable target (anchor, or relative file not found)");
-            state.set_link_message(format!("Can't open yet: {label} (in-document anchor, or file not found)"));
-        }
-    }
 }
