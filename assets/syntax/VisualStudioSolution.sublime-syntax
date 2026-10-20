@@ -1,0 +1,55 @@
+%YAML 1.2
+---
+# Self-authored, like DCL.sublime-syntax: syntect's default set has no
+# grammar for Visual Studio solution files. Deliberately
+# modest: the header, comments, the block keywords, section names,
+# GUIDs, strings, version numbers and `key = value` keys -- the scopes
+# ColorScheme::to_syntax_theme maps, so it colors under every scheme.
+name: Visual Studio Solution
+file_extensions:
+  - sln
+first_line_match: '^\x{FEFF}?\s*Microsoft Visual Studio Solution File'
+scope: source.sln
+
+contexts:
+  main:
+    - match: '^\x{FEFF}?\s*Microsoft Visual Studio Solution File.*$'
+      scope: meta.header.sln
+
+    - match: '^\s*#.*$'
+      scope: comment.line.number-sign.sln
+
+    - match: '\b(Project|EndProject|ProjectSection|EndProjectSection|GlobalSection|EndGlobalSection|Global|EndGlobal)\b'
+      scope: keyword.control.sln
+
+    # When a section is read: `GlobalSection(...) = preSolution`.
+    - match: '\b(preProject|postProject|preSolution|postSolution)\b'
+      scope: constant.language.sln
+
+    # A section's name: `GlobalSection(SolutionConfigurationPlatforms)`.
+    - match: '(?<=Section\()[^)]*(?=\))'
+      scope: entity.name.function.sln
+
+    - match: '\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}'
+      scope: constant.numeric.guid.sln
+
+    - match: '"'
+      scope: punctuation.definition.string.begin.sln
+      push: double_quoted_string
+
+    # A key at a line's start, before ` = `: `VisualStudioVersion`,
+    # `Debug|Any CPU`, `{GUID}.Release|x64.Build.0`.
+    - match: '^\s*[^=\s"#(][^="]*?(?=\s*=)'
+      scope: variable.parameter.sln
+
+    - match: '\b\d+(\.\d+)*\b'
+      scope: constant.numeric.sln
+
+    - match: '[()=,]'
+      scope: punctuation.separator.sln
+
+  double_quoted_string:
+    - meta_scope: string.quoted.double.sln
+    - match: '"'
+      scope: punctuation.definition.string.end.sln
+      pop: true

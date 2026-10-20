@@ -360,3 +360,50 @@ fn opening_a_bundled_grammar_file_gets_a_working_syntax_highlighter() {
         let _ = editor.view(&Theme::dark(), ratatui::layout::Rect::new(0, 0, 40, 10));
     }
 }
+
+
+/// Requested: `.sln` had no highlighting -- `syntect` has no grammar for
+/// it. Ours resolves, by extension and by the header line, and the
+/// solution and its relatives (`.slnf` JSON, `.slnx` XML) all get one.
+#[test]
+fn resolve_syntax_highlighter_covers_visual_studio_solutions() {
+    assert!(SyntaxHighlighter::new(SYNTAX_THEME, "sln").is_err(), "syntect's own set has none");
+    let (_, syntax_ref) = resolve_syntax_ref(&["App.sln", "sln"], "").expect("sln should resolve");
+    assert_eq!(syntax_ref.name, "Visual Studio Solution");
+    let (_, by_header) = resolve_syntax_ref(&["App.bak"], "\u{feff}Microsoft Visual Studio Solution File, Format Version 12.00").expect("found by its header");
+    assert_eq!(by_header.name, "Visual Studio Solution");
+    assert!(resolve_syntax_highlighter(&["App.slnf", "slnf"], "", &None).is_some());
+    assert!(resolve_syntax_highlighter(&["App.slnx", "slnx"], "", &None).is_some());
+}
+
+
+/// The `.sln` grammar really colors each part of a solution, under a
+/// scheme-derived theme too: a grammar that only resolves colors nothing.
+#[test]
+fn the_solution_grammar_colors_keywords_guids_strings_and_keys() {
+    use edtui::syntect::easy::HighlightLines;
+
+    let syntax_set = bundled_extra_syntax_set();
+    let syntax_ref = syntax_set.find_syntax_by_extension("sln").expect("sln syntax should resolve");
+    let scheme: crate::theming::ColorScheme = serde_json::from_str(include_str!("../../../themes/apple-system-colors.json")).unwrap();
+    let theme = scheme.to_syntax_theme();
+    let plain = theme.settings.foreground.expect("theme should define a foreground");
+    let mut highlighter = HighlightLines::new(syntax_ref, &theme);
+
+    let lines = [
+        ("Microsoft Visual Studio Solution File, Format Version 12.00\n", "Microsoft Visual Studio Solution File, Format Version 12.00"),
+        ("# Visual Studio Version 17\n", "# Visual Studio Version 17"),
+        ("Project(\"{9A19103F-16F7-4668-BE54-9A1E7A4F7556}\") = \"App\", \"App/App.csproj\", \"{1B2C3D4E-0000-1111-2222-333344445555}\"\n", "Project"),
+        ("Project(\"{9A19103F-16F7-4668-BE54-9A1E7A4F7556}\") = \"App\", \"App/App.csproj\", \"{1B2C3D4E-0000-1111-2222-333344445555}\"\n", "\"App\""),
+        ("\tGlobalSection(SolutionConfigurationPlatforms) = preSolution\n", "SolutionConfigurationPlatforms"),
+        ("\tGlobalSection(SolutionConfigurationPlatforms) = preSolution\n", "preSolution"),
+        ("\t\t{1B2C3D4E-0000-1111-2222-333344445555}.Debug|Any CPU.ActiveCfg = Debug|Any CPU\n", "\t\t{1B2C3D4E-0000-1111-2222-333344445555}.Debug|Any CPU.ActiveCfg"),
+        ("VisualStudioVersion = 17.0.31903.59\n", "17.0.31903.59"),
+        ("EndGlobal\n", "EndGlobal"),
+    ];
+    for (line, part) in lines {
+        let spans = highlighter.highlight_line(line, syntax_set).expect("highlighting should succeed");
+        let colored = spans.iter().any(|(style, text)| text.contains(part.trim_matches('"')) && style.foreground != plain);
+        assert!(colored, "{part:?} in {line:?} should be colored: {spans:?}");
+    }
+}

@@ -36,12 +36,23 @@ impl Editor {
     /// a click and a drag-select go through `edtui` (the selection, its
     /// mode), then land where our own layout says (`text_position_at`):
     /// `edtui`'s kept a click right of a line on its last character. A click
-    /// while the `Ctrl+F` box is open moves focus to the text but keeps the
-    /// box and its match (VS Code). `edtui` ends a click-selection in
-    /// `Normal`; `Standard` goes back to `Insert`.
+    /// in the text while the `Ctrl+F` box is open moves focus to the text
+    /// but keeps the box and its match; a click on the box focuses it.
+    /// With the box focused nothing else but the wheel reaches `edtui`: a
+    /// pointer move took the focus off it, and `Enter` broke lines (reported).
+    /// `edtui` ends a click-selection in `Normal`; `Standard` goes back to `Insert`.
     pub fn mouse(&mut self, mouse: MouseEvent) {
-        if matches!(mouse.kind, MouseEventKind::Down(_)) {
-            self.blur_search_box();
+        let pressed = matches!(mouse.kind, MouseEventKind::Down(_));
+        if pressed && self.search_box_contains(mouse.column, mouse.row) {
+            self.focus_search_box();
+            return;
+        }
+        if self.is_searching() {
+            match mouse.kind {
+                MouseEventKind::Down(_) => self.blur_search_box(),
+                MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {}
+                _ => return,
+            }
         }
         // With a selection, the caret is its end and can't move along:
         // `edtui`'s own scroll stays.

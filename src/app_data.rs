@@ -26,3 +26,13 @@ pub(crate) fn app_data_dir() -> Option<PathBuf> {
 pub(crate) fn history_dir() -> Option<PathBuf> {
     app_data_dir().map(|dir| dir.join("history"))
 }
+
+
+/// Where `logs/litastum.log` goes: `logs/` in the project root, anchored
+/// like `app_data_dir` -- never the current directory: started from a
+/// Windows Terminal profile, that can be a folder litastum may not write
+/// (`C:\Windows\System32`), and startup failed with "access denied"
+/// (reported).
+pub(crate) fn logs_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("logs")
+}

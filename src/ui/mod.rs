@@ -187,7 +187,7 @@ fn draw_screen(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option
     // Mirrors plain `F4`'s own search box (top of this function) --
     // reached here because a linked preview sent `Editing` through the
     // split-panel path instead of the full-screen return.
-    if let Mode::Editing(editor) = &app.mode {
+    if let Mode::Editing(editor) = &mut app.mode {
         if has_linked_preview && editor.search_box_open() {
             let box_cursor = editor_find::draw_find_popup(frame, area, editor, &app.search_history, &theme);
             if editor.is_searching() {

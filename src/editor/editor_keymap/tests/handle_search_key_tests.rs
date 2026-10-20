@@ -500,3 +500,22 @@ fn ctrl_a_in_the_search_box_selects_the_whole_query() {
     let Mode::Editing(editor) = &app.mode else { unreachable!() };
     assert_eq!(editor.search_query(), "h", "typing replaces the selected query");
 }
+
+/// Reported: with nothing found, a second `Enter` broke lines in the text
+/// instead of staying in the box.
+#[test]
+fn enter_with_nothing_found_stays_in_the_box_and_edits_nothing() {
+    let (mut app, _path) = open_editor_app("hello world\n");
+    handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+    for c in "zzz".chars() {
+        handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();
+    }
+
+    for _ in 0..3 {
+        handle_editor_key(&mut app, key(KeyCode::Enter)).unwrap();
+    }
+
+    let Mode::Editing(editor) = &app.mode else { unreachable!() };
+    assert!(editor.is_searching(), "focus stays in the box");
+    assert!(!editor.is_dirty(), "no line breaks typed into the text");
+}

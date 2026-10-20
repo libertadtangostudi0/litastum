@@ -28,7 +28,10 @@ line. Order matters and the table is grouped by it:
    directory the typed path is in (`Esc` takes it back); `Tab` completes the path,
    with a list to pick from when several entries match
    (`path_edit/complete.rs`, every path field). `F4` on a file in that
-   list (or typed out) selects it in the panel and opens the editor. The click needs mouse
+   list (or typed out) selects it in the panel and opens the editor;
+   so does pasting a file's path (requested; `panel_path::pasted`, after
+   the field's own `Ctrl+V` and after Windows Terminal's typed-in paste,
+   `event_loop::paste`). A pasted directory just shows in the panel. The click needs mouse
    capture in the browser, which takes the terminal's own text selection
    (`Shift`+drag still selects in Windows Terminal). With the panels
    hidden the wheel scrolls the user screen instead.

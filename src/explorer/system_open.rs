@@ -59,7 +59,9 @@ fn build_open_url_command(url: &str) -> Command {
 /// `Ctrl`+click / `l`-search `Enter` on a Markdown link that resolved to
 /// a real URL (`markdown_preview::links::LinkTarget::Url`) -- see
 /// `build_open_url_command`'s own doc comment for why this is a
-/// distinct code path from `open` above rather than reusing it.
+/// distinct code path from `open` above rather than reusing it. Not
+/// called in tests: they never start a browser (`markdown_preview::trust`).
+#[cfg_attr(test, allow(dead_code))]
 pub fn open_url(url: &str) -> std::io::Result<Child> {
     build_open_url_command(url).spawn()
 }

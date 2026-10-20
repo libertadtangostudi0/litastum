@@ -240,3 +240,31 @@ fn two_cell_characters_take_a_click_on_each_half() {
         x += cells;
     }
 }
+
+
+/// Reported: in the `Ctrl+F` box, `Enter` started breaking lines in the
+/// text. The pointer had moved meanwhile -- the terminal reports every
+/// move -- and a move or a release took the focus off the box. Only a
+/// press moves the focus to the text.
+#[test]
+fn a_pointer_move_or_release_leaves_the_focus_in_the_search_box() {
+    let (mut editor, _path) = open_test_editor("first\nabcdef\n");
+    draw(&mut editor);
+    editor.start_search();
+    editor.search_push_char('z');
+
+    for kind in [MouseEventKind::Moved, MouseEventKind::Up(MouseButton::Left), MouseEventKind::Drag(MouseButton::Left)] {
+        editor.mouse(MouseEvent { kind, column: 3, row: 1, modifiers: KeyModifiers::NONE });
+        assert!(editor.is_searching(), "{kind:?} kept the focus in the box");
+    }
+
+    editor.mouse(click(3, 1));
+    assert!(!editor.is_searching(), "a click gives the focus to the text");
+    assert!(editor.search_box_open(), "the box stays open");
+
+    editor.set_search_box_area(ratatui::layout::Rect::new(20, 1, 15, 3));
+    editor.mouse(click(25, 2));
+    assert!(editor.is_searching(), "a click on the box gives it the focus back");
+    editor.mouse(click(25, 2));
+    assert!(editor.is_searching(), "and another click on it keeps it there");
+}

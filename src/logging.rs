@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use color_eyre::eyre::Result;
 use tracing_subscriber::EnvFilter;
 
-const LOG_PATH: &str = "logs/litastum.log";
+const LOG_FILE: &str = "litastum.log";
 
 
 /// A key as the log shows it: which key and modifiers, never the
@@ -28,14 +28,17 @@ impl std::fmt::Debug for LoggedKey {
 }
 
 
-/// File logging to `logs/litastum.log` -- the TUI owns the terminal.
+/// File logging to `logs/litastum.log` in the project (`app_data::logs_dir`)
+/// -- the TUI owns the terminal.
 /// Capped at `limits().max_log_bytes` (`SizeCappedFile`); reading
 /// `limits()` this early is fine, it's cached after the first read. Level
 /// defaults to `debug` for this crate and `info` for dependencies
 /// (`.claude/rules/logging.md`); override with `RUST_LOG`.
 pub fn init() -> Result<()> {
-    std::fs::create_dir_all("logs")?;
-    let file = SizeCappedFile::open(LOG_PATH, crate::theming::config::limits().max_log_bytes)?;
+    let dir = crate::app_data::logs_dir();
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(LOG_FILE);
+    let file = SizeCappedFile::open(&path.to_string_lossy(), crate::theming::config::limits().max_log_bytes)?;
 
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,litastum=debug"));

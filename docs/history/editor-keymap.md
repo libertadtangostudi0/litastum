@@ -25,6 +25,16 @@ Code: `src/editor/editor_keymap/mod.rs`. Related:
   match and reported wrong: they browse the search history, like a
   shell. Next/previous is `Enter`/`Shift+Enter` (VS Code), and `F3`/
   `Shift+F3` from the text.
+- **`Enter` in the box broke lines in the text** (reported, with a
+  query that matched nothing). Any mouse event over the editor went to
+  `edtui` -- the terminal reports every pointer move -- and a drag left
+  its mode off `Search`, so the box lost the focus unseen and the next
+  `Enter` went to the text. With the box focused only a press (to the
+  text) and the wheel get through now; a press on the box itself gives
+  it the focus (`Editor::mouse`).
+- **Nothing said a query wasn't found** (reported): the box shows
+  "2 of 5" at its right, or "No results" with its border in `danger`
+  (`Editor::search_match_count`).
 - **Search history isn't saved when the box closes**: that handler is
   heavily unit-tested and would write a real history file into the cwd
   from every test. It's saved once at clean exit (`main.rs`), the same

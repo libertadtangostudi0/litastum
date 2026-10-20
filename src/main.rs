@@ -37,13 +37,18 @@ use terminal_setup::{install_ctrl_c_handler, restore_terminal, setup_terminal};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
-    logging::init()?;
+    // Without a log litastum still runs: a log it can't write must never
+    // keep it from starting.
+    let log_error = logging::init().err();
     install_ctrl_c_handler()?;
     let start_dir = std::env::current_dir()?;
 
     let mut terminal = setup_terminal()?;
     let (theme, syntax_theme) = theming::config::load_active_theme();
     let mut app = App::new(start_dir, theme, syntax_theme)?;
+    if let Some(err) = log_error {
+        app.notice = Some(notice::Notice::error(format!("Logging is off: {err}")));
+    }
     // Queried after entering the alternate screen but before `run()` reads
     // events: the query uses raw escape sequences on stdio. On error,
     // `App::new`'s half-blocks stay. In litastum's own window there's

@@ -31,15 +31,24 @@ fn popup_width(content: usize, area_width: u16) -> u16 {
 /// The `Ctrl+F` box: a single-row bordered field at the editor's top-right,
 /// like VS Code's (the first version, a full popup card, was too big).
 /// A query wider than the box scrolls sideways to keep the caret in view.
-/// Returns the cursor position.
-pub fn draw_find_popup(frame: &mut Frame, area: Rect, editor: &Editor, search_history: &[String], theme: &Theme) -> Position {
+/// At its right, how many matches there are -- "2 of 5", or "No results"
+/// with the border in `danger` (requested: nothing said a query wasn't
+/// found). Notes its area on the editor (a click on it focuses it) and
+/// returns the cursor position.
+pub fn draw_find_popup(frame: &mut Frame, area: Rect, editor: &mut Editor, search_history: &[String], theme: &Theme) -> Position {
     let empty = TextField::new();
     let field = editor.search_field().unwrap_or(&empty);
     // Char-based, not a byte slice -- a query can easily contain
     // non-ASCII text, where slicing by `len()` could split a character.
     let suggestion_suffix = crate::editor::find_history::suggest(search_history, field.text())
         .map(|full| full.chars().skip(field.text().chars().count()).collect::<String>());
-    let content = field.text().chars().count() + suggestion_suffix.as_ref().map_or(0, |suffix| suffix.chars().count());
+    let status = editor.search_match_count().map(|(highlighted, total)| match total {
+        0 => ("No results".to_string(), theme.danger),
+        _ => (format!("{highlighted} of {total}"), theme.text_dim),
+    });
+    // The status and one blank cell before it.
+    let status_width = status.as_ref().map_or(0, |(text, _)| text.chars().count() + 1);
+    let content = field.text().chars().count() + suggestion_suffix.as_ref().map_or(0, |suffix| suffix.chars().count()) + status_width;
 
     let width = popup_width(content, area.width);
     let popup = Rect {
@@ -50,9 +59,17 @@ pub fn draw_find_popup(frame: &mut Frame, area: Rect, editor: &Editor, search_hi
     };
     frame.render_widget(Clear, popup);
 
-    let block = Block::default().borders(Borders::ALL).border_style(Style::default().fg(theme.accent));
-    let inner = block.inner(popup);
+    let not_found = matches!(&status, Some((_, color)) if *color == theme.danger);
+    let border = if not_found { theme.danger } else { theme.accent };
+    let block = Block::default().borders(Borders::ALL).border_style(Style::default().fg(border));
+    let mut inner = block.inner(popup);
     frame.render_widget(block, popup);
+    if let Some((text, color)) = status {
+        let status_width = u16::try_from(text.chars().count()).unwrap_or(u16::MAX).min(inner.width);
+        let status_area = Rect { x: inner.right() - status_width, width: status_width, ..inner };
+        frame.render_widget(Line::from(Span::styled(text, Style::default().fg(color))), status_area);
+        inner.width = inner.width.saturating_sub(status_width + 1);
+    }
 
     let mut spans = super::text_field::field_spans(field, theme);
     if let Some(suffix) = suggestion_suffix {
@@ -61,7 +78,9 @@ pub fn draw_find_popup(frame: &mut Frame, area: Rect, editor: &Editor, search_hi
     let scroll = (field.cursor() + 1).saturating_sub(usize::from(inner.width));
     frame.render_widget(Paragraph::new(Line::from(spans)).scroll((0, scroll as u16)), inner);
 
-    Position { x: inner.x + (field.cursor() - scroll) as u16, y: inner.y }
+    let cursor = Position { x: inner.x + (field.cursor() - scroll) as u16, y: inner.y };
+    editor.set_search_box_area(popup);
+    cursor
 }
 
 
@@ -93,7 +112,7 @@ mod tests {
         let mut cursor = Position::default();
         terminal
             .draw(|frame| {
-                cursor = draw_find_popup(frame, frame.area(), &editor, &[], &theme);
+                cursor = draw_find_popup(frame, frame.area(), &mut editor, &[], &theme);
             })
             .unwrap();
 
@@ -114,7 +133,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                draw_find_popup(frame, frame.area(), &editor, &history, &theme);
+                draw_find_popup(frame, frame.area(), &mut editor, &history, &theme);
             })
             .unwrap();
 
@@ -140,7 +159,7 @@ mod tests {
         let mut cursor = Position::default();
         terminal
             .draw(|frame| {
-                cursor = draw_find_popup(frame, frame.area(), &editor, &[], &theme);
+                cursor = draw_find_popup(frame, frame.area(), &mut editor, &[], &theme);
             })
             .unwrap();
 
@@ -157,7 +176,7 @@ mod tests {
     /// corner, not centered.
     #[test]
     fn draw_find_popup_sits_in_the_top_right_corner() {
-        let editor = open_test_editor("hello world");
+        let mut editor = open_test_editor("hello world");
         let theme = Theme::dark();
 
         let backend = TestBackend::new(80, 24);
@@ -165,7 +184,7 @@ mod tests {
         let area = Rect::new(0, 0, 80, 24);
         terminal
             .draw(|frame| {
-                draw_find_popup(frame, area, &editor, &[], &theme);
+                draw_find_popup(frame, area, &mut editor, &[], &theme);
             })
             .unwrap();
 
@@ -205,7 +224,7 @@ mod tests {
         let mut cursor = Position::default();
         terminal
             .draw(|frame| {
-                cursor = draw_find_popup(frame, frame.area(), &editor, &[], &theme);
+                cursor = draw_find_popup(frame, frame.area(), &mut editor, &[], &theme);
             })
             .unwrap();
 
@@ -216,4 +235,56 @@ mod tests {
         assert_eq!(shown, query[55..], "the query's end shows right before the caret");
     }
 
+
+    fn rendered_box(editor: &mut Editor) -> (String, ratatui::buffer::Buffer) {
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_find_popup(frame, frame.area(), editor, &[], &theme);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (buffer_text(&buffer), buffer)
+    }
+
+    /// Reported: nothing said a query wasn't found. The box says so, its
+    /// border in `danger`.
+    #[test]
+    fn a_query_with_no_match_says_no_results() {
+        let mut editor = open_test_editor("hello world");
+        editor.start_search();
+        for c in "zzz".chars() {
+            editor.search_push_char(c);
+        }
+
+        let (text, buffer) = rendered_box(&mut editor);
+
+        assert!(text.contains("zzz"));
+        assert!(text.contains("No results"));
+        let corner = (0..buffer.area.width).find(|&x| buffer[(x, 1)].symbol() == "┌").expect("the box's corner");
+        assert_eq!(buffer[(corner, 1)].fg, Theme::dark().danger);
+    }
+
+    #[test]
+    fn a_query_with_matches_says_which_of_how_many() {
+        let mut editor = open_test_editor("hello world");
+        editor.start_search();
+        editor.search_push_char('o');
+
+        let (text, _) = rendered_box(&mut editor);
+
+        assert!(text.contains("1 of 2"), "{text}");
+        assert!(!text.contains("No results"));
+    }
+
+    #[test]
+    fn an_empty_query_shows_no_count() {
+        let mut editor = open_test_editor("hello world");
+        editor.start_search();
+
+        let (text, _) = rendered_box(&mut editor);
+
+        assert!(!text.contains(" of ") && !text.contains("No results"));
+    }
 }

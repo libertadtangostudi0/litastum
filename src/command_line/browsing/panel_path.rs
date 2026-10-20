@@ -40,7 +40,8 @@ pub fn mouse(app: &mut App, mouse: MouseEvent) {
 /// directory, or to a typed file's directory with the file under the
 /// cursor; a path that isn't there keeps the field open to fix it, with a
 /// notice. `Esc` takes the panel back to where it was. `F4` on a file
-/// opens it in the editor (`edit_file`).
+/// opens it in the editor (`edit_file`), and so does pasting a file's
+/// path (`pasted`).
 pub(super) fn key(app: &mut App, key: KeyEvent) {
     if key.code == KeyCode::F(4) && key.modifiers == KeyModifiers::NONE {
         edit_file(app);
@@ -50,6 +51,7 @@ pub(super) fn key(app: &mut App, key: KeyEvent) {
         return;
     };
     match edit.key(key) {
+        PathEditKey::Editing if is_paste_key(key) => pasted(app),
         PathEditKey::Editing => follow(app),
         PathEditKey::Cancel => cancel(app),
         PathEditKey::Submit(path) => match go_to(app, &path) {
@@ -103,6 +105,32 @@ fn edit_file(app: &mut App) {
     app.panel_path_edit = None;
     if let Err(err) = execute(Command::EditSelected, app) {
         app.notice = Some(Notice::error(format!("Can't edit {}: {err}", path.display())));
+    }
+}
+
+
+/// The field's own paste key; in Windows Terminal `Ctrl+V` comes as the
+/// clipboard typed in instead (`event_loop::paste`), which calls `pasted`.
+fn is_paste_key(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char('v' | 'V')) && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+
+/// After a paste into the field (requested): a path to an existing file
+/// goes to its directory, selects it and opens it in the editor, as `F4`
+/// would -- pasting a file's path means opening it. Anything else (a
+/// directory, a partial path) stays typed, the panel following it.
+pub(crate) fn pasted(app: &mut App) {
+    let Some(edit) = app.panel_path_edit.as_mut() else {
+        return;
+    };
+    // A paste typed into an open `Tab` list's filter is for the field.
+    edit.completions = None;
+    let typed = edit.base().join(edit.field.text().trim().trim_matches('"'));
+    if typed.is_file() {
+        edit_file(app);
+    } else {
+        follow(app);
     }
 }
 
@@ -355,6 +383,64 @@ mod tests {
 
         assert!(app.panel_path_edit.is_some(), "the field and its list stay");
         assert!(matches!(app.mode, crate::app::Mode::Browsing));
+    }
+
+    /// Requested: pasting a file's path goes to its directory, selects it
+    /// and opens it in the editor.
+    #[test]
+    fn pasting_a_file_path_selects_the_file_and_opens_the_editor() {
+        let dir = unique_scratch_dir("panel-path");
+        fs::create_dir_all(dir.join("docs")).unwrap();
+        fs::write(dir.join("docs").join("notes.md"), "hello
+").unwrap();
+        fs::write(dir.join("docs").join("a.txt"), "").unwrap();
+        let mut app = test_app(dir.clone());
+        handle_browsing_key(&mut app, ctrl_key('l')).unwrap();
+        let file = dir.join("docs").join("notes.md");
+        type_path(&mut app, &format!("\"{}\"", file.display()));
+
+        super::pasted(&mut app);
+
+        assert!(app.panel_path_edit.is_none());
+        let panel = &app.panels[app.active];
+        assert_eq!(panel.path, dir.join("docs"));
+        assert_eq!(panel.current().map(|entry| entry.name.as_str()), Some("notes.md"));
+        let crate::app::Mode::Editing(editor) = &app.mode else { panic!("expected the editor") };
+        assert_eq!(editor.path(), file);
+    }
+
+    /// A directory's path, or one not finished yet, just stays typed.
+    #[test]
+    fn pasting_a_directory_path_only_follows_it() {
+        let dir = unique_scratch_dir("panel-path");
+        fs::create_dir_all(dir.join("docs")).unwrap();
+        let mut app = test_app(dir.clone());
+        handle_browsing_key(&mut app, ctrl_key('l')).unwrap();
+        type_path(&mut app, &dir.join("docs").to_string_lossy());
+
+        super::pasted(&mut app);
+
+        assert!(app.panel_path_edit.is_some(), "the field stays");
+        assert_eq!(app.panels[app.active].path, dir.join("docs"));
+        assert!(matches!(app.mode, crate::app::Mode::Browsing));
+    }
+
+    /// The field's own `Ctrl+V` (outside Windows Terminal) opens a pasted
+    /// file too.
+    #[test]
+    fn ctrl_v_in_the_field_opens_a_pasted_file() {
+        let dir = unique_scratch_dir("panel-path");
+        fs::write(dir.join("notes.md"), "hello
+").unwrap();
+        let mut app = test_app(dir.clone());
+        handle_browsing_key(&mut app, ctrl_key('l')).unwrap();
+        app.panel_path_edit.as_mut().unwrap().field.select_all();
+        crate::text_field::clipboard::set(dir.join("notes.md").to_string_lossy().into_owned());
+
+        handle_browsing_key(&mut app, ctrl_key('v')).unwrap();
+
+        let crate::app::Mode::Editing(editor) = &app.mode else { panic!("expected the editor") };
+        assert_eq!(editor.path(), dir.join("notes.md"));
     }
 
     #[test]

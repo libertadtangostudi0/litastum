@@ -106,6 +106,10 @@ fn apply_paste(app: &mut App, target: PasteTarget, text: &str) -> Result<()> {
                 let effect = key_effect(app, crossterm::event::KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))?;
                 debug_assert_eq!(effect, Effect::None);
             }
+            // A file's path pasted into a panel's path field opens it.
+            if app.overlay.is_none() && matches!(app.mode, Mode::Browsing) && app.panel_path_edit.is_some() {
+                crate::command_line::pasted_into_panel_path(app);
+            }
         }
     }
     Ok(())
@@ -170,6 +174,24 @@ mod tests {
         handle_paste_event(&mut app, "svn st\r\n--quiet").unwrap();
 
         assert_eq!(app.command_line.text(), "svn st--quiet");
+    }
+
+    /// Requested: a file's path pasted into a panel's path field (as
+    /// Windows Terminal delivers `Ctrl+V`) opens the file in the editor.
+    #[test]
+    fn pasting_a_file_path_into_the_panel_path_field_opens_the_file() {
+        let dir = unique_scratch_dir("paste-routing");
+        let file = dir.join("notes.md");
+        std::fs::write(&file, "hello\n").unwrap();
+        let mut app = test_app(dir.clone());
+        app.panel_path_edit = Some(crate::path_edit::PathEdit::new(&dir));
+        app.panel_path_edit.as_mut().unwrap().field.select_all();
+
+        handle_paste_event(&mut app, &file.to_string_lossy()).unwrap();
+
+        assert!(app.panel_path_edit.is_none());
+        let Mode::Editing(editor) = &app.mode else { panic!("expected the editor") };
+        assert_eq!(editor.path(), file);
     }
 
     /// With a prompt or menu open over the editor, a paste must not

@@ -11,3 +11,5 @@ pub use popup_style::PopupStyle;
 pub use popup_style_menu::{handle_popup_style_menu_key, PopupStyleMenu};
 pub use theme::{blend_over_bg, Theme};
 pub use theme_menu::{handle_theme_menu_key, ThemeMenu, ThemeMenuEntry};
+#[cfg(test)]
+pub(crate) use scheme::ColorScheme;

@@ -1,6 +1,7 @@
 use crossterm::event::KeyEvent;
 use edtui::actions::{Execute, SwitchMode};
 use edtui::{EditorMode, Index2};
+use ratatui::layout::Rect;
 
 use crate::text_field::{EditOutcome, TextField};
 
@@ -18,12 +19,15 @@ use session::SearchSession;
 pub(in crate::editor::editor) struct SearchBox {
     field: TextField,
     session: SearchSession,
+    /// Where the box was last drawn (`set_search_box_area`): a click on
+    /// it keeps the focus there.
+    area: Rect,
 }
 
 
 impl SearchBox {
     fn new(start_cursor: Index2) -> Self {
-        Self { field: TextField::new(), session: SearchSession::new(start_cursor) }
+        Self { field: TextField::new(), session: SearchSession::new(start_cursor), area: Rect::default() }
     }
 }
 
@@ -59,6 +63,39 @@ impl Editor {
     /// (`editor_keymap::handle_search_key`).
     pub fn search_cursor_at_end(&self) -> bool {
         self.search_field().is_none_or(|field| field.cursor() == field.text().chars().count())
+    }
+
+    /// `(highlighted, total)` for the box to show: the highlighted match's
+    /// number from 1 (0 if none is) and how many there are -- `None` with
+    /// the box closed or empty. Requested: nothing said a query wasn't found.
+    pub fn search_match_count(&self) -> Option<(usize, usize)> {
+        let search_box = self.search.as_ref()?;
+        if search_box.field.text().is_empty() {
+            return None;
+        }
+        let session = &search_box.session;
+        Some((session.selected_index().map_or(0, |index| index + 1), session.matches().len()))
+    }
+
+    /// Notes where the box was drawn (`ui::editor_find`).
+    pub fn set_search_box_area(&mut self, area: Rect) {
+        if let Some(search_box) = &mut self.search {
+            search_box.area = area;
+        }
+    }
+
+    /// Whether the open box is drawn at `(column, row)`.
+    pub(super) fn search_box_contains(&self, column: u16, row: u16) -> bool {
+        self.search.as_ref().is_some_and(|search_box| search_box.area.contains(ratatui::layout::Position::new(column, row)))
+    }
+
+    /// A click on the open box: it takes the focus back, the query and
+    /// its match as they are.
+    pub(super) fn focus_search_box(&mut self) {
+        if self.search.is_some() && !self.is_searching() {
+            SwitchMode(EditorMode::Search).execute(&mut self.state);
+            self.search_history_index = None;
+        }
     }
 
     /// The currently selected match as an inclusive `(start, end)` span

@@ -152,10 +152,11 @@ in with `include_str!`, loaded lazily into one extra `SyntaxSet`
 | Groovy (`.groovy`, `.gvy`, `.gradle`, `Jenkinsfile`) | sublimehq/Packages |
 | CMake (`CMakeLists.txt`, `.cmake`) + CMakeCommands | github.com/zyxar/Sublime-CMakeLists (MIT) |
 | DCL (AutoCAD Dialog Control Language, `.dcl`) | self-authored, deliberately modest -- the only public `.dcl` grammar is OpenVMS's unrelated language |
+| Visual Studio Solution (`.sln`, or by its header line) | self-authored, deliberately modest -- `syntect` has none |
 
 `editor/syntax/grammars.rs::EXTENSION_ALIASES` maps an extension onto
 an existing grammar instead of bundling one (`.rc`/`.rc2` -> C++,
-`.clang-format`/`.clang-tidy` -> YAML) -- also the way to avoid an
+`.clang-format`/`.clang-tidy` -> YAML, `.slnf` -> JSON, `.slnx` -> XML) -- also the way to avoid an
 unrelated grammar that merely shares an extension (Android's
 `init.rc`).
 

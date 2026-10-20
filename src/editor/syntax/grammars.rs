@@ -6,7 +6,8 @@ use tracing::warn;
 /// `.sublime-syntax` (YAML) grammars for files `syntect`'s default set
 /// doesn't cover, compiled in; licenses in `assets/syntax/`. Sources:
 /// SublimeText/PowerShell, jwortmann/ini-syntax, zyxar/Sublime-CMakeLists,
-/// sublimehq/Packages (TOML, Git formats, Groovy); DCL is self-authored.
+/// sublimehq/Packages (TOML, Git formats, Groovy); DCL and Visual Studio
+/// Solution (`.sln`) are self-authored.
 ///
 /// - A grammar that `include:`s a hidden one needs that one here too
 ///   (Git Common, CMakeCommands), or it silently colors nothing.
@@ -26,6 +27,7 @@ const BUNDLED_GRAMMARS: &[&str] = &[
     include_str!("../../../assets/syntax/CMakeCommands.sublime-syntax"),
     include_str!("../../../assets/syntax/CMake.sublime-syntax"),
     include_str!("../../../assets/syntax/DCL.sublime-syntax"),
+    include_str!("../../../assets/syntax/VisualStudioSolution.sublime-syntax"),
     include_str!("../../../assets/syntax/Groovy.sublime-syntax"),
 ];
 
@@ -33,12 +35,16 @@ const BUNDLED_GRAMMARS: &[&str] = &[
 /// matched against the same `[file_name, extension]` candidates, so a
 /// full dotfile name works. `.rc` is mostly C preprocessor, so C++ fits;
 /// the only public `.rc` grammar is Android's unrelated `init.rc`.
-/// `.clang-format`/`.clang-tidy` are real YAML. History: docs/history/theming.md.
+/// `.clang-format`/`.clang-tidy` are real YAML; a solution filter
+/// (`.slnf`) is JSON, the newer solution format (`.slnx`) XML.
+/// History: docs/history/theming.md.
 pub(super) const EXTENSION_ALIASES: &[(&str, &str)] = &[
     ("rc", "cpp"),
     ("rc2", "cpp"),
     (".clang-format", "yaml"),
     (".clang-tidy", "yaml"),
+    ("slnf", "json"),
+    ("slnx", "xml"),
 ];
 
 /// A second `SyntaxSet` with just `BUNDLED_GRAMMARS` -- `edtui`'s set

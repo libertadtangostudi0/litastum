@@ -14,6 +14,8 @@ mod bindings;
 mod hidden_console;
 mod live_command;
 mod panel_path;
+
+pub(crate) use panel_path::pasted as pasted_into_panel_path;
 mod shell_exec;
 mod type_ahead;
 

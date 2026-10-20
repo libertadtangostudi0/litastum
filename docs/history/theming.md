@@ -163,6 +163,15 @@ The derived syntax theme originally named code scopes only.
   DIGITAL Command Language, which would mis-highlight, so it's
   self-authored and deliberately modest (comments, strings, numbers,
   punctuation, tile types, attribute names).
+- **Visual Studio Solution** (`.sln`), requested: `syntect` has no
+  grammar for it, so it's self-authored and modest like DCL -- the
+  header, `#` comments, the `Project`/`GlobalSection`/... keywords, a
+  section's name, `preSolution`-style timings, GUIDs, strings, version
+  numbers and the key before `=` -- only scopes `to_syntax_theme` maps,
+  so it colors under every scheme
+  (`the_solution_grammar_colors_keywords_guids_strings_and_keys`). Its
+  header line finds it too (with or without the BOM). The solution
+  filter (`.slnf`, JSON) and the newer `.slnx` (XML) are aliases.
 - **Groovy** (`Jenkinsfile` via `hidden_file_extensions`) is in
   sublimehq/Packages but not in `syntect`'s dump, like TOML. One local
   patch: the upstream `comments` context tried `include:

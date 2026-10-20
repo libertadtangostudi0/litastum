@@ -164,7 +164,10 @@ appdata/
 
 `theming::config::config_dir()` and `app_data::history_dir()` both
 derive from it. `appdata/` is git-ignored. `logs/` stays at the project
-root for now.
+root for now (`app_data::logs_dir`, anchored the same way -- never the
+cwd: a Windows Terminal profile started litastum in a folder it can't
+write, and startup failed; a log that can't be opened now only turns
+logging off, with a notice).
 
 **When the installer lands**: switch `app_data_dir()` to the OS
 location (`directories::ProjectDirs`, per [[litastum-stack]]) and move

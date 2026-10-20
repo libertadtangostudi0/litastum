@@ -153,6 +153,11 @@ impl SearchSession {
         }
     }
 
+    /// The highlighted match's place in `matches`, if any.
+    pub(super) fn selected_index(&self) -> Option<usize> {
+        self.selected
+    }
+
     /// The currently selected match's own start, if any.
     pub(super) fn selected_match(&self) -> Option<Index2> {
         self.selected.and_then(|index| self.matches().get(index).copied())
