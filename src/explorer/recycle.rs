@@ -20,7 +20,7 @@ pub fn available() -> bool {
 #[cfg(all(windows, not(test)))]
 pub fn to_recycle_bin(path: &Path, _is_dir: bool) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::UI::Shell::{SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE, SHFILEOPSTRUCTW};
+    use windows_sys::Win32::UI::Shell::{SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FOF_WANTNUKEWARNING, FO_DELETE, SHFILEOPSTRUCTW};
 
     let absolute = std::path::absolute(path)?;
     // A list of paths, each ending in a NUL, the list in another.
@@ -31,7 +31,10 @@ pub fn to_recycle_bin(path: &Path, _is_dir: bool) -> io::Result<()> {
         wFunc: FO_DELETE,
         pFrom: from.as_ptr(),
         pTo: std::ptr::null(),
-        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI) as u16,
+        // `FOF_WANTNUKEWARNING`: what doesn't fit in the Recycle Bin asks
+        // before it's deleted for good -- without it, `FOF_NOCONFIRMATION`
+        // deleted such a folder for good unasked.
+        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOF_WANTNUKEWARNING) as u16,
         fAnyOperationsAborted: 0,
         hNameMappings: std::ptr::null_mut(),
         lpszProgressTitle: std::ptr::null(),

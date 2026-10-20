@@ -110,6 +110,11 @@ fn main() -> Result<()> {
         app.overlay = Some(Overlay::ConfirmPortFarMenu(far_path));
     }
     let result = event_loop::run(&mut terminal, &mut app);
+    // A delete still running finishes first: ending the process would
+    // cut it off half-way.
+    if let Some(deletion) = app.deletion.take() {
+        deletion.wait();
+    }
     // Windows Terminal back at the size it had before litastum.
     #[cfg(windows)]
     if let Some(zoom) = &mut app.terminal_zoom {

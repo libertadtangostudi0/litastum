@@ -1,5 +1,6 @@
 mod command;
 mod confirm;
+mod deletion;
 mod drive_menu;
 mod entry;
 mod find_file;
@@ -14,6 +15,9 @@ mod user_menu;
 
 pub use command::execute;
 pub use confirm::{handle_confirm_delete_key, handle_confirm_transfer_key};
+pub use deletion::{is_deletion_pending, poll_pending_deletion, Deletion};
+#[cfg(test)]
+pub(crate) use deletion::wait_for_deletion;
 pub use drive_menu::{format_bytes, handle_drive_menu_key, DriveMenu};
 pub(crate) use entry::is_vcs_dir_name;
 pub use entry::{Entry, HighlightRole};

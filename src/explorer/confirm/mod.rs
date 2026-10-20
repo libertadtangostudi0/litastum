@@ -35,20 +35,8 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<Effect>
             let Some(Overlay::ConfirmDelete(pending)) = app.overlay.take() else {
                 unreachable!("just matched Overlay::ConfirmDelete above");
             };
-            let mut failures = Vec::new();
-            for entry in &pending.entries {
-                let result = if pending.permanent {
-                    super::recycle::delete_for_good(&entry.path, entry.is_dir)
-                } else {
-                    super::recycle::to_recycle_bin(&entry.path, entry.is_dir)
-                };
-                if let Err(err) = result {
-                    debug!(path = %entry.path.display(), %err, "delete failed");
-                    failures.push((entry.name.clone(), err));
-                }
-            }
-            app.notice = failure_notice("Delete", &failures, pending.entries.len());
-            app.active_panel().reload()?;
+            // On a thread of its own: a large folder froze the app.
+            super::deletion::begin(app, pending.entries, pending.permanent);
         }
         Answer::No => app.overlay = None,
         Answer::Ignore => {}
@@ -137,7 +125,7 @@ fn run_confirmed_transfer(app: &mut App) -> Result<()> {
 
 /// The error notice for a bulk file operation, `None` if nothing failed:
 /// the one failure in full, or a count plus the first one.
-fn failure_notice(verb: &str, failures: &[(String, io::Error)], total: usize) -> Option<Notice> {
+pub(super) fn failure_notice(verb: &str, failures: &[(String, io::Error)], total: usize) -> Option<Notice> {
     let (name, err) = failures.first()?;
     let text = if failures.len() == 1 {
         format!("{verb} failed: {name}: {err}")

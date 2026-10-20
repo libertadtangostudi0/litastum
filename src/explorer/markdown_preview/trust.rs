@@ -88,7 +88,7 @@ pub fn handle_confirm_open_link_key(app: &mut App, key: KeyEvent) -> Result<Effe
     let Some(Overlay::ConfirmOpenLink(pending)) = &app.overlay else {
         return Ok(Effect::None);
     };
-    let trust = match key.code {
+    let trust = match crate::keyboard_layout::latin_key(key).code {
         KeyCode::Char('y' | 'Y') => false,
         KeyCode::Char('t' | 'T') => true,
         KeyCode::Char('n' | 'N') | KeyCode::Esc => {

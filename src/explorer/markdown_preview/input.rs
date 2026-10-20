@@ -39,7 +39,7 @@ pub fn open_edit_preview(app: &mut App) {
 /// `editor::close_editor_or_confirm`, so unsaved edits still get the
 /// discard prompt.
 pub fn handle_markdown_edit_preview_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
-    if let KeyCode::Char('l' | 'L') = key.code {
+    if let KeyCode::Char('l' | 'L') = crate::keyboard_layout::latin_key(key).code {
         open_link_search(app);
         return Ok(Effect::None);
     }

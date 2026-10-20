@@ -194,9 +194,14 @@ impl Binding {
 }
 
 
-/// The first binding matching `key` in this state, if any.
+/// The first binding matching `key` in this state, if any. A letter no
+/// row takes is tried again as the Latin letter on its key: `Shift+A`
+/// typed `Ф` under the Russian layout (requested,
+/// `keyboard_layout::latin_key`). Typing is unaffected -- no row takes a
+/// plain letter.
 pub(super) fn lookup(key: KeyEvent, line: LineState) -> Option<BrowserAction> {
-    BINDINGS.iter().find(|binding| binding.matches(key, line)).map(|binding| binding.action)
+    let find = |key: KeyEvent| BINDINGS.iter().find(|binding| binding.matches(key, line)).map(|binding| binding.action);
+    find(key).or_else(|| matches!(key.code, KeyCode::Char(_)).then(|| find(crate::keyboard_layout::latin_key(key))).flatten())
 }
 
 
@@ -282,6 +287,15 @@ mod tests {
     fn shift_a_is_only_a_binding_on_an_empty_line() {
         assert_eq!(lookup(chord(KeyCode::Char('A'), SHIFT), EMPTY), Some(A::Command(Command::SelectAll)));
         assert_eq!(lookup(chord(KeyCode::Char('A'), SHIFT), TYPED), None, "falls through to typing");
+    }
+
+    /// Requested: `Shift+A` marks all under the Russian layout too, where
+    /// the key types `Ф`; a plain Cyrillic letter still just types.
+    #[test]
+    fn shift_a_works_under_the_russian_layout() {
+        assert_eq!(lookup(chord(KeyCode::Char('Ф'), SHIFT), EMPTY), Some(A::Command(Command::SelectAll)));
+        assert_eq!(lookup(chord(KeyCode::Char('Ф'), SHIFT), TYPED), None, "falls through to typing");
+        assert_eq!(lookup(chord(KeyCode::Char('ф'), NONE), EMPTY), None);
     }
 
     #[test]

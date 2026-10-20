@@ -60,6 +60,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     let drawn = draw_screen(frame, app);
     if let Some(notice) = &app.notice {
         notice::draw_notice(frame, notice, &app.theme, app.settings.popup_style);
+    } else if let Some(deletion) = &app.deletion {
+        notice::draw_notice(frame, &crate::notice::Notice::info(deletion.message()), &app.theme, app.settings.popup_style);
     }
     drawn
 }

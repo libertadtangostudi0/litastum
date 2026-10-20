@@ -14,8 +14,9 @@ pub enum Answer {
 }
 
 
+/// Read by the key, whatever the layout (`keyboard_layout::latin_key`).
 pub fn answer(key: KeyEvent) -> Answer {
-    match key.code {
+    match crate::keyboard_layout::latin_key(key).code {
         KeyCode::Char('y' | 'Y') => Answer::Yes,
         KeyCode::Char('n' | 'N') | KeyCode::Esc => Answer::No,
         _ => Answer::Ignore,
@@ -39,6 +40,13 @@ mod tests {
         assert_eq!(answer(key(KeyCode::Char('n'))), Answer::No);
         assert_eq!(answer(key(KeyCode::Char('N'))), Answer::No);
         assert_eq!(answer(key(KeyCode::Esc)), Answer::No);
+    }
+
+    /// Reported: under the Russian layout the keys type `н`/`т`.
+    #[test]
+    fn the_same_keys_answer_under_the_russian_layout() {
+        assert_eq!(answer(key(KeyCode::Char('н'))), Answer::Yes);
+        assert_eq!(answer(key(KeyCode::Char('Т'))), Answer::No);
     }
 
     #[test]

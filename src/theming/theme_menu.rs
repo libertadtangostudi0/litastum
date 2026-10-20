@@ -96,7 +96,7 @@ pub enum ThemeMenuCommand {
 
 /// Resolves a raw key press on the theme-picker popup.
 pub fn resolve(key: KeyEvent) -> ThemeMenuCommand {
-    match key.code {
+    match crate::keyboard_layout::latin_key(key).code {
         KeyCode::Up => ThemeMenuCommand::Up,
         KeyCode::Down => ThemeMenuCommand::Down,
         KeyCode::Enter => ThemeMenuCommand::ApplyBoth,

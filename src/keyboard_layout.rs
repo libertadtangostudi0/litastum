@@ -11,10 +11,19 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 /// is searched, with no notion of the active layout (`crossterm` doesn't
 /// report it), so switching layouts mid-session just works. Adding a
 /// layout means adding a table. History: docs/history/keyboard-layout.md.
-pub(crate) fn normalize_ctrl_shortcut(mut key: KeyEvent) -> KeyEvent {
+pub(crate) fn normalize_ctrl_shortcut(key: KeyEvent) -> KeyEvent {
     if !key.modifiers.contains(KeyModifiers::CONTROL) {
         return key;
     }
+    latin_key(key)
+}
+
+
+/// A letter key as the Latin letter on the same key, whatever the layout
+/// -- for a key that is a command, not text: `Y`/`N` in a prompt, `I`/`E`
+/// in the theme picker. Reported: under the Russian layout `y` arrived as
+/// `н` and the delete prompt took no answer. Never for typed text.
+pub(crate) fn latin_key(mut key: KeyEvent) -> KeyEvent {
     if let KeyCode::Char(c) = key.code {
         let is_upper = c.is_uppercase();
         let lower = c.to_lowercase().next().unwrap_or(c);
@@ -47,6 +56,18 @@ mod tests {
     fn preserves_uppercase() {
         let normalized = normalize_ctrl_shortcut(ctrl_char('С'));
         assert_eq!(normalized.code, KeyCode::Char('C'));
+    }
+
+    /// Reported: the delete prompt's `y` did nothing under the Russian
+    /// layout, where the key types `н`.
+    #[test]
+    fn a_command_letter_is_read_by_its_key() {
+        let plain = |c| latin_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)).code;
+        assert_eq!(plain('н'), KeyCode::Char('y'));
+        assert_eq!(plain('т'), KeyCode::Char('n'));
+        assert_eq!(plain('Н'), KeyCode::Char('Y'));
+        assert_eq!(plain('y'), KeyCode::Char('y'));
+        assert_eq!(latin_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).code, KeyCode::Esc);
     }
 
     #[test]

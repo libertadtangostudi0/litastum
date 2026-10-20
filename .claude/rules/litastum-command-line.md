@@ -41,8 +41,14 @@ line. Order matters and the table is grouped by it:
    selection, on a typed line only (above `Delete` = delete forward).
    On an empty line `Shift+Delete` deletes for good, where `F8` sends to
    the Recycle Bin, as in Far (`explorer/recycle.rs`; requested). The
-   prompt says which.
-3. Marking -- `Shift+arrows`, and `Shift+A` on an empty line only.
+   prompt says which. A confirmed delete runs on its own thread
+   (`explorer/deletion.rs`; a large folder froze the app), a toast
+   saying so; the panels reload when it's done, one at a time, and exit
+   waits for it. What doesn't fit in the Recycle Bin asks Windows'
+   own question before it's deleted for good (`FOF_WANTNUKEWARNING`).
+3. Marking -- `Shift+arrows`, and `Shift+A` on an empty line only (by
+   its key under any layout: a letter no row takes is looked up again
+   as the Latin letter on its key, `keyboard_layout::latin_key`).
 4. The typed line -- `Enter` runs it; while suggestions show (history
    entries, then the active panel's names starting with the typed word,
    `command_line/suggestions.rs`), `Up`/`Down`/`Tab` work on them (never

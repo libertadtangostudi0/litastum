@@ -26,6 +26,7 @@ fn confirm_delete_removes_a_file_and_returns_to_browsing() {
     app.overlay = Some(Overlay::ConfirmDelete(pending_delete(file.clone(), "victim.txt", false, 3)));
 
     handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+    crate::explorer::wait_for_deletion(&mut app);
 
     assert!(!file.exists());
     assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
@@ -40,6 +41,7 @@ fn confirm_delete_removes_a_directory_recursively() {
     app.overlay = Some(Overlay::ConfirmDelete(pending_delete(dir.clone(), "victim_dir", true, 0)));
 
     handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+    crate::explorer::wait_for_deletion(&mut app);
 
     assert!(!dir.exists());
 }
@@ -75,6 +77,7 @@ fn confirm_delete_removes_every_entry_in_a_multi_entry_prompt() {
     }));
 
     handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+    crate::explorer::wait_for_deletion(&mut app);
 
     assert!(!a.exists());
     assert!(!b.exists());
@@ -182,6 +185,7 @@ fn a_failed_delete_shows_a_notice() {
     app.overlay = Some(Overlay::ConfirmDelete(pending_delete(missing, "already-gone.txt", false, 0)));
 
     handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+    crate::explorer::wait_for_deletion(&mut app);
 
     let Some(notice) = &app.notice else { panic!("a failed delete shows a notice") };
     assert_eq!(notice.kind, crate::notice::NoticeKind::Error);
@@ -196,6 +200,7 @@ fn a_successful_delete_shows_no_notice() {
     app.overlay = Some(Overlay::ConfirmDelete(pending_delete(file, "victim.txt", false, 3)));
 
     handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
+    crate::explorer::wait_for_deletion(&mut app);
 
     assert_eq!(app.notice, None);
 }
