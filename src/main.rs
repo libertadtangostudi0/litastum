@@ -14,6 +14,7 @@ mod keyboard_layout;
 mod last_paths;
 mod list_cursor;
 mod logging;
+mod hotkeys;
 mod notice;
 mod path_edit;
 mod terminal_palette;
@@ -61,7 +62,7 @@ fn main() -> Result<()> {
     // The query wrote to the real screen behind `ratatui`'s buffer, and stray
     // text showed in a panel before the UI; `clear()` forces a full repaint.
     terminal.clear()?;
-    // Applies a shell profile saved via F9 -> Options -> Save setup, if
+    // Applies the shell profile last picked with `Ctrl+P`, if
     // its name still matches one of the built-in profiles -- a name
     // that no longer exists (profiles changed between runs) just falls
     // back to the default at index 0, same as a broken theme choice

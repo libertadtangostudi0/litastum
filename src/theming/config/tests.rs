@@ -117,7 +117,7 @@ mod persist_tests {
         assert_eq!(config.editor_theme.as_deref(), Some("keep-me"), "unrelated key must survive the write");
     }
 
-    /// `save_setup`/`load_active_shell` go through the real `config_dir()`, so
+    /// `save_active_shell`/`load_active_shell` go through the real `config_dir()`, so
     /// they aren't tested directly; this covers the injectable-path half they
     /// wrap.
     #[test]

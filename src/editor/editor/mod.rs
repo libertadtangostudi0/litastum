@@ -228,6 +228,16 @@ impl Editor {
     }
 
 
+    /// Whether a polled `Ctrl+V` pastes here at once (`paste_text`):
+    /// `Standard` typing, or over a selection, which the paste replaces.
+    /// Reported: after `Ctrl+A`, `Ctrl+C`, a paste over the selection was
+    /// typed in by the terminal a character at a time. Vim's `Ctrl+V` is
+    /// visual block.
+    pub(crate) fn takes_fast_paste(&self) -> bool {
+        self.keymap_mode == EditorKeymapMode::Standard && matches!(self.state.mode, EditorMode::Insert | EditorMode::Visual)
+    }
+
+
     /// Switches this open session's keymap live (the keymap menu's
     /// `Enter`). Rebuilds `event_handler` and resets to `starting_mode`,
     /// dropping any selection -- neither mode nor selection semantics

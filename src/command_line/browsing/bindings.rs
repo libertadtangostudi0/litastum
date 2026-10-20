@@ -12,7 +12,7 @@ use crate::explorer::Command;
 
 /// What has to be true of the command line for a binding to apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum When {
+pub(crate) enum When {
     Always,
     EmptyLine,
     TypedLine,
@@ -30,7 +30,7 @@ pub(super) struct LineState {
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum BrowserAction {
+pub(crate) enum BrowserAction {
     /// A panel command, run as is.
     Command(Command),
     /// A panel command from the plain navigation/F-key row: also ends
@@ -73,11 +73,11 @@ pub(super) enum BrowserAction {
 
 
 pub(super) struct Binding {
-    code: KeyCode,
-    required: KeyModifiers,
+    pub(super) code: KeyCode,
+    pub(super) required: KeyModifiers,
     forbidden: KeyModifiers,
-    when: When,
-    action: BrowserAction,
+    pub(super) when: When,
+    pub(super) action: BrowserAction,
 }
 
 

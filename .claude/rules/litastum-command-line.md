@@ -29,7 +29,7 @@ line. Order matters and the table is grouped by it:
    with a list to pick from when several entries match
    (`path_edit/complete.rs`, every path field). `F4` on a file in that
    list (or typed out) selects it in the panel and opens the editor;
-   so does pasting a file's path (requested; `panel_path::pasted`, after
+   so do `Enter` on a typed file's path and pasting one (requested; `panel_path::pasted`, after
    the field's own `Ctrl+V` and after Windows Terminal's typed-in paste,
    `event_loop::paste`). A pasted directory just shows in the panel. The click needs mouse
    capture in the browser, which takes the terminal's own text selection
@@ -220,11 +220,19 @@ If a user picks a profile that isn't actually installed, spawning it
 just fails and the OS error shows on the user screen — honest
 feedback, no pre-flight probing needed either. See `TODO/command-line.md`.
 
-**Not persisted** to `config.json` — resets to the platform default
-each run. `config.rs` already has the pattern for persisting a choice
-(from the theme picker) if this turns out to be wanted; left out here
-to keep the change scoped to "pick a shell for this session," which is
-what was actually asked for.
+**Saved as soon as it's picked** (`config::save_active_shell`, by name;
+a name no longer among the profiles falls back to the default). It
+used to wait for F9 -> Options -> Save setup, which went (requested).
+
+## Hotkeys table (F9 -> Options -> Hotkeys)
+
+Requested in place of Save setup: every binding in a scrollable table
+-- the key, what it does, and when, if only in some state
+(`hotkeys.rs`, `ui/hotkeys.rs`). The panels' rows are read off
+`BINDINGS` itself (`browsing/hotkey_rows.rs`), so the table can't drift
+from what the keys do. Planned in stages: viewing (done), rebinding the
+panels' keys -- saved in `config.json`, warning when a combination is
+taken -- then the editor's, Compare's and the resolver's.
 
 ## Show/hide panels (`Ctrl+O`)
 

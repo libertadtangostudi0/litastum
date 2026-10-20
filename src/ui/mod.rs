@@ -19,6 +19,7 @@ mod editor_menu;
 mod editor_pane;
 mod find_file;
 mod image_preview;
+mod hotkeys;
 mod info;
 mod markdown_preview;
 mod menu;
@@ -324,6 +325,7 @@ fn draw_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) -> Opti
         Overlay::MarkdownLinkSearch(search) => return Some(markdown_preview::draw_markdown_link_search(frame, area, search, theme, style)),
         Overlay::ConfirmOpenLink(pending) => confirm::draw_confirm_open_link_popup(frame, area, pending, theme, style),
         Overlay::TrustedLinks(menu) => trusted_links_menu::draw_trusted_links_menu(frame, area, menu, theme, style),
+        Overlay::Hotkeys(menu) => hotkeys::draw_hotkeys(frame, area, menu, theme, style),
     }
     None
 }

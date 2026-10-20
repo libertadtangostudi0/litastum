@@ -64,8 +64,7 @@ pub fn open_shell_menu(app: &App) -> ShellMenu {
 
 
 /// Key handling on the `Ctrl+P` shell picker: `Enter` sets
-/// `app.active_shell`, `Esc` cancels. Not persisted automatically (F9 ->
-/// Options -> Save setup does that).
+/// `app.active_shell` and saves it for the next start, `Esc` cancels.
 pub fn handle_shell_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::ShellMenu(menu)) = &mut app.overlay else {
         return Ok(Effect::None);
@@ -79,6 +78,8 @@ pub fn handle_shell_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         MenuOutcome::Chosen(index) => {
             app.active_shell = index;
             app.overlay = None;
+            // Requested: kept for the next start at once.
+            crate::theming::config::save_active_shell(&app.shell_profiles[index].name);
         }
     }
     Ok(Effect::None)

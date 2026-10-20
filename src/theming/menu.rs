@@ -7,13 +7,12 @@ use crate::choice_menu::{ChoiceMenu, MenuOutcome};
 use crate::command_line::CommandHistoryMenu;
 use crate::command_line::Effect;
 use crate::explorer::{FindFileState, TrustedLinksMenu};
-use super::config;
 use super::popup_style_menu::open_popup_style_menu;
 use super::theme_menu::ThemeMenu;
 
 /// F9's top menu. Enough structure to reach what's actually been asked
 /// for so far (Commands → Find file/History, Options → Color schemes/
-/// UI/Trusted links/Save setup) — not Far Manager's full Left/Files/Commands/Options/
+/// UI/Trusted links/Hotkeys) — not Far Manager's full Left/Files/Commands/Options/
 /// View/Right top-menu bar; see `TODO/f9-menu.md` for what a real one would
 /// still need.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +34,7 @@ pub enum MainMenuItem {
     ColorSchemes,
     Ui,
     TrustedLinks,
-    SaveSetup,
+    Hotkeys,
 }
 
 
@@ -49,7 +48,7 @@ impl MainMenuItem {
             Self::ColorSchemes => "Color schemes",
             Self::Ui => "UI",
             Self::TrustedLinks => "Trusted links",
-            Self::SaveSetup => "Save setup",
+            Self::Hotkeys => "Hotkeys",
         }
     }
 }
@@ -61,7 +60,7 @@ impl MenuLevel {
         match self {
             MenuLevel::Main => &[MainMenuItem::Commands, MainMenuItem::Options],
             MenuLevel::Commands => &[MainMenuItem::FindFile, MainMenuItem::History],
-            MenuLevel::Options => &[MainMenuItem::ColorSchemes, MainMenuItem::Ui, MainMenuItem::TrustedLinks, MainMenuItem::SaveSetup],
+            MenuLevel::Options => &[MainMenuItem::ColorSchemes, MainMenuItem::Ui, MainMenuItem::TrustedLinks, MainMenuItem::Hotkeys],
         }
     }
 
@@ -139,15 +138,7 @@ pub fn handle_main_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
             MainMenuItem::ColorSchemes => app.overlay = Some(Overlay::ThemeMenu(ThemeMenu::open())),
             MainMenuItem::Ui => app.overlay = Some(Overlay::PopupStyleMenu(open_popup_style_menu(app.settings.popup_style))),
             MainMenuItem::TrustedLinks => app.overlay = Some(Overlay::TrustedLinks(TrustedLinksMenu::open())),
-            MainMenuItem::SaveSetup => {
-                // Far Manager's own Shift+F9 -- persists the current
-                // session's choices (so far, the active shell profile)
-                // on demand, unlike the theme picker's auto-persist.
-                let name = app.shell_profiles[app.active_shell].name.clone();
-                config::save_setup(&name);
-                debug!(shell = name, "save setup: persisted active shell profile");
-                app.overlay = None;
-            }
+            MainMenuItem::Hotkeys => app.overlay = Some(Overlay::Hotkeys(crate::hotkeys::HotkeysMenu::open())),
         },
     }
 
@@ -180,7 +171,7 @@ mod tests {
             menu.enter(MenuLevel::Options);
             assert_eq!(menu.level, MenuLevel::Options);
             assert_eq!(menu.list.selected_index(), 0);
-            assert_eq!(menu.list.options(), &[MainMenuItem::ColorSchemes, MainMenuItem::Ui, MainMenuItem::TrustedLinks, MainMenuItem::SaveSetup]);
+            assert_eq!(menu.list.options(), &[MainMenuItem::ColorSchemes, MainMenuItem::Ui, MainMenuItem::TrustedLinks, MainMenuItem::Hotkeys]);
         }
 
         #[test]
@@ -247,30 +238,27 @@ mod tests {
     fn handle_main_menu_key_select_color_schemes_opens_theme_menu() {
         let mut app = app_in_main_menu();
         let Some(Overlay::MainMenu(menu)) = &mut app.overlay else { unreachable!() };
-        menu.enter(MenuLevel::Options); // Color schemes, UI, Trusted links, Save setup
+        menu.enter(MenuLevel::Options); // Color schemes, UI, Trusted links, Hotkeys
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
         assert!(matches!(app.overlay, Some(Overlay::ThemeMenu(_))));
     }
 
+    /// Requested: Save setup gave way to the hotkeys table (the shell is
+    /// saved as soon as it's picked).
     #[test]
-    fn handle_main_menu_key_select_save_setup_closes_the_menu() {
-        // Doesn't assert the config.json write itself happened --
-        // config::save_setup goes through the real config dir, same
-        // reason config.rs's own tests don't exercise it directly (see
-        // that module). This only pins down the app-visible effect:
-        // the action runs (doesn't panic) and the menu closes.
+    fn handle_main_menu_key_select_hotkeys_opens_the_table() {
         let mut app = app_in_main_menu();
         let Some(Overlay::MainMenu(menu)) = &mut app.overlay else { unreachable!() };
         menu.enter(MenuLevel::Options);
         menu.list.move_down();
         menu.list.move_down();
-        menu.list.move_down(); // "Save setup"
+        menu.list.move_down(); // "Hotkeys"
 
         handle_main_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
 
-        assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
+        assert!(matches!(app.overlay, Some(Overlay::Hotkeys(_))) && matches!(app.mode, Mode::Browsing));
     }
 
     #[test]

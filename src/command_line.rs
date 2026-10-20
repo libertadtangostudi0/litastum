@@ -8,7 +8,7 @@ mod shell;
 mod suggestions;
 
 pub use browsing::{handle_browsing_key, handle_browsing_mouse};
-pub(crate) use browsing::pasted_into_panel_path;
+pub(crate) use browsing::{browser_hotkeys, pasted_into_panel_path};
 pub(crate) use effect::apply_effect;
 pub use effect::Effect;
 pub use dangerous::handle_confirm_command_key;

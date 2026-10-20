@@ -12,10 +12,12 @@ use super::suggestions::{suggestions, Suggestion};
 
 mod bindings;
 mod hidden_console;
+mod hotkey_rows;
 mod live_command;
 mod panel_path;
 
 pub(crate) use panel_path::pasted as pasted_into_panel_path;
+pub(crate) use hotkey_rows::browser_hotkeys;
 mod shell_exec;
 mod type_ahead;
 

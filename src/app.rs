@@ -113,6 +113,8 @@ pub enum Overlay {
     ConfirmOpenLink(PendingLink),
     /// F9 -> Options -> Trusted links.
     TrustedLinks(TrustedLinksMenu),
+    /// F9 -> Options -> Hotkeys.
+    Hotkeys(crate::hotkeys::HotkeysMenu),
 }
 
 

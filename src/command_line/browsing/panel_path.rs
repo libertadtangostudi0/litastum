@@ -37,11 +37,10 @@ pub fn mouse(app: &mut App, mouse: MouseEvent) {
 
 /// A key while the field is open. While typing, the panel shows the
 /// directory the typed path is in (`follow`). `Enter` goes to the typed
-/// directory, or to a typed file's directory with the file under the
-/// cursor; a path that isn't there keeps the field open to fix it, with a
-/// notice. `Esc` takes the panel back to where it was. `F4` on a file
-/// opens it in the editor (`edit_file`), and so does pasting a file's
-/// path (`pasted`).
+/// directory; on a file it goes to the file's directory, selects it and
+/// opens it in the editor (`edit_file`; requested), as `F4` and pasting a
+/// file's path do (`pasted`). A path that isn't there keeps the field open
+/// to fix it, with a notice. `Esc` takes the panel back to where it was.
 pub(super) fn key(app: &mut App, key: KeyEvent) {
     if key.code == KeyCode::F(4) && key.modifiers == KeyModifiers::NONE {
         edit_file(app);
@@ -54,6 +53,7 @@ pub(super) fn key(app: &mut App, key: KeyEvent) {
         PathEditKey::Editing if is_paste_key(key) => pasted(app),
         PathEditKey::Editing => follow(app),
         PathEditKey::Cancel => cancel(app),
+        PathEditKey::Submit(path) if edit.base().join(&path).is_file() => edit_file(app),
         PathEditKey::Submit(path) => match go_to(app, &path) {
             Ok(()) => app.panel_path_edit = None,
             Err(err) => app.notice = Some(Notice::error(format!("Can't open {}: {err}", path.display()))),
@@ -213,8 +213,9 @@ mod tests {
         assert!(app.panel_path_edit.is_none());
     }
 
+    /// Requested: a file's path typed by hand opens it too, as a pasted one.
     #[test]
-    fn enter_on_a_file_selects_it_in_its_directory() {
+    fn enter_on_a_file_selects_it_in_its_directory_and_opens_the_editor() {
         let dir = unique_scratch_dir("panel-path");
         fs::create_dir_all(dir.join("sub")).unwrap();
         fs::write(dir.join("sub").join("b.txt"), "b").unwrap();
@@ -225,9 +226,12 @@ mod tests {
 
         handle_browsing_key(&mut app, key(KeyCode::Enter)).unwrap();
 
+        assert!(app.panel_path_edit.is_none());
         let panel = &app.panels[app.active];
         assert_eq!(panel.path, dir.join("sub"));
         assert_eq!(panel.current().map(|entry| entry.name.as_str()), Some("b.txt"));
+        let crate::app::Mode::Editing(editor) = &app.mode else { panic!("expected the editor") };
+        assert_eq!(editor.path(), dir.join("sub").join("b.txt"));
     }
 
     #[test]

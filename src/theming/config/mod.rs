@@ -78,9 +78,8 @@ pub fn find_scheme(name: &str) -> Option<ColorScheme> {
 struct Config {
     interface_theme: Option<String>,
     editor_theme: Option<String>,
-    /// Shell profile name saved by F9 -> Options -> Save setup (on
-    /// demand, like Far's `Shift+F9`); applied at startup if it still
-    /// exists.
+    /// Shell profile name last picked with `Ctrl+P` (`save_active_shell`);
+    /// applied at startup if it still exists.
     active_shell: Option<String>,
     /// F9 -> Options -> UI (`PopupStyle`), stored as the enum itself.
     popup_style: Option<PopupStyle>,
@@ -272,16 +271,16 @@ pub fn set_editor_theme(name: &str) -> Option<SynTheme> {
 }
 
 
-/// F9 -> Options -> Save setup (Far's `Shift+F9`): persists the active
-/// shell profile name, best-effort.
-pub fn save_setup(shell_profile_name: &str) {
+/// Persists the shell profile picked with `Ctrl+P`, best-effort -- saved
+/// as soon as it's picked, as the theme and the UI style are.
+pub fn save_active_shell(shell_profile_name: &str) {
     if let Some(config_dir) = config_dir() {
         persist(&config_dir, |config| config.active_shell = Some(shell_profile_name.to_string()));
     }
 }
 
 
-/// The shell profile name saved by `save_setup`; `main.rs` applies it
+/// The shell profile name saved by `save_active_shell`; `main.rs` applies it
 /// if a profile by that name still exists.
 pub fn load_active_shell() -> Option<String> {
     let config_dir = config_dir()?;

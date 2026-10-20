@@ -32,6 +32,11 @@ and word-occurrence highlighting only scans rows that can be on screen
   program used to paste here too
   (`windows_terminal::PasteFlood` -- matched character by character,
   with a deadline as a safety valve; see its own docs).
+  It takes a paste over a selection too (`Editor::takes_fast_paste`,
+  replacing it): gated on plain typing, a paste after `Ctrl+A` was left
+  to the terminal's typing again (reported). litastum's window (`gui/`)
+  goes the same way: it writes the clipboard into the pseudoconsole, and
+  litastum's own polled `Ctrl+V` pastes it at once.
 - **Where a paste lands**: `event_loop::paste::paste_target`, an
   explicit allow-list -- the editor buffer, or a single-line text field
   (replayed with no redraw in between). A mode where a letter is a

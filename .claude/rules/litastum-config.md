@@ -22,8 +22,9 @@ back on its own), and a menu that changes one sets the field and calls
 `save_settings(&app.settings)`. A new setting of this kind is one field
 on `Settings` (and `Config`), not a new load/set pair. Themes and the
 shell profile stay separate on purpose: themes are looked up by name
-across directories, and the shell is only saved by F9 -> Options ->
-Save setup.
+across directories, and the shell is saved by name as soon as `Ctrl+P`
+picks it (`save_active_shell`; F9 -> Options -> Save setup did that
+before, and gave way to the hotkeys table -- requested).
 
 ## `left_panel_path`/`right_panel_path`: the panels reopen where they were
 

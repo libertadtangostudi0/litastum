@@ -7,16 +7,11 @@
       `(level, item label)` rather than a positional index, so
       reordering `MenuLevel::items` can't silently wire the wrong
       action to a key.
-- [x] `Options` → `Color schemes` (`Mode::ThemeMenu`, unchanged) and
-      `Save setup` — Far Manager's own Shift+F9, reached only through
-      the menu here (no global hotkey binding, wasn't asked for):
-      persists the current session's choices to `config.json` on
-      demand rather than every choice auto-persisting immediately the
-      way the theme picker's own does. So far, that's just the active
-      shell profile (`config.rs::save_setup`/`load_active_shell`,
-      applied back at startup in `main.rs` if the saved name still
-      matches a built-in profile) — the one setting that wasn't already
-      being persisted somewhere.
+- [x] `Options` → `Color schemes`, `UI`, `Trusted links` and `Hotkeys`
+      (a scrollable table of every binding; rebinding is next).
+      `Save setup` went (requested): it only saved the shell profile,
+      which is now saved as soon as `Ctrl+P` picks it
+      (`config::save_active_shell`/`load_active_shell`).
 - [x] `Commands` → `Find file` and `History` — see
       [find-file.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/find-file.md) and [history.md](https://github.com/libertadtangostudi0/litastum/blob/main/TODO/history.md).
 

@@ -23,7 +23,7 @@ pub(super) fn try_intercept_paste_hotkey(app: &mut App) -> Result<bool> {
     let Some(target) = paste_target(app) else {
         return Ok(false);
     };
-    if target == PasteTarget::EditorBuffer && !matches!(&app.mode, Mode::Editing(editor) if editor.is_plain_standard_typing()) {
+    if target == PasteTarget::EditorBuffer && !matches!(&app.mode, Mode::Editing(editor) if editor.takes_fast_paste()) {
         return Ok(false);
     }
     let text = match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
@@ -152,6 +152,31 @@ mod tests {
 
         let app = editor_app("hello");
         assert_eq!(paste_target(&app), Some(PasteTarget::EditorBuffer));
+    }
+
+    /// Reported: `Ctrl+A`, `Ctrl+C`, then `Ctrl+V` over the selection was
+    /// left to the terminal's slow typing. A selection takes the fast
+    /// paste, which replaces it; Vim's `Ctrl+V` never does.
+    #[test]
+    fn a_selection_takes_the_fast_paste_and_is_replaced() {
+        let mut app = editor_app("old text
+more
+");
+        let Mode::Editing(editor) = &mut app.mode else { unreachable!() };
+        editor.select_all();
+        assert!(editor.takes_fast_paste(), "over a selection");
+
+        let pasted: String = (0..2000).map(|n| format!("line {n}
+")).collect();
+        apply_paste(&mut app, PasteTarget::EditorBuffer, &pasted).unwrap();
+
+        let Mode::Editing(editor) = &app.mode else { unreachable!() };
+        assert_eq!(editor.text(), pasted, "the selection was replaced, in one paste");
+
+        let vim = editing_app("x
+", EditorKeymapMode::Vim);
+        let Mode::Editing(editor) = &vim.mode else { unreachable!() };
+        assert!(!editor.takes_fast_paste());
     }
 
     /// A mode where a plain character is a command must never get
