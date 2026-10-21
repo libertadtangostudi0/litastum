@@ -75,7 +75,7 @@ pub fn draw_find_popup(frame: &mut Frame, area: Rect, editor: &mut Editor, searc
     if let Some(suffix) = suggestion_suffix {
         spans.push(Span::styled(suffix, Style::default().fg(theme.text_dim)));
     }
-    let scroll = (field.cursor() + 1).saturating_sub(usize::from(inner.width));
+    let scroll = super::text_field::view_scroll(field, usize::from(inner.width));
     frame.render_widget(Paragraph::new(Line::from(spans)).scroll((0, scroll as u16)), inner);
 
     let cursor = Position { x: inner.x + (field.cursor() - scroll) as u16, y: inner.y };

@@ -37,9 +37,53 @@ pub(super) fn styled_field_spans(field: &TextField, text_style: Style, selected_
 /// than its field hid its end, the caret past the edge -- in the command
 /// line, the `Ctrl+F` box, every popup's field.
 pub(super) fn draw_field(frame: &mut Frame, area: Rect, field: &TextField, theme: &Theme) -> Position {
-    let scroll = (field.cursor() + 1).saturating_sub(usize::from(area.width));
+    let scroll = view_scroll(field, usize::from(area.width));
     frame.render_widget(Paragraph::new(Line::from(field_spans(field, theme))).scroll((0, scroll as u16)), area);
     Position { x: area.x + (field.cursor() - scroll) as u16, y: area.y }
+}
+
+
+/// Where `field`'s view starts in a `width`-wide row (`scroll_for`),
+/// noted on the field for the next frame -- for fields drawn by hand
+/// (the `Ctrl+F` box, a path field).
+pub(super) fn view_scroll(field: &TextField, width: usize) -> usize {
+    let scroll = scroll_for(field, width);
+    field.set_view_offset(scroll);
+    scroll
+}
+
+
+/// Characters of context kept left of the caret while it moves left.
+const MARGIN: usize = 4;
+
+
+/// Where the view starts: where it was, moved only as much as the caret
+/// needs -- with `MARGIN` characters before it -- and, when a selection
+/// fits, so both its ends show. Reported: selecting leftwards from the
+/// end, the view jumped to the start and the selected part went off the
+/// right edge. Never past the end: the caret's cell after the text is the
+/// last one.
+fn scroll_for(field: &TextField, width: usize) -> usize {
+    if width == 0 {
+        return 0;
+    }
+    let cursor = field.cursor();
+    let len = field.text().chars().count();
+    let margin = MARGIN.min(width / 4);
+    let mut scroll = field.view_offset();
+    if cursor < scroll + margin {
+        scroll = cursor.saturating_sub(margin);
+    }
+    if cursor + 1 > scroll + width {
+        scroll = cursor + 1 - width;
+    }
+    if let Some((start, end)) = field.selection() {
+        // `end` is past the last selected character; it stays in view too.
+        if end - start < width {
+            scroll = scroll.clamp((end + 1).saturating_sub(width), start);
+        }
+    }
+    scroll.min((len + 1).saturating_sub(width))
 }
 
 
@@ -68,6 +112,58 @@ mod tests {
 
         assert_eq!(shown, "bcdefghij", "the end shows, the caret's cell after it");
         assert_eq!(cursor, 9);
+    }
+
+    /// Reported: selecting leftwards from the end, the view jumped to the
+    /// start and the selection's end went off the right edge. The view
+    /// stays put while the caret is in it, so the selected part shows.
+    #[test]
+    fn selecting_leftwards_from_the_end_keeps_the_selection_in_view() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut field = TextField::new();
+        field.set_text("0123456789abcdefghij");
+        drawn(&field, 10);
+        assert_eq!(field.view_offset(), 11, "the end shows");
+
+        for _ in 0..5 {
+            field.apply_key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT));
+        }
+        let (shown, cursor) = drawn(&field, 10);
+
+        assert_eq!(field.selection(), Some((15, 20)));
+        assert_eq!(shown, "bcdefghij", "the view didn't move: the selected 'fghij' shows");
+        assert_eq!(cursor, 4);
+    }
+
+    /// Past the margin the view follows the caret left, keeping a few
+    /// characters before it.
+    #[test]
+    fn moving_left_keeps_context_before_the_caret() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut field = TextField::new();
+        field.set_text("0123456789abcdefghijklmnopqrstuvwxyz");
+        drawn(&field, 20);
+        for _ in 0..20 {
+            field.apply_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        }
+
+        let (shown, cursor) = drawn(&field, 20);
+
+        assert_eq!(field.cursor(), 16);
+        assert_eq!(cursor, 4, "four characters of context before the caret");
+        assert!(shown.starts_with("cdef"), "{shown:?}");
+    }
+
+    /// A selection wider than the field can't show whole: the caret wins.
+    #[test]
+    fn a_selection_wider_than_the_field_follows_the_caret() {
+        let mut field = TextField::new();
+        field.set_text("0123456789abcdefghij");
+        field.select_all();
+
+        let (_, cursor) = drawn(&field, 10);
+
+        assert!(cursor < 10);
     }
 
     #[test]

@@ -16,6 +16,11 @@ pub struct TextField {
     /// Steps of `apply_key` edits only -- the command line edits through
     /// the single-purpose methods below and has no undo.
     history: UndoHistory,
+    /// The first character shown when drawn narrower than its text --
+    /// kept between frames by `ui::text_field::draw_field`, so the view
+    /// only moves when the caret needs it to. A view state, so a `Cell`:
+    /// drawing reads the field.
+    view_offset: std::cell::Cell<usize>,
 }
 
 impl PartialEq for TextField {
@@ -33,6 +38,17 @@ impl TextField {
     }
 
 
+    /// See `view_offset`.
+    pub fn view_offset(&self) -> usize {
+        self.view_offset.get()
+    }
+
+
+    pub fn set_view_offset(&self, offset: usize) {
+        self.view_offset.set(offset);
+    }
+
+
     /// A field holding `text`, cursor at the end, nothing selected.
     pub fn with_text(text: impl Into<String>) -> Self {
         let mut field = Self::new();
@@ -46,7 +62,7 @@ impl TextField {
     pub fn with_cursor_at(text: impl Into<String>, cursor: usize) -> Self {
         let text = text.into();
         let cursor = cursor.min(text.chars().count());
-        Self { text, cursor, anchor: None, history: UndoHistory::default() }
+        Self { text, cursor, anchor: None, ..Self::default() }
     }
 
 
@@ -55,7 +71,7 @@ impl TextField {
     pub fn at(text: impl Into<String>, cursor: usize, anchor: Option<usize>) -> Self {
         let text = text.into();
         assert!(cursor <= text.chars().count(), "cursor past the end of the text");
-        Self { text, cursor, anchor, history: UndoHistory::default() }
+        Self { text, cursor, anchor, ..Self::default() }
     }
 
 

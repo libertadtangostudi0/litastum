@@ -42,7 +42,12 @@ line. Order matters and the table is grouped by it:
    line only (above `Delete` = delete forward). A line longer than the
    row scrolls to keep the caret in view, and a deep directory's prompt
    keeps its end after a `…` (at most half the row) -- every one-line
-   field scrolls the same way (`ui::text_field::draw_field`).
+   field scrolls the same way (`ui::text_field::draw_field`), the `Ctrl+F`
+   box and path fields too. The view is kept between frames
+   (`TextField::view_offset`) and moves only as the caret needs, with
+   four characters of context before it; a selection that fits shows
+   whole (reported: selecting leftwards from the end, the view jumped to
+   the start and the selected part went off the edge).
    On an empty line `Shift+Delete` deletes for good, where `F8` sends to
    the Recycle Bin, as in Far (`explorer/recycle.rs`; requested). The
    prompt says which. A confirmed copy, move or delete runs on its own
