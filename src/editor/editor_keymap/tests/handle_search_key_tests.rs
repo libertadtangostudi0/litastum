@@ -73,19 +73,16 @@ fn enter_and_shift_enter_navigate_between_matches() {
 /// Real requirement, stated directly after `Up`/`Down` was
 /// first tried for match navigation and reported wrong: those
 /// keys browse the *search history* instead, a shell-`Up`-arrow
-/// convention -- first press recalls the most recent past
-/// query, further presses step further back, `Down` steps back
-/// toward the present and clears the box once past the newest
-/// entry.
+/// convention -- the box opens on the most recent past query,
+/// `Up` steps further back, `Down` steps back toward the present
+/// and clears the box once past the newest entry.
 #[test]
 fn up_and_down_browse_search_history_not_matches() {
     let (mut app, _path) = open_editor_app("cat dog cat\n");
     app.search_history = vec!["dog".to_string(), "cat".to_string()];
     handle_editor_key(&mut app, ctrl_key('f')).unwrap();
-
-    handle_editor_key(&mut app, key(KeyCode::Up)).unwrap();
     let Mode::Editing(editor) = &app.mode else { unreachable!() };
-    assert_eq!(editor.search_query(), "cat", "first Up should recall the most recent past query");
+    assert_eq!(editor.search_query(), "cat", "the box opens on the most recent past query");
 
     handle_editor_key(&mut app, key(KeyCode::Up)).unwrap();
     let Mode::Editing(editor) = &app.mode else { unreachable!() };
@@ -518,4 +515,56 @@ fn enter_with_nothing_found_stays_in_the_box_and_edits_nothing() {
     let Mode::Editing(editor) = &app.mode else { unreachable!() };
     assert!(editor.is_searching(), "focus stays in the box");
     assert!(!editor.is_dirty(), "no line breaks typed into the text");
+}
+
+
+/// Requested: `Ctrl+F` selects the whole previous query in the box, so
+/// typing replaces it -- also with the box already focused, where it did
+/// nothing.
+#[test]
+fn ctrl_f_in_the_focused_box_selects_the_whole_query() {
+    let (mut app, _path) = open_editor_app("hello world\n");
+    handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+    for c in "world".chars() {
+        handle_editor_key(&mut app, key(KeyCode::Char(c))).unwrap();
+    }
+
+    handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+    handle_editor_key(&mut app, key(KeyCode::Char('h'))).unwrap();
+
+    let Mode::Editing(editor) = &app.mode else { unreachable!() };
+    assert!(editor.is_searching());
+    assert_eq!(editor.search_query(), "h", "the typed letter replaced the selected query");
+}
+
+
+/// Requested: reopened, the box shows the last query selected -- typing
+/// replaces it, `Up` goes on to the one before, and its match is found.
+#[test]
+fn reopening_the_box_brings_back_the_last_query_selected() {
+    let (mut app, _path) = open_editor_app("cat dog cat\n");
+    app.search_history = vec!["cat".to_string(), "dog".to_string()];
+
+    handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+    let Mode::Editing(editor) = &app.mode else { unreachable!() };
+    assert_eq!(editor.search_query(), "dog");
+    assert_eq!(editor.search_match_count(), Some((1, 1)), "its match is live");
+
+    handle_editor_key(&mut app, key(KeyCode::Up)).unwrap();
+    let Mode::Editing(editor) = &app.mode else { unreachable!() };
+    assert_eq!(editor.search_query(), "cat", "Up goes on to the one before");
+
+    handle_editor_key(&mut app, key(KeyCode::Esc)).unwrap();
+    handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+    handle_editor_key(&mut app, key(KeyCode::Char('x'))).unwrap();
+    let Mode::Editing(editor) = &app.mode else { unreachable!() };
+    assert_eq!(editor.search_query(), "x", "typing replaced the selected query");
+}
+
+#[test]
+fn with_no_history_the_box_opens_empty() {
+    let (mut app, _path) = open_editor_app("hello\n");
+    handle_editor_key(&mut app, ctrl_key('f')).unwrap();
+    let Mode::Editing(editor) = &app.mode else { unreachable!() };
+    assert_eq!(editor.search_query(), "");
 }

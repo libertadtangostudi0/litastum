@@ -2,7 +2,7 @@ use std::fs;
 
 use super::*;
 use crate::app::Mode;
-use crate::app::{App, DeleteEntry, Overlay, PendingDelete, PendingTransfer, TransferSource};
+use crate::app::{App, DeleteEntry, Overlay, PendingDelete, PendingTransfer, TransferOp, TransferSource};
 use crate::test_support::{key, test_app, unique_scratch_dir};
 use crate::text_field::TextField;
 
@@ -26,7 +26,7 @@ fn confirm_delete_removes_a_file_and_returns_to_browsing() {
     app.overlay = Some(Overlay::ConfirmDelete(pending_delete(file.clone(), "victim.txt", false, 3)));
 
     handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
-    crate::explorer::wait_for_deletion(&mut app);
+    crate::explorer::wait_for_file_job(&mut app);
 
     assert!(!file.exists());
     assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
@@ -41,7 +41,7 @@ fn confirm_delete_removes_a_directory_recursively() {
     app.overlay = Some(Overlay::ConfirmDelete(pending_delete(dir.clone(), "victim_dir", true, 0)));
 
     handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
-    crate::explorer::wait_for_deletion(&mut app);
+    crate::explorer::wait_for_file_job(&mut app);
 
     assert!(!dir.exists());
 }
@@ -77,7 +77,7 @@ fn confirm_delete_removes_every_entry_in_a_multi_entry_prompt() {
     }));
 
     handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
-    crate::explorer::wait_for_deletion(&mut app);
+    crate::explorer::wait_for_file_job(&mut app);
 
     assert!(!a.exists());
     assert!(!b.exists());
@@ -114,6 +114,7 @@ fn confirm_transfer_enter_copies_and_keeps_the_source() {
     app.overlay = Some(Overlay::ConfirmTransfer(pending_transfer(TransferOp::Copy, src.clone(), dst.to_string_lossy().into_owned())));
 
     handle_confirm_transfer_key(&mut app, key(KeyCode::Enter)).unwrap();
+    crate::explorer::wait_for_file_job(&mut app);
 
     assert!(src.exists(), "copy should leave the source alone");
     assert_eq!(fs::read(&dst).unwrap(), b"hello");
@@ -129,6 +130,7 @@ fn confirm_transfer_enter_moves_and_removes_the_source() {
     app.overlay = Some(Overlay::ConfirmTransfer(pending_transfer(TransferOp::Move, src.clone(), dst.to_string_lossy().into_owned())));
 
     handle_confirm_transfer_key(&mut app, key(KeyCode::Enter)).unwrap();
+    crate::explorer::wait_for_file_job(&mut app);
 
     assert!(!src.exists(), "move should remove the source");
     assert_eq!(fs::read(&dst).unwrap(), b"hello");
@@ -171,6 +173,7 @@ fn confirm_transfer_a_failed_move_still_returns_to_browsing_without_panicking() 
     app.overlay = Some(Overlay::ConfirmTransfer(pending_transfer(TransferOp::Move, missing_src, dst.to_string_lossy().into_owned())));
 
     handle_confirm_transfer_key(&mut app, key(KeyCode::Enter)).unwrap();
+    crate::explorer::wait_for_file_job(&mut app);
 
     assert!(app.overlay.is_none() && matches!(app.mode, Mode::Browsing));
     assert!(!dst.exists());
@@ -185,7 +188,7 @@ fn a_failed_delete_shows_a_notice() {
     app.overlay = Some(Overlay::ConfirmDelete(pending_delete(missing, "already-gone.txt", false, 0)));
 
     handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
-    crate::explorer::wait_for_deletion(&mut app);
+    crate::explorer::wait_for_file_job(&mut app);
 
     let Some(notice) = &app.notice else { panic!("a failed delete shows a notice") };
     assert_eq!(notice.kind, crate::notice::NoticeKind::Error);
@@ -200,7 +203,7 @@ fn a_successful_delete_shows_no_notice() {
     app.overlay = Some(Overlay::ConfirmDelete(pending_delete(file, "victim.txt", false, 3)));
 
     handle_confirm_delete_key(&mut app, key(KeyCode::Char('y'))).unwrap();
-    crate::explorer::wait_for_deletion(&mut app);
+    crate::explorer::wait_for_file_job(&mut app);
 
     assert_eq!(app.notice, None);
 }
@@ -237,6 +240,7 @@ fn confirm_transfer_enter_copies_every_marked_source_into_the_destination_direct
     }));
 
     handle_confirm_transfer_key(&mut app, key(KeyCode::Enter)).unwrap();
+    crate::explorer::wait_for_file_job(&mut app);
 
     assert_eq!(fs::read(dst_dir.join("a.txt")).unwrap(), b"aaa");
     assert_eq!(fs::read(dst_dir.join("b.txt")).unwrap(), b"bbb");

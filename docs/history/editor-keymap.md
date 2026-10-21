@@ -32,6 +32,11 @@ Code: `src/editor/editor_keymap/mod.rs`. Related:
   `Enter` went to the text. With the box focused only a press (to the
   text) and the wheel get through now; a press on the box itself gives
   it the focus (`Editor::mouse`).
+- **`Ctrl+F` brings back the last query, selected** (requested): the
+  box opens on the newest history entry, typing replaces it, `Up` goes
+  on to the one before (`Editor::start_search_with_history`). With the
+  box already focused, `Ctrl+F`/`F7` select its query too -- they did
+  nothing there.
 - **Nothing said a query wasn't found** (reported): the box shows
   "2 of 5" at its right, or "No results" with its border in `danger`
   (`Editor::search_match_count`).

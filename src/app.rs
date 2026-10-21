@@ -115,6 +115,8 @@ pub enum Overlay {
     TrustedLinks(TrustedLinksMenu),
     /// F9 -> Options -> Hotkeys.
     Hotkeys(crate::hotkeys::HotkeysMenu),
+    /// `Esc` while a copy, move or delete runs: stop it?
+    ConfirmStopJob,
 }
 
 
@@ -304,8 +306,8 @@ pub struct App {
     /// The toast in the bottom-right corner, if any -- see `Notice`.
     /// Cleared by the next key press (`event_loop::keys::key_effect`).
     pub notice: Option<Notice>,
-    /// A confirmed delete running on its own thread (`explorer::deletion`).
-    pub deletion: Option<crate::explorer::Deletion>,
+    /// A copy, move or delete running on its own thread (`explorer::file_job`).
+    pub file_job: Option<crate::explorer::FileJob>,
     /// What commands printed, shown by `Ctrl+O` and while one runs
     /// (`user_screen`).
     pub user_screen: crate::user_screen::UserScreen,
@@ -378,7 +380,7 @@ impl App {
             terminal_zoom: None,
             markdown_edit_preview: None,
             notice: None,
-            deletion: None,
+            file_job: None,
             user_screen: Default::default(),
             panels_hidden: false,
             terminal_focused: true,

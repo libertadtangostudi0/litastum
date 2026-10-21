@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::app::{DeleteEntry, PendingCommand, PendingDelete, PendingTransfer, TransferOp};
-use crate::explorer::PendingLink;
+use crate::explorer::{JobKind, PendingLink};
 use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
@@ -104,6 +104,42 @@ pub fn draw_confirm_command_popup(frame: &mut Frame, area: Rect, pending: &Pendi
     frame.render_widget(Line::from(Span::styled(format!("It {}.", pending.reason), Style::default().fg(theme.text_dim))), rows[1]);
     frame.render_widget(popup::separator(inner.width, theme), rows[2]);
     let hints = Line::from(vec![popup::key_pill("y", "run", theme.danger, theme), Span::raw("  "), popup::key_pill("esc", "keep", theme.accent, theme)]);
+    frame.render_widget(hints, rows[3]);
+}
+
+
+/// `Esc` while a copy, move or delete runs (`Overlay::ConfirmStopJob`):
+/// stop it? What's done stays -- `y stop` / `esc go on`.
+pub fn draw_confirm_stop_job_popup(frame: &mut Frame, area: Rect, kind: Option<JobKind>, theme: &Theme, style: PopupStyle) {
+    const WIDTH: u16 = 56;
+    let height = match style {
+        PopupStyle::Classic => 4 + 2,
+        PopupStyle::Rounded => 4 + 1 + 2 * (1 + 2),
+    };
+    let heading = match kind {
+        Some(JobKind::Copy) => "Stop copying?",
+        Some(JobKind::Move) => "Stop moving?",
+        _ => "Stop deleting?",
+    };
+    let title = match style {
+        PopupStyle::Classic => Line::from(Span::raw(format!(" {heading} "))),
+        PopupStyle::Rounded => Line::from(vec![
+            Span::styled("● ", Style::default().fg(theme.warning)),
+            Span::styled(heading, Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
+        ]),
+    };
+    let inner = popup::draw_frame(frame, area, theme, style, title, WIDTH, height);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
+        .split(inner);
+    let detail = match kind {
+        Some(JobKind::Delete) => "What's deleted stays deleted.",
+        _ => "What's done stays; the file being copied is removed.",
+    };
+    frame.render_widget(Line::from(Span::styled(detail, Style::default().fg(theme.text_dim))), rows[0]);
+    frame.render_widget(popup::separator(inner.width, theme), rows[2]);
+    let hints = Line::from(vec![popup::key_pill("y", "stop", theme.danger, theme), Span::raw("  "), popup::key_pill("esc", "go on", theme.accent, theme)]);
     frame.render_widget(hints, rows[3]);
 }
 
@@ -294,6 +330,17 @@ mod tests {
         assert!(contents.contains("23.3 kB"));
         assert!(contents.contains("recycle"));
         assert!(contents.contains("keep"));
+    }
+
+    #[test]
+    fn the_stop_question_names_the_operation_and_what_stays() {
+        let theme = Theme::dark();
+        for style in [PopupStyle::Rounded, PopupStyle::Classic] {
+            let copy = crate::test_support::render_text(80, 24, |frame| draw_confirm_stop_job_popup(frame, frame.area(), Some(JobKind::Copy), &theme, style));
+            assert!(copy.contains("Stop copying?") && copy.contains("What's done stays") && copy.contains("go on"), "{style:?}");
+            let delete = crate::test_support::render_text(80, 24, |frame| draw_confirm_stop_job_popup(frame, frame.area(), Some(JobKind::Delete), &theme, style));
+            assert!(delete.contains("Stop deleting?") && delete.contains("stays deleted"), "{style:?}");
+        }
     }
 
     /// A link's text can say anything: the question shows where it goes.

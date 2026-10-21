@@ -125,6 +125,24 @@ impl Editor {
         self.search_history_index = None;
     }
 
+    /// `Ctrl+F` with the box closed and a search `history`: opens it with
+    /// the last query, selected so typing replaces it (requested), its
+    /// matches live; `Up` then goes on to the one before. Else as
+    /// `start_search`.
+    pub fn start_search_with_history(&mut self, history: &[String]) {
+        let last = history.last().filter(|_| self.search.is_none()).cloned();
+        self.start_search();
+        let Some(last) = last else {
+            return;
+        };
+        self.replace_search_query(&last);
+        if let Some(search_box) = &mut self.search {
+            search_box.field.select_all();
+        }
+        self.search_history_index = Some(history.len() - 1);
+    }
+
+
     /// Takes keyboard focus away from the box and gives it to the text,
     /// leaving the box open and its match highlighted -- a click in the
     /// text (`Editor::mouse`). The caret stays wherever it is.

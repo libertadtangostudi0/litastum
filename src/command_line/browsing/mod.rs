@@ -153,6 +153,8 @@ fn perform(app: &mut App, action: BrowserAction) -> Result<Effect> {
             complete(&mut line, &cwd, &mut app.command_line_completion);
             app.command_line.set_text(line);
         }
+        // On an empty line, a running copy/move/delete asks to stop.
+        BrowserAction::ClearLine if app.command_line.is_empty() && crate::explorer::ask_to_stop(app) => {}
         BrowserAction::ClearLine => {
             app.command_line.clear();
             line_edited(app);

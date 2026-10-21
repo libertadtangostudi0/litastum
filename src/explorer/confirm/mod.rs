@@ -10,18 +10,16 @@ use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use tracing::debug;
 
-use crate::app::{App, Overlay, TransferOp};
+use crate::app::{App, Overlay};
 use crate::command_line::Effect;
 use crate::notice::Notice;
 use crate::yes_no::{self, Answer};
-use super::fs_ops;
 
 
 /// The F8/`Shift+Del` prompt: `Y` sends every entry to the Recycle Bin --
 /// or, `permanent`, deletes it for good (directories with all in them, as
-/// Far does without asking twice) -- and reloads; `N`/`Esc` cancel. A
-/// failed delete doesn't stop the rest; the failures show as an error
-/// notice.
+/// Far does without asking twice) -- on its own thread (`file_job`);
+/// `N`/`Esc` cancel. A failed delete doesn't stop the rest.
 pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::ConfirmDelete(pending)) = &app.overlay else {
         return Ok(Effect::None);
@@ -36,7 +34,7 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<Effect>
                 unreachable!("just matched Overlay::ConfirmDelete above");
             };
             // On a thread of its own: a large folder froze the app.
-            super::deletion::begin(app, pending.entries, pending.permanent);
+            super::file_job::begin_delete(app, pending.entries, pending.permanent);
         }
         Answer::No => app.overlay = None,
         Answer::Ignore => {}
@@ -48,11 +46,9 @@ pub fn handle_confirm_delete_key(app: &mut App, key: KeyEvent) -> Result<Effect>
 
 /// Key handling on the F5/F6 "copy/move to?" prompt: the destination
 /// is a standard text field (`TextField::apply_key` -- cursor, word
-/// moves, selection, OS clipboard). `Enter` performs the transfer (`fs_ops::copy_entry`/
-/// `move_entry`) and reloads *both* panels (the destination side
-/// always needs it, and a move also changes the source side); `Esc`
-/// cancels with nothing touched. Failures show as an error notice
-/// (`run_confirmed_transfer`).
+/// moves, selection, OS clipboard). `Enter` starts the transfer on its
+/// own thread (`file_job`), both panels reloading when it's done; `Esc`
+/// cancels with nothing touched.
 pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     if key.code == KeyCode::Enter {
         run_confirmed_transfer(app)?;
@@ -75,49 +71,26 @@ pub fn handle_confirm_transfer_key(app: &mut App, key: KeyEvent) -> Result<Effec
 }
 
 
-/// `Enter` on the transfer prompt: copies or moves every source and
-/// reloads both panels. Takes `PendingTransfer` by `mem::replace` instead
-/// of cloning it. One source: `destination` is the full target path (so
-/// it doubles as a rename); several: it's the target directory, each name
-/// joined on. A failure doesn't stop the rest; the failures show as an
-/// error notice.
+/// `Enter` on the transfer prompt: copies or moves every source. One
+/// source: `destination` is the full target path (so it doubles as a
+/// rename); several: it's the target directory, each name joined on. A
+/// failure doesn't stop the rest; the failures show as an error notice.
 fn run_confirmed_transfer(app: &mut App) -> Result<()> {
     let Some(Overlay::ConfirmTransfer(pending)) = app.overlay.take() else {
         return Ok(());
     };
     let destination_input = PathBuf::from(pending.destination.text().trim());
-
-    let mut failures = Vec::new();
-    for source in &pending.sources {
-        let destination = if pending.sources.len() == 1 {
-            destination_input.clone()
-        } else {
-            destination_input.join(&source.name)
-        };
-        debug!(
-            source = %source.path.display(),
-            destination = %destination.display(),
-            op = ?pending.operation,
-            "confirm-transfer: running"
-        );
-        let result = match pending.operation {
-            TransferOp::Copy => fs_ops::copy_entry(&source.path, &destination, source.is_dir),
-            TransferOp::Move => fs_ops::move_entry(&source.path, &destination, source.is_dir),
-        };
-        if let Err(err) = result {
-            debug!(source = %source.path.display(), destination = %destination.display(), %err, "transfer failed");
-            failures.push((source.name.clone(), err));
-        }
-    }
-    let verb = match pending.operation {
-        TransferOp::Copy => "Copy",
-        TransferOp::Move => "Move",
-    };
-    app.notice = failure_notice(verb, &failures, pending.sources.len());
-
-    for panel in &mut app.panels {
-        panel.reload()?;
-    }
+    let entries = pending
+        .sources
+        .iter()
+        .map(|source| {
+            let destination = if pending.sources.len() == 1 { destination_input.clone() } else { destination_input.join(&source.name) };
+            debug!(source = %source.path.display(), destination = %destination.display(), op = ?pending.operation, "confirm-transfer: starting");
+            super::file_job::JobEntry { path: source.path.clone(), name: source.name.clone(), to: Some(destination) }
+        })
+        .collect();
+    // On a thread of its own, with progress (`file_job`).
+    super::file_job::begin_transfer(app, pending.operation, entries);
     Ok(())
 }
 

@@ -79,10 +79,10 @@ pub(crate) fn run(terminal: &mut Tui, app: &mut App) -> Result<()> {
 /// without waiting for input.
 const BACKGROUND_TASK_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(30);
 
-/// Whether an image decode, a Find file search or a delete is in flight, or the
+/// Whether an image decode, a Find file search or a file job is in flight, or the
 /// panels' directories wait to be written (`last_paths`).
 fn background_task_pending(app: &App) -> bool {
-    explorer::is_image_decode_pending(app) || explorer::is_find_file_search_pending(app) || explorer::is_deletion_pending(app) || app.last_paths.pending() || app.clipboard_wipe.pending()
+    explorer::is_image_decode_pending(app) || explorer::is_find_file_search_pending(app) || explorer::is_file_job_pending(app) || app.last_paths.pending() || app.clipboard_wipe.pending()
 }
 
 /// Polls every background task once; `true` if one finished and the
@@ -95,8 +95,8 @@ fn poll_background_tasks(app: &mut App) -> bool {
     app.clipboard_wipe.poll(std::time::Instant::now());
     let image = explorer::poll_pending_image_decode(app);
     let search = explorer::poll_pending_find_file_search(app);
-    let deleted = explorer::poll_pending_deletion(app);
-    image || search || deleted
+    let job = explorer::poll_pending_file_job(app);
+    image || search || job
 }
 
 /// How often `wait_for_event` looks at the physical `Ctrl+V` while idle

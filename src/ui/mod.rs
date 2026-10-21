@@ -60,8 +60,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     let drawn = draw_screen(frame, app);
     if let Some(notice) = &app.notice {
         notice::draw_notice(frame, notice, &app.theme, app.settings.popup_style);
-    } else if let Some(deletion) = &app.deletion {
-        notice::draw_notice(frame, &crate::notice::Notice::info(deletion.message()), &app.theme, app.settings.popup_style);
+    } else if let Some(job) = &app.file_job {
+        notice::draw_notice(frame, &crate::notice::Notice::info(job.message()), &app.theme, app.settings.popup_style);
     }
     drawn
 }
@@ -328,6 +328,7 @@ fn draw_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) -> Opti
         Overlay::ConfirmOpenLink(pending) => confirm::draw_confirm_open_link_popup(frame, area, pending, theme, style),
         Overlay::TrustedLinks(menu) => trusted_links_menu::draw_trusted_links_menu(frame, area, menu, theme, style),
         Overlay::Hotkeys(menu) => hotkeys::draw_hotkeys(frame, area, menu, theme, style),
+        Overlay::ConfirmStopJob => confirm::draw_confirm_stop_job_popup(frame, area, app.file_job.as_ref().map(crate::explorer::FileJob::kind), theme, style),
     }
     None
 }

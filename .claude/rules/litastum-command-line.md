@@ -41,11 +41,17 @@ line. Order matters and the table is grouped by it:
    selection, on a typed line only (above `Delete` = delete forward).
    On an empty line `Shift+Delete` deletes for good, where `F8` sends to
    the Recycle Bin, as in Far (`explorer/recycle.rs`; requested). The
-   prompt says which. A confirmed delete runs on its own thread
-   (`explorer/deletion.rs`; a large folder froze the app), a toast
-   saying so; the panels reload when it's done, one at a time, and exit
-   waits for it. What doesn't fit in the Recycle Bin asks Windows'
-   own question before it's deleted for good (`FOF_WANTNUKEWARNING`).
+   prompt says which. A confirmed copy, move or delete runs on its own
+   thread (`explorer/file_job/`; a large folder froze the app), one at a
+   time: a toast shows how far along it is -- bytes for a copy or move
+   (counted first; a file through `CopyFileExW`, its callback counting),
+   entries for a delete for good, only the time for the Recycle Bin --
+   and `Esc` on an empty command line asks to stop it
+   (`Overlay::ConfirmStopJob`): what's done stays, the file being copied
+   is removed. The panels reload when it's done; exit stops it and
+   waits. What doesn't fit in the Recycle Bin asks Windows' own question
+   before it's deleted for good (`FOF_WANTNUKEWARNING`). Next: the
+   Recycle Bin's progress and stopping through `IFileOperation`.
 3. Marking -- `Shift+arrows`, and `Shift+A` on an empty line only (by
    its key under any layout: a letter no row takes is looked up again
    as the Latin letter on its key, `keyboard_layout::latin_key`).

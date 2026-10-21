@@ -110,10 +110,11 @@ fn main() -> Result<()> {
         app.overlay = Some(Overlay::ConfirmPortFarMenu(far_path));
     }
     let result = event_loop::run(&mut terminal, &mut app);
-    // A delete still running finishes first: ending the process would
-    // cut it off half-way.
-    if let Some(deletion) = app.deletion.take() {
-        deletion.wait();
+    // A job still running ends first: ending the process would cut it off
+    // half-way. A copy, move or delete for good is stopped; the Recycle
+    // Bin's can't be yet, and is waited for.
+    if let Some(job) = app.file_job.take() {
+        job.finish_at_exit();
     }
     // Windows Terminal back at the size it had before litastum.
     #[cfg(windows)]

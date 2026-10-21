@@ -202,7 +202,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         EditorCommand::OpenMenu => unreachable!("handled above"),
         EditorCommand::Save => unreachable!("handled above"),
         EditorCommand::SaveAs => app.editor_save_as = Some(PathEdit::save_as(active_editor.path())),
-        EditorCommand::Find => active_editor.start_search(),
+        EditorCommand::Find => active_editor.start_search_with_history(&app.search_history),
         EditorCommand::FindNext => active_editor.search_next(),
         EditorCommand::FindPrevious => active_editor.search_previous(),
         EditorCommand::SelectAll | EditorCommand::WordSelect { .. } | EditorCommand::BlockMove { .. } | EditorCommand::Forward => text_key(active_editor, key),
@@ -241,12 +241,19 @@ fn save_as_key(app: &mut App, key: KeyEvent) {
 /// single-line text field (`Editor::search_edit_key`) that filters
 /// matches live. `Enter`/`Shift+Enter` go to the next/previous match (VS
 /// Code); `Up`/`Down` browse the search history, like a shell; `End` at
-/// the end of the query accepts the ghost-text suggestion; `Esc` closes
-/// the box and records a non-empty query. History: docs/history/editor-keymap.md.
+/// the end of the query accepts the ghost-text suggestion; `Ctrl+F`/`F7`
+/// select the whole query, as from the text (requested: they did nothing
+/// with the box focused); `Esc` closes the box and records a non-empty
+/// query. History: docs/history/editor-keymap.md.
 fn handle_search_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Mode::Editing(active_editor) = &mut app.mode else {
         return Ok(Effect::None);
     };
+
+    if resolve(key) == EditorCommand::Find {
+        active_editor.start_search();
+        return Ok(Effect::None);
+    }
 
     match key.code {
         KeyCode::Esc => {

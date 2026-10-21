@@ -106,6 +106,7 @@ pub(super) fn console_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         }
         KeyCode::PageUp => app.user_screen.scroll_by(rows as isize, rows),
         KeyCode::PageDown => app.user_screen.scroll_by(-(rows as isize), rows),
+        KeyCode::Esc if app.command_line.is_empty() && crate::explorer::ask_to_stop(app) => {}
         KeyCode::Esc => {
             app.command_line.clear();
             super::line_edited(app);
