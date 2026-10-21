@@ -133,7 +133,9 @@ mod tests {
 
         assert_eq!(rows[..3], ["C:> dir", "a.txt", "running"]);
         assert_eq!(cursor, Some(Position::new(7, 2)), "the program's cursor, not the command line's");
-        assert!(rows[4].starts_with(&dir.to_string_lossy()[..3]), "the command line under the screen: {:?}", rows[4]);
+        // The scratch directory is wider than half the row: its end shows.
+        let tail: String = dir.to_string_lossy().chars().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect();
+        assert!(rows[4].contains(&format!("{tail}>")), "the command line under the screen: {:?}", rows[4]);
     }
 
     #[test]

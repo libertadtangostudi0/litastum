@@ -336,3 +336,28 @@ mod handle_browsing_key_tests {
         assert_eq!(app.command_line.selection(), Some((2, 3)));
     }
 }
+
+
+mod select_line_tests {
+    use crossterm::event::KeyCode;
+
+    use super::super::handle_browsing_key;
+    use crate::test_support::{ctrl_key, key, test_app, unique_scratch_dir};
+
+    /// Requested: `Ctrl+A` selects the whole typed line, so typing replaces
+    /// it -- with the panels shown and hidden alike.
+    #[test]
+    fn ctrl_a_selects_the_typed_line() {
+        for hidden in [false, true] {
+            let mut app = test_app(unique_scratch_dir("ctrl-a"));
+            app.panels_hidden = hidden;
+            app.command_line.set_text("svn info");
+
+            handle_browsing_key(&mut app, ctrl_key('a')).unwrap();
+            assert_eq!(app.command_line.selection(), Some((0, 8)), "hidden: {hidden}");
+
+            handle_browsing_key(&mut app, key(KeyCode::Char('x'))).unwrap();
+            assert_eq!(app.command_line.text(), "x", "typing replaced the selection; hidden: {hidden}");
+        }
+    }
+}

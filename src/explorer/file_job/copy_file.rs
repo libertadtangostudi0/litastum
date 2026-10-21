@@ -54,7 +54,7 @@ pub(super) fn copy(src: &Path, dst: &Path, progress: &Progress, cancel: &AtomicB
         }
     }
 
-    let wide = |path: &Path| -> io::Result<Vec<u16>> { Ok(std::path::absolute(path)?.as_os_str().encode_wide().chain([0]).collect()) };
+    let wide = |path: &Path| -> io::Result<Vec<u16>> { Ok(long_path(&std::path::absolute(path)?).encode_wide().chain([0]).collect()) };
     let (from, to) = (wide(src)?, wide(dst)?);
     let mut context = Context { progress, cancel, counted: 0 };
     // SAFETY: both paths are NUL-terminated and, with `context`, outlive
@@ -67,6 +67,21 @@ pub(super) fn copy(src: &Path, dst: &Path, progress: &Progress, cancel: &AtomicB
         return Err(cancelled());
     }
     Err(io::Error::last_os_error())
+}
+
+
+/// `path` (absolute) in its `\\?\` form, so a path past 260 characters
+/// works -- `std::fs` adds it itself, a raw `CopyFileExW` call doesn't.
+#[cfg(windows)]
+fn long_path(path: &Path) -> std::ffi::OsString {
+    let text = path.as_os_str().to_string_lossy();
+    if text.starts_with(r"\\?\") {
+        return path.as_os_str().to_owned();
+    }
+    match text.strip_prefix(r"\\") {
+        Some(unc) => format!(r"\\?\UNC\{unc}").into(),
+        None => format!(r"\\?\{text}").into(),
+    }
 }
 
 
@@ -95,5 +110,35 @@ pub(super) fn copy(src: &Path, dst: &Path, progress: &Progress, cancel: &AtomicB
             let _ = std::fs::remove_file(dst);
             Err(err)
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::unique_scratch_dir;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_long_path_gets_its_verbatim_prefix() {
+        assert_eq!(long_path(Path::new(r"C:\a\b")), std::ffi::OsString::from(r"\\?\C:\a\b"));
+        assert_eq!(long_path(Path::new(r"\\server\share\x")), std::ffi::OsString::from(r"\\?\UNC\server\share\x"));
+        assert_eq!(long_path(Path::new(r"\\?\C:\a")), std::ffi::OsString::from(r"\\?\C:\a"));
+    }
+
+    /// Past 260 characters a raw `CopyFileExW` failed without the prefix.
+    #[test]
+    fn a_file_deeper_than_260_characters_copies() {
+        let mut dir = unique_scratch_dir("long-path");
+        while dir.as_os_str().len() < 300 {
+            dir = dir.join("a_rather_long_directory_name_to_pass_max_path");
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("from.txt"), "deep").unwrap();
+
+        copy(&dir.join("from.txt"), &dir.join("to.txt"), &Progress::default(), &AtomicBool::new(false)).unwrap();
+
+        assert_eq!(std::fs::read_to_string(dir.join("to.txt")).unwrap(), "deep");
     }
 }

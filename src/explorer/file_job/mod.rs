@@ -3,10 +3,12 @@
 //! is (`FileJob::message`); `Esc` on the panels asks to stop it
 //! (`Overlay::ConfirmStopJob`): what's done stays, the file being copied
 //! is removed. When it ends, both panels reload and a failure shows as a
-//! notice. The Recycle Bin is the shell's, with no progress of its own
-//! yet: only the time it's taken.
+//! notice. The Recycle Bin is the shell's `IFileOperation`
+//! (`recycle_bin`), its progress in the shell's own units.
 
 mod copy_file;
+#[cfg(all(windows, not(test)))]
+mod recycle_bin;
 mod work;
 
 use std::io;
@@ -114,23 +116,26 @@ impl FileJob {
     pub fn message(&self) -> String {
         let verb = self.kind.verb();
         let progress = &self.progress;
-        let stop = if self.kind == JobKind::Recycle { "" } else { " · Esc stops" };
+        let stop = " · Esc stops";
         if self.cancel.load(Ordering::Relaxed) {
             return format!("{verb} {}: stopping...", self.label);
         }
-        if self.kind == JobKind::Recycle {
-            let seconds = self.started.elapsed().as_secs();
-            return format!("{verb} {}... {}:{:02}", self.label, seconds / 60, seconds % 60);
-        }
         if !progress.counted.load(Ordering::Relaxed) {
+            // The shell says nothing until it has looked the tree over.
+            if self.kind == JobKind::Recycle {
+                let seconds = self.started.elapsed().as_secs();
+                return format!("{verb} {}... {}:{:02}{stop}", self.label, seconds / 60, seconds % 60);
+            }
             return format!("{verb} {}: counting...{stop}", self.label);
         }
         let (done, total) = match self.kind {
-            JobKind::Delete => (progress.done_items.load(Ordering::Relaxed), progress.total_items.load(Ordering::Relaxed)),
+            JobKind::Delete | JobKind::Recycle => (progress.done_items.load(Ordering::Relaxed), progress.total_items.load(Ordering::Relaxed)),
             _ => (progress.done_bytes.load(Ordering::Relaxed), progress.total_bytes.load(Ordering::Relaxed)),
         };
         let percent = (done.min(total) * 100).checked_div(total).unwrap_or(100);
         let amounts = match self.kind {
+            // The shell's units mean nothing to show: just the percentage.
+            JobKind::Recycle => return format!("{verb} {}: {percent}%{stop}", self.label),
             JobKind::Delete => format!("{done} of {total} entries"),
             _ => format!("{} of {}", super::format_bytes(done), super::format_bytes(total)),
         };
@@ -144,45 +149,50 @@ impl FileJob {
 
 
     /// Asks the job to stop; it does at the next file, or mid-file for a
-    /// copy. The Recycle Bin's can't be stopped yet.
+    /// copy or the Recycle Bin.
     fn stop(&self) {
         self.cancel.store(true, Ordering::Relaxed);
     }
 
 
-    /// Blocks until it's done -- at exit, so it isn't cut off half-way;
-    /// a copy, move or delete for good is stopped first.
+    /// Stops it and waits until it has -- at exit, so it isn't cut off
+    /// half-way.
     pub fn finish_at_exit(self) {
-        if self.kind != JobKind::Recycle {
-            self.stop();
-        }
+        self.stop();
         let _ = self.done.recv();
     }
 }
 
 
-/// The job's thread: counts first (except for the Recycle Bin), then
-/// works through the entries, stopping at `cancel`.
-fn run(kind: JobKind, entries: &[JobEntry], progress: &Progress, cancel: &AtomicBool) -> Vec<(String, io::Error)> {
-    if kind != JobKind::Recycle {
-        for entry in entries {
-            work::count(&entry.path, progress, cancel);
-        }
+/// The job's thread: counts first, then works through the entries,
+/// stopping at `cancel`. The Recycle Bin goes to the shell in one
+/// operation, which counts on its own; in tests, never the real Recycle
+/// Bin of whoever runs them, and outside Windows, it's a delete for good.
+fn run(kind: JobKind, entries: &[JobEntry], progress: &Arc<Progress>, cancel: &Arc<AtomicBool>) -> Vec<(String, io::Error)> {
+    #[cfg(all(windows, not(test)))]
+    if kind == JobKind::Recycle {
+        return recycle_bin::send(entries, progress, cancel);
+    }
+    // A move on one drive is a rename, done at once: tried first, so only
+    // what has to be copied is counted -- counting a whole tree just to
+    // rename it took as long as the walk.
+    let left: Vec<&JobEntry> = match kind {
+        JobKind::Move => entries.iter().filter(|entry| !entry.to.as_ref().is_some_and(|to| std::fs::rename(&entry.path, to).is_ok())).collect(),
+        _ => entries.iter().collect(),
+    };
+    for entry in &left {
+        work::count(&entry.path, progress, cancel);
     }
     progress.counted.store(true, Ordering::Relaxed);
     let mut failures = Vec::new();
-    for entry in entries {
+    for entry in left {
         if cancel.load(Ordering::Relaxed) {
             break;
         }
         let result = match (kind, &entry.to) {
             (JobKind::Copy, Some(to)) => work::copy_tree(&entry.path, to, progress, cancel),
-            (JobKind::Move, Some(to)) => move_entry(&entry.path, to, progress, cancel),
-            (JobKind::Recycle, _) => {
-                let is_dir = entry.path.is_dir();
-                super::recycle::to_recycle_bin(&entry.path, is_dir)
-            }
-            (JobKind::Delete, _) => work::delete_tree(&entry.path, progress, cancel),
+            (JobKind::Move, Some(to)) => move_by_copy(&entry.path, to, progress, cancel),
+            (JobKind::Recycle | JobKind::Delete, _) => work::delete_tree(&entry.path, progress, cancel),
             (_, None) => Err(io::Error::other("no destination")),
         };
         match result {
@@ -198,14 +208,9 @@ fn run(kind: JobKind, entries: &[JobEntry], progress: &Progress, cancel: &Atomic
 }
 
 
-/// A rename where it can be (one drive: instant); else a copy, and the
-/// source deleted once the copy is whole.
-fn move_entry(from: &std::path::Path, to: &std::path::Path, progress: &Progress, cancel: &AtomicBool) -> io::Result<()> {
-    if std::fs::rename(from, to).is_ok() {
-        let bytes = progress.total_bytes.load(Ordering::Relaxed);
-        progress.done_bytes.store(bytes, Ordering::Relaxed);
-        return Ok(());
-    }
+/// A move a rename couldn't do (another drive): a copy, and the source
+/// deleted once the copy is whole.
+fn move_by_copy(from: &std::path::Path, to: &std::path::Path, progress: &Progress, cancel: &AtomicBool) -> io::Result<()> {
     work::copy_tree(from, to, progress, cancel)?;
     let removed = Progress::default();
     work::delete_tree(from, &removed, &AtomicBool::new(false))
@@ -267,21 +272,26 @@ pub(super) fn begin_delete(app: &mut App, entries: Vec<DeleteEntry>, permanent: 
 }
 
 
-/// A confirmed copy or move.
+/// A confirmed copy or move -- refused if it would go into itself: a
+/// folder copied into its own subfolder copied itself over and over until
+/// the disk was full.
 pub(super) fn begin_transfer(app: &mut App, operation: TransferOp, entries: Vec<JobEntry>) {
     let kind = match operation {
         TransferOp::Copy => JobKind::Copy,
         TransferOp::Move => JobKind::Move,
     };
+    if let Some(entry) = entries.iter().find(|entry| entry.to.as_ref().is_some_and(|to| work::is_within(to, &entry.path))) {
+        app.notice = Some(Notice::error(format!("Can't {} {} into itself", kind.noun().to_lowercase(), entry.name)));
+        return;
+    }
     begin(app, kind, entries);
 }
 
 
-/// `Esc` on the panels while a job that can stop runs: asks first.
-/// `true` if it asked.
+/// `Esc` on the panels while a job runs: asks first. `true` if it asked.
 pub(crate) fn ask_to_stop(app: &mut App) -> bool {
     match &app.file_job {
-        Some(job) if job.kind != JobKind::Recycle && !job.cancel.load(Ordering::Relaxed) => {
+        Some(job) if !job.cancel.load(Ordering::Relaxed) => {
             app.overlay = Some(Overlay::ConfirmStopJob);
             true
         }

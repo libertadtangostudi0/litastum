@@ -270,14 +270,14 @@ fn draw_halves(frame: &mut Frame, halves: [Rect; 2], app: &mut App, theme: &Them
 /// it (dropped as noise, requested). Returns where its cursor is.
 fn draw_command_rows(frame: &mut Frame, line_row: Rect, app: &App, theme: &Theme, suggest: bool) -> Position {
     let cwd = app.panels[app.active].path.clone();
-    let prefix_len = command_line::draw_command_line(frame, line_row, &cwd, &app.command_line, theme);
+    let cursor = command_line::draw_command_line(frame, line_row, &cwd, &app.command_line, theme);
     if suggest && matches!(app.mode, Mode::Browsing) && app.overlay.is_none() && app.panel_path_edit.is_none() && !app.command_line_suggestion_dismissed {
         let suggestions = crate::command_line::suggestions(app);
         if !suggestions.is_empty() {
             command_line::draw_suggestions(frame, line_row, &suggestions, app.command_line_suggestion_selected, theme);
         }
     }
-    Position { x: line_row.x + prefix_len + app.command_line.cursor() as u16, y: line_row.y }
+    cursor
 }
 
 

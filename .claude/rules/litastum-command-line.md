@@ -38,20 +38,31 @@ line. Order matters and the table is grouped by it:
 2. Selection and word moves in the command line (`Shift`/`Ctrl` +
    arrows); `Shift+Left/Right` select only while something is typed.
    `Ctrl+C`/`Ctrl+Insert` copy and `Ctrl+X`/`Shift+Delete` cut the
-   selection, on a typed line only (above `Delete` = delete forward).
+   selection, `Ctrl+A` selects the whole line (requested), on a typed
+   line only (above `Delete` = delete forward). A line longer than the
+   row scrolls to keep the caret in view, and a deep directory's prompt
+   keeps its end after a `…` (at most half the row) -- every one-line
+   field scrolls the same way (`ui::text_field::draw_field`).
    On an empty line `Shift+Delete` deletes for good, where `F8` sends to
    the Recycle Bin, as in Far (`explorer/recycle.rs`; requested). The
    prompt says which. A confirmed copy, move or delete runs on its own
    thread (`explorer/file_job/`; a large folder froze the app), one at a
    time: a toast shows how far along it is -- bytes for a copy or move
    (counted first; a file through `CopyFileExW`, its callback counting),
-   entries for a delete for good, only the time for the Recycle Bin --
+   entries for a delete for good, a percentage for the Recycle Bin --
    and `Esc` on an empty command line asks to stop it
    (`Overlay::ConfirmStopJob`): what's done stays, the file being copied
    is removed. The panels reload when it's done; exit stops it and
    waits. What doesn't fit in the Recycle Bin asks Windows' own question
-   before it's deleted for good (`FOF_WANTNUKEWARNING`). Next: the
-   Recycle Bin's progress and stopping through `IFileOperation`.
+   before it's deleted for good (`FOF_WANTNUKEWARNING`). The Recycle
+   Bin is the shell's `IFileOperation` (`file_job/recycle_bin.rs`, the
+   `windows` crate for COM: `windows-sys` has no interfaces), every entry
+   in one operation; its progress sink reports the shell's own units and
+   stops it (`E_ABORT`). Never in tests: there a delete is for good.
+   A copy or move into itself is refused (`work::is_within`: it filled
+   the disk); a move tries a rename first and counts only what it has to
+   copy; `CopyFileExW` gets the `\\?\` form of a path, so one past 260
+   characters copies.
 3. Marking -- `Shift+arrows`, and `Shift+A` on an empty line only (by
    its key under any layout: a letter no row takes is looked up again
    as the Latin letter on its key, `keyboard_layout::latin_key`).

@@ -100,7 +100,7 @@ fn confirm_delete_ignores_unrelated_keys_and_stays_open() {
 fn pending_transfer(operation: TransferOp, source: PathBuf, destination: String) -> PendingTransfer {
     PendingTransfer {
         operation,
-        sources: vec![TransferSource { path: source, name: "irrelevant".into(), is_dir: false }],
+        sources: vec![TransferSource { path: source, name: "irrelevant".into() }],
         destination: TextField::with_text(destination),
     }
 }
@@ -233,8 +233,8 @@ fn confirm_transfer_enter_copies_every_marked_source_into_the_destination_direct
     app.overlay = Some(Overlay::ConfirmTransfer(PendingTransfer {
         operation: TransferOp::Copy,
         sources: vec![
-            TransferSource { path: src_dir.join("a.txt"), name: "a.txt".into(), is_dir: false },
-            TransferSource { path: src_dir.join("b.txt"), name: "b.txt".into(), is_dir: false },
+            TransferSource { path: src_dir.join("a.txt"), name: "a.txt".into() },
+            TransferSource { path: src_dir.join("b.txt"), name: "b.txt".into() },
         ],
         destination: TextField::with_cursor_at(dst_dir.to_string_lossy(), 0),
     }));

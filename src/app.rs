@@ -164,7 +164,6 @@ pub enum TransferOp {
 pub struct TransferSource {
     pub path: PathBuf,
     pub name: String,
-    pub is_dir: bool,
 }
 
 

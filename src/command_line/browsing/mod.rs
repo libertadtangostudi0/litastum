@@ -168,6 +168,7 @@ fn perform(app: &mut App, action: BrowserAction) -> Result<Effect> {
             line_edited(app);
         }
         BrowserAction::CopySelection => app.command_line.copy_selection(),
+        BrowserAction::SelectLine => app.command_line.select_all(),
         BrowserAction::CutSelection => {
             if app.command_line.cut_selection() {
                 line_edited(app);

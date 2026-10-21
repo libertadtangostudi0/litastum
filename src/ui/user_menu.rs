@@ -87,7 +87,7 @@ pub fn draw_add_user_menu_item(frame: &mut Frame, area: Rect, form: &AddUserMenu
 
     let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(inner);
 
-    frame.render_widget(super::text_field::field_line(field, theme), rows[0]);
+    let cursor = super::text_field::draw_field(frame, rows[0], field, theme);
 
     let next_label = if form.is_title_stage() { " next  " } else { " add  " };
     let hint = Line::from(vec![
@@ -97,8 +97,7 @@ pub fn draw_add_user_menu_item(frame: &mut Frame, area: Rect, form: &AddUserMenu
         Span::styled(" cancel", Style::default().fg(theme.text_dim)),
     ]);
     frame.render_widget(hint, rows[1]);
-
-    Position { x: rows[0].x + field.cursor() as u16, y: rows[0].y }
+    cursor
 }
 
 
@@ -122,7 +121,7 @@ pub fn draw_user_menu_prompt(frame: &mut Frame, area: Rect, prompt: &UserMenuPro
 
     let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(inner);
 
-    frame.render_widget(super::text_field::field_line(&prompt.value, theme), rows[0]);
+    let cursor = super::text_field::draw_field(frame, rows[0], &prompt.value, theme);
 
     let next_label = if current < total { " next  " } else { " run  " };
     let hint = Line::from(vec![
@@ -132,8 +131,7 @@ pub fn draw_user_menu_prompt(frame: &mut Frame, area: Rect, prompt: &UserMenuPro
         Span::styled(" cancel", Style::default().fg(theme.text_dim)),
     ]);
     frame.render_widget(hint, rows[1]);
-
-    Position { x: rows[0].x + prompt.value.cursor() as u16, y: rows[0].y }
+    cursor
 }
 
 

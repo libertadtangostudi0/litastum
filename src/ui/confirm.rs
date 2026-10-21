@@ -135,6 +135,7 @@ pub fn draw_confirm_stop_job_popup(frame: &mut Frame, area: Rect, kind: Option<J
         .split(inner);
     let detail = match kind {
         Some(JobKind::Delete) => "What's deleted stays deleted.",
+        Some(JobKind::Recycle) => "What's in the Recycle Bin stays there.",
         _ => "What's done stays; the file being copied is removed.",
     };
     frame.render_widget(Line::from(Span::styled(detail, Style::default().fg(theme.text_dim))), rows[0]);
@@ -274,7 +275,7 @@ pub fn draw_confirm_transfer_popup(frame: &mut Frame, area: Rect, pending: &Pend
     ));
     frame.render_widget(source_line, rows[0]);
 
-    frame.render_widget(super::text_field::field_line(&pending.destination, theme), rows[1]);
+    let cursor = super::text_field::draw_field(frame, rows[1], &pending.destination, theme);
 
     let hint = Line::from(vec![
         Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
@@ -283,11 +284,7 @@ pub fn draw_confirm_transfer_popup(frame: &mut Frame, area: Rect, pending: &Pend
         Span::styled(" cancel", Style::default().fg(theme.text_dim)),
     ]);
     frame.render_widget(hint, rows[3]);
-
-    Position {
-        x: rows[1].x + pending.destination.cursor() as u16,
-        y: rows[1].y,
-    }
+    cursor
 }
 
 #[cfg(test)]

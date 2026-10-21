@@ -58,7 +58,7 @@ pub(super) fn request_transfer(app: &mut App, operation: TransferOp) {
 /// own doc comment for the "marked set wins over the cursor" rule this
 /// (and `request_delete`, for F8) shares.
 fn transfer_sources(panel: &Panel) -> Vec<TransferSource> {
-    panel.marked_or_current().into_iter().map(|entry| TransferSource { path: panel.path.join(&entry.name), name: entry.name.clone(), is_dir: entry.is_dir }).collect()
+    panel.marked_or_current().into_iter().map(|entry| TransferSource { path: panel.path.join(&entry.name), name: entry.name.clone() }).collect()
 }
 
 
@@ -79,7 +79,7 @@ pub(super) fn request_rename(app: &mut App) {
     let cursor = destination.chars().count() - entry.name.chars().count();
     let pending = PendingTransfer {
         operation: TransferOp::Move,
-        sources: vec![TransferSource { path, name: entry.name.clone(), is_dir: entry.is_dir }],
+        sources: vec![TransferSource { path, name: entry.name.clone() }],
         destination: TextField::with_cursor_at(destination, cursor),
     };
     app.overlay = Some(Overlay::ConfirmTransfer(pending));

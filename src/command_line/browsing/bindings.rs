@@ -54,6 +54,8 @@ pub(crate) enum BrowserAction {
     WordRight,
     CopySelection,
     CutSelection,
+    /// `Ctrl+A` on a typed line: the whole line selected (requested).
+    SelectLine,
     Submit,
     SuggestionUp,
     SuggestionDown,
@@ -136,6 +138,8 @@ pub(super) static BINDINGS: &[Binding] = &[
     with(KeyCode::Char('c'), CTRL, TypedLine, A::CopySelection),
     with(KeyCode::Insert, CTRL, TypedLine, A::CopySelection),
     with(KeyCode::Char('x'), CTRL, TypedLine, A::CutSelection),
+    with(KeyCode::Char('a'), CTRL, TypedLine, A::SelectLine),
+    with(KeyCode::Char('A'), CTRL, TypedLine, A::SelectLine),
     with(KeyCode::Delete, SHIFT, TypedLine, A::CutSelection),
     // Far's: for good, where F8 sends to the Recycle Bin.
     with(KeyCode::Delete, SHIFT, EmptyLine, A::Navigate(Command::WipeSelected)),
@@ -296,6 +300,13 @@ mod tests {
         assert_eq!(lookup(chord(KeyCode::Char('Ф'), SHIFT), EMPTY), Some(A::Command(Command::SelectAll)));
         assert_eq!(lookup(chord(KeyCode::Char('Ф'), SHIFT), TYPED), None, "falls through to typing");
         assert_eq!(lookup(chord(KeyCode::Char('ф'), NONE), EMPTY), None);
+    }
+
+    /// Requested: `Ctrl+A` selected nothing in the command line.
+    #[test]
+    fn ctrl_a_selects_a_typed_line() {
+        assert_eq!(lookup(chord(KeyCode::Char('a'), CTRL), TYPED), Some(A::SelectLine));
+        assert_eq!(lookup(chord(KeyCode::Char('a'), CTRL), EMPTY), None, "nothing to select");
     }
 
     #[test]

@@ -43,10 +43,14 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_LibraryLoader",
     "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Shell",
     "Win32_System_Threading",
 ] }
 winreg = "0.52"
+# COM, for the Recycle Bin's IFileOperation and its progress sink
+# (explorer/file_job/recycle_bin.rs); windows-sys has no COM interfaces.
+windows = { version = "0.62.2", features = ["Win32_UI_Shell", "Win32_System_Com", "Win32_Foundation"] }
+# `#[implement]` (the sink) names this crate directly.
+windows-core = "0.62.2"
 
 # The window (gui/) draws every cell of the screen when the editor
 # scrolls; unoptimized, that took ~100 ms a frame, so held arrow keys

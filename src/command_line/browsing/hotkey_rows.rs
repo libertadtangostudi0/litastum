@@ -76,6 +76,7 @@ fn action_label(action: BrowserAction) -> &'static str {
         A::WordRight => "A word right",
         A::CopySelection => "Copy the selection",
         A::CutSelection => "Cut the selection",
+        A::SelectLine => "Select the whole line",
         A::Submit => "Run the command",
         A::SuggestionUp => "Previous suggestion",
         A::SuggestionDown => "Next suggestion",

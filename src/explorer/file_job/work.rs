@@ -35,6 +35,22 @@ pub(super) fn count(path: &Path, progress: &Progress, cancel: &AtomicBool) {
 }
 
 
+/// Whether `path` is `dir` or anything under it -- by their absolute,
+/// lexically normalized forms, letter case aside on Windows (`C:\A` and
+/// `c:\a\b` are the same tree there).
+pub(super) fn is_within(path: &Path, dir: &Path) -> bool {
+    let normalized = |path: &Path| -> Option<Vec<String>> {
+        let absolute = std::path::absolute(path).ok()?;
+        let parts = absolute.components().filter(|part| !matches!(part, std::path::Component::CurDir)).map(|part| part.as_os_str().to_string_lossy().into_owned());
+        Some(if cfg!(windows) { parts.map(|part| part.to_lowercase()).collect() } else { parts.collect() })
+    };
+    match (normalized(path), normalized(dir)) {
+        (Some(path), Some(dir)) => path.starts_with(&dir),
+        _ => false,
+    }
+}
+
+
 /// Copies `src` -- a file, or a directory with all in it -- to `dst`.
 pub(super) fn copy_tree(src: &Path, dst: &Path, progress: &Progress, cancel: &AtomicBool) -> io::Result<()> {
     if cancel.load(Ordering::Relaxed) {
@@ -130,6 +146,19 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::Interrupted);
         assert!(!dst.exists(), "nothing started");
+    }
+
+    /// A folder copied into its own subfolder copied itself until the disk
+    /// was full; `begin_transfer` refuses what `is_within` finds.
+    #[test]
+    fn a_path_is_within_its_own_tree_only() {
+        let dir = tree();
+        assert!(is_within(&dir.join("sub").join("copy"), &dir));
+        assert!(is_within(&dir, &dir), "onto itself");
+        assert!(!is_within(&dir.with_file_name("src2"), &dir), "a sibling with the same start is not inside");
+        assert!(!is_within(&dir.with_file_name("dst"), &dir));
+        #[cfg(windows)]
+        assert!(is_within(std::path::Path::new(&dir.join("SUB").to_string_lossy().to_uppercase()), &dir), "letter case aside");
     }
 
     #[test]

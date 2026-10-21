@@ -1,5 +1,8 @@
+use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
+use ratatui::widgets::Paragraph;
+use ratatui::Frame;
 
 use crate::text_field::TextField;
 use crate::theming::Theme;
@@ -29,9 +32,14 @@ pub(super) fn styled_field_spans(field: &TextField, text_style: Style, selected_
 }
 
 
-/// `field_spans` as a whole line.
-pub(super) fn field_line(field: &TextField, theme: &Theme) -> Line<'static> {
-    Line::from(field_spans(field, theme))
+/// Draws `field` into its one-row `area`, scrolled sideways to keep the
+/// caret in view, and returns the caret's cell. Reported: a text longer
+/// than its field hid its end, the caret past the edge -- in the command
+/// line, the `Ctrl+F` box, every popup's field.
+pub(super) fn draw_field(frame: &mut Frame, area: Rect, field: &TextField, theme: &Theme) -> Position {
+    let scroll = (field.cursor() + 1).saturating_sub(usize::from(area.width));
+    frame.render_widget(Paragraph::new(Line::from(field_spans(field, theme))).scroll((0, scroll as u16)), area);
+    Position { x: area.x + (field.cursor() - scroll) as u16, y: area.y }
 }
 
 
@@ -41,6 +49,38 @@ mod tests {
 
     fn texts(spans: &[Span]) -> Vec<String> {
         spans.iter().map(|span| span.content.to_string()).collect()
+    }
+
+    fn drawn(field: &TextField, width: u16) -> (String, u16) {
+        let mut cursor = Position::default();
+        let text = crate::test_support::render_text(width, 1, |frame| cursor = draw_field(frame, frame.area(), field, &Theme::dark()));
+        (text.lines().next().unwrap_or("").trim_end().to_string(), cursor.x)
+    }
+
+    /// Reported: a text longer than its field hid its end, the caret past
+    /// the edge. It scrolls to keep the caret -- at the end here -- in view.
+    #[test]
+    fn a_long_text_scrolls_to_keep_the_caret_in_view() {
+        let mut field = TextField::new();
+        field.set_text("0123456789abcdefghij");
+
+        let (shown, cursor) = drawn(&field, 10);
+
+        assert_eq!(shown, "bcdefghij", "the end shows, the caret's cell after it");
+        assert_eq!(cursor, 9);
+    }
+
+    #[test]
+    fn a_caret_back_at_the_start_shows_the_start() {
+        let mut field = TextField::new();
+        field.set_text("0123456789abcdefghij");
+        field.select_all();
+        field.apply_key(crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Home, crossterm::event::KeyModifiers::NONE));
+
+        let (shown, cursor) = drawn(&field, 10);
+
+        assert_eq!(shown, "0123456789");
+        assert_eq!(cursor, 0);
     }
 
     #[test]

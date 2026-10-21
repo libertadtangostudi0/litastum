@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
@@ -14,17 +14,31 @@ use crate::theming::{PopupStyle, Theme};
 use crate::ui::popup;
 
 /// The always-live command line: `"{cwd}> {typed}"`, like Far's (the
-/// path, not a bare `>`). Returns the prefix's character count, for the
-/// cursor. The shell-profile hint on the right was removed as clutter;
+/// path, not a bare `>`). Returns where the cursor goes. The shell-profile hint on the right was removed as clutter;
 /// `Ctrl+P`'s picker shows it.
-pub(super) fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &TextField, theme: &Theme) -> u16 {
-    let prefix = format!("{}> ", cwd.display());
+pub(super) fn draw_command_line(frame: &mut Frame, area: Rect, cwd: &Path, command_line: &TextField, theme: &Theme) -> Position {
+    let prefix = shortened_prefix(&format!("{}> ", cwd.display()), area.width / 2);
+    let prefix_width = (prefix.chars().count() as u16).min(area.width);
+    frame.render_widget(Line::from(Span::styled(prefix, Style::default().fg(theme.command_line_prefix).add_modifier(Modifier::BOLD))), area);
 
-    let mut spans = vec![Span::styled(prefix.clone(), Style::default().fg(theme.command_line_prefix).add_modifier(Modifier::BOLD))];
-    spans.extend(super::text_field::field_spans(command_line, theme));
+    // Reported: a line longer than the row hid its end, the caret past
+    // the edge. The text scrolls sideways to keep the caret in view, as
+    // the editor's search box does.
+    let text_area = Rect { x: area.x + prefix_width, width: area.width - prefix_width, ..area };
+    super::text_field::draw_field(frame, text_area, command_line, theme)
+}
 
-    frame.render_widget(Line::from(spans), area);
-    prefix.chars().count() as u16
+
+/// `prefix` as is, or its end after a `…` when it's wider than `max`
+/// cells -- a deep directory left the typed line no room.
+fn shortened_prefix(prefix: &str, max: u16) -> String {
+    let count = prefix.chars().count();
+    let max = usize::from(max).max(4);
+    if count <= max {
+        return prefix.to_string();
+    }
+    let tail: String = prefix.chars().skip(count - (max - 1)).collect();
+    format!("…{tail}")
 }
 
 /// Fixed height (the list scrolls), the same 21 as the Find file results;
@@ -153,6 +167,50 @@ mod tests {
     use super::*;
     use crate::command_line::CommandHistoryMenu;
     use crate::theming::Theme;
+
+    fn line_with(text: &str) -> TextField {
+        let mut field = TextField::new();
+        field.set_text(text);
+        field
+    }
+
+    /// Draws the command line into a `width`-wide row: what shows, and the
+    /// cursor's column.
+    fn drawn_line(cwd: &str, field: &TextField, width: u16) -> (String, u16) {
+        let mut cursor = Position::default();
+        let text = crate::test_support::render_text(width, 1, |frame| cursor = draw_command_line(frame, frame.area(), Path::new(cwd), field, &Theme::dark()));
+        (text.lines().next().unwrap_or("").to_string(), cursor.x)
+    }
+
+    /// Reported: a line longer than the row hid its end, and the caret
+    /// went past the edge. The text scrolls to keep the caret in view.
+    #[test]
+    fn a_long_line_scrolls_to_keep_the_caret_in_view() {
+        let typed: String = (0..80).map(|i| char::from(b'a' + (i % 26) as u8)).collect();
+        let (shown, cursor) = drawn_line("C:\\work", &line_with(&typed), 40);
+
+        assert!(cursor < 40, "the caret stays on screen: {cursor}");
+        assert!(shown.trim_end().ends_with(&typed[typed.len() - 10..]), "the end of the line shows: {shown:?}");
+        assert!(shown.starts_with("C:\\work> "), "the prefix stays: {shown:?}");
+    }
+
+    #[test]
+    fn a_short_line_is_drawn_as_is() {
+        let (shown, cursor) = drawn_line("C:\\work", &line_with("dir"), 40);
+        assert_eq!(shown.trim_end(), "C:\\work> dir");
+        assert_eq!(cursor, "C:\\work> dir".len() as u16);
+    }
+
+    /// A deep directory left no room to type: the prefix keeps its end.
+    #[test]
+    fn a_long_prefix_is_shortened_from_the_left() {
+        let cwd = format!("C:\\{}\\project", "very_long_directory_name\\".repeat(4));
+        let (shown, cursor) = drawn_line(&cwd, &line_with("cargo build"), 60);
+
+        assert!(shown.starts_with('…'), "{shown:?}");
+        assert!(shown.contains("project> cargo build"), "{shown:?}");
+        assert!(cursor < 60);
+    }
 
     fn history_of(count: usize) -> Vec<String> {
         (0..count).map(|i| format!("command_{i:04}")).collect()

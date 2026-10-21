@@ -103,13 +103,13 @@ fn draw_typing(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &The
     frame.render_widget(name_label, rows[content_start]);
 
     let name_row = rows[content_start + 1];
-    frame.render_widget(super::text_field::field_line(&state.query, theme), name_row);
+    let name_cursor = super::text_field::draw_field(frame, name_row, &state.query, theme);
 
     let content_label = Line::from(Span::styled("Text to find:", label_style(FindFileField::Content)));
     frame.render_widget(content_label, rows[content_start + 2]);
 
     let content_row = rows[content_start + 3];
-    frame.render_widget(super::text_field::field_line(&state.content_query, theme), content_row);
+    let content_cursor = super::text_field::draw_field(frame, content_row, &state.content_query, theme);
 
     let hint = Line::from(vec![
         Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
@@ -121,11 +121,10 @@ fn draw_typing(frame: &mut Frame, area: Rect, state: &FindFileState, theme: &The
     ]);
     frame.render_widget(hint, rows[content_start + 4]);
 
-    let (cursor_row, cursor) = match state.active_field {
-        FindFileField::Name => (name_row, state.query.cursor()),
-        FindFileField::Content => (content_row, state.content_query.cursor()),
-    };
-    Position { x: cursor_row.x + cursor as u16, y: cursor_row.y }
+    match state.active_field {
+        FindFileField::Name => name_cursor,
+        FindFileField::Content => content_cursor,
+    }
 }
 
 /// `Searching`: live progress while the background search runs, as in

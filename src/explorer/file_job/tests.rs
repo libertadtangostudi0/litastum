@@ -29,7 +29,7 @@ fn a_running_copy_shows_how_far_along_it_is() {
 
 
 #[test]
-fn a_delete_for_good_counts_entries_and_the_recycle_bin_its_time() {
+fn a_delete_counts_entries_and_the_recycle_bin_its_percentage() {
     let (job, _sender) = running(JobKind::Delete, "old");
     job.progress.total_items.store(400, Ordering::Relaxed);
     job.progress.done_items.store(100, Ordering::Relaxed);
@@ -37,7 +37,11 @@ fn a_delete_for_good_counts_entries_and_the_recycle_bin_its_time() {
     assert_eq!(job.message(), "Deleting old: 25% (100 of 400 entries) · Esc stops");
 
     let (job, _sender) = running(JobKind::Recycle, "old");
-    assert_eq!(job.message(), "Deleting old... 0:00", "no progress of its own, and no stopping, yet");
+    assert_eq!(job.message(), "Deleting old... 0:00 · Esc stops", "the shell says nothing until it has looked the tree over");
+    job.progress.total_items.store(1000, Ordering::Relaxed);
+    job.progress.done_items.store(420, Ordering::Relaxed);
+    job.progress.counted.store(true, Ordering::Relaxed);
+    assert_eq!(job.message(), "Deleting old: 42% · Esc stops", "the shell's own units: only the percentage");
 }
 
 
@@ -107,19 +111,35 @@ fn esc_answer_lets_the_job_go_on() {
 }
 
 
-/// On one drive a move is a rename: done at once, its bytes counted as
-/// done. (Across drives it's `copy_tree` then `delete_tree`, tested on
-/// their own.)
+/// On one drive a move is a rename, tried before anything is counted:
+/// counting a tree just to rename it took as long as the walk.
 #[test]
-fn a_move_renames_and_counts_the_bytes_as_done() {
+fn a_move_on_one_drive_renames_without_counting() {
     let dir = unique_scratch_dir("file-job");
-    fs::write(dir.join("a.txt"), "12345").unwrap();
-    let progress = Progress::default();
-    work::count(&dir.join("a.txt"), &progress, &AtomicBool::new(false));
+    fs::create_dir_all(dir.join("big").join("sub")).unwrap();
+    fs::write(dir.join("big").join("sub").join("a.txt"), "12345").unwrap();
+    let progress = Arc::new(Progress::default());
+    let entries = [JobEntry { path: dir.join("big"), name: "big".into(), to: Some(dir.join("moved")) }];
 
-    move_entry(&dir.join("a.txt"), &dir.join("b.txt"), &progress, &AtomicBool::new(false)).unwrap();
+    let failures = run(JobKind::Move, &entries, &progress, &Arc::new(AtomicBool::new(false)));
 
-    assert!(!dir.join("a.txt").exists());
-    assert_eq!(fs::read_to_string(dir.join("b.txt")).unwrap(), "12345");
-    assert_eq!(progress.done_bytes.load(Ordering::Relaxed), 5);
+    assert!(failures.is_empty());
+    assert!(!dir.join("big").exists());
+    assert_eq!(fs::read_to_string(dir.join("moved").join("sub").join("a.txt")).unwrap(), "12345");
+    assert_eq!(progress.total_items.load(Ordering::Relaxed), 0, "nothing was counted");
+}
+
+
+/// Reported risk: a folder copied into its own subfolder fills the disk.
+#[test]
+fn a_copy_or_move_into_itself_is_refused() {
+    let dir = unique_scratch_dir("file-job");
+    fs::create_dir_all(dir.join("a")).unwrap();
+    let mut app = test_app(dir.clone());
+
+    begin_transfer(&mut app, TransferOp::Copy, vec![JobEntry { path: dir.join("a"), name: "a".into(), to: Some(dir.join("a").join("copy")) }]);
+
+    assert!(app.file_job.is_none(), "not started");
+    assert!(app.notice.as_ref().is_some_and(|notice| notice.text == "Can't copy a into itself"), "{:?}", app.notice);
+    assert!(!dir.join("a").join("copy").exists());
 }
