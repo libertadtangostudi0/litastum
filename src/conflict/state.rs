@@ -169,6 +169,10 @@ impl ConflictState {
     /// (reported: the wheel sometimes did nothing). The bottom Compare
     /// routes its own halves.
     pub fn mouse(&mut self, mouse: MouseEvent) {
+        // An open path field takes its own clicks and drags.
+        if self.path_edit.as_mut().is_some_and(|edit| edit.mouse(mouse)) {
+            return;
+        }
         let Some(pane) = self.pane_at(mouse.column, mouse.row) else {
             return;
         };
@@ -180,6 +184,7 @@ impl ConflictState {
                 self.incoming.path_edit = None;
                 if self.top_editor(pane).is_some_and(|editor| editor.title_row_contains(mouse.column, mouse.row)) {
                     self.start_path_edit();
+                    self.path_edit = self.path_edit.take().map(PathEdit::opened_by_click);
                     return;
                 }
             }

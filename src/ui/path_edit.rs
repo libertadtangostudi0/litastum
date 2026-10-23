@@ -22,6 +22,7 @@ pub(super) fn draw_path_field(frame: &mut Frame, area: Rect, edit: &PathEdit, th
         return None;
     }
     let field = &edit.field;
+    edit.note_area(area);
     let scroll = super::text_field::view_scroll(field, usize::from(area.width));
     let style = Style::default().fg(theme.text).bg(theme.bg);
     let line = Line::from(super::text_field::styled_field_spans(field, style, super::popup::selected_row_style(theme)));

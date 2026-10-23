@@ -256,6 +256,23 @@ impl TextField {
     pub fn clear_selection(&mut self) {
         self.anchor = None;
     }
+
+
+    /// A click: the caret at `position` (clamped to the text), nothing
+    /// selected.
+    pub fn place_caret(&mut self, position: usize) {
+        self.cursor = position.min(self.text.chars().count());
+        self.anchor = None;
+    }
+
+
+    /// A drag: the caret to `position` (clamped), selecting from where the
+    /// selection started, or from the caret.
+    pub fn select_to(&mut self, position: usize) {
+        let anchor = self.anchor.unwrap_or(self.cursor);
+        self.cursor = position.min(self.text.chars().count());
+        self.anchor = (anchor != self.cursor).then_some(anchor);
+    }
 }
 
 

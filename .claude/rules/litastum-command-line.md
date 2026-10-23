@@ -23,7 +23,9 @@ line. Order matters and the table is grouped by it:
    `Alt+F1/F2/F5/F7/F8`, `Ctrl+L`/`Ctrl+F2`. They sit above the plain keys they
    would otherwise fall through to (`Alt+F5` above `F5` = Copy).
    `Ctrl+L`/`Ctrl+F2` turn the active panel's path title into a field, as in
-   Compare (`browsing/panel_path.rs`); so does a click on it. While it's
+   Compare (`browsing/panel_path.rs`), the path selected (requested: typing
+   replaces it, `End` goes on from it); so does a click on it, nothing
+   selected -- a double click selects it all. While it's
    open it takes every key, ahead of the table, and the panel shows the
    directory the typed path is in (`Esc` takes it back); `Tab` completes the path,
    with a list to pick from when several entries match
@@ -31,7 +33,14 @@ line. Order matters and the table is grouped by it:
    list (or typed out) selects it in the panel and opens the editor;
    so do `Enter` on a typed file's path and pasting one (requested; `panel_path::pasted`, after
    the field's own `Ctrl+V` and after Windows Terminal's typed-in paste,
-   `event_loop::paste`). A pasted directory just shows in the panel. The click needs mouse
+   `event_loop::paste`). A pasted directory just shows in the panel; with a
+   directory typed out and no list open, `Down`/`Up` go on in that panel
+   (requested; not with the panels hidden). In an open path field --
+   here, Compare's, the resolver's, `Shift+F2`'s -- a click places the
+   caret, a double click selects the whole path -- the click that
+   opened the field counts as the first (requested, to copy it quicker) --
+   and a drag selects, the text only (`PathEdit::mouse`; reported:
+   the terminal's own selection took the frame's corner too). The click needs mouse
    capture in the browser, which takes the terminal's own text selection
    (`Shift`+drag still selects in Windows Terminal). With the panels
    hidden the wheel scrolls the user screen instead.

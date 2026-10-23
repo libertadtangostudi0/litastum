@@ -248,6 +248,10 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         crate::command_line::handle_browsing_mouse(app, mouse);
         return;
     }
+    // `Shift+F2`'s field over the title takes its own clicks and drags.
+    if matches!(app.mode, Mode::Editing(_)) && app.editor_save_as.as_mut().is_some_and(|edit| edit.mouse(mouse)) {
+        return;
+    }
     if let Mode::Editing(editor) = &mut app.mode {
         if editor.contains_screen_position(mouse.column, mouse.row) {
             editor.mouse(mouse);

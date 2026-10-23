@@ -150,7 +150,7 @@ pub(super) fn mouse(app: &mut App, mouse: MouseEvent) {
         // The command line is the row under the screen's lines.
         let on_prompt = usize::from(mouse.row) == app.user_screen.visible_rows() && usize::from(mouse.column) < app.panels[app.active].path.display().to_string().chars().count();
         if on_prompt {
-            super::panel_path::start(app);
+            super::panel_path::start_by_click(app);
             return;
         }
         if app.panel_path_edit.is_some() {
@@ -293,6 +293,7 @@ commands = [\"svn st\"]
 
         console_key(&mut app, KeyEvent::new(KeyCode::F(2), KeyModifiers::CONTROL)).unwrap();
         assert_eq!(app.panel_path_edit.as_ref().unwrap().field.text(), dir.to_string_lossy());
+        super::super::handle_browsing_key(&mut app, key(KeyCode::End)).unwrap(); // past the selected path
         for c in [std::path::MAIN_SEPARATOR, 's', 'u', 'b'] {
             super::super::handle_browsing_key(&mut app, key(KeyCode::Char(c))).unwrap();
         }

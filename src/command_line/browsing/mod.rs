@@ -70,6 +70,10 @@ fn suggestions_showing(app: &App) -> bool {
 /// A mouse event in the browser: the user screen's while the panels are
 /// hidden (the wheel scrolls), else the panels' (a click on a title).
 pub fn handle_browsing_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
+    // An open path field takes its clicks and drags, the panels hidden or not.
+    if app.panel_path_edit.as_mut().is_some_and(|edit| edit.mouse(mouse)) {
+        return;
+    }
     if app.panels_hidden {
         hidden_console::mouse(app, mouse);
     } else {

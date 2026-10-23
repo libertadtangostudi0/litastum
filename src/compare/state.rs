@@ -125,6 +125,10 @@ impl CompareState {
     /// The wheel scrolls the focused pane wherever the pointer is -- the
     /// other one follows it every frame anyway.
     pub fn mouse(&mut self, mouse: MouseEvent) {
+        // An open path field takes its own clicks and drags.
+        if self.path_edit.as_mut().is_some_and(|edit| edit.mouse(mouse)) {
+            return;
+        }
         if matches!(mouse.kind, MouseEventKind::Down(_)) {
             let title = if self.left.title_row_contains(mouse.column, mouse.row) {
                 Some(Side::Left)
@@ -138,6 +142,7 @@ impl CompareState {
                     self.toggle_focus();
                 }
                 self.start_path_edit();
+                self.path_edit = self.path_edit.take().map(PathEdit::opened_by_click);
                 return;
             }
             // A click anywhere else puts the title back.

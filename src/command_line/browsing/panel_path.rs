@@ -8,15 +8,28 @@ use crate::explorer::{execute, Command};
 use crate::notice::Notice;
 use crate::path_edit::{PathEdit, PathEditKey};
 
-/// `Ctrl+L`: the active panel's path title becomes a field, as in Compare.
+/// `Ctrl+L`/`Ctrl+F2`: the active panel's path title becomes a field, as
+/// in Compare, the path selected (requested): typing replaces it,
+/// `Ctrl+C` copies it, `End` or an arrow goes on from it.
 pub(super) fn start(app: &mut App) {
-    app.panel_path_edit = Some(PathEdit::new(&app.panels[app.active].path));
+    let mut edit = PathEdit::new(&app.panels[app.active].path);
+    edit.field.select_all();
+    app.panel_path_edit = Some(edit);
 }
 
 
-/// A mouse event in the browser: a left click on a panel's title makes
-/// that panel active and edits its path, as in Compare; a click anywhere
-/// else puts the title back. Everything else is ignored.
+/// A click on the path title: as `start`, but nothing selected -- the
+/// click counts as the first of a double click, which selects it all.
+pub(super) fn start_by_click(app: &mut App) {
+    app.panel_path_edit = Some(PathEdit::new(&app.panels[app.active].path).opened_by_click());
+}
+
+
+/// A mouse event in the browser, past an open path field's own
+/// (`handle_browsing_mouse`, `PathEdit::mouse`): a left click on a
+/// panel's title makes that panel active and edits its path, as in
+/// Compare; a click anywhere else puts the title back. Everything else is
+/// ignored.
 pub fn mouse(app: &mut App, mouse: MouseEvent) {
     if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
         return;
@@ -28,7 +41,7 @@ pub fn mouse(app: &mut App, mouse: MouseEvent) {
     match on_title {
         Some(index) => {
             app.active = index;
-            start(app);
+            start_by_click(app);
         }
         None => cancel(app),
     }
@@ -41,9 +54,13 @@ pub fn mouse(app: &mut App, mouse: MouseEvent) {
 /// opens it in the editor (`edit_file`; requested), as `F4` and pasting a
 /// file's path do (`pasted`). A path that isn't there keeps the field open
 /// to fix it, with a notice. `Esc` takes the panel back to where it was.
+/// `Down`/`Up` on a typed directory go on in the panel (`into_panel`).
 pub(super) fn key(app: &mut App, key: KeyEvent) {
     if key.code == KeyCode::F(4) && key.modifiers == KeyModifiers::NONE {
         edit_file(app);
+        return;
+    }
+    if matches!(key.code, KeyCode::Down | KeyCode::Up) && key.modifiers == KeyModifiers::NONE && into_panel(app, key.code) {
         return;
     }
     let Some(edit) = app.panel_path_edit.as_mut() else {
@@ -106,6 +123,36 @@ fn edit_file(app: &mut App) {
     if let Err(err) = execute(Command::EditSelected, app) {
         app.notice = Some(Notice::error(format!("Can't edit {}: {err}", path.display())));
     }
+}
+
+
+/// Requested: with a directory typed out and no `Tab` list open, `Down`
+/// (or `Up`) leaves the field for the panel, which already shows that
+/// directory, and moves its cursor. `false` -- the key is the field's --
+/// for anything else: a partial name, a file, an open list.
+fn into_panel(app: &mut App, code: KeyCode) -> bool {
+    let Some(edit) = &app.panel_path_edit else {
+        return false;
+    };
+    // With the panels hidden there's no panel to go on in.
+    if edit.completions.is_some() || app.panels_hidden {
+        return false;
+    }
+    let typed = edit.field.text().trim().trim_matches('"');
+    if typed.is_empty() || !edit.base().join(typed).is_dir() {
+        return false;
+    }
+    let path = std::path::PathBuf::from(typed);
+    if let Err(err) = go_to(app, &path) {
+        app.notice = Some(Notice::error(format!("Can't open {}: {err}", path.display())));
+        return true;
+    }
+    app.panel_path_edit = None;
+    let command = if code == KeyCode::Down { Command::MoveDown } else { Command::MoveUp };
+    if let Err(err) = execute(command, app) {
+        app.notice = Some(Notice::error(err.to_string()));
+    }
+    true
 }
 
 
@@ -186,6 +233,21 @@ mod tests {
         handle_browsing_key(&mut app, ctrl_key('l')).unwrap();
 
         assert_eq!(app.panel_path_edit.as_ref().unwrap().field.text(), dir.to_string_lossy());
+    }
+
+    /// Requested: `Ctrl+F2` selects the whole path -- typing replaces it,
+    /// `End` goes on from it.
+    #[test]
+    fn ctrl_f2_opens_with_the_path_selected() {
+        let dir = unique_scratch_dir("panel-path");
+        let mut app = test_app(dir.clone());
+
+        handle_browsing_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::F(2), crossterm::event::KeyModifiers::CONTROL)).unwrap();
+        let len = dir.to_string_lossy().chars().count();
+        assert_eq!(app.panel_path_edit.as_ref().unwrap().field.selection(), Some((0, len)));
+
+        handle_browsing_key(&mut app, key(KeyCode::Char('C'))).unwrap();
+        assert_eq!(app.panel_path_edit.as_ref().unwrap().field.text(), "C", "typing replaced the path");
     }
 
     #[test]
@@ -294,6 +356,7 @@ mod tests {
         fs::create_dir_all(dir.join("dist").join("themes")).unwrap();
         let mut app = test_app(dir.clone());
         handle_browsing_key(&mut app, ctrl_key('l')).unwrap();
+        handle_browsing_key(&mut app, key(KeyCode::End)).unwrap(); // past the selected path
 
         handle_browsing_key(&mut app, key(KeyCode::Char(std::path::MAIN_SEPARATOR))).unwrap();
         for c in "dist".chars() {
@@ -332,6 +395,7 @@ mod tests {
         fs::create_dir_all(dir.join("packaging")).unwrap();
         let mut app = test_app(dir.clone());
         handle_browsing_key(&mut app, ctrl_key('l')).unwrap();
+        handle_browsing_key(&mut app, key(KeyCode::End)).unwrap(); // past the selected path
         for c in [std::path::MAIN_SEPARATOR, 'p', 'a'] {
             handle_browsing_key(&mut app, key(KeyCode::Char(c))).unwrap();
         }
@@ -445,6 +509,98 @@ mod tests {
 
         let crate::app::Mode::Editing(editor) = &app.mode else { panic!("expected the editor") };
         assert_eq!(editor.path(), dir.join("notes.md"));
+    }
+
+    /// Requested: a directory typed out, `Down` goes on in its panel --
+    /// the field closes and the panel's cursor moves.
+    #[test]
+    fn down_on_a_typed_directory_moves_on_in_its_panel() {
+        let dir = unique_scratch_dir("panel-path");
+        fs::create_dir_all(dir.join("docs")).unwrap();
+        fs::write(dir.join("docs").join("a.txt"), "").unwrap();
+        fs::write(dir.join("docs").join("b.txt"), "").unwrap();
+        let mut app = test_app(dir.clone());
+        handle_browsing_key(&mut app, ctrl_key('l')).unwrap();
+        type_path(&mut app, &format!("{}{}docs{}", dir.display(), std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR));
+
+        handle_browsing_key(&mut app, key(KeyCode::Down)).unwrap();
+
+        assert!(app.panel_path_edit.is_none(), "the field closed");
+        let panel = &app.panels[app.active];
+        assert_eq!(panel.path, dir.join("docs"));
+        assert_eq!(panel.current().map(|entry| entry.name.as_str()), Some("a.txt"), "moved down off '..'");
+    }
+
+    /// A partial name isn't a directory yet: `Down` stays the field's.
+    #[test]
+    fn down_on_a_partial_name_stays_in_the_field() {
+        let dir = unique_scratch_dir("panel-path");
+        fs::create_dir_all(dir.join("docs")).unwrap();
+        let mut app = test_app(dir.clone());
+        handle_browsing_key(&mut app, ctrl_key('l')).unwrap();
+        type_path(&mut app, &format!("{}{}do", dir.display(), std::path::MAIN_SEPARATOR));
+
+        handle_browsing_key(&mut app, key(KeyCode::Down)).unwrap();
+
+        assert!(app.panel_path_edit.is_some());
+    }
+
+    /// Reported: dragging to the far left selected the frame's corner too
+    /// -- the terminal's own selection was all there was. A drag selects
+    /// the path only, past its left end from its first character.
+    #[test]
+    fn a_drag_in_the_field_selects_the_text_only() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut app = test_app(unique_scratch_dir("panel-path"));
+        handle_browsing_key(&mut app, ctrl_key('l')).unwrap();
+        type_path(&mut app, r"W:\folder");
+        let edit = app.panel_path_edit.as_ref().unwrap();
+        edit.note_area(ratatui::layout::Rect::new(1, 0, 30, 1));
+        edit.field.set_view_offset(0);
+        let at = |kind, column| MouseEvent { kind, column, row: 0, modifiers: KeyModifiers::NONE };
+
+        for (kind, column) in [(MouseEventKind::Down(MouseButton::Left), 10), (MouseEventKind::Drag(MouseButton::Left), 0), (MouseEventKind::Up(MouseButton::Left), 0)] {
+            crate::command_line::handle_browsing_mouse(&mut app, at(kind, column));
+        }
+
+        let field = &app.panel_path_edit.as_ref().expect("the field stays open").field;
+        assert_eq!(field.selection(), Some((0, 9)), "all of 'W:\\folder', nothing more");
+    }
+
+    #[test]
+    fn a_click_in_the_field_places_the_caret() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut app = test_app(unique_scratch_dir("panel-path"));
+        handle_browsing_key(&mut app, ctrl_key('l')).unwrap();
+        type_path(&mut app, r"W:\folder");
+        let edit = app.panel_path_edit.as_ref().unwrap();
+        edit.note_area(ratatui::layout::Rect::new(1, 0, 30, 1));
+        edit.field.set_view_offset(0);
+
+        crate::command_line::handle_browsing_mouse(&mut app, MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 4, row: 0, modifiers: KeyModifiers::NONE });
+
+        let field = &app.panel_path_edit.as_ref().expect("a click in the field keeps it").field;
+        assert_eq!((field.cursor(), field.selection()), (3, None));
+    }
+
+    /// Requested: a double click on a panel's path opens it as a field
+    /// and selects it all -- quicker to copy.
+    #[test]
+    fn a_double_click_on_the_path_selects_all_of_it() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let dir = unique_scratch_dir("panel-path");
+        let mut app = test_app(dir.clone());
+        app.panels[0].screen_area = ratatui::layout::Rect::new(0, 0, 40, 10);
+        let click = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 5, row: 0, modifiers: KeyModifiers::NONE };
+
+        crate::command_line::handle_browsing_mouse(&mut app, click);
+        assert!(app.panel_path_edit.is_some(), "the first click opens the field");
+        app.panel_path_edit.as_ref().unwrap().note_area(ratatui::layout::Rect::new(1, 0, 38, 1));
+        crate::command_line::handle_browsing_mouse(&mut app, click);
+
+        let field = &app.panel_path_edit.as_ref().unwrap().field;
+        let len = dir.to_string_lossy().chars().count();
+        assert_eq!(field.selection(), Some((0, len)), "the whole path selected");
     }
 
     #[test]

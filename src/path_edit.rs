@@ -5,7 +5,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::{Position, Rect};
 
 use crate::editor::Editor;
 use crate::text_field::TextField;
@@ -32,7 +33,19 @@ pub struct PathEdit {
     /// A save-as target that already exists and was reported once: the
     /// next `Enter` on the same path overwrites it.
     overwrite_confirmed: Option<PathBuf>,
+    /// Where the field was last drawn (`ui::path_edit`), for the mouse.
+    area: std::cell::Cell<Rect>,
+    /// A drag that started in the field goes on selecting outside it.
+    dragging: bool,
+    /// The last click in the field, or the one that opened it: a second
+    /// one soon after selects the whole path.
+    last_click: Option<std::time::Instant>,
 }
+
+
+/// Clicks closer together than this are a double click (Windows' own
+/// default, as on the user screen).
+const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// What `Enter` does with the typed path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,8 +93,60 @@ impl PathEdit {
         let mut field = TextField::with_text(path.to_string_lossy().into_owned());
         field.move_to_end();
         let base = if path.is_dir() { path.to_path_buf() } else { path.parent().map(Path::to_path_buf).unwrap_or_default() };
-        Self { field, purpose, completions: None, base, overwrite_confirmed: None }
+        Self { field, purpose, completions: None, base, overwrite_confirmed: None, area: std::cell::Cell::new(Rect::default()), dragging: false, last_click: None }
     }
+
+    /// The field was opened by a click on the title: the next click soon
+    /// after is the second of a double click (requested: a double click on
+    /// the path selects it all, ready to copy).
+    pub fn opened_by_click(mut self) -> Self {
+        self.last_click = Some(std::time::Instant::now());
+        self
+    }
+
+
+    /// Notes where the field was drawn.
+    pub fn note_area(&self, area: Rect) {
+        self.area.set(area);
+    }
+
+
+    /// The mouse over the field: a click places the caret, a drag
+    /// selects -- the text only, whatever cell the pointer reaches
+    /// (reported: the terminal's own selection, the only one there was,
+    /// took the frame's corner too). `true` if it was the field's.
+    pub fn mouse(&mut self, mouse: MouseEvent) -> bool {
+        let area = self.area.get();
+        let inside = area.contains(Position::new(mouse.column, mouse.row));
+        // The character under `column`, by the field's scroll; clamped, so
+        // past either end is that end.
+        let position = self.field.view_offset() + usize::from(mouse.column.saturating_sub(area.x).min(area.width.saturating_sub(1)));
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if inside => {
+                self.completions = None;
+                let double = self.last_click.is_some_and(|last| last.elapsed() <= DOUBLE_CLICK);
+                if double {
+                    self.field.select_all();
+                    self.last_click = None;
+                } else {
+                    self.field.place_caret(position);
+                    self.dragging = true;
+                    self.last_click = Some(std::time::Instant::now());
+                }
+                true
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.dragging => {
+                self.field.select_to(position);
+                true
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.dragging => {
+                self.dragging = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
 
     /// What a relative typed path is taken against.
     pub fn base(&self) -> &Path {
