@@ -241,20 +241,25 @@ fn screen_rows(lines: &Lines, row: usize, text_width: usize) -> usize {
 /// Names `resolve_syntax_highlighter` should try for `path`, in order.
 ///
 /// The full file name first, then the extension -- `Path::extension()`
-/// is `None` for dotfiles like `.gitignore`. A trailing `.sdk` (this
-/// project's build-template convention, `CMakeLists.txt.sdk`) is also
-/// tried stripped.
+/// is `None` for dotfiles like `.gitignore`. A trailing template suffix
+/// -- `.sdk` (this project's build-template convention,
+/// `CMakeLists.txt.sdk`) or `.tmpl` (`config.yaml.tmpl`) -- is also tried
+/// stripped, ahead of the aliases (`.tmpl` alone is INI).
 fn syntax_name_candidates(path: &Path) -> Vec<&str> {
     let file_name = path.file_name().and_then(|n| n.to_str());
     let extension = path.extension().and_then(|e| e.to_str());
-    let mut candidates: Vec<&str> = [file_name, extension].into_iter().flatten().collect();
+    let mut candidates: Vec<&str> = file_name.into_iter().collect();
 
-    if let Some(inner_name) = file_name.and_then(|name| name.strip_suffix(".sdk")) {
+    // The inner name ahead of the template's own extension: `.tmpl` alone
+    // would win (`EXTENSION_OVERRIDES`) over `config.yaml.tmpl`'s YAML.
+    let inner = file_name.and_then(|name| [".sdk", ".tmpl"].iter().find_map(|suffix| name.strip_suffix(suffix)));
+    if let Some(inner_name) = inner {
         candidates.push(inner_name);
         if let Some(inner_extension) = Path::new(inner_name).extension().and_then(|e| e.to_str()) {
             candidates.push(inner_extension);
         }
     }
+    candidates.extend(extension);
     candidates
 }
 

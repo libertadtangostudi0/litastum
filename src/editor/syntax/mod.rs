@@ -6,7 +6,7 @@ use edtui::{SyntaxHighlighter, SYNTAX_SET, THEME_SET};
 
 mod grammars;
 
-use grammars::{bundled_extra_syntax_set, EXTENSION_ALIASES};
+use grammars::{bundled_extra_syntax_set, EXTENSION_ALIASES, EXTENSION_OVERRIDES};
 
 /// The fallback syntect theme bundled with `edtui`. Not
 /// `"base16-ocean.dark"`: `edtui`'s docs spell it both with a dot and a
@@ -16,7 +16,8 @@ pub(super) const SYNTAX_THEME: &str = "dracula";
 
 /// Resolves `(SyntaxSet, SyntaxReference)` for a file without building the
 /// highlighter, so tests can see which grammar won (`name`). Order:
-/// 1. each of `candidates` (`[file_name, extension]`) against `syntect`'s
+/// 1. each of `candidates` (`[file_name, extension]`) -- by
+///    `EXTENSION_OVERRIDES` if one names it, else -- against `syntect`'s
 ///    set *and* `BUNDLED_GRAMMARS` before the next, less specific one --
 ///    otherwise `CMakeLists.txt`'s `txt` matched Plain Text before the
 ///    bundled CMake grammar was tried;
@@ -30,6 +31,15 @@ fn resolve_syntax_ref(candidates: &[&str], first_line: &str) -> Option<(Arc<Synt
     let extra_set = bundled_extra_syntax_set();
 
     for candidate in candidates {
+        let overridden = EXTENSION_OVERRIDES.iter().find(|(ext, _)| ext.eq_ignore_ascii_case(candidate)).map(|&(_, to)| to);
+        if let Some(to) = overridden {
+            if let Some(syntax_ref) = SYNTAX_SET.find_syntax_by_extension(to) {
+                return Some((SYNTAX_SET.clone(), syntax_ref.clone()));
+            }
+            if let Some(syntax_ref) = extra_set.find_syntax_by_extension(to) {
+                return Some((extra_set.clone(), syntax_ref.clone()));
+            }
+        }
         if let Some(syntax_ref) = SYNTAX_SET.find_syntax_by_extension(candidate) {
             return Some((SYNTAX_SET.clone(), syntax_ref.clone()));
         }
@@ -45,6 +55,10 @@ fn resolve_syntax_ref(candidates: &[&str], first_line: &str) -> Option<(Arc<Synt
         if let Some((_, aliased)) = EXTENSION_ALIASES.iter().find(|(ext, _)| ext.eq_ignore_ascii_case(candidate)) {
             if let Some(syntax_ref) = SYNTAX_SET.find_syntax_by_extension(aliased) {
                 return Some((SYNTAX_SET.clone(), syntax_ref.clone()));
+            }
+            // An alias onto a bundled grammar (`.tmpl` -> INI).
+            if let Some(syntax_ref) = extra_set.find_syntax_by_extension(aliased) {
+                return Some((extra_set.clone(), syntax_ref.clone()));
             }
         }
     }

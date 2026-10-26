@@ -188,6 +188,44 @@ fn dispatch_event(app: &mut App, terminal: &mut Tui, event: Event) -> Result<boo
     }
 }
 
+/// The wheel over a popup that is a list: one row per tick, as `Up`/
+/// `Down`. Only these -- elsewhere `Up`/`Down` mean something else (Find
+/// file's fields, a prompt's answer).
+fn overlay_wheel(app: &mut App, kind: MouseEventKind) {
+    use crate::app::Overlay;
+    let code = match kind {
+        MouseEventKind::ScrollUp => crossterm::event::KeyCode::Up,
+        MouseEventKind::ScrollDown => crossterm::event::KeyCode::Down,
+        _ => return,
+    };
+    let is_list = matches!(
+        &app.overlay,
+        Some(
+            Overlay::CommandHistory(_)
+                | Overlay::Hotkeys(_)
+                | Overlay::TrustedLinks(_)
+                | Overlay::MainMenu(_)
+                | Overlay::ThemeMenu(_)
+                | Overlay::ShellMenu(_)
+                | Overlay::PopupStyleMenu(_)
+                | Overlay::EditorMenu(_)
+                | Overlay::EditorKeymapMenu(_)
+                | Overlay::CompareMenu(_)
+                | Overlay::CompareLineEndingMenu(_)
+                | Overlay::ChangeDrive(_)
+                | Overlay::UserMenu(_)
+                | Overlay::MarkdownLinkSearch(_)
+        )
+    ) || matches!(&app.overlay, Some(Overlay::FindFile(state)) if state.phase == crate::explorer::FindFilePhase::Results);
+    if !is_list {
+        return;
+    }
+    if let Err(err) = keys::key_effect(app, crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)) {
+        tracing::warn!(%err, "wheel over a list popup");
+    }
+}
+
+
 /// Handles every queued mouse event without blocking, so a touchpad's
 /// burst of wheel ticks costs one redraw, not one per tick. Drains until
 /// the queue is empty (a time cap made long scrolls feel slower), but
@@ -232,8 +270,11 @@ fn drain_pending_mouse_events(app: &mut App, terminal: &mut Tui, mut last_scroll
 fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     let on_editor = matches!(app.mode, Mode::Editing(_) | Mode::CompareFiles(_) | Mode::ResolveConflict(_));
     let mouse = crate::cell_halves::adjust(&mut app.cell_halves, mouse, on_editor);
-    // An overlay is modal: nothing underneath reacts to the mouse.
+    // An overlay is modal: nothing underneath reacts to the mouse. Over a
+    // list, the wheel moves its highlight (reported: the touchpad didn't
+    // scroll `Alt+F8`'s history).
     if app.overlay.is_some() {
+        overlay_wheel(app, mouse.kind);
         return;
     }
     if let Mode::CompareFiles(state) = &mut app.mode {
@@ -262,4 +303,46 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         }
     }
     explorer::handle_markdown_preview_mouse(app, mouse);
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+
+    use super::handle_mouse;
+    use crate::app::Overlay;
+    use crate::command_line::CommandHistoryMenu;
+    use crate::test_support::{test_app, unique_scratch_dir};
+
+    fn wheel(kind: MouseEventKind) -> MouseEvent {
+        MouseEvent { kind, column: 10, row: 5, modifiers: KeyModifiers::NONE }
+    }
+
+    /// Reported: the touchpad didn't scroll `Alt+F8`'s history. The wheel
+    /// over a list popup moves its highlight a row per tick.
+    #[test]
+    fn the_wheel_moves_a_list_popups_highlight() {
+        let mut app = test_app(unique_scratch_dir("overlay-wheel"));
+        app.command_history = vec!["a".into(), "b".into(), "c".into()];
+        app.overlay = Some(Overlay::CommandHistory(CommandHistoryMenu::open()));
+
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown));
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown));
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollUp));
+
+        let Some(Overlay::CommandHistory(menu)) = &app.overlay else { panic!("the popup stays open") };
+        assert_eq!(menu.selected, 1);
+    }
+
+    /// A prompt isn't a list: the wheel leaves it alone.
+    #[test]
+    fn the_wheel_leaves_a_prompt_alone() {
+        let mut app = test_app(unique_scratch_dir("overlay-wheel"));
+        app.overlay = Some(Overlay::Info("read me".to_string()));
+
+        handle_mouse(&mut app, wheel(MouseEventKind::ScrollDown));
+
+        assert!(matches!(app.overlay, Some(Overlay::Info(_))), "any key would have dismissed it");
+    }
 }

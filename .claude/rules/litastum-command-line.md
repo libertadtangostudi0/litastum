@@ -22,6 +22,10 @@ line. Order matters and the table is grouped by it:
    picker), `Ctrl+U`, `Shift+F6`, `Shift+Enter` on an empty line,
    `Alt+F1/F2/F5/F7/F8`, `Ctrl+L`/`Ctrl+F2`. They sit above the plain keys they
    would otherwise fall through to (`Alt+F5` above `F5` = Copy).
+   `Alt+F8`'s history lists the newest first, as the suggestions do
+   (requested; `history::matching_history`), and the wheel moves the
+   highlight of it and every other list popup (`event_loop::overlay_wheel`:
+   an overlay takes no other mouse).
    `Ctrl+L`/`Ctrl+F2` turn the active panel's path title into a field, as in
    Compare (`browsing/panel_path.rs`), the path selected (requested: typing
    replaces it, `End` goes on from it); so does a click on it, nothing

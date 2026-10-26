@@ -229,7 +229,8 @@ mod tests {
 
         let text = rendered(&menu, &history, PopupStyle::Classic);
 
-        assert!(text.contains("command_0150"), "the selected entry should be scrolled into view:\n{text}");
+        // Newest first: row 150 is the 151st newest of 200.
+        assert!(text.contains("command_0049"), "the selected entry should be scrolled into view:\n{text}");
     }
 
     #[test]

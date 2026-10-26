@@ -47,6 +47,12 @@ pub(super) const EXTENSION_ALIASES: &[(&str, &str)] = &[
     ("slnx", "xml"),
 ];
 
+/// Extensions `syntect` claims for a grammar that isn't what this user's
+/// files hold, mapped onto the one that is -- tried before `syntect`'s
+/// own. `.tmpl` is HTML there; requested as INI (`x.yaml.tmpl` still goes
+/// by its inner extension, tried first: `view::syntax_name_candidates`).
+pub(super) const EXTENSION_OVERRIDES: &[(&str, &str)] = &[("tmpl", "ini")];
+
 /// A second `SyntaxSet` with just `BUNDLED_GRAMMARS` -- `edtui`'s set
 /// can't be extended (`SyntaxSet` isn't `Clone`). Parsed lazily, once.
 pub(super) fn bundled_extra_syntax_set() -> &'static Arc<SyntaxSet> {

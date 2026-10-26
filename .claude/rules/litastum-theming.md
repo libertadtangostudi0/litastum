@@ -159,6 +159,9 @@ an existing grammar instead of bundling one (`.rc`/`.rc2` -> C++,
 `.clang-format`/`.clang-tidy` -> YAML, `.slnf` -> JSON, `.slnx` -> XML) -- also the way to avoid an
 unrelated grammar that merely shares an extension (Android's
 `init.rc`).
+`EXTENSION_OVERRIDES` goes further, ahead of `syntect`'s own: an
+extension it claims for a grammar the user's files aren't (`.tmpl` is
+HTML there; requested as INI).
 
 - Only YAML `.sublime-syntax` works -- `syntect` doesn't load
   `.tmLanguage` grammars.
@@ -173,8 +176,8 @@ unrelated grammar that merely shares an extension (Android's
 in `syntect`'s own set, the same in the bundled set, then the file's
 first line (`Editor::first_line`) in both -- a general mechanism, which
 is how `.git/config` (`first_line_match: ^\[core\]`) gets highlighted.
-A trailing `.sdk` is also retried stripped (`CMakeLists.txt.sdk`
-templates).
+A trailing `.sdk` or `.tmpl` is also retried stripped, ahead of the
+extension itself (`CMakeLists.txt.sdk`, `config.yaml.tmpl` -> YAML).
 
 A future "extension X has no highlighting" report: first check whether
 `syntect` lacks the grammar, has it but the scopes aren't mapped above,

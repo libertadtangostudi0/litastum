@@ -53,16 +53,17 @@ mod history_recording_tests {
 mod matching_history_tests {
     use super::*;
 
+    /// Requested: the newest at the top -- the oldest showed first.
     #[test]
-    fn empty_query_matches_everything_in_original_order() {
+    fn empty_query_matches_everything_newest_first() {
         let history = vec!["dir".to_string(), "cargo build".to_string()];
-        assert_eq!(matching_history(&history, ""), vec!["dir", "cargo build"]);
+        assert_eq!(matching_history(&history, ""), vec!["cargo build", "dir"]);
     }
 
     #[test]
     fn query_matches_a_substring_anywhere_case_insensitively() {
         let history = vec!["svn merge -c 1".to_string(), "cargo build".to_string(), "svn status".to_string()];
-        assert_eq!(matching_history(&history, "SVN"), vec!["svn merge -c 1", "svn status"]);
+        assert_eq!(matching_history(&history, "SVN"), vec!["svn status", "svn merge -c 1"]);
     }
 
     #[test]
@@ -118,8 +119,8 @@ mod history_key_handling_tests {
         let target = app.panels[app.active].path.join("sub");
         fs::create_dir_all(&target).unwrap();
         let Some(Overlay::CommandHistory(menu)) = &mut app.overlay else { unreachable!() };
-        menu.selected = 1;
-        // Overwrite the second entry with a target that actually
+        menu.selected = 0; // the newest, shown first
+        // Overwrite the newest entry with a target that actually
         // exists, so the effect of running it is observable.
         app.command_history[1] = "cd sub".to_string();
 
@@ -194,7 +195,7 @@ mod history_key_handling_tests {
     /// not whatever was highlighted before the filter narrowed it.
     #[test]
     fn enter_on_a_filtered_match_runs_that_match_not_the_pre_filter_selection() {
-        let mut app = app_in_history_menu(vec!["cd sub1", "cargo build", "cd sub2"]);
+        let mut app = app_in_history_menu(vec!["cd sub2", "cargo build", "cd sub1"]);
         let base = app.panels[app.active].path.clone();
         fs::create_dir_all(base.join("sub1")).unwrap();
         fs::create_dir_all(base.join("sub2")).unwrap();
@@ -202,8 +203,8 @@ mod history_key_handling_tests {
         for c in "cd s".chars() {
             handle_history_key(&mut app, key(KeyCode::Char(c))).unwrap();
         }
-        // Filtered list is now ["cd sub1", "cd sub2"]; arrow down to
-        // the second match before running it.
+        // Filtered list is now ["cd sub1", "cd sub2"], newest first;
+        // arrow down to the second match before running it.
         handle_history_key(&mut app, key(KeyCode::Down)).unwrap();
 
         handle_history_key(&mut app, key(KeyCode::Enter)).unwrap();
@@ -219,7 +220,7 @@ mod history_key_handling_tests {
     fn handle_history_key_tab_copies_the_selected_entry_without_running_it() {
         let mut app = app_in_history_menu(vec!["dir", "cd nonexistent-dir"]);
         let Some(Overlay::CommandHistory(menu)) = &mut app.overlay else { unreachable!() };
-        menu.selected = 1;
+        menu.selected = 0; // the newest, shown first
         let original_path = app.panels[app.active].path.clone();
 
         handle_history_key(&mut app, key(KeyCode::Tab)).unwrap();
@@ -250,18 +251,18 @@ mod history_key_handling_tests {
     /// resolved `selected` against `app.command_history` directly.
     #[test]
     fn handle_history_key_f8_deletes_the_filtered_match_not_the_wrong_entry() {
-        let mut app = app_in_history_menu(vec!["cd sub1", "cargo build", "cd sub2"]);
+        let mut app = app_in_history_menu(vec!["cd sub2", "cargo build", "cd sub1"]);
 
         for c in "cd s".chars() {
             handle_history_key(&mut app, key(KeyCode::Char(c))).unwrap();
         }
-        // Filtered list is now ["cd sub1", "cd sub2"]; arrow down to
-        // the second match before deleting it.
+        // Filtered list is now ["cd sub1", "cd sub2"], newest first;
+        // arrow down to the second match before deleting it.
         handle_history_key(&mut app, key(KeyCode::Down)).unwrap();
 
         handle_history_key(&mut app, key(KeyCode::F(8))).unwrap();
 
-        assert_eq!(app.command_history, vec!["cd sub1", "cargo build"], "should have deleted \"cd sub2\", not \"cargo build\"");
+        assert_eq!(app.command_history, vec!["cargo build", "cd sub1"], "should have deleted \"cd sub2\", not \"cargo build\"");
     }
 
     /// Deleting the last remaining filtered match must re-clamp
@@ -275,7 +276,7 @@ mod history_key_handling_tests {
 
         handle_history_key(&mut app, key(KeyCode::F(8))).unwrap();
 
-        assert_eq!(app.command_history, vec!["dir"]);
+        assert_eq!(app.command_history, vec!["cargo build"], "the oldest, last in the list, went");
         let Some(Overlay::CommandHistory(menu)) = &app.overlay else { panic!("expected Overlay::CommandHistory") };
         assert_eq!(menu.selected, 0);
     }

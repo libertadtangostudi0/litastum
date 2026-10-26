@@ -86,14 +86,14 @@ impl CommandHistoryMenu {
 
 /// Entries whose text contains `query` (case-insensitive, substring
 /// anywhere — forgiving, same spirit as a shell's own `Ctrl+R` search),
-/// in their original oldest-first order. An empty `query` matches
+/// newest first, the highlight on the last command run (requested: the
+/// oldest showed at the top, as the suggestions never did). An empty `query` matches
 /// everything, which is what makes the popup show the full history
 /// before anything's been typed. Shared by `handle_history_key` and
 /// `ui::command_line::draw_command_history` so the highlighted index
 /// always lines up with what's actually rendered.
 pub fn matching_history<'a>(history: &'a [String], query: &str) -> Vec<&'a String> {
-    let query = query.to_lowercase();
-    history.iter().filter(|entry| entry.to_lowercase().contains(&query)).collect()
+    matching_history_indices(history, query).into_iter().map(|index| &history[index]).collect()
 }
 
 /// Substring matches (case-insensitive) for the suggestions that pop up
@@ -122,7 +122,7 @@ pub fn suggest_history<'a>(history: &'a [String], query: &str) -> Vec<&'a str> {
 /// real, unfiltered `Vec` (`KeyCode::F(8)` below).
 fn matching_history_indices(history: &[String], query: &str) -> Vec<usize> {
     let query = query.to_lowercase();
-    history.iter().enumerate().filter(|(_, entry)| entry.to_lowercase().contains(&query)).map(|(i, _)| i).collect()
+    history.iter().enumerate().rev().filter(|(_, entry)| entry.to_lowercase().contains(&query)).map(|(i, _)| i).collect()
 }
 
 /// Keys on the History popup: typing filters it live through the command

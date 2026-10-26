@@ -407,3 +407,21 @@ fn the_solution_grammar_colors_keywords_guids_strings_and_keys() {
         assert!(colored, "{part:?} in {line:?} should be colored: {spans:?}");
     }
 }
+
+
+/// Requested: `.tmpl` files highlighted as INI. `syntect` claims `.tmpl`
+/// for HTML, which colored them as nothing much; the override wins.
+#[test]
+fn a_bare_tmpl_file_resolves_to_ini() {
+    assert_eq!(SYNTAX_SET.find_syntax_by_extension("tmpl").map(|syntax| syntax.name.as_str()), Some("HTML"), "why an alias wasn't enough");
+    let (_, syntax_ref) = resolve_syntax_ref(&["settings.tmpl", "settings", "tmpl"], "").expect(".tmpl should resolve");
+    assert_eq!(syntax_ref.name, "INI");
+}
+
+/// A template of another format goes by its inner extension first --
+/// the order `Editor`'s candidates come in.
+#[test]
+fn a_tmpl_of_another_format_goes_by_its_inner_extension() {
+    let (_, syntax_ref) = resolve_syntax_ref(&["config.yaml.tmpl", "config.yaml", "yaml", "tmpl"], "").expect("should resolve");
+    assert_eq!(syntax_ref.name, "YAML");
+}
