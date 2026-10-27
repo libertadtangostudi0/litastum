@@ -15,7 +15,7 @@ use keys::handle_key_event;
 use paste::handle_paste_event;
 #[cfg(windows)]
 use paste::try_intercept_paste_hotkey;
-use sync::{sync_mouse_capture, sync_panel_paths, sync_screen, sync_terminal_palette, sync_title};
+use sync::{forget_images, left_image_preview, sync_mouse_capture, sync_panel_paths, sync_screen, sync_terminal_palette, sync_title};
 #[cfg(windows)]
 pub(crate) use zoom::save_terminal_zoom;
 #[cfg(windows)]
@@ -53,7 +53,12 @@ pub(crate) fn run(terminal: &mut Tui, app: &mut App) -> Result<()> {
         panel.set_visible_rows(rows);
     }
 
+    let mut was_previewing = false;
     while !app.should_quit {
+        if left_image_preview(was_previewing, &app.mode) {
+            forget_images(terminal)?;
+        }
+        was_previewing = matches!(app.mode, Mode::ImagePreview(_));
         sync_mouse_capture(app);
         sync_terminal_palette(app);
         sync_title(app);

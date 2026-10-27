@@ -9,6 +9,7 @@ use crossterm::execute;
 use tracing::warn;
 
 use crate::app::{App, Mode};
+use crate::terminal_setup::Tui;
 
 
 /// Mouse capture is on in the browser (a click on a panel's title edits
@@ -82,6 +83,26 @@ pub(super) fn sync_screen(app: &mut App) {
 }
 
 
+/// Whether the screen just left the F3 image preview, given whether it
+/// showed it when last drawn.
+pub(super) fn left_image_preview(was_previewing: bool, mode: &Mode) -> bool {
+    was_previewing && !matches!(mode, Mode::ImagePreview(_))
+}
+
+
+/// Wipes what the image preview drew. An image lives on cells it left
+/// blank, and blank cells drawn blank again are never sent -- ConPTY
+/// skips them too -- so an image stayed wherever the screen after it is
+/// empty. The terminal's screen is cleared and drawn whole (a Sixel image
+/// goes with the clear), and litastum's window, which draws images
+/// itself, is told to drop them (`FORGET_IMAGES_VARIABLE`).
+pub(super) fn forget_images(terminal: &mut Tui) -> color_eyre::eyre::Result<()> {
+    send(&crate::user_var::set_user_var(crate::image_host::FORGET_IMAGES_VARIABLE, "clear"), "to drop its images");
+    terminal.clear()?;
+    Ok(())
+}
+
+
 /// The screen's name for its zoom (requested: the panels, the editor,
 /// Compare and the resolver each keep their own). `main` is the panels --
 /// an image preview included -- the name it had before the editor got
@@ -128,6 +149,14 @@ fn send(sequence: &str, what: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Requested to check: an image stayed on after the preview closed.
+    /// Leaving it, and only leaving it, wipes the images.
+    #[test]
+    fn only_leaving_the_image_preview_wipes_the_images() {
+        assert!(left_image_preview(true, &Mode::Browsing), "closed");
+        assert!(!left_image_preview(false, &Mode::Browsing), "never shown");
+    }
     use crate::test_support::{test_app, unique_scratch_dir};
 
     /// Requested: the panels, the editor, Compare and the resolver each

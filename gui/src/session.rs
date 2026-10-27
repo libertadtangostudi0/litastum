@@ -141,6 +141,19 @@ struct Io {
 const IMAGE_AT_VARIABLE: &str = "litastum_image_at";
 
 
+/// The user variable litastum sends when its F3 preview closes (value
+/// `"clear"`): every image goes. Until then an image stays while its cells
+/// are blank (`render::drop_overwritten_images`), and closing left it on
+/// wherever the panels are empty. Its `image_host` sets the same name.
+const FORGET_IMAGES_VARIABLE: &str = "litastum_images";
+
+
+/// Whether a user variable says to drop every image.
+fn forgets_images(name: &str, value: &str) -> bool {
+    name == FORGET_IMAGES_VARIABLE && value == "clear"
+}
+
+
 /// `"line,column"`, as litastum sends it.
 fn parse_image_at(value: &str) -> Option<(usize, usize)> {
     let (line, column) = value.split_once(',')?;
@@ -214,6 +227,8 @@ impl Io {
                 if let Some((name, value)) = body.strip_prefix(b"SetUserVar=").and_then(user_var) {
                     if name == IMAGE_AT_VARIABLE {
                         *image_at = parse_image_at(&value);
+                    } else if forgets_images(&name, &value) {
+                        images.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
                     } else {
                         let _ = proxy.proxy.send_event(UserEvent::UserVar(proxy.tab, name, value));
                     }
@@ -279,6 +294,9 @@ mod tests {
     #[test]
     fn where_litastum_says_an_image_goes() {
         assert_eq!(parse_image_at("3,51"), Some((3, 51)));
+        assert!(forgets_images("litastum_images", "clear"), "the name litastum's image_host sends");
+        assert!(!forgets_images("litastum_screen", "clear"));
+        assert!(!forgets_images("litastum_images", "x"));
         assert_eq!(parse_image_at("3"), None);
         assert_eq!(parse_image_at("x,1"), None);
     }

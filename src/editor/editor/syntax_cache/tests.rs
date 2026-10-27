@@ -70,9 +70,7 @@ fn opening_a_comment_above_recolors_what_follows() {
 /// up, the event loop drawing them (`catching_up`).
 #[test]
 fn a_view_far_down_catches_up_over_frames() {
-    let lines = Lines::from(format!("/*
-{}", "for
-".repeat(1000)).as_str());
+    let lines = Lines::from(format!("/*\n{}", "for\n".repeat(1000)).as_str());
     let mut cache = cache_for("x.c", "c");
     let comment = styles_on(&cache.highlights(&lines, 0..1, BASE), &lines, 0)[0];
     let last = 999;
@@ -93,8 +91,7 @@ fn a_view_far_down_catches_up_over_frames() {
 /// checked.
 #[test]
 fn kept_rows_go_with_an_edit_above_them() {
-    let code = "int a;
-".repeat(100);
+    let code = "int a;\n".repeat(100);
     let lines = Lines::from(code.as_str());
     let mut cache = cache_for("x.c", "c");
     cache.highlights(&lines, 40..60, BASE);
@@ -126,8 +123,7 @@ fn neighbouring_pieces_of_one_style_are_one_highlight() {
 /// there and panicked.
 #[test]
 fn an_edit_low_in_the_view_with_kept_rows_above_it() {
-    let lines = Lines::from("int a;
-".repeat(300).as_str());
+    let lines = Lines::from("int a;\n".repeat(300).as_str());
     let mut cache = cache_for("x.c", "c");
     cache.highlights(&lines, 100..200, BASE);
 
@@ -141,8 +137,7 @@ fn an_edit_low_in_the_view_with_kept_rows_above_it() {
 /// kept with it: typing cost a reparse from the checkpoint above.
 #[test]
 fn an_edit_on_a_colored_row_resumes_from_its_own_state() {
-    let lines = Lines::from("int a;
-".repeat(300).as_str());
+    let lines = Lines::from("int a;\n".repeat(300).as_str());
     let mut cache = cache_for("x.c", "c");
     cache.highlights(&lines, 100..160, BASE);
 

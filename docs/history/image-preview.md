@@ -81,3 +81,22 @@ takes the rest. Fixed along the way:
 - jobs for images switched past ran to the end (holding `Right` over
   large photos: dozens of them); dropped, they're cancelled before
   decoding and before encoding.
+
+
+## Images left on screen after the preview closed
+
+Requested to check, in the window and in Windows Terminal. An image
+lives on cells it leaves blank: `ratatui-image` clears its area and
+skips those cells. Nothing removed it when the preview closed: the
+terminal drops Sixel pixels only under new text, and the window drops an
+image once text is written into one of its cells
+(`render::drop_overwritten_images`). Blank cells drawn blank again are
+never sent, by `ratatui`'s diff or by ConPTY's own, so wherever the
+panels after it were empty the picture stayed.
+
+Leaving the preview now wipes the images (`event_loop::sync::forget_images`):
+- the terminal's screen is cleared and drawn whole, and a Sixel image
+  goes with the clear;
+- litastum's window is told to drop its images, through the user
+  variable `litastum_images=clear` (`image_host::FORGET_IMAGES_VARIABLE`,
+  read in `gui/src/session.rs`).

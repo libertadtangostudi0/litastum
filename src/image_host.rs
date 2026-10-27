@@ -43,6 +43,13 @@ pub(crate) fn hosted_picker(cell: (u16, u16)) -> Picker {
 pub(crate) const IMAGE_AT_VARIABLE: &str = "litastum_image_at";
 
 
+/// The terminal user variable telling the window to drop every image it
+/// placed (value `"clear"`): the F3 preview closed. The window kept an
+/// image while its cells stayed blank -- after closing, an empty part of
+/// the panels showed the picture on (requested to check).
+pub(crate) const FORGET_IMAGES_VARIABLE: &str = "litastum_images";
+
+
 /// Tells the window where the image drawn at `area`'s top-left goes,
 /// right before it, in the same cell of `buffer`. The window used to put
 /// an image at the cursor, but ConPTY forwards an image as soon as it
@@ -93,6 +100,7 @@ mod tests {
     #[test]
     fn the_variable_name_matches_the_windows() {
         assert_eq!(HOST_CELL_SIZE_ENV_VAR, "LITASTUM_HOST_CELL_SIZE");
+        assert_eq!(FORGET_IMAGES_VARIABLE, "litastum_images", "gui/src/session.rs reads this name");
     }
 
     /// The window places the image by this, not by the cursor.
