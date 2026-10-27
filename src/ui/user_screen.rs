@@ -26,10 +26,11 @@ pub fn draw_console(frame: &mut Frame, app: &App, live: Option<&LiveView>) -> Op
     let [screen, line_row] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
     let screen_cursor = draw_screen_lines(frame, screen, app, live);
     let command_cursor = super::draw_command_rows(frame, line_row, app, &theme, live.is_none());
-    // While a command runs, nothing else draws the notices: a paste
-    // waiting to be confirmed asks there.
-    if let (Some(_), Some(notice)) = (live, &app.notice) {
-        super::notice::draw_notice(frame, notice, &theme, app.settings.popup_style);
+    // While a command runs, nothing else draws the toast: a paste waiting
+    // to be confirmed asks there, and a copy, move or delete shows how far
+    // along it is (requested).
+    if live.is_some() {
+        super::draw_toast(frame, app);
     }
     match live {
         Some(_) => screen_cursor,
@@ -171,5 +172,26 @@ mod tests {
 
         let parts: Vec<(String, bool)> = drawn.spans.iter().map(|span| (span.content.to_string(), span.style.add_modifier.contains(Modifier::REVERSED))).collect();
         assert_eq!(parts, [("a".into(), false), ("b".into(), true), ("c".into(), true), ("d".into(), false)]);
+    }
+
+    /// Requested: a copy, move or delete keeps showing how far along it is
+    /// while a command runs.
+    #[test]
+    fn a_running_job_shows_its_progress_over_a_running_command() {
+        let mut app = test_app(unique_scratch_dir("console-view"));
+        let (job, _sender) = crate::explorer::running_for_test(crate::explorer::JobKind::Copy, "big");
+        crate::explorer::report_for_test(&job, 1, 4);
+        app.file_job = Some(job);
+        let live = LiveView { lines: vec![Line::raw("running")], cursor: Some((0, 7)), full_screen: false };
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_console(frame, &app, Some(&live));
+            })
+            .unwrap();
+        let screen = crate::test_support::buffer_text(terminal.backend().buffer());
+        assert!(screen.contains("Copying big: 25%"), "the toast: {screen}");
+        assert!(screen.contains('\u{2501}'), "with its bar: {screen}");
     }
 }

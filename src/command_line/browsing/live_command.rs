@@ -53,6 +53,11 @@ pub(super) fn run_live(app: &mut App, terminal: &mut Tui, line: &str) -> Result<
             break;
         }
         app.clipboard_wipe.poll(std::time::Instant::now());
+        // A copy, move or delete goes on meanwhile: its toast moves, and its
+        // end reloads the panels and says how it went, as in the main loop.
+        if crate::explorer::poll_pending_file_job(app) {
+            redraw = true;
+        }
         // Windows Terminal keeps `Ctrl+V` and types the clipboard in as
         // keys -- a password pasted that way wasn't accepted (reported).
         // As in the main loop: the key is polled, the clipboard pasted

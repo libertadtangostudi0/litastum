@@ -355,6 +355,27 @@ pub fn handle_confirm_stop_job_key(app: &mut App, key: KeyEvent) -> Result<Effec
 }
 
 
+/// A job that runs until its `Sender` says it's done -- tests only, as a
+/// large folder seems to.
+#[cfg(test)]
+pub(crate) fn running_for_test(kind: JobKind, label: &str) -> (FileJob, mpsc::Sender<Vec<(String, io::Error)>>) {
+    let (sender, done) = mpsc::channel();
+    let now = Instant::now();
+    let job = FileJob { kind, label: label.to_string(), total: 1, progress: Arc::new(Progress::default()), cancel: Arc::new(AtomicBool::new(false)), started: now, next_refresh: now + REFRESH_INTERVAL, done };
+    (job, sender)
+}
+
+
+/// The bytes a job has done, counted, as its thread would report them --
+/// tests only.
+#[cfg(test)]
+pub(crate) fn report_for_test(job: &FileJob, done_bytes: u64, total_bytes: u64) {
+    job.progress.total_bytes.store(total_bytes, Ordering::Relaxed);
+    job.progress.done_bytes.store(done_bytes, Ordering::Relaxed);
+    job.progress.counted.store(true, Ordering::Relaxed);
+}
+
+
 /// Waits for a job to finish -- tests only, where it's quick.
 #[cfg(test)]
 pub(crate) fn wait_for_file_job(app: &mut App) {

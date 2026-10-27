@@ -58,13 +58,20 @@ use panel::build_list_item;
 /// A notice toast (`App::notice`) is drawn last, over any screen or popup.
 pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Position>) {
     let drawn = draw_screen(frame, app);
+    draw_toast(frame, app);
+    drawn
+}
+
+
+/// The toast over everything: a notice, else a running copy, move or
+/// delete with its bar.
+fn draw_toast(frame: &mut Frame, app: &App) {
     if let Some(notice) = &app.notice {
         notice::draw_notice(frame, notice, &app.theme, app.settings.popup_style);
     } else if let Some(job) = &app.file_job {
         let bar = job.fraction().map_or(notice::Bar::Busy(job.elapsed()), notice::Bar::Fraction);
         notice::draw_progress(frame, &crate::notice::Notice::info(job.message()), bar, &app.theme, app.settings.popup_style);
     }
-    drawn
 }
 
 

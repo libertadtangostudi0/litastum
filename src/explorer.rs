@@ -17,7 +17,7 @@ pub use confirm::{handle_confirm_delete_key, handle_confirm_transfer_key};
 pub use file_job::{handle_confirm_stop_job_key, is_file_job_pending, poll_pending_file_job, FileJob, JobKind};
 pub(crate) use file_job::ask_to_stop;
 #[cfg(test)]
-pub(crate) use file_job::wait_for_file_job;
+pub(crate) use file_job::{report_for_test, running_for_test, wait_for_file_job};
 pub use drive_menu::{format_bytes, handle_drive_menu_key, DriveMenu};
 pub(crate) use entry::is_vcs_dir_name;
 pub use entry::{Entry, HighlightRole};

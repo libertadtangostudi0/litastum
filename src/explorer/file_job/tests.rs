@@ -6,12 +6,7 @@ use super::*;
 use crate::test_support::{key, test_app, unique_scratch_dir};
 
 
-/// A job that never finishes, as a large folder seems to.
-fn running(kind: JobKind, label: &str) -> (FileJob, mpsc::Sender<Vec<(String, io::Error)>>) {
-    let (sender, done) = mpsc::channel();
-    let job = FileJob { kind, label: label.to_string(), total: 1, progress: Arc::new(Progress::default()), cancel: Arc::new(AtomicBool::new(false)), started: Instant::now(), next_refresh: Instant::now() + REFRESH_INTERVAL, done };
-    (job, sender)
-}
+use super::running_for_test as running;
 
 
 /// Reported: a large folder froze the app. The job runs on its own, the
