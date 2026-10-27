@@ -21,6 +21,7 @@ mod input;
 mod mouse;
 mod search;
 mod selection_delete;
+mod syntax_cache;
 mod undo;
 mod view;
 
@@ -97,6 +98,10 @@ pub struct Editor {
     /// Off only for Compare (`disable_syntax_highlighting`): token colors
     /// competed with the diff backgrounds.
     syntax_highlighting_enabled: bool,
+    /// The file's grammar and the states parsed so far, resolved on the
+    /// first draw (`syntax_resolved`); `None` if no grammar matches.
+    syntax: Option<Box<syntax_cache::SyntaxCache>>,
+    syntax_resolved: bool,
     /// Undo stack for the `Standard` keymap, most recent last -- replaces
     /// `edtui`'s own undo there (`.claude/rules/litastum-editor-undo.md`).
     /// Stays empty for `Vim`.
@@ -189,6 +194,8 @@ impl Editor {
             keymap_mode,
             extra_highlights: Vec::new(),
             syntax_highlighting_enabled: true,
+            syntax: None,
+            syntax_resolved: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             row_edit: None,
@@ -348,6 +355,14 @@ impl Editor {
         self.extra_highlights = highlights;
     }
 
+
+
+    /// Whether the syntax colors are still parsing their way down to the
+    /// view (`syntax_cache::SyntaxCache::catching_up`): the event loop
+    /// draws again without waiting for a key.
+    pub fn syntax_catching_up(&self) -> bool {
+        self.syntax.as_ref().is_some_and(|syntax| syntax.catching_up())
+    }
 
 
     /// Turns syntax highlighting off for the session. One-way: callers

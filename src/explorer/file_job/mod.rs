@@ -7,6 +7,7 @@
 //! (`recycle_bin`), its progress in the shell's own units.
 
 mod copy_file;
+mod copy_tree;
 #[cfg(all(windows, not(test)))]
 mod recycle_bin;
 mod work;
@@ -16,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use color_eyre::eyre::Result;
 use crossterm::event::KeyEvent;
@@ -71,6 +72,11 @@ impl JobKind {
 }
 
 
+/// How often a running job's toast is redrawn: nothing else redraws it
+/// while no key is pressed (reported: the progress moved only on a key).
+const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
+
+
 /// One entry of a job: what to act on, and where to (copy/move).
 pub(super) struct JobEntry {
     pub path: PathBuf,
@@ -88,6 +94,8 @@ pub struct FileJob {
     progress: Arc<Progress>,
     cancel: Arc<AtomicBool>,
     started: Instant,
+    /// When the toast is next redrawn (`poll_pending_file_job`).
+    next_refresh: Instant,
     done: Receiver<Vec<(String, io::Error)>>,
 }
 
@@ -108,7 +116,8 @@ impl FileJob {
             // The app may have quit meanwhile; nothing to tell then.
             let _ = sender.send(failures);
         });
-        Self { kind, label, total, progress, cancel, started: Instant::now(), done }
+        let started = Instant::now();
+        Self { kind, label, total, progress, cancel, started, next_refresh: started + REFRESH_INTERVAL, done }
     }
 
 
@@ -140,6 +149,27 @@ impl FileJob {
             _ => format!("{} of {}", super::format_bytes(done), super::format_bytes(total)),
         };
         format!("{verb} {}: {percent}% ({amounts}){stop}", self.label)
+    }
+
+
+    /// How much is done, `0.0..=1.0` -- `None` until the totals are
+    /// counted, when the bar only shows it's busy.
+    pub fn fraction(&self) -> Option<f64> {
+        let progress = &self.progress;
+        if !progress.counted.load(Ordering::Relaxed) {
+            return None;
+        }
+        let (done, total) = match self.kind {
+            JobKind::Delete | JobKind::Recycle => (progress.done_items.load(Ordering::Relaxed), progress.total_items.load(Ordering::Relaxed)),
+            _ => (progress.done_bytes.load(Ordering::Relaxed), progress.total_bytes.load(Ordering::Relaxed)),
+        };
+        Some(if total == 0 { 1.0 } else { done.min(total) as f64 / total as f64 })
+    }
+
+
+    /// How long it has run -- the busy bar moves with it.
+    pub fn elapsed(&self) -> Duration {
+        self.started.elapsed()
     }
 
 
@@ -190,7 +220,7 @@ fn run(kind: JobKind, entries: &[JobEntry], progress: &Arc<Progress>, cancel: &A
             break;
         }
         let result = match (kind, &entry.to) {
-            (JobKind::Copy, Some(to)) => work::copy_tree(&entry.path, to, progress, cancel),
+            (JobKind::Copy, Some(to)) => copy_tree::copy_tree(&entry.path, to, progress, cancel),
             (JobKind::Move, Some(to)) => move_by_copy(&entry.path, to, progress, cancel),
             (JobKind::Recycle | JobKind::Delete, _) => work::delete_tree(&entry.path, progress, cancel),
             (_, None) => Err(io::Error::other("no destination")),
@@ -211,7 +241,7 @@ fn run(kind: JobKind, entries: &[JobEntry], progress: &Arc<Progress>, cancel: &A
 /// A move a rename couldn't do (another drive): a copy, and the source
 /// deleted once the copy is whole.
 fn move_by_copy(from: &std::path::Path, to: &std::path::Path, progress: &Progress, cancel: &AtomicBool) -> io::Result<()> {
-    work::copy_tree(from, to, progress, cancel)?;
+    copy_tree::copy_tree(from, to, progress, cancel)?;
     let removed = Progress::default();
     work::delete_tree(from, &removed, &AtomicBool::new(false))
 }
@@ -223,14 +253,22 @@ pub fn is_file_job_pending(app: &App) -> bool {
 
 
 /// A finished job: the panels reload, a failure becomes a notice, a
-/// stopped one says so. `true` if it finished.
+/// stopped one says so. `true` if it finished, or if a running one's
+/// toast is due a redraw (`REFRESH_INTERVAL`).
 pub fn poll_pending_file_job(app: &mut App) -> bool {
-    let Some(job) = &app.file_job else {
+    let Some(job) = &mut app.file_job else {
         return false;
     };
     let failures = match job.done.try_recv() {
         Ok(failures) => failures,
-        Err(TryRecvError::Empty) => return false,
+        Err(TryRecvError::Empty) => {
+            let now = Instant::now();
+            if now < job.next_refresh {
+                return false;
+            }
+            job.next_refresh = now + REFRESH_INTERVAL;
+            return true;
+        }
         Err(TryRecvError::Disconnected) => vec![(job.label.clone(), io::Error::other("the operation stopped"))],
     };
     let (kind, total, stopped) = (job.kind, job.total, job.cancel.load(Ordering::Relaxed));

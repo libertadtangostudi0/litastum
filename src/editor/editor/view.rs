@@ -8,7 +8,7 @@ use ratatui::widgets::Block;
 use crate::theming::Theme;
 
 use super::super::bracket_match::{bracket_match_highlights, cursor_is_on_a_matched_bracket, matched_bracket_row_span};
-use super::super::syntax::resolve_syntax_highlighter;
+use super::super::syntax::resolve_syntax;
 use super::super::word_highlight::word_occurrence_highlights;
 use super::Editor;
 
@@ -25,12 +25,13 @@ impl Editor {
         // line (`has_pathologically_long_line`'s own doc comment).
         let pathologically_long_line = self.has_long_line;
 
-        // `syntect` tokenizes whole lines on every redraw, visible or not.
-        let syntax_highlighter = if pathologically_long_line || !self.syntax_highlighting_enabled {
-            None
-        } else {
-            resolve_syntax_highlighter(&syntax_name_candidates(&self.path), &self.first_line, &self.custom_syntax_theme)
-        };
+        if !self.syntax_resolved && self.syntax_highlighting_enabled {
+            self.syntax_resolved = true;
+            self.syntax = resolve_syntax(&syntax_name_candidates(&self.path), &self.first_line, &self.custom_syntax_theme)
+                .map(|(syntax_set, syntax, theme)| Box::new(super::syntax_cache::SyntaxCache::new(syntax_set, syntax, theme)));
+        }
+        // `syntect` takes a whole line, however long.
+        let colors_syntax = !pathologically_long_line && self.syntax_highlighting_enabled;
 
         if !pathologically_long_line {
             self.widen_viewport_to_show_matched_bracket_pair(area);
@@ -59,6 +60,13 @@ impl Editor {
         };
         let visible = super::highlights_on(&self.extra_highlights, rows_that_can_be_visible(self.state.cursor.row, area));
         self.state.highlights.extend(visible.iter().cloned());
+        // Last: `edtui`'s plain path takes the first highlight that
+        // covers a character, so everything above wins over a token color.
+        let on_screen = rows_on_screen(self.state.cursor.row, self.state.viewport_offset().1, area);
+        if let Some(syntax) = self.syntax.as_mut().filter(|_| colors_syntax) {
+            let tokens = syntax.highlights(&self.state.lines, on_screen, theme.text);
+            self.state.highlights.extend(tokens);
+        }
 
         let editor_theme = EditorTheme::default()
             .base(Style::default().fg(theme.text).bg(theme.bg))
@@ -80,7 +88,6 @@ impl Editor {
 
         EditorView::new(&mut self.state)
             .theme(editor_theme)
-            .syntax_highlighter(syntax_highlighter)
             .line_numbers(LineNumbers::Absolute)
     }
 
@@ -227,6 +234,22 @@ impl Editor {
 fn rows_that_can_be_visible(cursor_row: usize, area: Rect) -> std::ops::Range<usize> {
     let height = area.height as usize;
     cursor_row.saturating_sub(height)..cursor_row + height + 1
+}
+
+
+/// The rows `edtui` can draw this frame, from the view's top row `top`:
+/// it scrolls only to bring the cursor's row into view. Narrower than
+/// `rows_that_can_be_visible`, for the syntax colors -- `edtui` checks
+/// every highlight for every character it draws.
+fn rows_on_screen(cursor_row: usize, top: usize, area: Rect) -> std::ops::Range<usize> {
+    let height = (area.height as usize).max(1);
+    if cursor_row < top {
+        cursor_row..cursor_row + height
+    } else if cursor_row >= top + height {
+        cursor_row + 1 - height..cursor_row + 1
+    } else {
+        top..top + height
+    }
 }
 
 

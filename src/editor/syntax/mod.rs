@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use edtui::syntect::highlighting::Theme as SynTheme;
 use edtui::syntect::parsing::{SyntaxReference, SyntaxSet};
-use edtui::{SyntaxHighlighter, SYNTAX_SET, THEME_SET};
+#[cfg(test)]
+use edtui::SyntaxHighlighter;
+use edtui::{SYNTAX_SET, THEME_SET};
 
 mod grammars;
 
@@ -74,9 +76,25 @@ fn resolve_syntax_ref(candidates: &[&str], first_line: &str) -> Option<(Arc<Synt
 }
 
 
+/// What the editor highlights a file with: its grammar's set, the
+/// grammar, and the syntect theme (`custom_syntax_theme`, else
+/// `SYNTAX_THEME`). The editor parses with them itself, carrying the state
+/// from line to line (`editor::syntax_cache`); `edtui`'s
+/// `SyntaxHighlighter` starts every line afresh.
+pub(super) fn resolve_syntax(candidates: &[&str], first_line: &str, custom_syntax_theme: &Option<SynTheme>) -> Option<(Arc<SyntaxSet>, SyntaxReference, SynTheme)> {
+    let (syntax_set, syntax_ref) = resolve_syntax_ref(candidates, first_line)?;
+    let theme = match custom_syntax_theme {
+        Some(custom) => custom.clone(),
+        None => THEME_SET.themes.get(SYNTAX_THEME)?.clone(),
+    };
+    Some((syntax_set, syntax_ref, theme))
+}
+
+
 /// Resolves a `SyntaxHighlighter` for a file — see `resolve_syntax_ref`
 /// for the actual lookup strategy; this just builds the highlighter
 /// from whatever it finds.
+#[cfg(test)]
 pub(super) fn resolve_syntax_highlighter(candidates: &[&str], first_line: &str, custom_syntax_theme: &Option<SynTheme>) -> Option<SyntaxHighlighter> {
     if let Some((syntax_set, syntax_ref)) = resolve_syntax_ref(candidates, first_line) {
         return build_highlighter(syntax_set, syntax_ref, custom_syntax_theme);
@@ -90,6 +108,7 @@ pub(super) fn resolve_syntax_highlighter(candidates: &[&str], first_line: &str, 
 /// named `SYNTAX_THEME` fallback if one is set. `None` only if
 /// `SYNTAX_THEME` itself somehow isn't in `THEME_SET` (would mean the
 /// bundled theme dump is broken, not a per-file lookup failure).
+#[cfg(test)]
 fn build_highlighter(syntax_set: Arc<SyntaxSet>, syntax_ref: SyntaxReference, custom_syntax_theme: &Option<SynTheme>) -> Option<SyntaxHighlighter> {
     let theme_set = THEME_SET.clone();
     let theme = match custom_syntax_theme {

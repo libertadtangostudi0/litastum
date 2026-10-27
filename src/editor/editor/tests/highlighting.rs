@@ -404,3 +404,41 @@ fn a_click_by_a_brace_leaves_the_view_alone() {
     assert_eq!(editor.cursor(), Index2::new(4, 0), "on the '{{'");
     assert_eq!(editor.state.viewport_offset().1, 0, "the view stays");
 }
+
+
+/// Reported: in a block comment's later lines, words were colored as
+/// code. Typing the `/*` above recolors the rows under it, and every cell
+/// of the comment's next line takes the `/*`'s color.
+#[test]
+fn a_block_comment_typed_above_colors_its_later_lines_as_a_comment() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let mut editor = open_test_rust_editor("\nfn for while\n*/");
+    let theme = Theme::dark();
+    let mut terminal = Terminal::new(TestBackend::new(40, 6)).unwrap();
+    let mut draw = |editor: &mut Editor| {
+        terminal
+            .draw(|frame| {
+                let view = editor.view(&theme, frame.area());
+                frame.render_widget(view, frame.area());
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    };
+    let row_fgs = |buffer: &ratatui::buffer::Buffer, y: u16| -> Vec<ratatui::style::Color> {
+        let line: String = (0..buffer.area.width).map(|x| buffer[(x, y)].symbol().to_string()).collect();
+        let start = line.find("fn").expect("the row is drawn") as u16;
+        (start..start + "fn for while".len() as u16).filter(|&x| buffer[(x, y)].symbol() != " ").map(|x| buffer[(x, y)].fg).collect()
+    };
+
+    let before = draw(&mut editor);
+    assert!(row_fgs(&before, 2).windows(2).any(|pair| pair[0] != pair[1]), "code: `fn` colored apart from the rest");
+
+    editor.input(key(KeyCode::Char('/')));
+    editor.input(key(KeyCode::Char('*')));
+    let after = draw(&mut editor);
+    let fgs = row_fgs(&after, 2);
+    assert!(fgs.windows(2).all(|pair| pair[0] == pair[1]), "one comment color: {fgs:?}");
+    assert_ne!(fgs[0], theme.text, "colored as a comment, not plain");
+}

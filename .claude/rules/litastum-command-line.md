@@ -66,9 +66,15 @@ line. Order matters and the table is grouped by it:
    prompt says which. A confirmed copy, move or delete runs on its own
    thread (`explorer/file_job/`; a large folder froze the app), one at a
    time: a toast shows how far along it is -- bytes for a copy or move
-   (counted first; a file through `CopyFileExW`, its callback counting),
+   (counted first, each entry's metadata from the listing itself --
+   asked for per entry, 50k files took 3 s; a file through
+   `CopyFileExW`, its callback counting; eight threads copy the files,
+   one walks and makes the directories, `file_job/copy_tree.rs` -- 10k
+   small files went from ~5 s to 2.6 s; files from 16 MiB one at a time),
    entries for a delete for good, a percentage for the Recycle Bin --
-   and `Esc` on an empty command line asks to stop it
+   with a bar under it (requested; a segment going to and fro until it's
+   counted), redrawn every 100 ms (`file_job::REFRESH_INTERVAL`; it moved
+   only on a key) -- and `Esc` on an empty command line asks to stop it
    (`Overlay::ConfirmStopJob`): what's done stays, the file being copied
    is removed. The panels reload when it's done; exit stops it and
    waits. What doesn't fit in the Recycle Bin asks Windows' own question

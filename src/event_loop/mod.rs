@@ -79,10 +79,37 @@ pub(crate) fn run(terminal: &mut Tui, app: &mut App) -> Result<()> {
 /// without waiting for input.
 const BACKGROUND_TASK_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(30);
 
-/// Whether an image decode, a Find file search or a file job is in flight, or the
-/// panels' directories wait to be written (`last_paths`).
+/// The same while the editor's syntax colors catch up: each frame parses
+/// for a while itself, so the next one comes at once.
+const CATCH_UP_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1);
+
+
+/// How long to wait for an event while a background task runs.
+fn background_poll_interval(app: &App) -> std::time::Duration {
+    if syntax_catching_up(app) {
+        CATCH_UP_POLL_INTERVAL
+    } else {
+        BACKGROUND_TASK_POLL_INTERVAL
+    }
+}
+
+/// Whether an image decode, a Find file search or a file job is in flight,
+/// the panels' directories wait to be written (`last_paths`), or the
+/// editor's syntax colors are still parsing down to the view.
 fn background_task_pending(app: &App) -> bool {
-    explorer::is_image_decode_pending(app) || explorer::is_find_file_search_pending(app) || explorer::is_file_job_pending(app) || app.last_paths.pending() || app.clipboard_wipe.pending()
+    explorer::is_image_decode_pending(app)
+        || explorer::is_find_file_search_pending(app)
+        || explorer::is_file_job_pending(app)
+        || app.last_paths.pending()
+        || app.clipboard_wipe.pending()
+        || syntax_catching_up(app)
+}
+
+
+/// The editor is still parsing its way to a view far down the file: each
+/// frame parses a little more (`Editor::syntax_catching_up`).
+fn syntax_catching_up(app: &App) -> bool {
+    matches!(&app.mode, Mode::Editing(editor) if editor.syntax_catching_up())
 }
 
 /// Polls every background task once; `true` if one finished and the
@@ -96,7 +123,7 @@ fn poll_background_tasks(app: &mut App) -> bool {
     let image = explorer::poll_pending_image_decode(app);
     let search = explorer::poll_pending_find_file_search(app);
     let job = explorer::poll_pending_file_job(app);
-    image || search || job
+    image || search || job || syntax_catching_up(app)
 }
 
 /// How often `wait_for_event` looks at the physical `Ctrl+V` while idle
@@ -119,7 +146,7 @@ fn wait_for_event(app: &mut App, terminal: &mut Tui) -> Result<()> {
             settle_terminal_zoom(app, terminal)?;
             return Ok(());
         }
-        let poll_interval = if background_task_pending(app) { BACKGROUND_TASK_POLL_INTERVAL } else { IDLE_POLL_INTERVAL };
+        let poll_interval = if background_task_pending(app) { background_poll_interval(app) } else { IDLE_POLL_INTERVAL };
         if event::poll(poll_interval)? {
             // A key event `handle_event` never actually dispatched
             // anything for (see `handle_key_event`'s own doc comment)
@@ -145,7 +172,7 @@ fn wait_for_event(app: &mut App, terminal: &mut Tui) -> Result<()> {
             }
             continue;
         }
-        if event::poll(BACKGROUND_TASK_POLL_INTERVAL)? {
+        if event::poll(background_poll_interval(app))? {
             if handle_event(app, terminal)? {
                 return Ok(());
             }

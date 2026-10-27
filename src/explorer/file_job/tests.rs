@@ -9,7 +9,7 @@ use crate::test_support::{key, test_app, unique_scratch_dir};
 /// A job that never finishes, as a large folder seems to.
 fn running(kind: JobKind, label: &str) -> (FileJob, mpsc::Sender<Vec<(String, io::Error)>>) {
     let (sender, done) = mpsc::channel();
-    let job = FileJob { kind, label: label.to_string(), total: 1, progress: Arc::new(Progress::default()), cancel: Arc::new(AtomicBool::new(false)), started: Instant::now(), done };
+    let job = FileJob { kind, label: label.to_string(), total: 1, progress: Arc::new(Progress::default()), cancel: Arc::new(AtomicBool::new(false)), started: Instant::now(), next_refresh: Instant::now() + REFRESH_INTERVAL, done };
     (job, sender)
 }
 
@@ -42,6 +42,36 @@ fn a_delete_counts_entries_and_the_recycle_bin_its_percentage() {
     job.progress.done_items.store(420, Ordering::Relaxed);
     job.progress.counted.store(true, Ordering::Relaxed);
     assert_eq!(job.message(), "Deleting old: 42% · Esc stops", "the shell's own units: only the percentage");
+}
+
+
+/// Reported: the progress moved only when a key was pressed. A running
+/// job asks for a redraw every `REFRESH_INTERVAL`, not more often.
+#[test]
+fn a_running_job_asks_for_a_redraw_now_and_then() {
+    let mut app = test_app(unique_scratch_dir("file-job"));
+    let (mut job, _sender) = running(JobKind::Copy, "x");
+    job.next_refresh = Instant::now();
+    app.file_job = Some(job);
+
+    assert!(poll_pending_file_job(&mut app), "due: redraw");
+    assert!(!poll_pending_file_job(&mut app), "just redrawn");
+    assert!(app.file_job.is_some(), "still running");
+}
+
+
+#[test]
+fn the_bar_fills_with_what_is_done() {
+    let (job, _sender) = running(JobKind::Copy, "x");
+    assert_eq!(job.fraction(), None, "counting: only busy");
+    job.progress.total_bytes.store(400, Ordering::Relaxed);
+    job.progress.done_bytes.store(100, Ordering::Relaxed);
+    job.progress.counted.store(true, Ordering::Relaxed);
+    assert_eq!(job.fraction(), Some(0.25));
+
+    let (job, _sender) = running(JobKind::Delete, "empty");
+    job.progress.counted.store(true, Ordering::Relaxed);
+    assert_eq!(job.fraction(), Some(1.0), "nothing to do is all done");
 }
 
 

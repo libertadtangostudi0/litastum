@@ -56,6 +56,17 @@ case-insensitive comparison allocates per character and reran over the
 whole buffer on every query edit (2.46s per typed character on 100k
 lines). Ours is allocation-free and incremental.
 
+## Syntax colors: parsed once, kept
+
+`edtui` re-parsed every visible line on every frame. Our own cache
+(`editor/editor/syntax_cache.rs`) keeps the colored rows and
+`syntect`'s state every 64 rows, so on 100k lines of Rust (release) a
+frame takes ~5 ms, and one after a typed character ~8 ms. `syntect`
+itself takes ~0.1 ms a row there, so getting far down a big file takes a
+while: 15 ms of parsing a frame, the frames coming at once
+(`event_loop::background_poll_interval`). A first look at the end of
+such a file colors from a clean state until it's caught up.
+
 ## Editing: nothing O(buffer) per keystroke
 
 Measured on a 300k-line, 53 MB log, typing a character cost 246 ms in

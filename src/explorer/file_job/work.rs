@@ -1,14 +1,18 @@
 //! The tree walks a job does on its thread: counting what's there,
-//! copying, deleting for good -- each checks `cancel` between files.
+//! deleting for good -- each checks `cancel` between files (copying is
+//! `copy_tree`'s).
 //! Links aren't followed: a link to a directory is copied or deleted as
-//! the link, never its target's contents.
+//! the link, never its target's contents. Below the top entry, metadata
+//! comes from the directory listing (`DirEntry::metadata`, free on
+//! Windows): asking for it per entry made counting 50k files take 3 s,
+//! not 0.05 s (reported: counting took very long).
 
 use std::fs;
 use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::copy_file::{self, cancelled};
+use super::copy_file::cancelled;
 use super::Progress;
 
 
@@ -16,21 +20,28 @@ use super::Progress;
 /// (files, links and directories alike). Unreadable parts are skipped --
 /// they fail later, where the error is reported.
 pub(super) fn count(path: &Path, progress: &Progress, cancel: &AtomicBool) {
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        count_entry(path, &metadata, progress, cancel);
+    }
+}
+
+
+fn count_entry(path: &Path, metadata: &fs::Metadata, progress: &Progress, cancel: &AtomicBool) {
     if cancel.load(Ordering::Relaxed) {
         return;
     }
-    let Ok(metadata) = fs::symlink_metadata(path) else {
+    progress.total_items.fetch_add(1, Ordering::Relaxed);
+    if !metadata.is_dir() {
+        progress.total_bytes.fetch_add(metadata.len(), Ordering::Relaxed);
+        return;
+    }
+    let Ok(entries) = fs::read_dir(path) else {
         return;
     };
-    progress.total_items.fetch_add(1, Ordering::Relaxed);
-    if metadata.is_dir() {
-        if let Ok(entries) = fs::read_dir(path) {
-            for entry in entries.flatten() {
-                count(&entry.path(), progress, cancel);
-            }
+    for entry in entries.flatten() {
+        if let Ok(metadata) = entry.metadata() {
+            count_entry(&entry.path(), &metadata, progress, cancel);
         }
-    } else {
-        progress.total_bytes.fetch_add(metadata.len(), Ordering::Relaxed);
     }
 }
 
@@ -51,41 +62,24 @@ pub(super) fn is_within(path: &Path, dir: &Path) -> bool {
 }
 
 
-/// Copies `src` -- a file, or a directory with all in it -- to `dst`.
-pub(super) fn copy_tree(src: &Path, dst: &Path, progress: &Progress, cancel: &AtomicBool) -> io::Result<()> {
-    if cancel.load(Ordering::Relaxed) {
-        return Err(cancelled());
-    }
-    let metadata = fs::symlink_metadata(src)?;
-    if metadata.is_dir() {
-        fs::create_dir_all(dst)?;
-        progress.done_items.fetch_add(1, Ordering::Relaxed);
-        for entry in fs::read_dir(src)? {
-            let entry = entry?;
-            copy_tree(&entry.path(), &dst.join(entry.file_name()), progress, cancel)?;
-        }
-        Ok(())
-    } else {
-        copy_file::copy(src, dst, progress, cancel)?;
-        progress.done_items.fetch_add(1, Ordering::Relaxed);
-        Ok(())
-    }
+/// Deletes `path` for good -- a directory with all in it, its files first.
+pub(super) fn delete_tree(path: &Path, progress: &Progress, cancel: &AtomicBool) -> io::Result<()> {
+    delete_entry(path, &fs::symlink_metadata(path)?, progress, cancel)
 }
 
 
-/// Deletes `path` for good -- a directory with all in it, its files first.
-pub(super) fn delete_tree(path: &Path, progress: &Progress, cancel: &AtomicBool) -> io::Result<()> {
+fn delete_entry(path: &Path, metadata: &fs::Metadata, progress: &Progress, cancel: &AtomicBool) -> io::Result<()> {
     if cancel.load(Ordering::Relaxed) {
         return Err(cancelled());
     }
-    let metadata = fs::symlink_metadata(path)?;
     if metadata.is_dir() {
         for entry in fs::read_dir(path)? {
-            delete_tree(&entry?.path(), progress, cancel)?;
+            let entry = entry?;
+            delete_entry(&entry.path(), &entry.metadata()?, progress, cancel)?;
         }
         fs::remove_dir(path)?;
     } else {
-        remove_link_or_file(path, &metadata)?;
+        remove_link_or_file(path, metadata)?;
     }
     progress.done_items.fetch_add(1, Ordering::Relaxed);
     Ok(())
@@ -122,30 +116,6 @@ mod tests {
         count(&dir, &progress, &AtomicBool::new(false));
         assert_eq!(progress.total_bytes.load(Ordering::Relaxed), 8);
         assert_eq!(progress.total_items.load(Ordering::Relaxed), 4, "the directory, sub, two files");
-    }
-
-    #[test]
-    fn a_copy_counts_its_bytes_and_entries_as_it_goes() {
-        let dir = tree();
-        let dst = dir.with_file_name("dst");
-        let progress = Progress::default();
-
-        copy_tree(&dir, &dst, &progress, &AtomicBool::new(false)).unwrap();
-
-        assert_eq!(fs::read_to_string(dst.join("sub").join("b.txt")).unwrap(), "123");
-        assert_eq!(progress.done_bytes.load(Ordering::Relaxed), 8);
-        assert_eq!(progress.done_items.load(Ordering::Relaxed), 4);
-    }
-
-    #[test]
-    fn a_stopped_copy_stops_and_says_so() {
-        let dir = tree();
-        let dst = dir.with_file_name("dst");
-
-        let err = copy_tree(&dir, &dst, &Progress::default(), &AtomicBool::new(true)).unwrap_err();
-
-        assert_eq!(err.kind(), io::ErrorKind::Interrupted);
-        assert!(!dst.exists(), "nothing started");
     }
 
     /// A folder copied into its own subfolder copied itself until the disk

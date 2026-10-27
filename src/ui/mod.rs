@@ -61,7 +61,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) -> ([(usize, usize); 2], Option<Po
     if let Some(notice) = &app.notice {
         notice::draw_notice(frame, notice, &app.theme, app.settings.popup_style);
     } else if let Some(job) = &app.file_job {
-        notice::draw_notice(frame, &crate::notice::Notice::info(job.message()), &app.theme, app.settings.popup_style);
+        let bar = job.fraction().map_or(notice::Bar::Busy(job.elapsed()), notice::Bar::Fraction);
+        notice::draw_progress(frame, &crate::notice::Notice::info(job.message()), bar, &app.theme, app.settings.popup_style);
     }
     drawn
 }

@@ -78,7 +78,7 @@ impl SavedRows {
 /// make an edited row look unchanged, odds of about 1 in 2^64. (The
 /// standard library's hasher, called per character, was 3x slower in a
 /// debug build.)
-fn row_hash(row: &[char]) -> u64 {
+pub(super) fn row_hash(row: &[char]) -> u64 {
     const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
     let start = (row.len() as u64).wrapping_mul(SEED);
     row.iter().fold(start, |hash, &c| (hash.rotate_left(5) ^ u64::from(u32::from(c))).wrapping_mul(SEED))
@@ -105,6 +105,9 @@ impl Editor {
         self.differing = if clean { Differing::Nowhere } else { Differing::Elsewhere };
         self.has_long_line = has_pathologically_long_line(&self.state.lines);
         self.revision = next_revision();
+        if let Some(syntax) = &mut self.syntax {
+            syntax.buffer_changed(&self.state.lines);
+        }
         self.refresh_search_matches();
     }
 
@@ -119,6 +122,9 @@ impl Editor {
             .is_some_and(|saved| self.state.lines.len() == saved.len() && saved.row_matches(row, current.map_or(&[], Vec::as_slice)));
         self.differing = after_row_edit(self.differing, row, same);
         self.revision = next_revision();
+        if let Some(syntax) = &mut self.syntax {
+            syntax.row_changed(row);
+        }
         if current.is_some_and(|current| current.len() > MAX_HIGHLIGHTED_LINE_LEN) {
             self.has_long_line = true;
         } else if self.has_long_line {

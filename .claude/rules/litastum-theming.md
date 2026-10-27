@@ -112,9 +112,18 @@ With `editor_theme` set, the `syntect` theme is derived from the
 scheme's 16 colors, base16-style (`scheme.rs::ColorScheme::to_syntax_theme`);
 without it, the named `SYNTAX_THEME` ("dracula") is used, independent
 of `interface_theme`. Built as a `syntect::highlighting::Theme` (via
-`edtui::syntect`, re-exported -- no direct `syntect` dependency) and
-handed to `SyntaxHighlighter::custom_theme()`; `SyntaxHighlighter::new`
-still resolves the grammar.
+`edtui::syntect`, re-exported -- no direct `syntect` dependency).
+
+**The editor parses with it itself** (`editor/editor/syntax_cache.rs`),
+not through `edtui`'s `SyntaxHighlighter`: that one starts every line
+afresh, so a block comment's later lines were colored as code
+(reported). The state is carried from line to line and kept every 64
+rows. Rows on screen become `Highlight`s, after every other highlight
+(`edtui`'s plain path takes the first that covers a character), and are
+kept per row until an edit above them. Bold, italic and underline from
+the theme now show too; `edtui` took only the color. A view far down a
+large file catches up over several frames, 15 ms each, drawn without
+waiting for a key; until then it starts from a clean state.
 
 - `keyword`, `storage` → `purple`; `string` → `green`; `comment` →
   `brightBlack`; `constant.numeric`/`constant.language` → `yellow`

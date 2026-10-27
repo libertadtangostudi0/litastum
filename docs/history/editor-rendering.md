@@ -161,3 +161,24 @@ changed) start over. Skipped in litastum's window, which reports clicks
 that way already, and outside Windows. Each click logs the pixel, the
 fit and the cell it became (`click: cell half`, debug).
 
+## Syntax colors carried from line to line
+
+Reported with a screenshot: inside a C `/* ... */` comment, `register`
+and `for` were colored as keywords. `edtui`'s `SyntaxHighlighter`
+creates a new `HighlightLines` for every line it draws, so no
+multi-line construct survives past its first line, and it offers no
+hook to pass a state in. `syntax_cache.rs` parses with `syntect`
+directly and hands the rows on screen to `edtui` as `Highlight`s, its
+own highlighter off.
+
+Measured on 100k lines of Rust (release), along the way:
+- A first version parsed all of the way down to the view in one frame.
+  A jump to row 23k took 2 s. Now the parse is capped at 15 ms a frame,
+  and the event loop draws again at once while it lasts.
+- Every frame re-parsed the visible rows and up to 63 rows above them:
+  10-15 ms a frame. Colored rows are kept now (~5 ms a frame), with the
+  state each started from, so a typed character parses from its own row
+  (~8 ms).
+- Typing low in the view, past the last checkpoint, looked up a
+  checkpoint that wasn't there and panicked. Covered by
+  `an_edit_low_in_the_view_with_kept_rows_above_it`.
