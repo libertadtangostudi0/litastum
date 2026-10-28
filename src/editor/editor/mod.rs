@@ -12,19 +12,24 @@ use super::bindings::standard_key_handler;
 use super::clipboard::OsClipboardBridge;
 use super::keymap_mode::EditorKeymapMode;
 
+mod auto_indent;
 mod block_move;
 mod changes;
 mod click;
 mod fast_paste;
 mod file_write;
+mod indent;
 mod input;
+mod line_endings;
 mod mouse;
 mod search;
 mod selection_delete;
 mod syntax_cache;
+mod text_format;
 mod undo;
 mod view;
 
+pub use line_endings::LineEnding;
 pub(crate) use view::fitted_title;
 mod word_select_touch;
 
@@ -119,6 +124,11 @@ pub struct Editor {
     view_area: ratatui::layout::Rect,
     /// The file as read or last saved (`save_checked`).
     on_disk: Option<file_write::DiskStamp>,
+    /// The file's line breaks and the one picked for it
+    /// (`line_endings.rs`), written by `save`.
+    line_endings: line_endings::LineEndingState,
+    /// How the file indents: what Tab and Shift+Tab do (`indent.rs`).
+    indent: text_format::Indent,
 }
 
 
@@ -164,6 +174,8 @@ impl Editor {
         let on_disk = file_write::stamp(&path);
         let contents = fs::read_to_string(&path)?;
         let lines = Lines::from(contents.as_str());
+        let line_endings = line_endings::LineEndingState::of(&contents);
+        let indent = text_format::Indent::of(&lines, &path);
         let first_line = contents.lines().next().unwrap_or("").to_string();
 
         let has_long_line = super::word_highlight::has_pathologically_long_line(&lines);
@@ -201,6 +213,8 @@ impl Editor {
             row_edit: None,
             view_area: ratatui::layout::Rect::default(),
             on_disk,
+            line_endings,
+            indent,
         })
     }
 
@@ -346,7 +360,7 @@ impl Editor {
     /// The buffer's current content -- Compare recomputes its live diff
     /// from this.
     pub fn text(&self) -> String {
-        changes::lines_to_string(&self.state.lines)
+        changes::lines_to_string(&self.state.lines, "\n")
     }
 
     /// See the `extra_highlights` field: one row each.
@@ -393,14 +407,16 @@ impl Editor {
     }
 
 
-    /// Writes the current buffer back to the file it was opened from.
+    /// Writes the current buffer back to the file it was opened from,
+    /// with its line break, or the one picked (`line_endings.rs`).
     pub fn save(&mut self) -> io::Result<()> {
-        let contents = changes::lines_to_string(&self.state.lines);
+        let contents = changes::lines_to_string(&self.state.lines, self.line_endings.to_write().as_str());
         debug!(path = %self.path.display(), bytes = contents.len(), "editor save: writing");
         match file_write::write_in_place(&self.path, contents.as_bytes()) {
             Ok(()) => {
                 self.saved = None;
                 self.differing = changes::Differing::Nowhere;
+                self.line_endings.saved();
                 self.on_disk = file_write::stamp(&self.path);
                 debug!(path = %self.path.display(), "editor save: ok");
                 Ok(())
@@ -440,10 +456,11 @@ impl Editor {
     }
 
 
-    /// Whether the buffer differs from the last loaded/saved content --
-    /// an O(1) read of `differing`.
+    /// Whether a save would change the file: the buffer differs from the
+    /// last loaded/saved content (an O(1) read of `differing`), or other
+    /// line breaks were picked.
     pub fn is_dirty(&self) -> bool {
-        self.differing != changes::Differing::Nowhere
+        self.differing != changes::Differing::Nowhere || self.line_endings.changed()
     }
 }
 

@@ -33,6 +33,9 @@ pub enum EditorCommand {
     BlockMove { forward: bool },
     /// `Ctrl+A` -- `Editor::select_all` (no single `edtui` action for it).
     SelectAll,
+    /// `Shift+Tab` -- one indent level less (`Standard`; `edtui` has no
+    /// such key).
+    Outdent,
     /// `Ctrl+F` -- opens the built-in search box (`Editor::start_search`),
     /// or gives it focus back if it's open but the text has focus. Never
     /// resolved while the box itself has focus -- `handle_editor_key`
@@ -73,6 +76,7 @@ pub fn resolve(key: KeyEvent) -> EditorCommand {
         KeyCode::F(7) if key.modifiers.contains(KeyModifiers::ALT) => EditorCommand::FindPrevious,
         KeyCode::F(7) => EditorCommand::Find,
         KeyCode::Char('a' | 'A') if ctrl => EditorCommand::SelectAll,
+        KeyCode::BackTab => EditorCommand::Outdent,
         KeyCode::Down if ctrl && !shift => EditorCommand::BlockMove { forward: true },
         KeyCode::Up if ctrl && !shift => EditorCommand::BlockMove { forward: false },
         KeyCode::Left if ctrl && shift => EditorCommand::WordSelect { forward: false },
@@ -99,6 +103,8 @@ pub fn text_key(editor: &mut Editor, key: KeyEvent) {
         // where it's unbound. History: docs/history/editor-keymap.md.
         EditorCommand::WordSelect { forward } if editor.keymap_mode() == EditorKeymapMode::Standard => editor.extend_word_selection(forward),
         EditorCommand::BlockMove { forward } if editor.keymap_mode() == EditorKeymapMode::Standard => editor.move_by_block(forward),
+        // `Editor::input` takes it ahead of `edtui`, which panics on it.
+        EditorCommand::Outdent if editor.keymap_mode() == EditorKeymapMode::Standard => editor.input(key),
         EditorCommand::WordSelect { .. } | EditorCommand::BlockMove { .. } | EditorCommand::Forward => editor.input(key),
         _ => {}
     }
@@ -205,7 +211,7 @@ pub fn handle_editor_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
         EditorCommand::Find => active_editor.start_search_with_history(&app.search_history),
         EditorCommand::FindNext => active_editor.search_next(),
         EditorCommand::FindPrevious => active_editor.search_previous(),
-        EditorCommand::SelectAll | EditorCommand::WordSelect { .. } | EditorCommand::BlockMove { .. } | EditorCommand::Forward => text_key(active_editor, key),
+        EditorCommand::SelectAll | EditorCommand::WordSelect { .. } | EditorCommand::BlockMove { .. } | EditorCommand::Outdent | EditorCommand::Forward => text_key(active_editor, key),
         EditorCommand::Ignore => {}
     }
 

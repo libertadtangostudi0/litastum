@@ -27,7 +27,9 @@ fn open_test_rust_editor(contents: &str) -> Editor {
 
 
 mod dirty_and_save;
+mod auto_indent;
 mod highlighting;
+mod indent_and_line_endings;
 mod search_scroll;
 mod keymap_modes;
 mod line_selection;

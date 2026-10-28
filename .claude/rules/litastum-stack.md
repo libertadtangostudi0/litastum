@@ -133,6 +133,18 @@ tests, not by inspection):
   `MoveToEndOfLine` -- which already extend a Visual selection, so
   `Shift+Left`/`Right` wrap for free. `Ctrl` (word-wise) is deliberately
   excluded.
+- **A save gives back the file's own format** (requested, important):
+  `edtui` drops each `\r` on load, so the file's line breaks are kept
+  apart (`editor/editor/line_endings.rs`; `CRLF`/`LF`/`Mixed` on the
+  bottom border, F9 -> Line endings changes them on request, never
+  silently), and Tab/Shift+Tab are ours (`indent.rs`), indenting as the
+  file does (`text_format::Indent`) -- `edtui` typed `\t` into files
+  indented with spaces and panics on `BackTab`. Enter keeps the line's
+  indentation and Backspace in spaces takes a level (`auto_indent.rs`);
+  an `Enter`/`Tab` queued in a burst of typing is a pasted one, taken
+  as written (`event_loop::keys::burst_text`). An untouched file must
+  save byte for byte; `tests/indent_and_line_endings.rs` pins it.
+  History: `docs/history/editor-saving.md`.
 
 **OS clipboard integration**: `edtui` has its own optional `arboard`
 feature (on by default) that would give this for free, but its

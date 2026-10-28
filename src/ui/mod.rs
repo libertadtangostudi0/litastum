@@ -15,6 +15,7 @@ mod confirm;
 mod drive_menu;
 mod editor_find;
 mod editor_keymap_menu;
+mod editor_line_ending_menu;
 mod editor_menu;
 mod editor_pane;
 mod find_file;
@@ -305,6 +306,11 @@ fn draw_overlay(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) -> Opti
                 _ => app.settings.editor_keymap_mode,
             };
             editor_keymap_menu::draw_editor_keymap_menu(frame, area, menu, theme, style, current);
+        }
+        Overlay::EditorLineEndingMenu(menu) => {
+            if let Mode::Editing(editor) = &app.mode {
+                editor_line_ending_menu::draw_editor_line_ending_menu(frame, area, menu, theme, style, editor.line_ending());
+            }
         }
         Overlay::CompareMenu(menu) => compare_menu::draw_compare_menu(frame, area, menu, theme, style),
         Overlay::CompareLineEndingMenu(menu) => {

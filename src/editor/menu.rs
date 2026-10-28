@@ -7,23 +7,26 @@ use crate::choice_menu::{ChoiceMenu, MenuOutcome};
 use crate::command_line::Effect;
 
 use super::keymap_menu::open_editor_keymap_menu;
+use super::line_ending_menu::open_line_ending_menu;
 
 /// An item of the editor's own F9 menu (distinct from the browser's
-/// `theming::MainMenu`). One item for now; kept a real menu as the home
-/// for more editor settings (`TODO/editor.md`).
+/// `theming::MainMenu`), the home for more editor settings
+/// (`TODO/editor.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorMenuItem {
     Keybindings,
+    LineEndings,
 }
 
 
 impl EditorMenuItem {
-    pub const ALL: [Self; 1] = [Self::Keybindings];
+    pub const ALL: [Self; 2] = [Self::Keybindings, Self::LineEndings];
 
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Keybindings => "Keybindings",
+            Self::LineEndings => "Line endings",
         }
     }
 }
@@ -37,8 +40,8 @@ pub fn open_editor_menu() -> EditorMenu {
 }
 
 
-/// `Enter` on `Keybindings` opens the keymap picker in its place; `Esc`
-/// closes (a leaf `Esc` closes all the way out, like the picker's own).
+/// `Enter` on an item opens its picker in the menu's place; `Esc` closes
+/// (a leaf `Esc` closes all the way out, like the pickers' own).
 pub fn handle_editor_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
     let Some(Overlay::EditorMenu(menu)) = &mut app.overlay else {
         return Ok(Effect::None);
@@ -55,6 +58,10 @@ pub fn handle_editor_menu_key(app: &mut App, key: KeyEvent) -> Result<Effect> {
             };
             Some(Overlay::EditorKeymapMenu(open_editor_keymap_menu(current)))
         }
+        MenuOutcome::Chosen(EditorMenuItem::LineEndings) => match &app.mode {
+            Mode::Editing(editor) => Some(Overlay::EditorLineEndingMenu(open_line_ending_menu(editor.line_ending()))),
+            _ => None,
+        },
         MenuOutcome::Closed => None,
     };
     Ok(Effect::None)
@@ -84,6 +91,18 @@ mod tests {
         let Some(Overlay::EditorKeymapMenu(menu)) = &app.overlay else { panic!("expected the keymap picker") };
         assert_eq!(menu.selected(), EditorKeymapMode::Standard);
         assert!(matches!(app.mode, Mode::Editing(_)), "the editor stays underneath");
+    }
+
+    #[test]
+    fn enter_on_line_endings_opens_its_picker_on_the_files_own() {
+        let mut app = editing_app("a\r\nb\r\n", EditorKeymapMode::Standard);
+        app.overlay = Some(Overlay::EditorMenu(open_editor_menu()));
+
+        handle_editor_menu_key(&mut app, key(KeyCode::Down)).unwrap();
+        handle_editor_menu_key(&mut app, key(KeyCode::Enter)).unwrap();
+
+        let Some(Overlay::EditorLineEndingMenu(menu)) = &app.overlay else { panic!("expected the line ending picker") };
+        assert_eq!(menu.selected(), crate::editor::LineEnding::CrLf);
     }
 
     #[test]

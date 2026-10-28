@@ -55,6 +55,25 @@ fn is_plain_typed_char(code: KeyCode, modifiers: KeyModifiers) -> bool {
     matches!(code, KeyCode::Char(_)) && !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
 }
 
+
+/// The text a key queued in a burst of typing stands for: a character,
+/// and a plain `Enter` or `Tab` as a line break or a tab. Such a burst is
+/// a paste typed in as keys (Windows Terminal's right-click paste), so
+/// they're taken as written -- one at a time, `Enter` would indent each
+/// pasted line again on top of its own indentation (`auto_indent.rs`),
+/// and `Tab` turn a pasted tab into spaces.
+fn burst_text(code: KeyCode, modifiers: KeyModifiers) -> Option<char> {
+    if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+        return None;
+    }
+    match code {
+        KeyCode::Char(c) => Some(c),
+        KeyCode::Enter if !modifiers.contains(KeyModifiers::SHIFT) => Some('\n'),
+        KeyCode::Tab if !modifiers.contains(KeyModifiers::SHIFT) => Some('\t'),
+        _ => None,
+    }
+}
+
 /// Whether the built-in editor is the thing that would actually receive
 /// a plain typed character right now -- mirrors `dispatch_key_event`'s
 /// own `Mode::Editing` guard exactly, including the embedded-Markdown-
@@ -86,10 +105,8 @@ fn drain_pending_editor_typing(app: &mut App, terminal: &mut Tui) -> Result<()> 
     let mut batch = String::new();
     while event::poll(std::time::Duration::from_secs(0))? {
         match event::read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press && is_plain_typed_char(key.code, key.modifiers) && editor_accepting_plain_typing(app) => {
-                if let KeyCode::Char(c) = key.code {
-                    batch.push(c);
-                }
+            Event::Key(key) if key.kind == KeyEventKind::Press && editor_accepting_plain_typing(app) && burst_text(key.code, key.modifiers).is_some() => {
+                batch.extend(burst_text(key.code, key.modifiers));
                 app.paste_flood.record_typed_key(key.code, key.modifiers);
             }
             Event::Key(key) => {
@@ -192,6 +209,7 @@ pub(super) fn key_effect(app: &mut App, key: crossterm::event::KeyEvent) -> Resu
             Overlay::ConfirmDiscard => editor::handle_confirm_discard_key(app, key),
             Overlay::EditorMenu(_) => editor::handle_editor_menu_key(app, key),
             Overlay::EditorKeymapMenu(_) => editor::handle_editor_keymap_menu_key(app, key),
+            Overlay::EditorLineEndingMenu(_) => editor::handle_line_ending_menu_key(app, key),
             Overlay::CompareMenu(_) => compare::handle_compare_menu_key(app, key),
             Overlay::CompareLineEndingMenu(_) => compare::handle_compare_line_ending_menu_key(app, key),
             Overlay::ConfirmDelete(_) => explorer::handle_confirm_delete_key(app, key),
@@ -249,6 +267,20 @@ mod tests {
     use crate::app::Overlay;
     use crate::editor::EditorKeymapMode;
     use crate::test_support::{editing_app, key};
+
+    /// A paste typed in as keys is taken as written: its line breaks
+    /// aren't indented again, its tabs stay tabs.
+    #[test]
+    fn a_burst_of_typing_takes_enter_and_tab_as_written() {
+        assert_eq!(burst_text(KeyCode::Char('a'), KeyModifiers::NONE), Some('a'));
+        assert_eq!(burst_text(KeyCode::Char('A'), KeyModifiers::SHIFT), Some('A'));
+        assert_eq!(burst_text(KeyCode::Enter, KeyModifiers::NONE), Some('\n'));
+        assert_eq!(burst_text(KeyCode::Tab, KeyModifiers::NONE), Some('\t'));
+        assert_eq!(burst_text(KeyCode::Tab, KeyModifiers::SHIFT), None, "Shift+Tab outdents");
+        assert_eq!(burst_text(KeyCode::Char('z'), KeyModifiers::CONTROL), None, "a shortcut");
+        assert_eq!(burst_text(KeyCode::Enter, KeyModifiers::ALT), None);
+        assert_eq!(burst_text(KeyCode::Backspace, KeyModifiers::NONE), None);
+    }
 
     fn editor_app() -> App {
         editing_app("hello\n", EditorKeymapMode::Standard)

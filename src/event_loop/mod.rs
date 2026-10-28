@@ -242,6 +242,7 @@ fn overlay_wheel(app: &mut App, kind: MouseEventKind) {
                 | Overlay::PopupStyleMenu(_)
                 | Overlay::EditorMenu(_)
                 | Overlay::EditorKeymapMenu(_)
+                | Overlay::EditorLineEndingMenu(_)
                 | Overlay::CompareMenu(_)
                 | Overlay::CompareLineEndingMenu(_)
                 | Overlay::ChangeDrive(_)

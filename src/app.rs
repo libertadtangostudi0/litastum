@@ -8,7 +8,7 @@ use crate::choice_menu::ChoiceMenu;
 use crate::command_line::{self, builtin_profiles, CommandHistoryMenu, ShellProfile};
 use crate::compare::{CompareLineEndingMenu, CompareMenu, CompareState};
 use crate::conflict::ConflictState;
-use crate::editor::{Editor, EditorKeymapMenu, EditorMenu};
+use crate::editor::{Editor, EditorKeymapMenu, EditorLineEndingMenu, EditorMenu};
 use crate::explorer::{
     AddUserMenuItemState, DriveMenu, FindFileState, ImagePreviewState, MarkdownLinkSearchState, MarkdownPreviewState, Panel, PendingLink, TrustedLinksMenu, UserMenuCommandEdit, UserMenuPromptState,
     UserMenuState,
@@ -54,6 +54,8 @@ pub enum Overlay {
     EditorMenu(EditorMenu),
     /// Editor F9 -> Keybindings.
     EditorKeymapMenu(EditorKeymapMenu),
+    /// Editor F9 -> Line endings.
+    EditorLineEndingMenu(EditorLineEndingMenu),
     /// Compare's own F9 menu.
     CompareMenu(CompareMenu),
     /// Compare F9 -> Line endings.

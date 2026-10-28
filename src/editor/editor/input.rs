@@ -41,8 +41,8 @@ fn should_capture_undo_snapshot(mode_before: EditorMode, code: KeyCode, modifier
 }
 
 
-/// Whether `key` can only change the cursor's own row: typing, Tab, and
-/// Backspace/Delete that don't join two rows, with nothing selected and
+/// Whether `key` can only change the cursor's own row: typing, Tab,
+/// Shift+Tab, and Backspace/Delete that don't join two rows, with nothing selected and
 /// no `Ctrl`/`Alt` (word-wise deletes, chords). Such an edit gets a
 /// one-row undo snapshot and change tracking (`undo::Change::Row`).
 fn edits_only_the_cursor_row(state: &edtui::EditorState, key: KeyEvent) -> bool {
@@ -54,7 +54,7 @@ fn edits_only_the_cursor_row(state: &edtui::EditorState, key: KeyEvent) -> bool 
         return false;
     };
     match key.code {
-        KeyCode::Char(_) | KeyCode::Tab => true,
+        KeyCode::Char(_) | KeyCode::Tab | KeyCode::BackTab => true,
         KeyCode::Backspace => state.cursor.col > 0,
         KeyCode::Delete => state.cursor.col < row_len,
         _ => false,
@@ -143,6 +143,30 @@ impl Editor {
             self.state.cursor = cursor;
             self.state.mode = EditorMode::Visual;
             return true;
+        }
+
+        // The file's own indent (`indent.rs`), not `edtui`'s `\t`.
+        // Shift+Tab never reaches `edtui`, which panics on it. Enter keeps
+        // the line's indentation, Backspace takes a level of spaces
+        // (`auto_indent.rs`).
+        if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) {
+            let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+            match key.code {
+                KeyCode::Enter => {
+                    self.enter();
+                    return true;
+                }
+                KeyCode::Backspace if self.backspace_in_indent() => return true,
+                KeyCode::Tab if !shift => {
+                    self.tab();
+                    return true;
+                }
+                KeyCode::Tab | KeyCode::BackTab => {
+                    self.outdent();
+                    return true;
+                }
+                _ => {}
+            }
         }
 
         // Typing over a selection replaces it. A plain `Char` has no

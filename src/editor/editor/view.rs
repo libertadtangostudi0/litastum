@@ -3,6 +3,7 @@ use std::path::Path;
 use edtui::{EditorTheme, EditorView, Highlight, LineNumbers, Lines, RowIndex};
 use ratatui::layout::Rect;
 use ratatui::style::Style;
+use ratatui::text::Line;
 use ratatui::widgets::Block;
 
 use crate::theming::Theme;
@@ -73,7 +74,10 @@ impl Editor {
             .block(
                 Block::bordered()
                     .border_style(Style::default().fg(theme.accent))
-                    .title(self.title(area.width)),
+                    .title(self.title(area.width))
+                    // The file's line breaks, on the bottom border's right
+                    // (`line_endings.rs`).
+                    .title_bottom(Line::from(format!(" {} ", self.line_ending_label())).right_aligned()),
             )
             .selection_style(selection_style)
             .hide_status_line()

@@ -135,16 +135,17 @@ impl Editor {
 }
 
 
-/// The buffer as text, rows joined by `\n` -- what `String::from(Lines)`
-/// gives, without cloning the buffer first or formatting it a character
-/// at a time (`Display`, ~1.3 s for 300k lines in a debug build).
-pub(super) fn lines_to_string(lines: &Lines) -> String {
+/// The buffer as text, rows joined by `line_break` -- with `\n`, what
+/// `String::from(Lines)` gives, without cloning the buffer first or
+/// formatting it a character at a time (`Display`, ~1.3 s for 300k lines
+/// in a debug build).
+pub(super) fn lines_to_string(lines: &Lines, line_break: &str) -> String {
     let rows = lines.len();
-    let capacity = (0..rows).filter_map(|row| lines.get(RowIndex::new(row))).map(|row| row.len() + 1).sum();
+    let capacity = (0..rows).filter_map(|row| lines.get(RowIndex::new(row))).map(|row| row.len() + line_break.len()).sum();
     let mut text = String::with_capacity(capacity);
     for row in 0..rows {
         if row > 0 {
-            text.push('\n');
+            text.push_str(line_break);
         }
         if let Some(chars) = lines.get(RowIndex::new(row)) {
             text.extend(chars.iter());
@@ -188,7 +189,13 @@ mod tests {
     fn lines_to_string_matches_edtuis_own_conversion() {
         for text in ["", "a", "a\nb", "a\nb\n", "\n\n", "\u{0436}\u{1F600}\nx"] {
             let lines = Lines::from(text);
-            assert_eq!(lines_to_string(&lines), String::from(lines.clone()), "{text:?}");
+            assert_eq!(lines_to_string(&lines, "\n"), String::from(lines.clone()), "{text:?}");
         }
+    }
+
+    #[test]
+    fn lines_to_string_joins_with_the_line_break_given() {
+        let lines = Lines::from("a\n\tb\n");
+        assert_eq!(lines_to_string(&lines, "\r\n"), "a\r\n\tb\r\n");
     }
 }
