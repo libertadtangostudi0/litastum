@@ -5,7 +5,9 @@
 //!   paste done at once;
 //! - `paste_flood`: swallowing that keystroke flood afterward;
 //! - `zoom_keys`: Windows Terminal owns its zoom keys too, so a zoom per
-//!   screen polls and presses them (`crate::terminal_zoom`).
+//!   screen polls and presses them (`crate::terminal_zoom`);
+//! - `mouse_mode`: whether the console still gives us the mouse, or
+//!   another process set it back to selecting.
 //!
 //! Other Windows code that isn't about terminal input stays in its own
 //! module (`cmd.exe` quoting, App Paths, drives, shell profiles).
@@ -13,6 +15,8 @@
 mod paste_flood;
 #[cfg(windows)]
 mod paste_hotkey;
+#[cfg(windows)]
+pub mod mouse_mode;
 #[cfg(windows)]
 pub mod zoom_keys;
 

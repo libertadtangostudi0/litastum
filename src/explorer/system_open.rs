@@ -38,8 +38,12 @@ pub fn open(path: &Path) -> std::io::Result<Child> {
 fn build_open_url_command(url: &str) -> Command {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         let mut command = Command::new("cmd");
         command.args(["/C", "start", "", url]);
+        // A console of its own: sharing ours, `cmd` can set its mode back
+        // to selecting with the mouse (`windows_terminal::mouse_mode`).
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
         command
     }
     #[cfg(target_os = "macos")]

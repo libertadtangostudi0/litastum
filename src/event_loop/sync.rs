@@ -21,6 +21,10 @@ use crate::terminal_setup::Tui;
 /// succeeds -- `restore_terminal` relies on it.
 pub(super) fn sync_mouse_capture(app: &mut App) {
     let wanted = matches!(app.mode, Mode::Browsing | Mode::Editing(_) | Mode::CompareFiles(_) | Mode::ResolveConflict(_));
+    if wanted && app.mouse_capture_enabled {
+        reclaim_the_mouse();
+        return;
+    }
     if wanted == app.mouse_capture_enabled {
         return;
     }
@@ -28,6 +32,21 @@ pub(super) fn sync_mouse_capture(app: &mut App) {
     match result {
         Ok(()) => app.mouse_capture_enabled = wanted,
         Err(err) => warn!(%err, wanted, "failed to toggle mouse capture"),
+    }
+}
+
+
+/// Sets mouse capture again if the console no longer gives us the mouse
+/// (`windows_terminal::mouse_mode`): a process sharing it set its mode
+/// back, and Windows Terminal selected with the mouse itself. Logged with
+/// the mode found, to tell what did it.
+fn reclaim_the_mouse() {
+    #[cfg(windows)]
+    if let Some(mode) = crate::windows_terminal::mouse_mode::input_mode().filter(|&mode| !crate::windows_terminal::mouse_mode::takes_the_mouse(mode)) {
+        warn!(mode = format_args!("{mode:#x}"), "the console stopped giving us the mouse; capturing it again");
+        if let Err(err) = execute!(std::io::stdout(), EnableMouseCapture) {
+            warn!(%err, "failed to capture the mouse again");
+        }
     }
 }
 

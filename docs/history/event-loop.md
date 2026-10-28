@@ -79,3 +79,19 @@ editor opens or closes. `Shift`+drag still selects natively in Windows
 Terminal. `DisableMouseCapture` without a prior enable crashed on
 Windows ("Initial console modes not set"), hence
 `App::mouse_capture_enabled`.
+
+## The mouse taken back from the console
+
+Reported: in the editor, in Windows Terminal, the mouse sometimes
+selected the terminal's way -- line numbers and all, in its own color --
+without `Shift`, "not in every file". Our own drawing was ruled out by a
+probe (a drag and `Shift+Down` render the same, the gutter untouched).
+`EnableMouseCapture` sets the console's input mode once (mouse input on,
+QuickEdit off), and `sync_mouse_capture` never sent it again while it
+thought capture was on; a process sharing the console can set the mode
+back. The likely one: a link in the Markdown preview (a `.md` file's
+`F3`) opens through `cmd /C start`, which shared our console -- it now
+gets one of its own (`CREATE_NO_WINDOW`). Whatever else does it, the
+mode is now read every loop iteration (`windows_terminal::mouse_mode`)
+and capture set again when the mouse isn't ours, with a `warn!` naming
+the mode found.
